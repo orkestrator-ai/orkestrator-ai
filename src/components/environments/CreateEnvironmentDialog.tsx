@@ -203,9 +203,9 @@ export function CreateEnvironmentDialog({
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Create Environment</DialogTitle>
+          <DialogTitle>Create Ork (Environment)</DialogTitle>
           <DialogDescription>
-            Configure a new Claude Code environment with an optional initial prompt.
+            Configure a new Ork environment with an optional initial prompt.
           </DialogDescription>
         </DialogHeader>
 

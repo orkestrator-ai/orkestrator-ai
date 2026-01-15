@@ -223,8 +223,7 @@ export function PersistentTerminal({
         await writeRef.current("\r");
       }
 
-      // Close the compose bar and refocus terminal
-      setIsComposeBarOpen(false);
+      // Keep compose bar open but refocus terminal
       terminal.focus();
     },
     [terminal]
