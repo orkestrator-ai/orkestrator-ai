@@ -1,0 +1,603 @@
+import { useEffect, useRef, useCallback, useState } from "react";
+import {
+  DndContext,
+  pointerWithin,
+  rectIntersection,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+  type DragOverEvent,
+  type CollisionDetection,
+  type Collision,
+} from "@dnd-kit/core";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import { useTerminalContext, MAX_TABS, type TerminalTabType, type CreateTabOptions, type CreateFileTabOptions } from "@/contexts";
+import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useFilesPanelStore, getAllLeaves } from "@/stores";
+import { Button } from "@/components/ui/button";
+import { Play, Terminal as TerminalIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { PaneTree } from "@/components/pane-layout";
+import { TerminalPortalHost } from "./TerminalPortalHost";
+import { InitializationLogs } from "./InitializationLogs";
+import {
+  parseDraggableTabId,
+  parseEdgeDroppableId,
+  isPaneLeaf,
+  isGitFileStatus,
+  type TabInfo,
+} from "@/types/paneLayout";
+
+interface TerminalContainerProps {
+  environmentId: string;
+  containerId: string | null;
+  isContainerRunning?: boolean;
+  isContainerCreating?: boolean;
+  isActive?: boolean;
+  className?: string;
+  onStartContainer?: () => void;
+}
+
+/**
+ * Check if a collision ID represents a tab bar or tab (not an edge zone).
+ */
+const isTabOrTabbar = (collision: Collision): boolean => {
+  const id = String(collision.id);
+  return id.startsWith("tabbar:") || id.startsWith("tab:");
+};
+
+/**
+ * Custom collision detection that prioritizes tab bars and tabs over edge zones.
+ * Uses multiple strategies:
+ * 1. First try pointer-based detection (most accurate when pointer is directly over target)
+ * 2. Fall back to rect intersection for nearby targets
+ * 3. Use closestCenter as last resort
+ *
+ * When multiple collisions are found, prioritize tabbars/tabs over edge zones
+ * to prevent accidental splits when trying to combine tabs.
+ */
+const customCollisionDetection: CollisionDetection = (args) => {
+  // First, check if the pointer is directly over any droppable
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) {
+    // Prioritize tabbars and tabs over edge zones
+    const tabCollisions = pointerCollisions.filter(isTabOrTabbar);
+    if (tabCollisions.length > 0) {
+      return tabCollisions;
+    }
+    return pointerCollisions;
+  }
+
+  // Try rect intersection for nearby targets
+  const rectCollisions = rectIntersection(args);
+  if (rectCollisions.length > 0) {
+    // Prioritize tabbars and tabs over edge zones
+    const tabCollisions = rectCollisions.filter(isTabOrTabbar);
+    if (tabCollisions.length > 0) {
+      return tabCollisions;
+    }
+    return rectCollisions;
+  }
+
+  // Last resort: use closestCenter to find the nearest target
+  return closestCenter(args);
+};
+
+export function TerminalContainer({
+  environmentId,
+  containerId,
+  isContainerRunning = false,
+  isContainerCreating = false,
+  isActive = true,
+  className,
+  onStartContainer,
+}: TerminalContainerProps) {
+  const activeWriteRef = useRef<((data: string) => Promise<void>) | null>(null);
+
+  // Track currently dragged tab ID for cross-pane visual feedback
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [dragOverPaneId, setDragOverPaneId] = useState<string | null>(null);
+
+  // Get Claude options for this environment
+  const { getOptions, clearOptions } = useClaudeOptionsStore();
+  const claudeOptions = getOptions(environmentId);
+  const hasAppliedClaudeOptionsRef = useRef(false);
+
+  // Pane layout store - use selectors for reactive state
+  const environments = usePaneLayoutStore((state) => state.environments);
+
+  // Get derived state for THIS environment (not the globally active one)
+  // Each TerminalContainer should render its own environment's tabs
+  const currentEnvState = environments.get(environmentId);
+  const root = currentEnvState?.root ?? { kind: "leaf" as const, id: "default", tabs: [], activeTabId: null };
+  const activePaneId = currentEnvState?.activePaneId ?? "default";
+
+  // Pane layout actions
+  const {
+    setActiveEnvironment,
+    initialize,
+    reset,
+    addTab,
+    removeTab,
+    reorderTabs,
+    moveTab,
+    splitPaneAtEdge,
+    getActivePane,
+    getAllTabs,
+    getOpenFilePaths,
+    getPane,
+  } = usePaneLayoutStore();
+
+  const {
+    setTerminalWrite,
+    setCreateTab,
+    setSelectTab,
+    setCloseActiveTab,
+    setTabCount,
+    setCreateFileTab,
+    setOpenFilePaths,
+  } = useTerminalContext();
+
+  // Track the initial prompt to pass to the first tab
+  const initialPromptRef = useRef<string | undefined>(undefined);
+  const previousContainerIdRef = useRef<string | null>(null);
+
+  // Set active environment when this container becomes active
+  useEffect(() => {
+    if (isActive) {
+      setActiveEnvironment(environmentId);
+    }
+  }, [isActive, environmentId, setActiveEnvironment]);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Initialize pane layout when container starts running
+  useEffect(() => {
+    if (isContainerRunning && containerId) {
+      // First ensure this environment is active in the store
+      setActiveEnvironment(environmentId);
+
+      // Check if we need to initialize (no tabs yet for THIS environment)
+      // Use currentEnvState which is already derived above from environments.get(environmentId)
+      const currentTabs = currentEnvState
+        ? getAllLeaves(currentEnvState.root).flatMap((leaf) => leaf.tabs)
+        : [];
+
+      if (currentTabs.length === 0) {
+        initialize(containerId);
+
+        // Determine initial tab type based on agent options
+        let initialTabType: TerminalTabType = "plain";
+        if (claudeOptions?.launchAgent) {
+          initialTabType = claudeOptions.agentType;
+          hasAppliedClaudeOptionsRef.current = true;
+          // Capture the initial prompt for the first tab
+          if (claudeOptions.initialPrompt?.trim()) {
+            initialPromptRef.current = claudeOptions.initialPrompt.trim();
+          }
+        }
+
+        // Add the initial tab to the default pane
+        const initialTab: TabInfo = {
+          id: "default",
+          type: initialTabType,
+          initialPrompt: initialPromptRef.current,
+        };
+        addTab("default", initialTab, environmentId);
+      }
+    }
+    // Note: currentEnvState is derived from environments, so we don't need both in deps
+  }, [isContainerRunning, containerId, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState]);
+
+  // Reset pane layout when container changes within the same environment
+  // (e.g., container was stopped and restarted with a new ID)
+  useEffect(() => {
+    if (previousContainerIdRef.current !== null && previousContainerIdRef.current !== containerId) {
+      console.debug("[TerminalContainer] Container changed for environment:", environmentId, "resetting panes");
+      reset();
+      hasAppliedClaudeOptionsRef.current = false;
+    }
+    previousContainerIdRef.current = containerId;
+  }, [containerId, environmentId, reset]);
+
+  // Reset pane layout and workspace ready state when container stops
+  // This clears all terminals and tabs since their backend sessions are destroyed
+  const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
+  useEffect(() => {
+    if (!isContainerRunning && containerId) {
+      console.debug("[TerminalContainer] Container stopped, resetting panes for environment:", environmentId);
+      setWorkspaceReady(environmentId, false);
+      reset();
+    }
+  }, [isContainerRunning, environmentId, containerId, setWorkspaceReady, reset]);
+
+  // Register terminal write function with context
+  useEffect(() => {
+    if (!isActive) return;
+
+    if (activeWriteRef.current) {
+      setTerminalWrite(activeWriteRef.current);
+    } else {
+      setTerminalWrite(null);
+    }
+
+    return () => {
+      setTerminalWrite(null);
+    };
+  }, [isActive, setTerminalWrite, activePaneId]);
+
+  // Handler for creating new terminal tabs
+  const handleCreateTab = useCallback(
+    (type: TerminalTabType, options?: CreateTabOptions) => {
+      if (!containerId || !isContainerRunning) return;
+
+      const allTabs = getAllTabs();
+      if (allTabs.length >= MAX_TABS) {
+        console.debug("[TerminalContainer] Maximum tab limit reached:", MAX_TABS);
+        return;
+      }
+
+      const newTabId = `tab-${Date.now()}`;
+      const newTab: TabInfo = {
+        id: newTabId,
+        type,
+        initialPrompt: options?.initialPrompt,
+        initialCommands: options?.initialCommands,
+      };
+
+      console.debug("[TerminalContainer] Creating new tab:", newTabId, "type:", type, "for environment:", environmentId);
+      addTab(activePaneId, newTab, environmentId);
+    },
+    [containerId, isContainerRunning, activePaneId, addTab, getAllTabs, environmentId]
+  );
+
+  // Get target branch from files panel store for diff view
+  const targetBranch = useFilesPanelStore((state) => state.targetBranch);
+
+  // Handler for creating file viewer tabs
+  const handleCreateFileTab = useCallback(
+    (filePath: string, options?: CreateFileTabOptions) => {
+      if (!containerId || !isContainerRunning) return;
+
+      const allTabs = getAllTabs();
+      if (allTabs.length >= MAX_TABS) {
+        console.debug("[TerminalContainer] Maximum tab limit reached:", MAX_TABS);
+        return;
+      }
+
+      // Check if file is already open - need to match both path AND diff mode
+      // Note: This intentionally allows the same file to be open twice if one is in
+      // diff mode and one is in regular file mode, as they serve different purposes
+      const existingTab = allTabs.find(
+        (t) => t.type === "file" &&
+               t.fileData?.filePath === filePath &&
+               t.fileData?.isDiff === (options?.isDiff ?? false)
+      );
+      if (existingTab) {
+        // Activate the existing tab instead of creating a duplicate
+        const pane = usePaneLayoutStore.getState().findPaneWithTab(existingTab.id);
+        if (pane) {
+          usePaneLayoutStore.getState().setActiveTab(pane.id, existingTab.id);
+          console.debug("[TerminalContainer] Activated existing tab:", existingTab.id, "in pane:", pane.id);
+        }
+        return;
+      }
+
+      const newTabId = `file-${Date.now()}`;
+      // Validate gitStatus using type guard instead of unsafe cast
+      const validatedGitStatus = isGitFileStatus(options?.gitStatus)
+        ? options.gitStatus
+        : undefined;
+      const newTab: TabInfo = {
+        id: newTabId,
+        type: "file",
+        fileData: {
+          filePath,
+          containerId,
+          isDiff: options?.isDiff,
+          gitStatus: validatedGitStatus,
+          baseBranch: options?.isDiff ? targetBranch : undefined,
+        },
+      };
+
+      console.debug("[TerminalContainer] Creating file tab:", newTabId, "path:", filePath, "isDiff:", options?.isDiff, "for environment:", environmentId);
+      addTab(activePaneId, newTab, environmentId);
+    },
+    [containerId, isContainerRunning, activePaneId, addTab, getAllTabs, targetBranch, environmentId]
+  );
+
+  // Handler for selecting a tab by index (for Ctrl+1, Ctrl+2, etc.)
+  // This now only affects the active pane
+  const handleSelectTab = useCallback(
+    (index: number) => {
+      const activePane = getActivePane();
+      if (activePane && index >= 0 && index < activePane.tabs.length) {
+        const tab = activePane.tabs[index];
+        if (tab) {
+          usePaneLayoutStore.getState().setActiveTab(activePaneId, tab.id);
+        }
+      }
+    },
+    [activePaneId, getActivePane]
+  );
+
+  // Handler for closing the active tab
+  const handleCloseActiveTab = useCallback(() => {
+    const activePane = getActivePane();
+    if (activePane && activePane.activeTabId) {
+      removeTab(activePaneId, activePane.activeTabId);
+    }
+  }, [activePaneId, getActivePane, removeTab]);
+
+  // Clear claude options after they've been applied to first tab
+  useEffect(() => {
+    if (hasAppliedClaudeOptionsRef.current && claudeOptions?.initialPrompt) {
+      // Give time for the container to start and the command to be sent
+      const timer = setTimeout(() => {
+        clearOptions(environmentId);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [claudeOptions, environmentId, clearOptions]);
+
+  // Register tab functions with context
+  useEffect(() => {
+    if (!isActive) return;
+
+    if (isContainerRunning && containerId) {
+      setCreateTab(handleCreateTab);
+      setSelectTab(handleSelectTab);
+      setCloseActiveTab(handleCloseActiveTab);
+      const allTabs = getAllTabs();
+      setTabCount(allTabs.length);
+      setCreateFileTab(handleCreateFileTab);
+      setOpenFilePaths(getOpenFilePaths());
+    } else {
+      setCreateTab(null);
+      setSelectTab(null);
+      setCloseActiveTab(null);
+      setTabCount(0);
+      setCreateFileTab(null);
+      setOpenFilePaths([]);
+    }
+
+    return () => {
+      setCreateTab(null);
+      setSelectTab(null);
+      setCloseActiveTab(null);
+      setTabCount(0);
+      setCreateFileTab(null);
+      setOpenFilePaths([]);
+    };
+  }, [
+    isActive,
+    isContainerRunning,
+    containerId,
+    handleCreateTab,
+    handleCreateFileTab,
+    handleSelectTab,
+    handleCloseActiveTab,
+    getAllTabs,
+    getOpenFilePaths,
+    setCreateTab,
+    setSelectTab,
+    setCloseActiveTab,
+    setTabCount,
+    setCreateFileTab,
+    setOpenFilePaths,
+  ]);
+
+  // Handle drag start - track which tab is being dragged
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveDragId(event.active.id as string);
+  }, []);
+
+  // Handle drag over - track which pane is being hovered
+  const handleDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const { over } = event;
+      if (!over) {
+        setDragOverPaneId(null);
+        return;
+      }
+
+      const overId = over.id as string;
+
+      // Check if hovering over a tabbar
+      if (overId.startsWith("tabbar:")) {
+        const targetPaneId = overId.replace("tabbar:", "");
+        setDragOverPaneId(targetPaneId);
+        return;
+      }
+
+      // Check if hovering over a tab
+      const overTab = parseDraggableTabId(overId);
+      if (overTab) {
+        setDragOverPaneId(overTab.paneId);
+        return;
+      }
+
+      setDragOverPaneId(null);
+    },
+    []
+  );
+
+  // Handle drag end for tab reordering and moving
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      // Capture drag state before clearing (needed for self-collision handling)
+      const lastDragOverPaneId = dragOverPaneId;
+
+      // Clear drag state
+      setActiveDragId(null);
+      setDragOverPaneId(null);
+
+      const { active, over } = event;
+      console.debug("[TerminalContainer] DragEnd - active:", active.id, "over:", over?.id ?? "null", "lastDragOverPaneId:", lastDragOverPaneId);
+      if (!over) return;
+
+      const activeId = active.id as string;
+      const overId = over.id as string;
+
+      // Parse the dragged tab
+      const draggedTab = parseDraggableTabId(activeId);
+      if (!draggedTab) return;
+
+      // Check if dropped on an edge (for splitting)
+      const edgeDrop = parseEdgeDroppableId(overId);
+      if (edgeDrop) {
+        console.debug("[TerminalContainer] Split at edge:", edgeDrop.direction, "from pane:", draggedTab.paneId);
+        splitPaneAtEdge(edgeDrop.paneId, edgeDrop.direction, draggedTab.tabId, draggedTab.paneId);
+        return;
+      }
+
+      // Check if dropped on a tabbar
+      if (overId.startsWith("tabbar:")) {
+        const targetPaneId = overId.replace("tabbar:", "");
+
+        if (draggedTab.paneId === targetPaneId) {
+          // Same pane, dropped on tabbar area (not on a specific tab)
+          // Move tab to the end of the tab list
+          const pane = getPane(targetPaneId);
+          if (pane && isPaneLeaf(pane)) {
+            const fromIndex = pane.tabs.findIndex((t) => t.id === draggedTab.tabId);
+            const toIndex = pane.tabs.length - 1;
+            if (fromIndex !== -1 && fromIndex !== toIndex) {
+              console.debug("[TerminalContainer] Moving tab to end:", fromIndex, "->", toIndex);
+              reorderTabs(draggedTab.paneId, fromIndex, toIndex);
+            }
+          }
+        } else {
+          // Different pane - move tab to end of target pane
+          console.debug("[TerminalContainer] Moving tab to different pane");
+          moveTab(draggedTab.paneId, targetPaneId, draggedTab.tabId);
+        }
+        return;
+      }
+
+      // Check if dropped on another tab (for reordering)
+      const overTab = parseDraggableTabId(overId);
+      if (overTab) {
+        // When dragging across panes, the target pane's SortableContext includes
+        // the dragged tab's ID (with source pane ID). If we detect a collision with
+        // our own dragged item, use lastDragOverPaneId to determine the target pane.
+        if (overTab.tabId === draggedTab.tabId && overTab.paneId === draggedTab.paneId) {
+          if (lastDragOverPaneId && lastDragOverPaneId !== draggedTab.paneId) {
+            console.debug("[TerminalContainer] Self-collision - moving to lastDragOverPaneId:", lastDragOverPaneId);
+            moveTab(draggedTab.paneId, lastDragOverPaneId, draggedTab.tabId);
+          } else {
+            console.debug("[TerminalContainer] Self-collision but no valid target pane");
+          }
+          return;
+        }
+
+        if (draggedTab.paneId === overTab.paneId) {
+          // Same pane - reorder
+          const pane = getPane(draggedTab.paneId);
+          if (pane && isPaneLeaf(pane)) {
+            const fromIndex = pane.tabs.findIndex((t) => t.id === draggedTab.tabId);
+            const toIndex = pane.tabs.findIndex((t) => t.id === overTab.tabId);
+            if (fromIndex !== -1 && toIndex !== -1 && fromIndex !== toIndex) {
+              console.debug("[TerminalContainer] Reordering tabs:", fromIndex, "->", toIndex);
+              reorderTabs(draggedTab.paneId, fromIndex, toIndex);
+            }
+          }
+        } else {
+          // Different pane - move tab to position
+          const targetPane = getPane(overTab.paneId);
+          if (targetPane && isPaneLeaf(targetPane)) {
+            const toIndex = targetPane.tabs.findIndex((t) => t.id === overTab.tabId);
+            console.debug("[TerminalContainer] Moving tab to position:", toIndex);
+            moveTab(draggedTab.paneId, overTab.paneId, draggedTab.tabId, toIndex);
+          }
+        }
+      }
+    },
+    [dragOverPaneId, getPane, moveTab, reorderTabs, splitPaneAtEdge]
+  );
+
+  // Determine what overlay to show (if any)
+  const showNoEnvironmentOverlay = !containerId;
+  const showCreatingOverlay = containerId && isContainerCreating;
+  const showNotRunningOverlay = containerId && !isContainerRunning && !isContainerCreating;
+  // Use THIS environment's tabs, not the global active environment's tabs
+  const thisEnvTabs = currentEnvState ? getAllLeaves(currentEnvState.root).flatMap((leaf) => leaf.tabs) : [];
+  const showTerminal = isContainerRunning && containerId && thisEnvTabs.length > 0;
+
+  return (
+    <div className={cn("relative flex h-full min-h-0 flex-col bg-background", className)}>
+      {/* Main content with DnD context */}
+      {showTerminal && containerId && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={customCollisionDetection}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="relative flex-1 min-h-0 overflow-hidden bg-background">
+            <PaneTree
+              node={root}
+              containerId={containerId}
+              environmentId={environmentId}
+              isActive={isActive}
+              activeDragId={activeDragId}
+              dragOverPaneId={dragOverPaneId}
+            />
+            {/* Terminal portal host - renders all terminals via portals into pane targets */}
+            <TerminalPortalHost
+              containerId={containerId}
+              environmentId={environmentId}
+            />
+          </div>
+        </DndContext>
+      )}
+
+      {/* No environment selected overlay */}
+      {showNoEnvironmentOverlay && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background">
+          <div className="text-center text-muted-foreground">
+            <TerminalIcon className="mx-auto mb-4 h-12 w-12 opacity-50" />
+            <p>Select an environment from the sidebar to get started.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Container creating overlay - shows initialization logs */}
+      {showCreatingOverlay && containerId && (
+        <div className="absolute inset-0 bg-background">
+          <InitializationLogs containerId={containerId} className="h-full" />
+        </div>
+      )}
+
+      {/* Container not running overlay */}
+      {showNotRunningOverlay && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background">
+          <div className="text-center">
+            <TerminalIcon className="mx-auto mb-4 h-12 w-12 text-muted-foreground opacity-50" />
+            <p className="mb-4 text-muted-foreground">Container is not running</p>
+            {onStartContainer && (
+              <Button onClick={onStartContainer} variant="outline">
+                <Play className="mr-2 h-4 w-4" />
+                Start Container
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,461 @@
+#!/bin/bash
+# Workspace setup script - runs in the terminal so user can see progress
+# This script handles: repo cloning, .env files, orkestrator-ai.json setup
+
+set -e
+
+# Color output helpers - use $'...' syntax for proper escape sequence handling
+GREEN=$'\033[0;32m'
+BLUE=$'\033[0;34m'
+YELLOW=$'\033[1;33m'
+RED=$'\033[0;31m'
+NC=$'\033[0m' # No Color
+
+# Wait for entrypoint to complete (config files to be set up)
+# This prevents race conditions where Claude is launched before config is ready
+WAIT_COUNT=0
+PROGRESS_FILE="/tmp/.entrypoint-progress"
+LAST_LINE_COUNT=0
+
+# Show what the entrypoint is doing in real-time
+echo -e "${BLUE}=== Container Initialization ===${NC}"
+echo ""
+
+while [ ! -f /tmp/.entrypoint-complete ] && [ $WAIT_COUNT -lt 100 ]; do
+    # Check for new progress lines and display them
+    if [ -f "$PROGRESS_FILE" ]; then
+        CURRENT_LINE_COUNT=$(wc -l < "$PROGRESS_FILE" 2>/dev/null || echo "0")
+        if [ "$CURRENT_LINE_COUNT" -gt "$LAST_LINE_COUNT" ]; then
+            # Show new lines (skip empty lines)
+            tail -n +$((LAST_LINE_COUNT + 1)) "$PROGRESS_FILE" | while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                    echo -e "  $line"
+                fi
+            done
+            LAST_LINE_COUNT=$CURRENT_LINE_COUNT
+        fi
+    fi
+
+    sleep 0.2
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+done
+
+# Show any remaining progress lines
+if [ -f "$PROGRESS_FILE" ]; then
+    CURRENT_LINE_COUNT=$(wc -l < "$PROGRESS_FILE" 2>/dev/null || echo "0")
+    if [ "$CURRENT_LINE_COUNT" -gt "$LAST_LINE_COUNT" ]; then
+        tail -n +$((LAST_LINE_COUNT + 1)) "$PROGRESS_FILE" | while IFS= read -r line; do
+            if [ -n "$line" ]; then
+                echo -e "  $line"
+            fi
+        done
+    fi
+fi
+
+echo ""
+if [ ! -f /tmp/.entrypoint-complete ]; then
+    echo -e "${YELLOW}Container initialization timed out, proceeding anyway${NC}"
+else
+    echo -e "${GREEN}Container initialization complete${NC}"
+fi
+
+# Display network access mode for user awareness
+if [ "${NETWORK_MODE:-restricted}" = "full" ]; then
+    echo -e "${GREEN}Network: Full internet access (unrestricted)${NC}"
+else
+    echo -e "${BLUE}Network: Restricted (whitelist-based firewall)${NC}"
+fi
+
+# Wait for Claude config to be ready (skip for root terminals)
+# The entrypoint creates ~/.claude.json, but we need to ensure it's fully written
+# before launching Claude (which happens after workspace-setup.sh completes)
+# Root terminals (orkroot user) don't need Claude config, so skip the wait
+if [ "$(whoami)" = "orkroot" ]; then
+    echo -e "${BLUE}Root terminal - skipping Claude config wait${NC}"
+else
+    CLAUDE_CONFIG_WAIT=0
+    SPINNER_FRAMES=('|' '/' '-' '\')
+    if [ ! -f "$HOME/.claude.json" ]; then
+        printf "Waiting for Claude config "
+        while [ ! -f "$HOME/.claude.json" ] && [ $CLAUDE_CONFIG_WAIT -lt 50 ]; do
+            SPINNER_IDX=$((CLAUDE_CONFIG_WAIT % 4))
+            SPINNER_CHAR="${SPINNER_FRAMES[$SPINNER_IDX]}"
+            printf "\r%sWaiting for Claude config %s%s " "$BLUE" "$SPINNER_CHAR" "$NC"
+            sleep 0.2
+            CLAUDE_CONFIG_WAIT=$((CLAUDE_CONFIG_WAIT + 1))
+        done
+        printf "\r"
+    fi
+
+    if [ -f "$HOME/.claude.json" ]; then
+        echo -e "${GREEN}Claude config ready${NC}                         "
+    else
+        echo -e "${YELLOW}Warning: ~/.claude.json not found after waiting${NC}"
+    fi
+fi
+
+echo -e "${BLUE}=== Workspace Setup ===${NC}"
+
+# Function to convert SSH URLs to HTTPS for token-based authentication
+convert_ssh_to_https() {
+    local url="$1"
+
+    # Already HTTPS - return as-is
+    if [[ "$url" == https://* ]] || [[ "$url" == http://* ]]; then
+        echo "$url"
+        return
+    fi
+
+    # git@host:user/repo.git -> https://host/user/repo.git
+    if [[ "$url" == git@* ]]; then
+        # Extract: git@github.com:user/repo.git -> github.com:user/repo.git -> github.com user/repo.git
+        local after_at="${url#git@}"
+        local host="${after_at%%:*}"
+        local path="${after_at#*:}"
+        echo "https://${host}/${path}"
+        return
+    fi
+
+    # ssh://git@host/path -> https://host/path
+    if [[ "$url" == ssh://* ]]; then
+        local without_scheme="${url#ssh://}"
+        local without_user="${without_scheme#git@}"
+        echo "https://${without_user}"
+        return
+    fi
+
+    # git://host/path -> https://host/path
+    if [[ "$url" == git://* ]]; then
+        local without_scheme="${url#git://}"
+        echo "https://${without_scheme}"
+        return
+    fi
+
+    # Unknown format - return as-is
+    echo "$url"
+}
+
+# Convert GIT_URL from SSH to HTTPS if needed
+if [ -n "$GIT_URL" ]; then
+    ORIGINAL_URL="$GIT_URL"
+    GIT_URL=$(convert_ssh_to_https "$GIT_URL")
+    if [ "$ORIGINAL_URL" != "$GIT_URL" ]; then
+        echo -e "${BLUE}>>> Converted SSH URL to HTTPS <<<${NC}"
+        echo -e "  From: ${YELLOW}$ORIGINAL_URL${NC}"
+        echo -e "  To:   ${GREEN}$GIT_URL${NC}"
+    fi
+fi
+
+# Configure GitHub token if provided (avoid interactive prompts)
+TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+if [ -n "$TOKEN" ]; then
+    echo -e "${BLUE}>>> Configuring GitHub token for HTTPS <<<${NC}"
+    git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+    git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com"
+    # Also rewrite SSH URLs to use token auth (belt and suspenders)
+    git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "git@github.com:"
+    export GIT_TERMINAL_PROMPT=0
+fi
+
+# Check if setup already completed
+if [ -f /tmp/.workspace-setup-complete ]; then
+    echo -e "${GREEN}Workspace already set up.${NC}"
+    exit 0
+fi
+
+# Clone repository if GIT_URL is set and /workspace/.git doesn't exist
+if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
+    echo ""
+    echo -e "${BLUE}>>> Cloning Repository <<<${NC}"
+    echo -e "URL: ${GREEN}$GIT_URL${NC}"
+    echo -e "Branch: ${GREEN}${GIT_BRANCH:-main}${NC}"
+    echo ""
+
+    BRANCH="${GIT_BRANCH:-main}"
+
+    # Clean /workspace
+    echo "Preparing workspace..."
+    rm -rf /workspace/* 2>/dev/null || true
+    rm -rf /workspace/.* 2>/dev/null || true
+    find /workspace -mindepth 1 -delete 2>/dev/null || true
+
+    # Prepare clone URL - inject token directly for more reliable auth
+    # Note: We avoid logging the URL with token to prevent credential exposure
+    CLONE_URL="$GIT_URL"
+    if [ -n "$TOKEN" ] && [[ "$GIT_URL" == https://github.com/* ]]; then
+        # Replace https://github.com/ with https://x-access-token:TOKEN@github.com/
+        # Disable shell tracing temporarily to avoid token exposure in logs
+        { set +x; } 2>/dev/null
+        CLONE_URL="${GIT_URL/https:\/\/github.com\//https://x-access-token:${TOKEN}@github.com/}"
+        echo -e "${BLUE}Using token-authenticated URL${NC}"
+    fi
+
+    # Clone directly into /workspace
+    echo "Cloning..."
+    if git clone "$CLONE_URL" /workspace; then
+        echo -e "${GREEN}Clone successful!${NC}"
+        cd /workspace
+
+        # Checkout requested branch if different from current
+        CURRENT=$(git branch --show-current)
+        if [ "$CURRENT" != "$BRANCH" ]; then
+            echo "Checking out branch: $BRANCH"
+            if git checkout "$BRANCH" 2>/dev/null; then
+                echo -e "${GREEN}Checked out: $BRANCH${NC}"
+            elif git checkout -b "$BRANCH" "origin/$BRANCH" 2>/dev/null; then
+                echo -e "${GREEN}Checked out remote: origin/$BRANCH${NC}"
+            else
+                # Branch doesn't exist remotely - create a new branch from main/master
+                echo -e "${BLUE}Creating new branch: $BRANCH${NC}"
+                # Try to create from origin/main or origin/master
+                if git checkout -b "$BRANCH" "origin/main" 2>/dev/null; then
+                    echo -e "${GREEN}Created new branch: $BRANCH (from main)${NC}"
+                elif git checkout -b "$BRANCH" "origin/master" 2>/dev/null; then
+                    echo -e "${GREEN}Created new branch: $BRANCH (from master)${NC}"
+                else
+                    # Create from current HEAD as last resort
+                    if git checkout -b "$BRANCH" 2>/dev/null; then
+                        echo -e "${GREEN}Created new branch: $BRANCH (from HEAD)${NC}"
+                    else
+                        echo -e "${RED}Failed to create branch: $BRANCH${NC}"
+                        echo -e "${YELLOW}Staying on current branch: $CURRENT${NC}"
+                    fi
+                fi
+            fi
+        fi
+
+        echo ""
+        echo -e "${GREEN}Repository ready:${NC}"
+        echo "  Branch: $(git branch --show-current)"
+        REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo 'none')
+        if [ -n "$TOKEN" ]; then
+            REMOTE_URL=$(echo "$REMOTE_URL" | sed -E 's#https://x-access-token:[^@]+@github.com#https://github.com#g')
+        fi
+        echo "  Remote: ${REMOTE_URL}"
+    else
+        echo -e "${RED}Clone failed! Trying fallback...${NC}"
+
+        # Fallback: clone to temp then move
+        TEMP_CLONE="/tmp/repo_clone"
+        rm -rf "$TEMP_CLONE" 2>/dev/null
+
+        if git clone "$CLONE_URL" "$TEMP_CLONE"; then
+            echo "Moving files to workspace..."
+            mv "$TEMP_CLONE"/* /workspace/ 2>/dev/null || true
+            mv "$TEMP_CLONE"/.[!.]* /workspace/ 2>/dev/null || true
+            rm -rf "$TEMP_CLONE"
+
+            if [ -d "/workspace/.git" ]; then
+                echo -e "${GREEN}Fallback succeeded!${NC}"
+                cd /workspace
+            else
+                echo -e "${RED}Fallback failed - no .git directory${NC}"
+            fi
+        else
+            echo -e "${RED}Fallback clone also failed${NC}"
+        fi
+    fi
+else
+    if [ -z "$GIT_URL" ]; then
+        echo -e "${YELLOW}No GIT_URL provided - skipping clone${NC}"
+    elif [ -d "/workspace/.git" ]; then
+        echo "Repository already exists in /workspace"
+        cd /workspace
+        echo "  Branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
+    fi
+fi
+
+# Copy .env files to workspace
+echo ""
+echo -e "${BLUE}>>> Setting up environment files <<<${NC}"
+
+if [ -d /project-env ]; then
+    if [ -f /project-env/.env ]; then
+        cp /project-env/.env /workspace/.env
+        echo -e "  ${GREEN}Copied .env from project folder${NC}"
+    fi
+    if [ -f /project-env/.env.local ]; then
+        cp /project-env/.env.local /workspace/.env.local
+        echo -e "  ${GREEN}Copied .env.local from project folder${NC}"
+    fi
+elif [ -f /env/.env ]; then
+    cp /env/.env /workspace/.env
+    echo -e "  ${GREEN}Copied .env file${NC}"
+elif [ -f /env/.env.local ]; then
+    cp /env/.env.local /workspace/.env
+    echo -e "  ${GREEN}Copied .env.local file${NC}"
+else
+    echo "  No .env files to copy"
+fi
+
+# Copy additional project files if mounted (preserving directory structure)
+if [ -d /project-files ]; then
+    echo ""
+    echo -e "${BLUE}>>> Copying additional project files <<<${NC}"
+
+    # Find all files in /project-files and copy them preserving relative paths
+    cd /project-files
+    FILE_COUNT=0
+    # Use process substitution to avoid subshell, ensuring FILE_COUNT persists
+    while read -r file; do
+        # Remove leading ./ from path
+        rel_path="${file#./}"
+        dest="/workspace/$rel_path"
+        dest_dir=$(dirname "$dest")
+
+        # Create parent directories if needed
+        if [ ! -d "$dest_dir" ]; then
+            mkdir -p "$dest_dir"
+        fi
+
+        # Copy the file
+        cp "/project-files/$rel_path" "$dest"
+        echo -e "  ${GREEN}Copied $rel_path${NC}"
+        FILE_COUNT=$((FILE_COUNT + 1))
+    done < <(find . -type f)
+
+    if [ "$FILE_COUNT" -eq 0 ]; then
+        echo "  No additional files to copy"
+    fi
+fi
+
+# Set up opencode.json if mounted from project
+if [ -f /opencode-project-json ]; then
+    echo ""
+    echo -e "${BLUE}>>> Setting up OpenCode configuration <<<${NC}"
+
+    # Copy to workspace root
+    cp /opencode-project-json /workspace/opencode.json
+
+    # Add default model attribute if missing (use OPENCODE_MODEL env var or fallback to default)
+    if ! jq -e '.model' /workspace/opencode.json > /dev/null 2>&1; then
+        DEFAULT_MODEL="${OPENCODE_MODEL:-opencode/grok-code}"
+        echo -e "  ${YELLOW}No model specified, adding default: $DEFAULT_MODEL${NC}"
+        jq --arg model "$DEFAULT_MODEL" '. + {"model": $model}' /workspace/opencode.json > /tmp/opencode.json.tmp
+        mv /tmp/opencode.json.tmp /workspace/opencode.json
+    else
+        MODEL=$(jq -r '.model' /workspace/opencode.json)
+        echo -e "  ${GREEN}Using configured model: $MODEL${NC}"
+    fi
+
+    echo -e "  ${GREEN}opencode.json ready${NC}"
+fi
+
+# Run orkestrator-ai.json setup script if present
+echo ""
+echo -e "${BLUE}>>> Checking for project setup script <<<${NC}"
+
+if [ -f /workspace/orkestrator-ai.json ]; then
+    echo -e "${GREEN}Found orkestrator-ai.json${NC}"
+    cat /workspace/orkestrator-ai.json
+    echo ""
+
+    # Parse the root field (string or array) - runs as root user before regular scripts
+    ROOT_SCRIPT=$(jq -r '.root // empty' /workspace/orkestrator-ai.json 2>/dev/null)
+    ROOT_SCRIPT_TYPE=$(jq -r 'if .root==null then "empty" elif (.root|type)=="array" then "array" elif (.root|type)=="string" then "string" else "other" end' /workspace/orkestrator-ai.json 2>/dev/null)
+    ROOT_ARRAY_LENGTH=$(jq -r '.root | if type=="array" then length else 0 end' /workspace/orkestrator-ai.json 2>/dev/null)
+
+    if [ -n "$ROOT_SCRIPT" ] || { [ "$ROOT_SCRIPT_TYPE" = "array" ] && [ "$ROOT_ARRAY_LENGTH" -gt 0 ]; }; then
+        echo ""
+        echo -e "${BLUE}=== Running Root Setup ===${NC}"
+        echo ""
+
+        cd /workspace
+
+        run_root_step() {
+            local step="$1"
+            echo -e "Root command: ${GREEN}$step${NC}"
+            # Run as orkroot (UID 0, root-equivalent) using sudo
+            sudo -u orkroot /bin/bash -c "$step"
+        }
+
+        ROOT_EXIT=0
+        set +e
+        if [ "$ROOT_SCRIPT_TYPE" = "array" ]; then
+            # Iterate array steps in order
+            while IFS= read -r step; do
+                if [ -z "$step" ]; then
+                    continue
+                fi
+                run_root_step "$step"
+                ROOT_EXIT=$?
+                if [ $ROOT_EXIT -ne 0 ]; then
+                    break
+                fi
+            done < <(jq -r '.root[]' /workspace/orkestrator-ai.json 2>/dev/null)
+        else
+            # Single command string
+            run_root_step "$ROOT_SCRIPT"
+            ROOT_EXIT=$?
+        fi
+        set -e
+
+        echo ""
+        if [ $ROOT_EXIT -eq 0 ]; then
+            echo -e "${GREEN}Root setup completed successfully!${NC}"
+        else
+            echo -e "${YELLOW}Root setup exited with code $ROOT_EXIT${NC}"
+        fi
+    else
+        echo "  No root setup defined (root field is empty)"
+    fi
+
+    # Parse the script field (string or array)
+    SETUP_SCRIPT=$(jq -r '.script // empty' /workspace/orkestrator-ai.json 2>/dev/null)
+    SETUP_SCRIPT_TYPE=$(jq -r 'if .script==null then "empty" elif (.script|type)=="array" then "array" elif (.script|type)=="string" then "string" else "other" end' /workspace/orkestrator-ai.json 2>/dev/null)
+
+    if [ -n "$SETUP_SCRIPT" ] || [ "$SETUP_SCRIPT_TYPE" = "array" ]; then
+        echo ""
+        echo -e "${BLUE}=== Running Project Setup ===${NC}"
+        echo ""
+
+        cd /workspace
+
+        run_setup_step() {
+            local step="$1"
+            echo -e "Command: ${GREEN}$step${NC}"
+            # Run in login shell, explicitly sourcing .zshrc to pick up PATH changes from previous steps
+            /bin/zsh -lc "source ~/.zshrc 2>/dev/null || true; $step"
+            return $?
+        }
+
+        SCRIPT_EXIT=0
+        set +e
+        if [ "$SETUP_SCRIPT_TYPE" = "array" ]; then
+            # Iterate array steps in order
+            while IFS= read -r step; do
+                if [ -z "$step" ]; then
+                    continue
+                fi
+                run_setup_step "$step"
+                SCRIPT_EXIT=$?
+                if [ $SCRIPT_EXIT -ne 0 ]; then
+                    break
+                fi
+            done < <(jq -r '.script[]' /workspace/orkestrator-ai.json 2>/dev/null)
+        else
+            # Single command string
+            run_setup_step "$SETUP_SCRIPT"
+            SCRIPT_EXIT=$?
+        fi
+        set -e
+
+        echo ""
+        if [ $SCRIPT_EXIT -eq 0 ]; then
+            echo -e "${GREEN}Setup script completed successfully!${NC}"
+        else
+            echo -e "${YELLOW}Setup script exited with code $SCRIPT_EXIT${NC}"
+        fi
+    else
+        echo "  No setup script defined (script field is empty)"
+    fi
+else
+    echo "  No orkestrator-ai.json found"
+fi
+
+# Mark setup complete
+touch /tmp/.workspace-setup-complete
+
+echo ""
+echo -e "${GREEN}=== Workspace Ready ===${NC}"
+echo ""

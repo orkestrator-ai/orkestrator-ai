@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+/* FiraCode Nerd Font for terminal */
+@font-face {
+  font-family: 'FiraCode Nerd Font';
+  src: url('./assets/fonts/FiraCodeNerdFont-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'FiraCode Nerd Font';
+  src: url('./assets/fonts/FiraCodeNerdFont-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  /* Dark theme colors */
+  --color-background: #1e1e1e;
+  --color-foreground: #e4e4e7;
+  --color-muted: #27272a;
+  --color-muted-foreground: #a1a1aa;
+  --color-card: #27272a;
+  --color-card-foreground: #e4e4e7;
+  --color-popover: #27272a;
+  --color-popover-foreground: #e4e4e7;
+  --color-border: #3f3f46;
+  --color-input: #3f3f46;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #3f3f46;
+  --color-secondary-foreground: #e4e4e7;
+  --color-accent: #3f3f46;
+  --color-accent-foreground: #e4e4e7;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-ring: #3b82f6;
+
+  /* Status colors */
+  --color-status-running: #22c55e;
+  --color-status-stopped: #71717a;
+  --color-status-error: #ef4444;
+  --color-status-creating: #3b82f6;
+
+  /* Sidebar */
+  --sidebar-width: 280px;
+  --sidebar-width-collapsed: 0px;
+
+  /* Border radius */
+  --radius-lg: 0.5rem;
+  --radius-md: 0.375rem;
+  --radius-sm: 0.25rem;
+}
+
+/* Base styles */
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Prevent text selection during resize operations */
+.no-select {
+  user-select: none;
+}
+
+/* Terminal container styles */
+.terminal-container {
+  @apply bg-background;
+}
+
+/* Xterm sizing: keep fit calculations accurate and avoid clipped rows */
+.xterm {
+  height: 100%;
+  width: 100%;
+  display: block;
+  box-sizing: border-box;
+  padding: 4px;
+  /* !important needed to override xterm.js inline styles */
+  background-color: var(--color-background) !important;
+}
+
+.xterm .xterm-viewport {
+  height: 100%;
+  /* !important needed to override xterm.js inline styles */
+  background-color: var(--color-background) !important;
+}
+
+.xterm .xterm-screen {
+  background-color: transparent;
+}
+
+.xterm .xterm-scrollable-element {
+  pointer-events: auto;
+  z-index: 12;
+}
+
+/* Ensure all xterm internal elements have consistent background */
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background-color: var(--color-background);
+}
+
+/* The canvas wrapper that can show gaps */
+.xterm .xterm-screen canvas {
+  background-color: var(--color-background);
+}
+
+/* Scrollbar styles for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-md;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground;
+}

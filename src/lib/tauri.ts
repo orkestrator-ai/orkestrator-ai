@@ -1,0 +1,696 @@
+import { invoke } from "@tauri-apps/api/core";
+import type {
+  Project,
+  Environment,
+  AppConfig,
+  GlobalConfig,
+  RepositoryConfig,
+  EnvironmentStatus,
+  NetworkAccessMode,
+  DomainTestResult,
+  PreferredEditor,
+  PortMapping,
+  Session,
+  SessionType,
+  SessionStatus,
+  PrState,
+} from "@/types";
+
+/** PR detection result containing URL, state, and merge conflict status */
+export interface PrDetectionResult {
+  url: string;
+  state: PrState;
+  hasMergeConflicts: boolean;
+}
+
+// Typed invoke wrapper for Tauri commands
+// These will be implemented as the Rust backend is developed
+
+// --- Project Commands ---
+
+export async function getProjects(): Promise<Project[]> {
+  return invoke<Project[]>("get_projects");
+}
+
+export async function addProject(gitUrl: string, localPath?: string): Promise<Project> {
+  return invoke<Project>("add_project", { gitUrl, localPath });
+}
+
+export async function removeProject(projectId: string): Promise<void> {
+  return invoke("remove_project", { projectId });
+}
+
+export async function reorderProjects(projectIds: string[]): Promise<Project[]> {
+  return invoke<Project[]>("reorder_projects", { projectIds });
+}
+
+export async function updateProject(
+  projectId: string,
+  updates: Partial<Pick<Project, "name" | "localPath">>
+): Promise<Project> {
+  return invoke<Project>("update_project", { projectId, updates });
+}
+
+// --- Environment Commands ---
+
+export async function getEnvironments(projectId: string): Promise<Environment[]> {
+  return invoke<Environment[]>("get_environments", { projectId });
+}
+
+export async function reorderEnvironments(projectId: string, environmentIds: string[]): Promise<Environment[]> {
+  return invoke<Environment[]>("reorder_environments", { projectId, environmentIds });
+}
+
+export async function getEnvironment(environmentId: string): Promise<Environment | null> {
+  return invoke<Environment | null>("get_environment", { environmentId });
+}
+
+export async function createEnvironment(
+  projectId: string,
+  name?: string,
+  networkAccessMode?: NetworkAccessMode,
+  initialPrompt?: string,
+  portMappings?: PortMapping[]
+): Promise<Environment> {
+  return invoke<Environment>("create_environment", { projectId, name, networkAccessMode, initialPrompt, portMappings });
+}
+
+export async function deleteEnvironment(environmentId: string): Promise<void> {
+  return invoke("delete_environment", { environmentId });
+}
+
+export async function startEnvironment(environmentId: string): Promise<void> {
+  return invoke("start_environment", { environmentId });
+}
+
+export async function stopEnvironment(environmentId: string): Promise<void> {
+  return invoke("stop_environment", { environmentId });
+}
+
+/**
+ * Recreate an environment - preserves filesystem state via docker commit, then creates new container with updated port mappings
+ * Note: All running processes will be terminated, but installed packages and file changes are preserved
+ */
+export async function recreateEnvironment(environmentId: string): Promise<void> {
+  return invoke("recreate_environment", { environmentId });
+}
+
+export async function syncEnvironmentStatus(environmentId: string): Promise<Environment> {
+  return invoke<Environment>("sync_environment_status", { environmentId });
+}
+
+/**
+ * Sync all environments with Docker state at startup.
+ * Clears container references for environments whose Docker containers no longer exist.
+ * Returns an array of environment IDs that had their container references cleared.
+ */
+export async function syncAllEnvironmentsWithDocker(): Promise<string[]> {
+  return invoke<string[]>("sync_all_environments_with_docker");
+}
+
+export async function renameEnvironment(environmentId: string, name: string): Promise<Environment> {
+  return invoke<Environment>("rename_environment", { environmentId, name });
+}
+
+export async function getEnvironmentStatus(
+  environmentId: string
+): Promise<EnvironmentStatus> {
+  return invoke<EnvironmentStatus>("get_environment_status", { environmentId });
+}
+
+// --- Terminal Commands ---
+
+export async function attachTerminal(
+  containerId: string,
+  cols: number,
+  rows: number
+): Promise<string> {
+  return invoke<string>("attach_terminal", { containerId, cols, rows });
+}
+
+export async function createTerminalSession(
+  containerId: string,
+  cols: number,
+  rows: number,
+  user?: string
+): Promise<string> {
+  return invoke<string>("create_terminal_session", { containerId, cols, rows, user });
+}
+
+export async function startTerminalSession(sessionId: string): Promise<void> {
+  return invoke("start_terminal_session", { sessionId });
+}
+
+export async function detachTerminal(sessionId: string): Promise<void> {
+  return invoke("detach_terminal", { sessionId });
+}
+
+export async function writeTerminal(
+  sessionId: string,
+  data: string
+): Promise<void> {
+  return invoke("terminal_write", { sessionId, data });
+}
+
+export async function resizeTerminal(
+  sessionId: string,
+  cols: number,
+  rows: number
+): Promise<void> {
+  return invoke("terminal_resize", { sessionId, cols, rows });
+}
+
+// --- Configuration Commands ---
+
+export async function getConfig(): Promise<AppConfig> {
+  return invoke<AppConfig>("get_config");
+}
+
+export async function saveConfig(config: AppConfig): Promise<void> {
+  return invoke("save_config", { config });
+}
+
+export async function getGlobalConfig(): Promise<GlobalConfig> {
+  return invoke<GlobalConfig>("get_global_config");
+}
+
+export async function updateGlobalConfig(global: GlobalConfig): Promise<AppConfig> {
+  return invoke<AppConfig>("update_global_config", { global });
+}
+
+export async function getRepositoryConfig(projectId: string): Promise<RepositoryConfig> {
+  return invoke<RepositoryConfig>("get_repository_config", { projectId });
+}
+
+export async function updateRepositoryConfig(
+  projectId: string,
+  repoConfig: RepositoryConfig
+): Promise<AppConfig> {
+  return invoke<AppConfig>("update_repository_config", { projectId, repoConfig });
+}
+
+// --- GitHub Commands ---
+
+export async function openInBrowser(url: string): Promise<void> {
+  return invoke("open_in_browser", { url });
+}
+
+export async function getEnvironmentPrUrl(environmentId: string): Promise<string | null> {
+  return invoke<string | null>("get_environment_pr_url", { environmentId });
+}
+
+export async function clearEnvironmentPr(environmentId: string): Promise<void> {
+  return invoke("clear_environment_pr", { environmentId });
+}
+
+export async function setEnvironmentPr(
+  environmentId: string,
+  prUrl: string,
+  prState: PrState,
+  hasMergeConflicts?: boolean | null
+): Promise<Environment> {
+  return invoke<Environment>("set_environment_pr", { environmentId, prUrl, prState, hasMergeConflicts });
+}
+
+/** Detect if there's an open PR for the current branch by running gh pr view in the container */
+export async function detectPrUrl(containerId: string): Promise<string | null> {
+  return invoke<string | null>("detect_pr_url", { containerId });
+}
+
+/** Detect PR URL and state for the current branch */
+export async function detectPr(containerId: string): Promise<PrDetectionResult | null> {
+  return invoke<PrDetectionResult | null>("detect_pr", { containerId });
+}
+
+/** Merge method options for PR merging */
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/** Merge the current branch's PR using gh pr merge */
+export async function mergePr(
+  containerId: string,
+  method?: MergeMethod,
+  deleteBranch?: boolean
+): Promise<void> {
+  return invoke("merge_pr", { containerId, method, deleteBranch });
+}
+
+// --- Docker Commands ---
+
+export async function checkDocker(): Promise<boolean> {
+  return invoke<boolean>("check_docker");
+}
+
+export async function dockerVersion(): Promise<string> {
+  return invoke<string>("docker_version");
+}
+
+export async function provisionEnvironment(environmentId: string): Promise<string> {
+  return invoke<string>("provision_environment", { environmentId });
+}
+
+export async function dockerStartContainer(containerId: string): Promise<void> {
+  return invoke("docker_start_container", { containerId });
+}
+
+export async function dockerStopContainer(containerId: string): Promise<void> {
+  return invoke("docker_stop_container", { containerId });
+}
+
+export async function dockerRemoveContainer(containerId: string): Promise<void> {
+  return invoke("docker_remove_container", { containerId });
+}
+
+export async function dockerContainerStatus(
+  containerId: string
+): Promise<EnvironmentStatus> {
+  return invoke<EnvironmentStatus>("docker_container_status", { containerId });
+}
+
+export async function listDockerContainers(): Promise<[string, string][]> {
+  return invoke<[string, string][]>("list_docker_containers");
+}
+
+export async function checkBaseImage(): Promise<boolean> {
+  return invoke<boolean>("check_base_image");
+}
+
+/** Docker system statistics */
+export interface DockerSystemStats {
+  /** Memory currently used by containers (bytes) */
+  memoryUsed: number;
+  /** Total memory allocated to Docker (bytes) */
+  memoryTotal: number;
+  /** Number of CPUs available to Docker */
+  cpus: number;
+  /** Total CPU usage percentage across all running containers */
+  cpuUsagePercent: number;
+  /** Total disk space used by Docker (bytes) */
+  diskUsed: number;
+  /** Total disk space allocated to Docker (bytes) */
+  diskTotal: number;
+  /** Number of running containers */
+  containersRunning: number;
+  /** Total number of containers */
+  containersTotal: number;
+  /** Total number of images */
+  imagesTotal: number;
+}
+
+/** Container info for display */
+export interface ContainerInfo {
+  /** Container ID */
+  id: string;
+  /** Container name */
+  name: string;
+  /** Container status (running, exited, etc.) */
+  status: string;
+  /** Container state */
+  state: string;
+  /** Image name */
+  image: string;
+  /** Creation timestamp (Unix seconds) */
+  created: number;
+  /** Environment ID label (if set) */
+  environmentId: string | null;
+  /** Project ID label (if set) */
+  projectId: string | null;
+  /** Whether this container is assigned to a known environment */
+  isAssigned: boolean;
+  /** CPU usage percentage (0-100), null if container is not running */
+  cpuPercent: number | null;
+}
+
+/** Get Docker system statistics (memory, CPU, disk usage) */
+export async function getDockerSystemStats(): Promise<DockerSystemStats> {
+  return invoke<DockerSystemStats>("get_docker_system_stats");
+}
+
+/** Get all containers using the orkestrator-ai image */
+export async function getOrkestratorContainers(): Promise<ContainerInfo[]> {
+  return invoke<ContainerInfo[]>("get_orkestrator_containers");
+}
+
+/** Remove orphaned containers (not assigned to any environment) */
+export async function cleanupOrphanedContainers(): Promise<number> {
+  return invoke<number>("cleanup_orphaned_containers");
+}
+
+/** Result of Docker system prune operation */
+export interface SystemPruneResult {
+  /** Number of containers deleted */
+  containersDeleted: number;
+  /** Number of images deleted */
+  imagesDeleted: number;
+  /** Number of networks deleted */
+  networksDeleted: number;
+  /** Number of volumes deleted */
+  volumesDeleted: number;
+  /** Total space reclaimed in bytes */
+  spaceReclaimed: number;
+}
+
+/** Perform Docker system prune - removes unused containers, images, networks, and optionally volumes */
+export async function dockerSystemPrune(pruneVolumes: boolean = false): Promise<SystemPruneResult> {
+  return invoke<SystemPruneResult>("docker_system_prune", { pruneVolumes });
+}
+
+/** Get container logs (non-streaming, returns last N lines) */
+export async function getContainerLogs(containerId: string, tail?: string): Promise<string> {
+  return invoke<string>("get_container_logs", { containerId, tail });
+}
+
+/** Start streaming container logs to the frontend via "container-log" events */
+export async function streamContainerLogs(containerId: string): Promise<void> {
+  return invoke("stream_container_logs", { containerId });
+}
+
+// --- Credential Commands ---
+
+export interface CredentialStatus {
+  available: boolean;
+  expiresAt: number | null;
+}
+
+export async function hasClaudeCredentials(): Promise<boolean> {
+  return invoke<boolean>("has_claude_credentials");
+}
+
+export async function getCredentialStatus(): Promise<CredentialStatus> {
+  return invoke<CredentialStatus>("get_credential_status");
+}
+
+// --- CLI Detection and Onboarding Commands ---
+
+/** Check if the Claude CLI binary is installed and available */
+export async function checkClaudeCli(): Promise<boolean> {
+  return invoke<boolean>("check_claude_cli");
+}
+
+/** Check if the Claude config file (~/.claude.json) exists (indicates user is logged in) */
+export async function checkClaudeConfig(): Promise<boolean> {
+  return invoke<boolean>("check_claude_config");
+}
+
+/** Check if the OpenCode CLI binary is installed and available */
+export async function checkOpencodeCli(): Promise<boolean> {
+  return invoke<boolean>("check_opencode_cli");
+}
+
+/** Check if the GitHub CLI (gh) binary is installed and available */
+export async function checkGithubCli(): Promise<boolean> {
+  return invoke<boolean>("check_github_cli");
+}
+
+/** Check if any AI CLI (Claude or OpenCode) is available for name generation */
+export async function checkAnyAiCli(): Promise<boolean> {
+  return invoke<boolean>("check_any_ai_cli");
+}
+
+/** Get the name of the available AI CLI ("claude", "opencode", or null if none) */
+export async function getAvailableAiCli(): Promise<string | null> {
+  return invoke<string | null>("get_available_ai_cli");
+}
+
+// --- Utility Commands ---
+
+export async function greet(name: string): Promise<string> {
+  return invoke<string>("greet", { name });
+}
+
+export async function browseForDirectory(): Promise<string | null> {
+  return invoke<string | null>("browse_for_directory");
+}
+
+export async function validateGitUrl(url: string): Promise<boolean> {
+  return invoke<boolean>("validate_git_url", { url });
+}
+
+export async function getGitRemoteUrl(path: string): Promise<string | null> {
+  return invoke<string | null>("get_git_remote_url", { path });
+}
+
+// --- Network Commands ---
+
+export async function testDomainResolution(
+  domains: string[]
+): Promise<DomainTestResult[]> {
+  return invoke<DomainTestResult[]>("test_domain_resolution", { domains });
+}
+
+export async function validateDomains(
+  domains: string[]
+): Promise<DomainTestResult[]> {
+  return invoke<DomainTestResult[]>("validate_domains", { domains });
+}
+
+export async function addEnvironmentDomains(
+  environmentId: string,
+  domains: string[]
+): Promise<string> {
+  return invoke<string>("add_environment_domains", { environmentId, domains });
+}
+
+export async function removeEnvironmentDomains(
+  environmentId: string,
+  domains: string[]
+): Promise<string> {
+  return invoke<string>("remove_environment_domains", { environmentId, domains });
+}
+
+export async function updateEnvironmentAllowedDomains(
+  environmentId: string,
+  domains: string[]
+): Promise<Environment> {
+  return invoke<Environment>("update_environment_allowed_domains", { environmentId, domains });
+}
+
+// --- Claude State Commands ---
+
+export async function startClaudeStatePolling(containerId: string): Promise<void> {
+  return invoke("start_claude_state_polling", { containerId });
+}
+
+export async function stopClaudeStatePolling(containerId: string): Promise<void> {
+  return invoke("stop_claude_state_polling", { containerId });
+}
+
+// --- Editor Commands ---
+
+export async function openInEditor(
+  containerId: string,
+  editor: PreferredEditor
+): Promise<void> {
+  return invoke("open_in_editor", { containerId, editor });
+}
+
+// --- File Commands ---
+
+/** Represents a file changed in git */
+export interface GitFileChange {
+  path: string;
+  filename: string;
+  directory: string;
+  additions: number;
+  deletions: number;
+  status: string;
+}
+
+/** Represents a node in the file tree */
+export interface FileNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  children?: FileNode[];
+  extension?: string;
+}
+
+/** File content with metadata */
+export interface FileContent {
+  path: string;
+  content: string;
+  language: string;
+}
+
+/** Get git changes comparing current state against a target branch */
+export async function getGitStatus(
+  containerId: string,
+  targetBranch: string
+): Promise<GitFileChange[]> {
+  return invoke<GitFileChange[]>("get_git_status", { containerId, targetBranch });
+}
+
+/** Get workspace file tree from a container */
+export async function getFileTree(containerId: string): Promise<FileNode[]> {
+  return invoke<FileNode[]>("get_file_tree", { containerId });
+}
+
+/** Read a file from inside a container */
+export async function readContainerFile(
+  containerId: string,
+  filePath: string
+): Promise<FileContent> {
+  return invoke<FileContent>("read_container_file", { containerId, filePath });
+}
+
+/** Read a file from a specific git branch inside a container
+ * Returns null if the file doesn't exist in the specified branch (e.g., new file)
+ */
+export async function readFileAtBranch(
+  containerId: string,
+  filePath: string,
+  branch: string
+): Promise<FileContent | null> {
+  return invoke<FileContent | null>("read_file_at_branch", {
+    containerId,
+    filePath,
+    branch,
+  });
+}
+
+/** Read a binary file from inside a container as base64 */
+export async function readContainerFileBase64(
+  containerId: string,
+  filePath: string
+): Promise<string> {
+  return invoke<string>("read_container_file_base64", { containerId, filePath });
+}
+
+/** Write a file to inside a container from base64-encoded data */
+export async function writeContainerFile(
+  containerId: string,
+  filePath: string,
+  base64Data: string
+): Promise<string> {
+  return invoke<string>("write_container_file", { containerId, filePath, base64Data });
+}
+
+// --- Port Mapping Commands ---
+
+/** Update port mappings for an environment (requires restart to apply) */
+export async function updatePortMappings(
+  environmentId: string,
+  portMappings: PortMapping[]
+): Promise<Environment> {
+  return invoke<Environment>("update_port_mappings", {
+    environmentId,
+    portMappings,
+  });
+}
+
+// --- Session Commands (Persistent Session Tracking) ---
+
+/** Create a new persistent session for tracking */
+export async function createSession(
+  environmentId: string,
+  containerId: string,
+  tabId: string,
+  sessionType: SessionType
+): Promise<Session> {
+  return invoke<Session>("create_session", {
+    environmentId,
+    containerId,
+    tabId,
+    sessionType,
+  });
+}
+
+/** Get a single session by ID */
+export async function getSession(sessionId: string): Promise<Session | null> {
+  return invoke<Session | null>("get_session", { sessionId });
+}
+
+/** Get all sessions for an environment */
+export async function getSessionsByEnvironment(
+  environmentId: string
+): Promise<Session[]> {
+  return invoke<Session[]>("get_sessions_by_environment", { environmentId });
+}
+
+/** Update session status (connected/disconnected) */
+export async function updateSessionStatus(
+  sessionId: string,
+  status: SessionStatus
+): Promise<Session> {
+  return invoke<Session>("update_session_status", { sessionId, status });
+}
+
+/** Update session's last activity timestamp */
+export async function updateSessionActivity(
+  sessionId: string
+): Promise<Session> {
+  return invoke<Session>("update_session_activity", { sessionId });
+}
+
+/** Delete a session */
+export async function deleteSession(sessionId: string): Promise<void> {
+  return invoke("delete_session", { sessionId });
+}
+
+/** Delete all sessions for an environment */
+export async function deleteSessionsByEnvironment(
+  environmentId: string
+): Promise<string[]> {
+  return invoke<string[]>("delete_sessions_by_environment", { environmentId });
+}
+
+/** Rename a session */
+export async function renameSession(
+  sessionId: string,
+  name: string | null
+): Promise<Session> {
+  return invoke<Session>("rename_session", { sessionId, name });
+}
+
+/** Update whether a session has launched its command (e.g., Claude) */
+export async function setSessionHasLaunchedCommand(
+  sessionId: string,
+  hasLaunched: boolean
+): Promise<Session> {
+  return invoke<Session>("set_session_has_launched_command", { sessionId, hasLaunched });
+}
+
+/** Mark all sessions for an environment as disconnected */
+export async function disconnectEnvironmentSessions(
+  environmentId: string
+): Promise<Session[]> {
+  return invoke<Session[]>("disconnect_environment_sessions", { environmentId });
+}
+
+/** Save a session's terminal buffer to a separate file */
+export async function saveSessionBuffer(
+  sessionId: string,
+  buffer: string
+): Promise<void> {
+  return invoke("save_session_buffer", { sessionId, buffer });
+}
+
+/** Load a session's terminal buffer from file */
+export async function loadSessionBuffer(
+  sessionId: string
+): Promise<string | null> {
+  return invoke<string | null>("load_session_buffer", { sessionId });
+}
+
+/** Sync sessions for an environment with container state */
+export async function syncSessionsWithContainer(
+  environmentId: string,
+  containerRunning: boolean
+): Promise<Session[]> {
+  return invoke<Session[]>("sync_sessions_with_container", {
+    environmentId,
+    containerRunning,
+  });
+}
+
+/** Reorder sessions within an environment */
+export async function reorderSessions(
+  environmentId: string,
+  sessionIds: string[]
+): Promise<Session[]> {
+  return invoke<Session[]>("reorder_sessions", { environmentId, sessionIds });
+}
+
+/** Clean up orphaned buffer files (buffers without corresponding sessions) */
+export async function cleanupOrphanedBuffers(): Promise<string[]> {
+  return invoke<string[]>("cleanup_orphaned_buffers", {});
+}

@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+
+# Bun
+.bun/
+*.bun
+
+# Build outputs
+dist/
+out/
+release/
+build/
+
+# Tauri
+src-tauri/target/
+
+# Package outputs
+*.dmg
+*.exe
+*.msi
+*.deb
+*.rpm
+*.snap
+*.AppImage
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+.nyc_output/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Context directory (workspace-specific)
+.context/

@@ -1,0 +1,184 @@
+import { memo, useCallback, useRef, useLayoutEffect } from "react";
+import { useDroppable } from "@dnd-kit/core";
+import { useShallow } from "zustand/react/shallow";
+import { usePaneLayoutStore } from "@/stores";
+import { useTerminalPortalStore, createTerminalKey } from "@/stores/terminalPortalStore";
+import type { PaneLeaf } from "@/types/paneLayout";
+import { createTabbarDroppableId } from "@/types/paneLayout";
+import { cn } from "@/lib/utils";
+import { FileViewerTab } from "@/components/terminal/FileViewerTab";
+import { DraggableTabBar } from "./DraggableTabBar";
+import { DropZoneOverlay } from "./DropZoneOverlay";
+
+interface PaneLeafContainerProps {
+  pane: PaneLeaf;
+  containerId: string;
+  environmentId: string;
+  isActive: boolean;
+  /** Currently dragged tab ID (for cross-pane visual feedback) */
+  activeDragId?: string | null;
+  /** Pane ID currently being dragged over */
+  dragOverPaneId?: string | null;
+}
+
+export const PaneLeafContainer = memo(function PaneLeafContainer({
+  pane,
+  containerId: _containerId,
+  environmentId,
+  isActive,
+  activeDragId,
+  dragOverPaneId,
+}: PaneLeafContainerProps) {
+  // Use selectors to only subscribe to the specific values we need
+  // This prevents re-renders when other parts of the store change
+  const { setActivePane, setActiveTab, environments, activeEnvironmentId } = usePaneLayoutStore(
+    useShallow((state) => ({
+      setActivePane: state.setActivePane,
+      setActiveTab: state.setActiveTab,
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+    }))
+  );
+
+  // Derive activePaneId from current environment state
+  const currentEnvState = activeEnvironmentId ? environments.get(activeEnvironmentId) : null;
+  const activePaneId = currentEnvState?.activePaneId ?? "default";
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Set up droppable for tabbar
+  const { setNodeRef, isOver } = useDroppable({
+    id: createTabbarDroppableId(pane.id),
+  });
+
+  // Pane host for terminal rendering (tab targets are moved here)
+  const portalHostRef = useRef<HTMLDivElement>(null);
+  const { registerPaneHost, unregisterPaneHost } = useTerminalPortalStore(
+    useShallow((state) => ({
+      registerPaneHost: state.registerPaneHost,
+      unregisterPaneHost: state.unregisterPaneHost,
+    }))
+  );
+  const terminals = useTerminalPortalStore((state) => state.terminals);
+
+  // Register this pane's content area as a terminal host
+  useLayoutEffect(() => {
+    const host = portalHostRef.current;
+    if (!host) return;
+
+    registerPaneHost(environmentId, pane.id, host);
+
+    return () => {
+      unregisterPaneHost(environmentId, pane.id);
+    };
+  }, [environmentId, pane.id, registerPaneHost, unregisterPaneHost]);
+
+  // Keep terminal portal elements attached to this pane host
+  useLayoutEffect(() => {
+    const host = portalHostRef.current;
+    if (!host) return;
+
+    // Collect portal elements for this pane's terminal tabs
+    const portalElements: HTMLDivElement[] = [];
+    for (const tab of pane.tabs) {
+      if (tab.type === "file") continue;
+      const terminalKey = createTerminalKey(environmentId, tab.id);
+      const terminalData = terminals.get(terminalKey);
+      if (terminalData?.portalElement) {
+        portalElements.push(terminalData.portalElement);
+      }
+    }
+
+    // Ensure host contains exactly these portals (preserve existing to avoid unnecessary DOM churn)
+    const existing = Array.from(host.children) as HTMLElement[];
+    const existingSet = new Set(existing);
+
+    // Remove stale children
+    for (const child of existing) {
+      if (!portalElements.includes(child as HTMLDivElement)) {
+        host.removeChild(child);
+      }
+    }
+
+    // Append missing portals
+    for (const portalElement of portalElements) {
+      if (!existingSet.has(portalElement)) {
+        host.appendChild(portalElement);
+      }
+    }
+  }, [pane.tabs, terminals, environmentId]);
+
+  // Handle clicking on the pane to focus it
+  const handlePaneClick = useCallback(() => {
+    if (activePaneId !== pane.id) {
+      setActivePane(pane.id);
+    }
+  }, [activePaneId, pane.id, setActivePane]);
+
+  // Handle tab selection
+  const handleTabSelect = useCallback(
+    (tabId: string) => {
+      setActiveTab(pane.id, tabId);
+    },
+    [pane.id, setActiveTab]
+  );
+
+  // Check if this pane is focused (active in the layout)
+  const isPaneFocused = activePaneId === pane.id;
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        "relative flex h-full w-full flex-col overflow-hidden bg-background",
+        isPaneFocused && "ring-1 ring-primary/20"
+      )}
+      onClick={handlePaneClick}
+    >
+      {/* Tab bar */}
+      <div ref={setNodeRef}>
+        <DraggableTabBar
+          pane={pane}
+          onTabSelect={handleTabSelect}
+          isDropTarget={isOver}
+          activeDragId={activeDragId}
+          dragOverPaneId={dragOverPaneId}
+          isPaneFocused={isPaneFocused}
+        />
+      </div>
+
+      {/* Tab content */}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        {/* Portal target for terminal rendering - terminals render here via TerminalPortalHost */}
+        <div ref={portalHostRef} className="absolute inset-0 pointer-events-none" />
+
+        {/* File tabs still render directly (no portal needed) */}
+        {pane.tabs.map((tab) => {
+          const isTabActive = tab.id === pane.activeTabId;
+
+          // Only render file viewer tabs directly
+          // Terminal tabs are rendered via portals from TerminalPortalHost
+          if (tab.type === "file" && tab.fileData) {
+            return (
+              <FileViewerTab
+                key={tab.id}
+                tabId={tab.id}
+                filePath={tab.fileData.filePath}
+                containerId={tab.fileData.containerId}
+                isActive={isTabActive && isActive}
+                language={tab.fileData.language}
+                isDiff={tab.fileData.isDiff}
+                gitStatus={tab.fileData.gitStatus}
+                baseBranch={tab.fileData.baseBranch}
+              />
+            );
+          }
+
+          return null;
+        })}
+
+        {/* Drop zone overlay for edge splits */}
+        <DropZoneOverlay paneId={pane.id} />
+      </div>
+    </div>
+  );
+});

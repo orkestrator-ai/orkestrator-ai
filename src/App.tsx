@@ -1,0 +1,482 @@
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { AppShell } from "@/components/layout";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { TerminalContainer } from "@/components/terminal";
+import { TerminalProvider } from "@/contexts";
+import { useUIStore, useEnvironmentStore, useConfigStore } from "@/stores";
+import { cn } from "@/lib/utils";
+import { Toaster } from "@/components/ui/sonner";
+import { ErrorDetailsDialog } from "@/components/errors";
+import { checkDocker, checkClaudeCli, checkClaudeConfig, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
+
+function App() {
+  const { selectedEnvironmentId, selectedProjectId, zoomLevel, zoomIn, zoomOut, resetZoom } = useUIStore();
+  const { environments } = useEnvironmentStore();
+  const { setConfig } = useConfigStore();
+  const [dockerAvailable, setDockerAvailable] = useState<boolean | null>(null);
+  const [isCheckingDocker, setIsCheckingDocker] = useState(false);
+  const [claudeCliAvailable, setClaudeCliAvailable] = useState<boolean | null>(null);
+  const [claudeConfigAvailable, setClaudeConfigAvailable] = useState<boolean | null>(null);
+  const [opencodeCliAvailable, setOpencodeCliAvailable] = useState<boolean | null>(null);
+  const [githubCliAvailable, setGithubCliAvailable] = useState<boolean | null>(null);
+  const [availableAiCli, setAvailableAiCli] = useState<string | null>(null);
+  const [isCheckingClaude, setIsCheckingClaude] = useState(false);
+  const [githubCliWarningDismissed, setGithubCliWarningDismissed] = useState(false);
+
+  const projectEnvironments = selectedProjectId
+    ? environments.filter((env) => env.projectId === selectedProjectId)
+    : [];
+
+  // Debug logging
+  console.log("[App] selectedEnvironmentId:", selectedEnvironmentId);
+  console.log("[App] selectedProjectId:", selectedProjectId);
+  console.log("[App] projectEnvironments:", projectEnvironments.length);
+
+  // Check Docker availability on startup and sync environments
+  useEffect(() => {
+    const initDocker = async () => {
+      try {
+        const available = await checkDocker();
+        console.log("[App] Docker available:", available);
+        setDockerAvailable(available);
+
+        // If Docker is available, sync environments to clean up orphaned container references
+        if (available) {
+          try {
+            const clearedIds = await syncAllEnvironmentsWithDocker();
+            if (clearedIds.length > 0) {
+              console.log("[App] Cleared orphaned container references:", clearedIds);
+            }
+          } catch (error) {
+            console.error("[App] Failed to sync environments with Docker:", error);
+            // Non-fatal - continue with app startup
+          }
+        }
+      } catch (error) {
+        console.error("[App] Docker check failed:", error);
+        setDockerAvailable(false);
+      }
+    };
+
+    initDocker();
+  }, []);
+
+  // Check CLI availability after Docker is confirmed available
+  // Checks: Claude CLI, OpenCode CLI (fallback), and GitHub CLI
+  useEffect(() => {
+    if (dockerAvailable !== true) return;
+
+    Promise.all([
+      checkClaudeCli(),
+      checkClaudeConfig(),
+      checkOpencodeCli(),
+      checkGithubCli(),
+      getAvailableAiCli(),
+    ])
+      .then(([claudeCli, claudeConfig, opencodeCli, githubCli, aiCli]) => {
+        console.log("[App] Claude CLI available:", claudeCli);
+        console.log("[App] Claude config available:", claudeConfig);
+        console.log("[App] OpenCode CLI available:", opencodeCli);
+        console.log("[App] GitHub CLI available:", githubCli);
+        console.log("[App] Available AI CLI:", aiCli);
+        setClaudeCliAvailable(claudeCli);
+        setClaudeConfigAvailable(claudeConfig);
+        setOpencodeCliAvailable(opencodeCli);
+        setGithubCliAvailable(githubCli);
+        setAvailableAiCli(aiCli);
+      })
+      .catch((error) => {
+        console.error("[App] CLI check failed:", error);
+        setClaudeCliAvailable(false);
+        setClaudeConfigAvailable(false);
+        setOpencodeCliAvailable(false);
+        setGithubCliAvailable(false);
+        setAvailableAiCli(null);
+      });
+  }, [dockerAvailable]);
+
+  // Load config from backend on startup
+  // This ensures repository configs (including default port mappings) are available
+  // before the user opens any dialogs
+  useEffect(() => {
+    getConfig()
+      .then((config) => {
+        setConfig(config);
+      })
+      .catch((error) => {
+        console.error("[App] Failed to load config:", error);
+      });
+  }, [setConfig]);
+
+  // Handle closing the app when Docker is not available
+  const handleCloseApp = async () => {
+    await getCurrentWindow().close();
+  };
+
+  // Handle retrying Docker check
+  const handleRetryDockerCheck = async () => {
+    setIsCheckingDocker(true);
+    try {
+      const available = await checkDocker();
+      console.log("[App] Docker retry check:", available);
+      setDockerAvailable(available);
+    } catch (error) {
+      console.error("[App] Docker retry check failed:", error);
+      setDockerAvailable(false);
+    } finally {
+      setIsCheckingDocker(false);
+    }
+  };
+
+  // Handle retrying CLI checks (Claude, OpenCode, GitHub)
+  const handleRetryClaudeCheck = async () => {
+    setIsCheckingClaude(true);
+    try {
+      const [claudeCli, claudeConfig, opencodeCli, githubCli, aiCli] = await Promise.all([
+        checkClaudeCli(),
+        checkClaudeConfig(),
+        checkOpencodeCli(),
+        checkGithubCli(),
+        getAvailableAiCli(),
+      ]);
+      console.log("[App] CLI retry check - Claude:", claudeCli, "OpenCode:", opencodeCli, "GitHub:", githubCli, "Available AI:", aiCli);
+      setClaudeCliAvailable(claudeCli);
+      setClaudeConfigAvailable(claudeConfig);
+      setOpencodeCliAvailable(opencodeCli);
+      setGithubCliAvailable(githubCli);
+      setAvailableAiCli(aiCli);
+    } catch (error) {
+      console.error("[App] CLI retry check failed:", error);
+      setClaudeCliAvailable(false);
+      setClaudeConfigAvailable(false);
+      setOpencodeCliAvailable(false);
+      setGithubCliAvailable(false);
+      setAvailableAiCli(null);
+    } finally {
+      setIsCheckingClaude(false);
+    }
+  };
+
+  // Apply zoom level to the document
+  useEffect(() => {
+    document.documentElement.style.zoom = `${zoomLevel}%`;
+  }, [zoomLevel]);
+
+  // Listen for menu zoom events from Tauri backend
+  useEffect(() => {
+    const unlisten = listen<string>("menu-zoom", (event) => {
+      switch (event.payload) {
+        case "in":
+          zoomIn();
+          break;
+        case "out":
+          zoomOut();
+          break;
+        case "reset":
+          resetZoom();
+          break;
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [zoomIn, zoomOut, resetZoom]);
+
+  // Global keyboard shortcuts for zoom (CMD+/CMD- on Mac, Ctrl+/Ctrl- on Windows/Linux)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Handle CMD (Mac) or Ctrl (Windows/Linux) key combinations
+      // Require exactly one modifier key (not both)
+      const hasModifier = e.metaKey || e.ctrlKey;
+      const hasBothModifiers = e.metaKey && e.ctrlKey;
+      if (!hasModifier || hasBothModifiers || e.altKey) return;
+
+      // CMD/Ctrl+= or CMD/Ctrl++ (zoom in)
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomIn();
+        return;
+      }
+
+      // CMD/Ctrl+- (zoom out)
+      if (e.key === "-") {
+        e.preventDefault();
+        zoomOut();
+        return;
+      }
+
+      // CMD/Ctrl+0 (reset zoom)
+      if (e.key === "0") {
+        e.preventDefault();
+        resetZoom();
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [zoomIn, zoomOut, resetZoom]);
+
+  // Derived state for dialog visibility - makes conditions easier to read
+  const isCheckingCliTools =
+    dockerAvailable === true &&
+    availableAiCli === null &&
+    claudeCliAvailable === null;
+
+  const noAiCliAvailable =
+    dockerAvailable === true &&
+    claudeCliAvailable === false &&
+    opencodeCliAvailable === false;
+
+  const claudeNeedsLogin =
+    dockerAvailable === true &&
+    claudeCliAvailable === true &&
+    claudeConfigAvailable === false &&
+    opencodeCliAvailable === false;
+
+  const showGithubWarning =
+    dockerAvailable === true &&
+    (claudeCliAvailable === true || opencodeCliAvailable === true) &&
+    githubCliAvailable === false &&
+    !githubCliWarningDismissed;
+
+  return (
+    <TooltipProvider>
+      <TerminalProvider>
+        <AppShell>
+          {selectedEnvironmentId ? (
+            <div className="relative h-full bg-background">
+              {projectEnvironments.map((environment) => {
+                const isActive = environment.id === selectedEnvironmentId;
+                return (
+                  <div
+                    key={environment.id}
+                    className={cn(
+                      "absolute inset-0 bg-background",
+                      // Active environment gets higher z-index to ensure it's on top
+                      // and receives all pointer events. Inactive environments are
+                      // hidden and non-interactive.
+                      isActive ? "z-10" : "z-0 opacity-0 pointer-events-none"
+                    )}
+                  >
+                    <TerminalContainer
+                      environmentId={environment.id}
+                      containerId={environment.containerId ?? null}
+                      isContainerRunning={environment.status === "running"}
+                      isContainerCreating={environment.status === "creating"}
+                      isActive={isActive}
+                      className="h-full"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center bg-background">
+              <div className="text-center text-muted-foreground">
+                <h2 className="mb-2 text-lg font-medium">Welcome to Orkestrator AI</h2>
+                <p className="text-sm">
+                  Add a project to get started, then create an environment to begin coding.
+                </p>
+              </div>
+            </div>
+          )}
+        </AppShell>
+        <Toaster />
+        <ErrorDetailsDialog />
+
+        {/* Loading overlay while checking Docker */}
+        {dockerAvailable === null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Checking Docker availability...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Loading overlay while checking CLI tools (after Docker is confirmed) */}
+        {isCheckingCliTools && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Checking CLI tools installation...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Docker not available dialog */}
+        <AlertDialog open={dockerAvailable === false}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Docker Required</AlertDialogTitle>
+              <AlertDialogDescription>
+                Docker is not running or not installed on your system. Orkestrator AI requires Docker to create and manage development environments.
+                <br /><br />
+                Please install Docker Desktop from{" "}
+                <a
+                  href="https://docker.com"
+                  className="text-primary underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  docker.com
+                </a>{" "}
+                and ensure it is running before starting the application.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                onClick={handleRetryDockerCheck}
+                disabled={isCheckingDocker}
+              >
+                {isCheckingDocker ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  "Retry"
+                )}
+              </Button>
+              <AlertDialogAction onClick={handleCloseApp}>
+                Close Application
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* AI CLI not installed dialog - shows when neither Claude nor OpenCode is available */}
+        <AlertDialog open={noAiCliAvailable}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>AI CLI Required</AlertDialogTitle>
+              <AlertDialogDescription>
+                No compatible AI CLI is installed on your system. Orkestrator AI requires Claude Code or OpenCode to create and manage AI-powered development environments.
+                <br /><br />
+                <strong>Option 1: Install Claude Code (recommended)</strong>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">npm install -g @anthropic-ai/claude-code</pre>
+                Then run <code className="rounded bg-muted px-1 font-mono">claude</code> to complete the setup.
+                <br /><br />
+                <strong>Option 2: Install OpenCode</strong>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">npm install -g opencode</pre>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                onClick={handleRetryClaudeCheck}
+                disabled={isCheckingClaude}
+              >
+                {isCheckingClaude ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  "Retry"
+                )}
+              </Button>
+              <AlertDialogAction onClick={handleCloseApp}>
+                Close Application
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Claude Code not logged in dialog - only shows when Claude is available but not logged in, and OpenCode is NOT available as fallback */}
+        <AlertDialog open={claudeNeedsLogin}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Claude Code Login Required</AlertDialogTitle>
+              <AlertDialogDescription>
+                Claude Code is installed but you haven't logged in yet. Please log in to continue.
+                <br /><br />
+                Run the following command in your terminal:
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">claude</pre>
+                This will open a browser window to authenticate with your Anthropic account.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                onClick={handleRetryClaudeCheck}
+                disabled={isCheckingClaude}
+              >
+                {isCheckingClaude ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  "Retry"
+                )}
+              </Button>
+              <AlertDialogAction onClick={handleCloseApp}>
+                Close Application
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* GitHub CLI warning dialog - non-blocking, dismissible */}
+        <AlertDialog open={showGithubWarning}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>GitHub CLI Not Found</AlertDialogTitle>
+              <AlertDialogDescription>
+                The GitHub CLI (gh) is not installed on your system. While not required, it enables features like PR detection and GitHub integration.
+                <br /><br />
+                <strong>Install GitHub CLI:</strong>
+                <br /><br />
+                <strong>macOS (Homebrew):</strong>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">brew install gh</pre>
+                <strong>Linux:</strong>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">sudo apt install gh  # Debian/Ubuntu{"\n"}sudo dnf install gh  # Fedora</pre>
+                <strong>Windows:</strong>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">winget install GitHub.cli</pre>
+                After installation, run <code className="rounded bg-muted px-1 font-mono">gh auth login</code> to authenticate.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                onClick={handleRetryClaudeCheck}
+                disabled={isCheckingClaude}
+              >
+                {isCheckingClaude ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  "Retry"
+                )}
+              </Button>
+              <AlertDialogAction onClick={() => setGithubCliWarningDismissed(true)}>
+                Continue Without GitHub CLI
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </TerminalProvider>
+    </TooltipProvider>
+  );
+}
+
+export default App;
