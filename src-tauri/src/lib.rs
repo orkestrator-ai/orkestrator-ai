@@ -30,6 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Create App menu with About and Quit (CMD+Q)
             let app_menu = SubmenuBuilder::new(app, "Orkestrator AI")
