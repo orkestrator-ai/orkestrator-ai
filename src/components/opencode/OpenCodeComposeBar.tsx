@@ -142,8 +142,13 @@ export function OpenCodeComposeBar({
           name: filename,
         };
         addAttachment(environmentId, attachment);
-      } catch {
-        // No image in clipboard - let text paste through
+      } catch (e) {
+        // Clipboard read errors are expected when no image is present - ignore silently
+        // Log unexpected errors for debugging
+        if (e instanceof Error && !e.message.toLowerCase().includes("clipboard")) {
+          console.error("[OpenCodeComposeBar] Unexpected paste error:", e);
+        }
+        // Let text paste through by not preventing default
       }
     },
     [containerId, environmentId, addAttachment]

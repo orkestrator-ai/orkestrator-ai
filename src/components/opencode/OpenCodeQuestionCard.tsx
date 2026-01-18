@@ -10,7 +10,6 @@ import { useOpenCodeStore } from "@/stores/openCodeStore";
 interface OpenCodeQuestionCardProps {
   question: QuestionRequest;
   client: OpencodeClient;
-  environmentId: string;
 }
 
 /** Single question item with options or text input */
@@ -161,9 +160,8 @@ function QuestionItem({
 export function OpenCodeQuestionCard({
   question,
   client,
-  environmentId,
 }: OpenCodeQuestionCardProps) {
-  const { removePendingQuestion, setSessionLoading } = useOpenCodeStore();
+  const { removePendingQuestion } = useOpenCodeStore();
 
   // Track answers for each question
   const [answers, setAnswers] = useState<QuestionAnswer[]>(
@@ -231,14 +229,14 @@ export function OpenCodeQuestionCard({
       const success = await rejectQuestion(client, question.id);
       if (success) {
         removePendingQuestion(question.id);
-        setSessionLoading(environmentId, false);
+        // Note: Loading state is managed by SSE events in OpenCodeChatTab
       }
     } catch (error) {
       console.error("[OpenCodeQuestionCard] Failed to dismiss question:", error);
     } finally {
       setIsSubmitting(false);
     }
-  }, [client, question.id, removePendingQuestion, setSessionLoading, environmentId]);
+  }, [client, question.id, removePendingQuestion]);
 
   // Determine button text
   const isLastQuestion = currentQuestionIndex === questionCount - 1;

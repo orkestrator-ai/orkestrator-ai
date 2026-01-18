@@ -7,7 +7,7 @@ import { openInBrowser } from "@/lib/tauri";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
-import type { OpenCodeMessage as OpenCodeMessageType, OpenCodeMessagePart, ToolDiffMetadata } from "@/lib/opencode-client";
+import { ERROR_MESSAGE_PREFIX, type OpenCodeMessage as OpenCodeMessageType, type OpenCodeMessagePart, type ToolDiffMetadata } from "@/lib/opencode-client";
 
 /** Custom link component that opens URLs in the system browser */
 function ExternalLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
@@ -543,7 +543,7 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
   message,
 }: OpenCodeMessageProps) {
   const isUser = message.role === "user";
-  const isError = message.id.startsWith("error-");
+  const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
 
   // Group parts by type for better rendering order
   const thinkingParts = message.parts.filter((p) => p.type === "thinking");

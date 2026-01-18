@@ -110,6 +110,16 @@ export interface QuestionRequest {
 /** Answer to a question (array of selected labels or typed text) */
 export type QuestionAnswer = string[];
 
+/** Prefix for client-side error message IDs (used to preserve errors across message refreshes) */
+export const ERROR_MESSAGE_PREFIX = "error-";
+
+/** Structure for filediff metadata from the SDK */
+interface FileDiffMetadata {
+  file?: string;
+  before?: string;
+  after?: string;
+}
+
 /**
  * Create an OpenCode SDK client connected to a server
  */
@@ -126,7 +136,6 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
   try {
     // Use config.providers() to get the list of configured providers and models
     const response = await client.config.providers();
-    console.log("[opencode-client] Providers response:", response);
 
     if (!response.data) return [];
 
@@ -142,19 +151,9 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
         for (const model of Object.values(provider.models)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const m = model as any;
-          // Log model structure to debug cost extraction
-          if (models.length < 3) {
-            console.log("[opencode-client] Sample model structure:", {
-              id: m.id,
-              name: m.name,
-              cost: m.cost,
-              rawModel: JSON.stringify(m).slice(0, 500),
-            });
-          }
           // Cost fields may be in cost.input/cost.output or directly as inputCost/outputCost
           const inputCost = m.cost?.input ?? m.inputCost ?? m.input_cost;
           const outputCost = m.cost?.output ?? m.outputCost ?? m.output_cost;
-          console.log(`[opencode-client] Model ${m.id || m.name}: inputCost=${inputCost}, outputCost=${outputCost}`);
           models.push({
             id: `${provider.id}/${model.id}`,
             name: model.name || model.id,
@@ -166,7 +165,6 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
       }
     }
 
-    console.log("[opencode-client] Parsed models:", models);
     return models;
   } catch (error) {
     console.error("[opencode-client] Failed to get models:", error);
@@ -292,18 +290,18 @@ export async function getSessionMessages(
               const meta = p.state?.metadata || {};
 
               // The SDK uses camelCase property names: filePath, oldString, newString
+              // Get filediff metadata if available
+              const filediff = meta.filediff as FileDiffMetadata | undefined;
+
               // Get file path - check camelCase first (SDK standard), then snake_case fallback
               const filePath = (input.filePath || input.file_path || input.path || input.file ||
-                meta.file || meta.filePath || (meta.filediff as any)?.file) as string | undefined;
+                meta.file || meta.filePath || filediff?.file) as string | undefined;
 
               // Get oldString and newString from input (SDK uses camelCase)
               const oldString = typeof input.oldString === "string" ? input.oldString :
                 typeof input.old_string === "string" ? input.old_string : undefined;
               const newString = typeof input.newString === "string" ? input.newString :
                 typeof input.new_string === "string" ? input.new_string : undefined;
-
-              // Also try to get from metadata.filediff (contains before/after)
-              const filediff = meta.filediff as { file?: string; before?: string; after?: string } | undefined;
               const metaBefore = typeof filediff?.before === "string" ? filediff.before : undefined;
               const metaAfter = typeof filediff?.after === "string" ? filediff.after : undefined;
 
@@ -377,13 +375,8 @@ export async function getSessionMessages(
             });
           }
           // SKIP: Internal/control parts that we don't need to display
-          else if (["step-start", "step-finish", "compaction", "snapshot", "patch", "agent", "retry", "subtask"].includes(partType)) {
-            // These are handled silently
-          }
-          // UNHANDLED: Log any part types we don't recognize
-          else {
-            console.warn("[opencode-client] UNHANDLED part type:", partType, "full part:", JSON.stringify(p, null, 2).slice(0, 500));
-          }
+          // Includes: step-start, step-finish, compaction, snapshot, patch, agent, retry, subtask
+          // Any unrecognized part types are also silently ignored
         }
       }
 
@@ -522,7 +515,6 @@ export async function subscribeToEvents(client: OpencodeClient): Promise<AsyncIt
   try {
     // event.subscribe() returns { stream: AsyncGenerator }
     const response = await client.event.subscribe();
-    console.log("[opencode-client] Event subscribe response:", response);
 
     // The response has a stream property that is the async generator
     if (response && "stream" in response) {
@@ -534,7 +526,6 @@ export async function subscribeToEvents(client: OpencodeClient): Promise<AsyncIt
       return response as unknown as AsyncIterable<OpenCodeEvent>;
     }
 
-    console.warn("[opencode-client] Could not find event stream in response");
     return null;
   } catch (error) {
     console.error("[opencode-client] Failed to subscribe to events:", error);
@@ -604,7 +595,6 @@ export async function abortSession(client: OpencodeClient, sessionId: string): P
 export async function getPendingQuestions(client: OpencodeClient): Promise<QuestionRequest[]> {
   try {
     const response = await client.question.list();
-    console.log("[opencode-client] Pending questions response:", response);
     if (!response.data) return [];
     return response.data as QuestionRequest[];
   } catch (error) {

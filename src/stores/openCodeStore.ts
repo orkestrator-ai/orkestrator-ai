@@ -1,11 +1,12 @@
 import { create } from "zustand";
-import type {
-  OpenCodeMessage,
-  OpenCodeModel,
-  OpenCodeConversationMode,
-  OpencodeClient,
-  QuestionRequest,
-  OpenCodeEvent,
+import {
+  ERROR_MESSAGE_PREFIX,
+  type OpenCodeMessage,
+  type OpenCodeModel,
+  type OpenCodeConversationMode,
+  type OpencodeClient,
+  type QuestionRequest,
+  type OpenCodeEvent,
 } from "@/lib/opencode-client";
 
 /** Shared event subscription state per environment */
@@ -211,9 +212,9 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const session = state.sessions.get(environmentId);
       if (!session) return state;
 
-      // Preserve client-side error messages (IDs starting with "error-")
+      // Preserve client-side error messages (IDs starting with ERROR_MESSAGE_PREFIX)
       // These are not stored on the server, so we need to merge them back
-      const existingErrors = session.messages.filter((m) => m.id.startsWith("error-"));
+      const existingErrors = session.messages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
 
       // If there are no error messages to preserve, just use server messages
       if (existingErrors.length === 0) {

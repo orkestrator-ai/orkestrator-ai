@@ -10,8 +10,9 @@ import {
   getSessionMessages,
   sendPrompt,
   subscribeToEvents,
+  ERROR_MESSAGE_PREFIX,
+  type QuestionRequest,
 } from "@/lib/opencode-client";
-import type { QuestionRequest } from "@/lib/opencode-client";
 import { startOpenCodeServer, getOpenCodeServerStatus, getOpenCodeServerLog } from "@/lib/tauri";
 import { OpenCodeMessage } from "./OpenCodeMessage";
 import { OpenCodeComposeBar } from "./OpenCodeComposeBar";
@@ -86,9 +87,7 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
 
   // Initialize connection on mount
   useEffect(() => {
-    console.log("[OpenCodeChatTab] useEffect triggered, isActive:", isActive, "tabId:", tabId);
     if (!isActive) {
-      console.log("[OpenCodeChatTab] Tab not active, skipping initialization");
       return;
     }
 
@@ -96,7 +95,6 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
     const now = Date.now();
     const timeSinceLastInit = now - lastInitTimeRef.current;
     if (timeSinceLastInit < INIT_DEBOUNCE_MS && isInitializedRef.current) {
-      console.log("[OpenCodeChatTab] Skipping rapid re-initialization, last init was", timeSinceLastInit, "ms ago");
       return;
     }
 
@@ -105,18 +103,14 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
     async function initialize() {
       try {
         lastInitTimeRef.current = Date.now();
-        console.log("[OpenCodeChatTab] Starting initialization for tab:", tabId);
         setConnectionState("connecting");
         setErrorMessage(null);
 
         // Check if server is already running
-        console.log("[OpenCodeChatTab] Checking server status...");
         let status = await getOpenCodeServerStatus(containerId);
-        console.log("[OpenCodeChatTab] Server status:", status);
 
         // Start server if not running
         if (!status.running) {
-          console.log("[OpenCodeChatTab] Starting OpenCode server...");
           const result = await startOpenCodeServer(containerId);
           status = { running: true, hostPort: result.hostPort };
         }
@@ -147,23 +141,18 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
         if (existingSessionId && isInitializedRef.current) {
           // Re-activating an existing tab - DON'T reload messages, just reconnect
           // Messages are already in the store and SSE will update them
-          console.log("[OpenCodeChatTab] Reconnecting to existing session (no message reload):", existingSessionId);
-
           setConnectionState("connected");
 
           // Start shared event subscription if not already running
           startSharedEventSubscription(sdkClient);
         } else {
           // First initialization - create a new session
-          console.log("[OpenCodeChatTab] Creating new session for tab:", tabId);
           const newSession = await createSession(sdkClient);
           if (!mounted) return;
 
           if (!newSession) {
             throw new Error("Failed to create session");
           }
-
-          console.log("[OpenCodeChatTab] Session created:", newSession.id);
 
           // Store the session ID in the ref for future re-activations
           tabSessionIdRef.current = newSession.id;
@@ -204,7 +193,6 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
           try {
             const log = await getOpenCodeServerLog(containerId);
             if (log) {
-              console.log("[OpenCodeChatTab] Server log:", log);
               setServerLog(log);
             }
           } catch (logError) {
@@ -218,7 +206,6 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
 
     return () => {
       mounted = false;
-      console.log("[OpenCodeChatTab] Cleanup for tab:", tabId, "(NOT closing shared event subscription)");
       // NOTE: We do NOT close the event subscription here - it's shared per environment
       // The subscription will be closed when the environment is cleaned up
       // We also don't clear the client - it's shared per environment
@@ -231,31 +218,25 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
     async (sdkClient: ReturnType<typeof createClient>) => {
       // Check if there's already an active subscription for this environment
       if (hasActiveEventSubscription(environmentId)) {
-        console.log("[OpenCodeChatTab] Reusing existing event subscription for environment:", environmentId);
         return;
       }
 
       // Get or create subscription state from store
       const subscriptionState = getOrCreateEventSubscription(environmentId);
       if (!subscriptionState) {
-        console.error("[OpenCodeChatTab] Failed to create event subscription state");
         return;
       }
 
       const { abortController } = subscriptionState;
 
       try {
-        console.log("[OpenCodeChatTab] Starting shared event subscription for environment:", environmentId);
         const eventStream = await subscribeToEvents(sdkClient);
         if (!eventStream || abortController.signal.aborted) {
-          console.log("[OpenCodeChatTab] No event stream or aborted");
           return;
         }
 
         // Store stream reference in the store for cleanup
         setEventStream(environmentId, eventStream);
-
-        console.log("[OpenCodeChatTab] Shared event stream connected, listening for events...");
 
         // Track last reload time to debounce rapid updates per session
         const lastReloadTimeBySession = new Map<string, number>();
@@ -274,9 +255,7 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
           const doFetch = async () => {
             const now = Date.now();
             lastReloadTimeBySession.set(sessionId, now);
-            console.log("[OpenCodeChatTab] Fetching messages for session:", sessionId);
             const messages = await getSessionMessages(sdkClient, sessionId);
-            console.log("[OpenCodeChatTab] Got", messages.length, "messages, updating tab:", tabId);
             setMessages(tabId, messages);
           };
 
@@ -381,9 +360,9 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
                 errorMsg = "An unknown error occurred";
               }
               // Add error as a message with special ID prefix so it persists
-              // The setMessages function preserves messages with "error-" prefix
+              // The setMessages function preserves messages with ERROR_MESSAGE_PREFIX
               const errorMessage = {
-                id: `error-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
                 role: "assistant" as const,
                 content: errorMsg,
                 parts: [{ type: "text" as const, content: errorMsg }],
@@ -395,38 +374,33 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
 
           // Handle question events (not session-specific, need to match by sessionID in the event)
           if (eventType === "question.asked") {
-            console.log("[OpenCodeChatTab] Question asked:", event.properties);
-            const props = event.properties;
-            if (props?.id && props?.questions) {
+            const questionProps = event.properties;
+            if (questionProps?.id && questionProps?.questions) {
               const questionRequest: QuestionRequest = {
-                id: props.id,
-                sessionID: props.sessionID || "",
-                questions: props.questions,
-                tool: props.tool,
+                id: questionProps.id,
+                sessionID: questionProps.sessionID || "",
+                questions: questionProps.questions,
+                tool: questionProps.tool,
               };
               addPendingQuestion(questionRequest);
             }
           }
           // Handle question replied events (remove the question)
           else if (eventType === "question.replied") {
-            console.log("[OpenCodeChatTab] Question replied:", event.properties?.requestID);
             if (event.properties?.requestID) {
               removePendingQuestion(event.properties.requestID);
             }
           }
           // Handle question rejected events (remove the question)
           else if (eventType === "question.rejected") {
-            console.log("[OpenCodeChatTab] Question rejected:", event.properties?.requestID);
             if (event.properties?.requestID) {
               removePendingQuestion(event.properties.requestID);
             }
           }
         }
-
-        console.log("[OpenCodeChatTab] Shared event loop ended for environment:", environmentId);
       } catch (error) {
         if (!abortController.signal.aborted) {
-          console.error("[OpenCodeChatTab] Shared event subscription error:", error);
+          console.error("[OpenCodeChatTab] Event subscription error:", error);
         }
       } finally {
         // Clear the stream reference when loop ends
@@ -578,7 +552,6 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
                   key={question.id}
                   question={question}
                   client={client}
-                  environmentId={environmentId}
                 />
               ))}
             </div>

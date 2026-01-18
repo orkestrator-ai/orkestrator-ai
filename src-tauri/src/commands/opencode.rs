@@ -8,6 +8,12 @@ use tracing::{debug, error, info, warn};
 /// OpenCode server port inside the container
 const OPENCODE_SERVER_PORT: u16 = 4096;
 
+/// Maximum number of health check attempts when waiting for server startup
+const SERVER_STARTUP_MAX_ATTEMPTS: u32 = 75;
+
+/// Delay between health check attempts in milliseconds
+const SERVER_STARTUP_POLL_INTERVAL_MS: u64 = 200;
+
 /// Result of starting the OpenCode server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,12 +62,7 @@ pub async fn start_opencode_server(container_id: String) -> Result<OpenCodeServe
     // Check if server is already running by trying to ping it
     let health_url = format!("http://127.0.0.1:{}/global/health", host_port);
     let base_url = format!("http://127.0.0.1:{}", host_port);
-    // Use println! to ensure this shows up in terminal
-    println!("[OpenCode] ========================================");
-    println!("[OpenCode] Server URL: {}", base_url);
-    println!("[OpenCode] Health URL: {}", health_url);
-    println!("[OpenCode] ========================================");
-    info!(container_id = %container_id, base_url = %base_url, health_url = %health_url, "OpenCode server URL for debugging");
+    debug!(container_id = %container_id, base_url = %base_url, health_url = %health_url, "OpenCode server URLs");
     if let Ok(response) = reqwest::get(&health_url).await {
         if response.status().is_success() {
             debug!(container_id = %container_id, host_port = host_port, "OpenCode server already running");
@@ -96,12 +97,11 @@ pub async fn start_opencode_server(container_id: String) -> Result<OpenCodeServe
 
     // Wait for the server to start (poll health endpoint)
     // OpenCode server may need time to initialize, especially on first run
-    let max_attempts = 75; // 75 * 200ms = 15 seconds max
-    let mut attempts = 0;
+    let mut attempts: u32 = 0;
 
     loop {
         attempts += 1;
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(SERVER_STARTUP_POLL_INTERVAL_MS)).await;
 
         // Check health endpoint
         match reqwest::get(&health_url).await {
@@ -120,7 +120,7 @@ pub async fn start_opencode_server(container_id: String) -> Result<OpenCodeServe
             }
         }
 
-        if attempts >= max_attempts {
+        if attempts >= SERVER_STARTUP_MAX_ATTEMPTS {
             // Read server log for debugging before returning error
             let log_result = client
                 .exec_in_container(&container_id, vec!["cat", "/tmp/opencode-serve.log"], None)
