@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { DiffEditor } from "@monaco-editor/react";
+import type * as monaco from "monaco-editor";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
 import {
@@ -50,6 +51,29 @@ export function DiffViewerTab({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [diffMode, setDiffMode] = useState<DiffMode>("side-by-side");
+
+  // Track editor instance for proper cleanup
+  const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+
+  // Handle editor mount - capture the editor instance
+  const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneDiffEditor) => {
+    editorRef.current = editor;
+  }, []);
+
+  // Cleanup effect - dispose editor before unmount to prevent errors
+  useEffect(() => {
+    return () => {
+      if (editorRef.current) {
+        try {
+          // Dispose the editor instance before React unmounts the component
+          editorRef.current.dispose();
+        } catch {
+          // Ignore disposal errors - the editor may already be disposed
+        }
+        editorRef.current = null;
+      }
+    };
+  }, []);
 
   // Determine file state
   const isNewFile = gitStatus === "?" || gitStatus === "A";
@@ -182,6 +206,7 @@ export function DiffViewerTab({
             original={originalContent ?? ""}
             modified=""
             theme="vs-dark"
+            onMount={handleEditorMount}
             options={{
               readOnly: true,
               renderSideBySide: diffMode === "side-by-side",
@@ -228,6 +253,7 @@ export function DiffViewerTab({
           original={originalContent ?? ""}
           modified={modifiedContent ?? ""}
           theme="vs-dark"
+          onMount={handleEditorMount}
           options={{
             readOnly: true,
             renderSideBySide: diffMode === "side-by-side",

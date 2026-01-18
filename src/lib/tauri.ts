@@ -364,6 +364,43 @@ export async function streamContainerLogs(containerId: string): Promise<void> {
   return invoke("stream_container_logs", { containerId });
 }
 
+/** Get the host port mapped to a specific container port */
+export async function getContainerHostPort(containerId: string, containerPort: number): Promise<number | null> {
+  return invoke<number | null>("get_container_host_port", { containerId, containerPort });
+}
+
+// --- OpenCode Server Commands ---
+
+export interface OpenCodeServerStartResult {
+  hostPort: number;
+  wasRunning: boolean;
+}
+
+export interface OpenCodeServerStatus {
+  running: boolean;
+  hostPort: number | null;
+}
+
+/** Start the OpenCode server in a container */
+export async function startOpenCodeServer(containerId: string): Promise<OpenCodeServerStartResult> {
+  return invoke<OpenCodeServerStartResult>("start_opencode_server", { containerId });
+}
+
+/** Stop the OpenCode server in a container */
+export async function stopOpenCodeServer(containerId: string): Promise<void> {
+  return invoke("stop_opencode_server", { containerId });
+}
+
+/** Get the status of the OpenCode server in a container */
+export async function getOpenCodeServerStatus(containerId: string): Promise<OpenCodeServerStatus> {
+  return invoke<OpenCodeServerStatus>("get_opencode_server_status", { containerId });
+}
+
+/** Get the OpenCode server log from a container (for debugging) */
+export async function getOpenCodeServerLog(containerId: string): Promise<string> {
+  return invoke<string>("get_opencode_server_log", { containerId });
+}
+
 // --- Credential Commands ---
 
 export interface CredentialStatus {

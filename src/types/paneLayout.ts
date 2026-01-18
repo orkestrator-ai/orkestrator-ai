@@ -25,11 +25,25 @@ export interface FileTabData {
   baseBranch?: string;
 }
 
+// Data for OpenCode native chat tabs
+export interface OpenCodeNativeData {
+  /** Container ID for the environment */
+  containerId: string;
+  /** Environment ID */
+  environmentId: string;
+  /** Host port for the OpenCode server (assigned on server start) */
+  hostPort?: number;
+  /** Active session ID */
+  sessionId?: string;
+}
+
 // Tab information stored in pane leaves
 export interface TabInfo {
   id: string;
   type: TabType;
   fileData?: FileTabData;
+  /** Data for opencode-native tabs */
+  openCodeNativeData?: OpenCodeNativeData;
   /** Initial prompt to send to agent (only for claude/opencode tabs) */
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */

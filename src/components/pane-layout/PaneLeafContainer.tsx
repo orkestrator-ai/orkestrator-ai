@@ -7,6 +7,7 @@ import type { PaneLeaf } from "@/types/paneLayout";
 import { createTabbarDroppableId } from "@/types/paneLayout";
 import { cn } from "@/lib/utils";
 import { FileViewerTab } from "@/components/terminal/FileViewerTab";
+import { OpenCodeChatTab } from "@/components/opencode";
 import { DraggableTabBar } from "./DraggableTabBar";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 
@@ -80,7 +81,8 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
     // Collect portal elements for this pane's terminal tabs
     const portalElements: HTMLDivElement[] = [];
     for (const tab of pane.tabs) {
-      if (tab.type === "file") continue;
+      // Skip non-terminal tabs (file and opencode-native render directly)
+      if (tab.type === "file" || tab.type === "opencode-native") continue;
       const terminalKey = createTerminalKey(environmentId, tab.id);
       const terminalData = terminals.get(terminalKey);
       if (terminalData?.portalElement) {
@@ -151,12 +153,11 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
         {/* Portal target for terminal rendering - terminals render here via TerminalPortalHost */}
         <div ref={portalHostRef} className="absolute inset-0 pointer-events-none" />
 
-        {/* File tabs still render directly (no portal needed) */}
+        {/* File and OpenCode native tabs render directly (no portal needed) */}
         {pane.tabs.map((tab) => {
           const isTabActive = tab.id === pane.activeTabId;
 
-          // Only render file viewer tabs directly
-          // Terminal tabs are rendered via portals from TerminalPortalHost
+          // File viewer tabs
           if (tab.type === "file" && tab.fileData) {
             return (
               <FileViewerTab
@@ -173,6 +174,26 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
             );
           }
 
+          // OpenCode native chat tabs
+          if (tab.type === "opencode-native" && tab.openCodeNativeData) {
+            return (
+              <div
+                key={tab.id}
+                className={cn(
+                  "absolute inset-0",
+                  isTabActive && isActive ? "z-10 pointer-events-auto" : "hidden"
+                )}
+              >
+                <OpenCodeChatTab
+                  tabId={tab.id}
+                  data={tab.openCodeNativeData}
+                  isActive={isTabActive && isActive}
+                />
+              </div>
+            );
+          }
+
+          // Terminal tabs are rendered via portals from TerminalPortalHost
           return null;
         })}
 

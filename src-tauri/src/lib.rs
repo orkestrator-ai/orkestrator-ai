@@ -146,6 +146,7 @@ pub fn run() {
             docker_system_prune,
             get_container_logs,
             stream_container_logs,
+            get_container_host_port,
             // Terminal commands
             attach_terminal,
             create_terminal_session,
@@ -210,6 +211,11 @@ pub fn run() {
             read_file_at_branch,
             read_container_file_base64,
             write_container_file,
+            // OpenCode commands
+            start_opencode_server,
+            stop_opencode_server,
+            get_opencode_server_status,
+            get_opencode_server_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

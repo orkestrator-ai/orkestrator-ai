@@ -7,6 +7,7 @@ A Tauri desktop application for managing isolated Docker-based development envir
 - **Frontend**: React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Zustand, xterm.js
 - **Backend**: Rust, Tauri v2, Bollard (Docker client)
 - **Containerization**: Docker with custom base image
+- **OpenCode Integration**: `@opencode-ai/sdk` v2 (use `@opencode-ai/sdk/v2/client` import path)
 
 ## Project Structure
 
@@ -112,8 +113,47 @@ Containers have restricted network access via iptables firewall:
 | `src-tauri/src/docker/container.rs` | Container provisioning |
 | `src-tauri/src/commands/environments.rs` | Environment CRUD commands |
 | `src/components/terminal/TerminalContainer.tsx` | xterm.js integration |
+| `src/components/opencode/OpenCodeChatTab.tsx` | OpenCode Native Mode chat interface |
+| `src/lib/opencode-client.ts` | OpenCode SDK v2 client wrapper |
 | `docker/Dockerfile` | Base image definition |
 | `docker/init-firewall.sh` | Network firewall rules |
+
+## OpenCode Native Mode
+
+The application supports two modes for OpenCode interaction:
+- **Terminal mode**: Traditional CLI-based interaction via xterm.js
+- **Native mode**: Chat-style interface using the OpenCode SDK
+
+### OpenCode SDK v2
+
+We use the **v2 API** of the `@opencode-ai/sdk` package. This is important because v1 and v2 have different API structures.
+
+**Import path**: Always import from `@opencode-ai/sdk/v2/client`:
+
+```typescript
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
+```
+
+**Key differences from v1**:
+- Session methods use `sessionID` parameter directly instead of `path: { id: sessionId }`
+- Create session uses flat parameters: `{ title }` instead of `{ body: { title } }`
+- v2 includes the `question` API for interactive prompts (v1 doesn't)
+
+**Key files**:
+| File | Purpose |
+|------|---------|
+| `src/lib/opencode-client.ts` | SDK wrapper with typed functions |
+| `src/stores/openCodeStore.ts` | Zustand store for sessions, questions, state |
+| `src/components/opencode/OpenCodeChatTab.tsx` | Main chat interface |
+| `src/components/opencode/OpenCodeQuestionCard.tsx` | Interactive question/answer UI |
+| `src/components/opencode/OpenCodeComposeBar.tsx` | Message input with attachments |
+| `src/components/opencode/OpenCodeMessage.tsx` | Message rendering with tools |
+
+**SDK features used**:
+- `client.session.*` - Session management (create, messages, promptAsync, abort, delete)
+- `client.config.providers()` - Get available models
+- `client.event.subscribe()` - SSE event stream for real-time updates
+- `client.question.*` - Interactive question/answer handling (list, reply, reject)
 
 ## Configuration Storage
 

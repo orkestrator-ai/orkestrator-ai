@@ -110,6 +110,9 @@ export type PreferredEditor = "vscode" | "cursor";
 /** Default agent for new environments */
 export type DefaultAgent = "claude" | "opencode";
 
+/** OpenCode mode - terminal CLI or native chat interface */
+export type OpenCodeMode = "terminal" | "native";
+
 /** Terminal appearance settings */
 export interface TerminalAppearance {
   /** Font family for terminal and code editor */
@@ -133,6 +136,8 @@ export interface GlobalConfig {
   defaultAgent: DefaultAgent;
   /** Default model for OpenCode */
   opencodeModel: string;
+  /** OpenCode mode - terminal CLI or native chat interface */
+  opencodeMode: OpenCodeMode;
   /** Terminal appearance settings (font, size, colors) */
   terminalAppearance: TerminalAppearance;
   /** Terminal scrollback buffer size (lines) */
