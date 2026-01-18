@@ -247,6 +247,45 @@ impl DockerClient {
         Ok(())
     }
 
+    /// Execute a command in a running container
+    /// Returns the combined stdout/stderr output
+    pub async fn exec_in_container(
+        &self,
+        container_id: &str,
+        cmd: Vec<&str>,
+        working_dir: Option<&str>,
+    ) -> Result<String, DockerError> {
+        let options = CreateExecOptions {
+            cmd: Some(cmd),
+            working_dir,
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            ..Default::default()
+        };
+
+        let exec = self.docker.create_exec(container_id, options).await?;
+
+        let output = match self.docker.start_exec(&exec.id, None).await? {
+            StartExecResults::Attached { mut output, .. } => {
+                let mut result = String::new();
+                while let Some(Ok(chunk)) = output.next().await {
+                    match chunk {
+                        LogOutput::StdOut { message } | LogOutput::StdErr { message } => {
+                            if let Ok(text) = String::from_utf8(message.to_vec()) {
+                                result.push_str(&text);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                result
+            }
+            StartExecResults::Detached => String::new(),
+        };
+
+        Ok(output)
+    }
+
     /// Inspect a container
     pub async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse, DockerError> {
         let response = self.docker
@@ -269,6 +308,39 @@ impl DockerClient {
     pub async fn is_container_running(&self, container_id: &str) -> Result<bool, DockerError> {
         let status = self.get_container_status(container_id).await?;
         Ok(status.to_lowercase() == "running")
+    }
+
+    /// Get the host port mapped to a specific container port
+    /// Returns None if the port is not mapped or the container is not running
+    pub async fn get_host_port(&self, container_id: &str, container_port: u16, protocol: &str) -> Result<Option<u16>, DockerError> {
+        let info = self.inspect_container(container_id).await?;
+
+        // Get network settings
+        let network_settings = match info.network_settings {
+            Some(ns) => ns,
+            None => return Ok(None),
+        };
+
+        // Get port bindings
+        let ports = match network_settings.ports {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        // Look for the specific port binding
+        let port_key = format!("{}/{}", container_port, protocol);
+        if let Some(Some(bindings)) = ports.get(&port_key) {
+            // Get the first binding's host port
+            if let Some(binding) = bindings.first() {
+                if let Some(host_port_str) = &binding.host_port {
+                    if let Ok(host_port) = host_port_str.parse::<u16>() {
+                        return Ok(Some(host_port));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Get Docker system information

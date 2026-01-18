@@ -428,6 +428,18 @@ pub async fn docker_system_prune(prune_volumes: bool) -> Result<SystemPruneResul
     })
 }
 
+/// Get the host port mapped to a specific container port
+/// Returns None if the port is not mapped or the container is not running
+#[tauri::command]
+pub async fn get_container_host_port(container_id: String, container_port: u16) -> Result<Option<u16>, String> {
+    debug!(container_id = %container_id, container_port = container_port, "Getting host port mapping");
+    let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
+    client
+        .get_host_port(&container_id, container_port, "tcp")
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Payload for container log events
 #[derive(Clone, Serialize)]
 pub struct ContainerLogPayload {

@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useTerminalContext, MAX_TABS, type TerminalTabType, type CreateTabOptions, type CreateFileTabOptions } from "@/contexts";
-import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useFilesPanelStore, getAllLeaves } from "@/stores";
+import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useFilesPanelStore, useConfigStore, getAllLeaves } from "@/stores";
 import { Button } from "@/components/ui/button";
 import { Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -239,6 +239,10 @@ export function TerminalContainer({
     };
   }, [isActive, setTerminalWrite, activePaneId]);
 
+  // Get config for opencode mode
+  const { config } = useConfigStore();
+  const opencodeMode = config.global.opencodeMode || "terminal";
+
   // Handler for creating new terminal tabs
   const handleCreateTab = useCallback(
     (type: TerminalTabType, options?: CreateTabOptions) => {
@@ -251,6 +255,22 @@ export function TerminalContainer({
       }
 
       const newTabId = `tab-${Date.now()}`;
+
+      // Check if we should create an opencode-native tab instead
+      if (type === "opencode" && opencodeMode === "native") {
+        const newTab: TabInfo = {
+          id: newTabId,
+          type: "opencode-native",
+          openCodeNativeData: {
+            containerId,
+            environmentId,
+          },
+        };
+        console.debug("[TerminalContainer] Creating opencode-native tab:", newTabId, "for environment:", environmentId);
+        addTab(activePaneId, newTab, environmentId);
+        return;
+      }
+
       const newTab: TabInfo = {
         id: newTabId,
         type,
@@ -261,7 +281,7 @@ export function TerminalContainer({
       console.debug("[TerminalContainer] Creating new tab:", newTabId, "type:", type, "for environment:", environmentId);
       addTab(activePaneId, newTab, environmentId);
     },
-    [containerId, isContainerRunning, activePaneId, addTab, getAllTabs, environmentId]
+    [containerId, isContainerRunning, activePaneId, addTab, getAllTabs, environmentId, opencodeMode]
   );
 
   // Get target branch from files panel store for diff view

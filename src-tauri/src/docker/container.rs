@@ -361,8 +361,20 @@ pub async fn create_environment_container(
         port_bindings.insert(key, Some(vec![binding]));
     }
 
+    // Always expose port 4096 for OpenCode server (native mode)
+    // Use dynamic host port allocation (empty string) to allow multiple environments
+    const OPENCODE_SERVER_PORT: u16 = 4096;
+    let opencode_key = format!("{}/tcp", OPENCODE_SERVER_PORT);
+    exposed_ports.insert(opencode_key.clone(), HashMap::new());
+    let opencode_binding = PortBinding {
+        host_ip: Some("127.0.0.1".to_string()),
+        host_port: Some("".to_string()), // Empty string = dynamic allocation
+    };
+    port_bindings.insert(opencode_key, Some(vec![opencode_binding]));
+    debug!("Added OpenCode server port {} with dynamic host allocation", OPENCODE_SERVER_PORT);
+
     if !config.port_mappings.is_empty() {
-        println!("[create_container] Port mappings: {:?}", config.port_mappings);
+        debug!("User port mappings: {:?}", config.port_mappings);
     }
 
     // Build container configuration with capabilities and resource limits
