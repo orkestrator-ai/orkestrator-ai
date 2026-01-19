@@ -24,11 +24,13 @@ interface OpenCodeChatTabProps {
   tabId: string;
   data: OpenCodeNativeData;
   isActive: boolean;
+  /** Initial prompt to send after session creation */
+  initialPrompt?: string;
 }
 
 type ConnectionState = "connecting" | "connected" | "error";
 
-export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps) {
+export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCodeChatTabProps) {
   const { containerId, environmentId } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
@@ -40,6 +42,10 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
   const tabSessionIdRef = useRef<string | null>(null);
   // Track if this tab has been initialized (to differentiate first mount vs re-activation)
   const isInitializedRef = useRef(false);
+  // Track if initial prompt has been sent (to prevent duplicate sends)
+  const initialPromptSentRef = useRef(false);
+  // Ref to store handleSend for use in effects without causing re-runs
+  const handleSendRef = useRef<((text: string, attachments: OpenCodeAttachment[]) => Promise<void>) | null>(null);
 
   const {
     setClient,
@@ -462,6 +468,25 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
     },
     [client, session, tabId, environmentId, getSelectedModel, getSelectedMode, addMessage, setSessionLoading]
   );
+
+  // Keep handleSendRef updated with the latest handleSend
+  handleSendRef.current = handleSend;
+
+  // Send initial prompt after session is ready (for code review, PR creation, etc.)
+  useEffect(() => {
+    if (
+      connectionState === "connected" &&
+      client &&
+      session &&
+      initialPrompt &&
+      !initialPromptSentRef.current
+    ) {
+      initialPromptSentRef.current = true;
+      console.debug("[OpenCodeChatTab] Sending initial prompt for tab:", tabId);
+      // Use ref to avoid effect re-running when handleSend changes
+      handleSendRef.current?.(initialPrompt, []);
+    }
+  }, [connectionState, client, session, initialPrompt, tabId]);
 
   // Handle retry connection
   const handleRetry = useCallback(() => {
