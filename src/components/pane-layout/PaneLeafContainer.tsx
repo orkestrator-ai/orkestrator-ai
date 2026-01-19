@@ -188,6 +188,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                   tabId={tab.id}
                   data={tab.openCodeNativeData}
                   isActive={isTabActive && isActive}
+                  initialPrompt={tab.initialPrompt}
                 />
               </div>
             );

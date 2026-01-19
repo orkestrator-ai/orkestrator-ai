@@ -74,7 +74,7 @@ export function DraggableTab({
     // Default names
     if (tab.type === "plain") return `Terminal ${tabNumber}`;
     if (tab.type === "claude") return `Claude ${tabNumber}`;
-    if (tab.type === "opencode") return `OpenCode ${tabNumber}`;
+    if (tab.type === "opencode" || tab.type === "opencode-native") return `OpenCode ${tabNumber}`;
     if (tab.type === "root") return `ROOT ${tabNumber}`;
     return `Tab ${tabNumber}`;
   };
@@ -84,7 +84,7 @@ export function DraggableTab({
     if (tab.type === "file") {
       return <FileCode className="h-3 w-3 shrink-0" />;
     }
-    if (tab.type === "opencode") {
+    if (tab.type === "opencode" || tab.type === "opencode-native") {
       return <OpenCodeIcon className="h-3 w-3 shrink-0 text-green-500" />;
     }
     if (tab.type === "claude") {

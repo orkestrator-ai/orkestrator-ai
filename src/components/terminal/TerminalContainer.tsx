@@ -265,8 +265,9 @@ export function TerminalContainer({
             containerId,
             environmentId,
           },
+          initialPrompt: options?.initialPrompt,
         };
-        console.debug("[TerminalContainer] Creating opencode-native tab:", newTabId, "for environment:", environmentId);
+        console.debug("[TerminalContainer] Creating opencode-native tab:", newTabId, "for environment:", environmentId, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
         return;
       }

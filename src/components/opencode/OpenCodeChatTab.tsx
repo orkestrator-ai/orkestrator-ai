@@ -24,11 +24,13 @@ interface OpenCodeChatTabProps {
   tabId: string;
   data: OpenCodeNativeData;
   isActive: boolean;
+  /** Initial prompt to send after session creation */
+  initialPrompt?: string;
 }
 
 type ConnectionState = "connecting" | "connected" | "error";
 
-export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps) {
+export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCodeChatTabProps) {
   const { containerId, environmentId } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
@@ -40,6 +42,8 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
   const tabSessionIdRef = useRef<string | null>(null);
   // Track if this tab has been initialized (to differentiate first mount vs re-activation)
   const isInitializedRef = useRef(false);
+  // Track if initial prompt has been sent (to prevent duplicate sends)
+  const initialPromptSentRef = useRef(false);
 
   const {
     setClient,
@@ -462,6 +466,22 @@ export function OpenCodeChatTab({ tabId, data, isActive }: OpenCodeChatTabProps)
     },
     [client, session, tabId, environmentId, getSelectedModel, getSelectedMode, addMessage, setSessionLoading]
   );
+
+  // Send initial prompt after session is ready (for code review, PR creation, etc.)
+  useEffect(() => {
+    if (
+      connectionState === "connected" &&
+      client &&
+      session &&
+      initialPrompt &&
+      !initialPromptSentRef.current
+    ) {
+      initialPromptSentRef.current = true;
+      console.debug("[OpenCodeChatTab] Sending initial prompt for tab:", tabId);
+      // Use handleSend to send the initial prompt
+      handleSend(initialPrompt, []);
+    }
+  }, [connectionState, client, session, initialPrompt, tabId, handleSend]);
 
   // Handle retry connection
   const handleRetry = useCallback(() => {
