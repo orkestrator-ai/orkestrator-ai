@@ -106,6 +106,15 @@ export function TerminalContainer({
   const claudeOptions = getOptions(environmentId);
   const hasAppliedClaudeOptionsRef = useRef(false);
 
+  // Get config for opencode mode - needed early for initial tab creation
+  const { config } = useConfigStore();
+  const opencodeMode = config.global.opencodeMode || "terminal";
+
+  // Get workspace ready state - needed early for native OpenCode launch
+  const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
+  const isWorkspaceReady = useEnvironmentStore((state) => state.isWorkspaceReady);
+  const workspaceReady = isWorkspaceReady(environmentId);
+
   // Pane layout store - use selectors for reactive state
   const environments = usePaneLayoutStore((state) => state.environments);
 
@@ -145,6 +154,14 @@ export function TerminalContainer({
   const initialPromptRef = useRef<string | undefined>(undefined);
   const previousContainerIdRef = useRef<string | null>(null);
 
+  // Track pending native OpenCode launch (after workspace setup completes)
+  const pendingNativeOpenCodeRef = useRef<{
+    containerId: string;
+    environmentId: string;
+    initialPrompt?: string;
+    targetPaneId: string;
+  } | null>(null);
+
   // Set active environment when this container becomes active
   useEffect(() => {
     if (isActive) {
@@ -181,26 +198,57 @@ export function TerminalContainer({
 
         // Determine initial tab type based on agent options
         let initialTabType: TerminalTabType = "plain";
+        let pendingInitialPrompt: string | undefined;
         if (claudeOptions?.launchAgent) {
           initialTabType = claudeOptions.agentType;
           hasAppliedClaudeOptionsRef.current = true;
           // Capture the initial prompt for the first tab
           if (claudeOptions.initialPrompt?.trim()) {
-            initialPromptRef.current = claudeOptions.initialPrompt.trim();
+            pendingInitialPrompt = claudeOptions.initialPrompt.trim();
+            initialPromptRef.current = pendingInitialPrompt;
           }
         }
 
-        // Add the initial tab to the default pane
-        const initialTab: TabInfo = {
-          id: "default",
-          type: initialTabType,
-          initialPrompt: initialPromptRef.current,
-        };
-        addTab("default", initialTab, environmentId);
+        // Check if we should use opencode-native instead of opencode terminal
+        const useNativeOpenCode = initialTabType === "opencode" && opencodeMode === "native";
+        console.log("[TerminalContainer] Initial tab decision - agentType:", claudeOptions?.agentType, "launchAgent:", claudeOptions?.launchAgent, "opencodeMode:", opencodeMode, "useNativeOpenCode:", useNativeOpenCode);
+
+        // For native OpenCode: start with plain terminal so user can see setup scripts,
+        // then open native OpenCode tab after workspace is ready
+        if (useNativeOpenCode) {
+          // Reset workspace ready state to ensure we wait for THIS container's setup to complete
+          // (the state might be true from a previous run)
+          setWorkspaceReady(environmentId, false);
+
+          // Store pending native OpenCode launch for after workspace setup
+          // Use "default" as the target pane since that's where the plain terminal is added
+          pendingNativeOpenCodeRef.current = {
+            containerId,
+            environmentId,
+            initialPrompt: pendingInitialPrompt,
+            targetPaneId: "default",
+          };
+          console.log("[TerminalContainer] Pending native OpenCode launch stored for environment:", environmentId, "prompt:", !!pendingInitialPrompt);
+
+          // Start with plain terminal to show setup scripts
+          const initialTab: TabInfo = {
+            id: "default",
+            type: "plain",
+          };
+          addTab("default", initialTab, environmentId);
+        } else {
+          // For other agent types (claude, plain), use them directly
+          const initialTab: TabInfo = {
+            id: "default",
+            type: initialTabType,
+            initialPrompt: pendingInitialPrompt,
+          };
+          addTab("default", initialTab, environmentId);
+        }
       }
     }
     // Note: currentEnvState is derived from environments, so we don't need both in deps
-  }, [isContainerRunning, containerId, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState]);
+  }, [isContainerRunning, containerId, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState, opencodeMode, setWorkspaceReady]);
 
   // Reset pane layout when container changes within the same environment
   // (e.g., container was stopped and restarted with a new ID)
@@ -215,14 +263,46 @@ export function TerminalContainer({
 
   // Reset pane layout and workspace ready state when container stops
   // This clears all terminals and tabs since their backend sessions are destroyed
-  const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
   useEffect(() => {
     if (!isContainerRunning && containerId) {
       console.debug("[TerminalContainer] Container stopped, resetting panes for environment:", environmentId);
       setWorkspaceReady(environmentId, false);
       reset();
+      // Clear pending native OpenCode launch on container stop
+      pendingNativeOpenCodeRef.current = null;
     }
   }, [isContainerRunning, environmentId, containerId, setWorkspaceReady, reset]);
+
+  // Launch native OpenCode tab after workspace setup completes
+  useEffect(() => {
+    console.log("[TerminalContainer] Native OpenCode effect check - workspaceReady:", workspaceReady, "hasPending:", !!pendingNativeOpenCodeRef.current, "containerId:", !!containerId);
+
+    // Simple logic: when workspace is ready and we have a pending launch, create the tab
+    if (workspaceReady && pendingNativeOpenCodeRef.current && containerId) {
+      const pending = pendingNativeOpenCodeRef.current;
+
+      // Only launch if this is for the current container/environment
+      if (pending.containerId === containerId && pending.environmentId === environmentId) {
+        console.log("[TerminalContainer] Workspace ready, launching native OpenCode tab for environment:", environmentId);
+
+        const newTabId = `opencode-native-${Date.now()}`;
+        const newTab: TabInfo = {
+          id: newTabId,
+          type: "opencode-native",
+          openCodeNativeData: {
+            containerId: pending.containerId,
+            environmentId: pending.environmentId,
+          },
+          initialPrompt: pending.initialPrompt,
+        };
+        // Use the stored target pane ID to ensure the tab is added to the correct pane
+        addTab(pending.targetPaneId, newTab, environmentId);
+
+        // Clear the pending launch
+        pendingNativeOpenCodeRef.current = null;
+      }
+    }
+  }, [workspaceReady, containerId, environmentId, addTab]);
 
   // Register terminal write function with context
   useEffect(() => {
@@ -238,10 +318,6 @@ export function TerminalContainer({
       setTerminalWrite(null);
     };
   }, [isActive, setTerminalWrite, activePaneId]);
-
-  // Get config for opencode mode
-  const { config } = useConfigStore();
-  const opencodeMode = config.global.opencodeMode || "terminal";
 
   // Handler for creating new terminal tabs
   const handleCreateTab = useCallback(
