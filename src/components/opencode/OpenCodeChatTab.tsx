@@ -44,6 +44,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   const isInitializedRef = useRef(false);
   // Track if initial prompt has been sent (to prevent duplicate sends)
   const initialPromptSentRef = useRef(false);
+  // Ref to store handleSend for use in effects without causing re-runs
+  const handleSendRef = useRef<((text: string, attachments: OpenCodeAttachment[]) => Promise<void>) | null>(null);
 
   const {
     setClient,
@@ -467,6 +469,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     [client, session, tabId, environmentId, getSelectedModel, getSelectedMode, addMessage, setSessionLoading]
   );
 
+  // Keep handleSendRef updated with the latest handleSend
+  handleSendRef.current = handleSend;
+
   // Send initial prompt after session is ready (for code review, PR creation, etc.)
   useEffect(() => {
     if (
@@ -478,10 +483,10 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     ) {
       initialPromptSentRef.current = true;
       console.debug("[OpenCodeChatTab] Sending initial prompt for tab:", tabId);
-      // Use handleSend to send the initial prompt
-      handleSend(initialPrompt, []);
+      // Use ref to avoid effect re-running when handleSend changes
+      handleSendRef.current?.(initialPrompt, []);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, handleSend]);
+  }, [connectionState, client, session, initialPrompt, tabId]);
 
   // Handle retry connection
   const handleRetry = useCallback(() => {
