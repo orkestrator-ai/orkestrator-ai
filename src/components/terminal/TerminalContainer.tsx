@@ -159,6 +159,7 @@ export function TerminalContainer({
     containerId: string;
     environmentId: string;
     initialPrompt?: string;
+    targetPaneId: string;
   } | null>(null);
 
   // Set active environment when this container becomes active
@@ -220,10 +221,12 @@ export function TerminalContainer({
           setWorkspaceReady(environmentId, false);
 
           // Store pending native OpenCode launch for after workspace setup
+          // Use "default" as the target pane since that's where the plain terminal is added
           pendingNativeOpenCodeRef.current = {
             containerId,
             environmentId,
             initialPrompt: pendingInitialPrompt,
+            targetPaneId: "default",
           };
           console.log("[TerminalContainer] Pending native OpenCode launch stored for environment:", environmentId, "prompt:", !!pendingInitialPrompt);
 
@@ -292,13 +295,14 @@ export function TerminalContainer({
           },
           initialPrompt: pending.initialPrompt,
         };
-        addTab(activePaneId, newTab, environmentId);
+        // Use the stored target pane ID to ensure the tab is added to the correct pane
+        addTab(pending.targetPaneId, newTab, environmentId);
 
         // Clear the pending launch
         pendingNativeOpenCodeRef.current = null;
       }
     }
-  }, [workspaceReady, containerId, environmentId, activePaneId, addTab]);
+  }, [workspaceReady, containerId, environmentId, addTab]);
 
   // Register terminal write function with context
   useEffect(() => {

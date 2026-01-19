@@ -11,7 +11,14 @@ import { cn } from "@/lib/utils";
 import { loadSessionBuffer, setSessionHasLaunchedCommand } from "@/lib/tauri";
 import type { TabType } from "@/contexts";
 import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK, ROOT_TERMINAL_USER } from "@/constants/terminal";
-import { stripAnsi, tabTypeToSessionType, ENVIRONMENT_READY_MARKER } from "@/lib/terminal-utils";
+import {
+  stripAnsi,
+  tabTypeToSessionType,
+  ENVIRONMENT_READY_MARKER,
+  ENVIRONMENT_READY_MARKER_ALT_TILDE,
+  ENVIRONMENT_READY_MARKER_ALT_DASH,
+  SETUP_COMPLETE_MARKER,
+} from "@/lib/terminal-utils";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -281,10 +288,10 @@ export function PersistentTerminal({
           strippedBuffer.includes(ENVIRONMENT_READY_MARKER) ||
           dataBufferRef.current.includes(ENVIRONMENT_READY_MARKER) ||
           // Also check for alternate marker formats (with different delimiters)
-          strippedBuffer.includes("~~~ Workspace Ready ~~~") ||
-          strippedBuffer.includes("--- Workspace Ready ---") ||
-          // "Setup script completed successfully!" appears right before "Workspace Ready"
-          strippedBuffer.includes("Setup script completed successfully!");
+          strippedBuffer.includes(ENVIRONMENT_READY_MARKER_ALT_TILDE) ||
+          strippedBuffer.includes(ENVIRONMENT_READY_MARKER_ALT_DASH) ||
+          // Setup complete marker appears right before "Workspace Ready"
+          strippedBuffer.includes(SETUP_COMPLETE_MARKER);
 
         if (readyDetected) {
           console.log("[PersistentTerminal] Environment ready detected for tab:", tabId, "isFirstTab:", isFirstTab);
