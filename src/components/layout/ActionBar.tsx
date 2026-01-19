@@ -15,8 +15,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Settings, GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Settings2, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle } from "lucide-react";
-import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
+import { GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle, FolderGit2 } from "lucide-react";
+import { ClaudeIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
 import { useUIStore, useEnvironmentStore, useProjectStore, useConfigStore, useFilesPanelStore } from "@/stores";
 import { useShallow } from "zustand/react/shallow";
 import { useTerminalContext, MAX_TABS } from "@/contexts";
@@ -571,7 +571,7 @@ export function ActionBar() {
                 className="h-8 w-8"
                 onClick={() => setDockerStatsOpen(true)}
               >
-                <Container className="h-4 w-4" />
+                <DockerIcon className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Docker configuration</TooltipContent>
@@ -586,7 +586,7 @@ export function ActionBar() {
                   className="h-8 w-8"
                   onClick={() => setRepoSettingsOpen(true)}
                 >
-                  <Settings className="h-4 w-4" />
+                  <FolderGit2 className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Repository settings</TooltipContent>
@@ -602,7 +602,7 @@ export function ActionBar() {
                   className="h-8 w-8"
                   onClick={() => setEnvSettingsOpen(true)}
                 >
-                  <Settings2 className="h-4 w-4" />
+                  <Container className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Environment settings</TooltipContent>

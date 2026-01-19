@@ -134,6 +134,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
 
         // Create SDK client (shared per environment)
         const baseUrl = `http://127.0.0.1:${status.hostPort}`;
+        console.log("[OpenCodeChatTab] OpenCode server running at:", baseUrl);
         const sdkClient = createClient(baseUrl);
         setClient(environmentId, sdkClient);
 
