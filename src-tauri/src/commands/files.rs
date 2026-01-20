@@ -785,13 +785,25 @@ pub async fn get_local_git_status(
     let branch_name_status = Command::new("git")
         .args(["-C", &worktree_path, "diff", "--name-status", &branch_diff_ref])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --name-status failed for branch comparison");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
         .unwrap_or_default();
 
     let branch_numstat = Command::new("git")
         .args(["-C", &worktree_path, "diff", "--numstat", &branch_diff_ref])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --numstat failed for branch comparison");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
         .unwrap_or_default();
 
     debug!(target_branch = %target_branch, "Local branch diff output: {} files", branch_name_status.lines().count());
@@ -812,19 +824,37 @@ pub async fn get_local_git_status(
     let status_output = Command::new("git")
         .args(["-C", &worktree_path, "status", "--porcelain", "-uall"])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git status failed");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
         .unwrap_or_default();
 
     let unstaged_numstat = Command::new("git")
         .args(["-C", &worktree_path, "diff", "--numstat"])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --numstat (unstaged) failed");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
         .unwrap_or_default();
 
     let staged_numstat = Command::new("git")
         .args(["-C", &worktree_path, "diff", "--cached", "--numstat"])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --cached --numstat (staged) failed");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
         .unwrap_or_default();
 
     let uncommitted_files = parse_git_status(&status_output);
@@ -853,10 +883,11 @@ pub async fn get_local_git_status(
                 .unwrap_or((0, 0))
         };
 
-        // For uncommitted changes, we may need to combine with branch stats
+        // For uncommitted changes, take the max of uncommitted vs branch stats
+        // to avoid double-counting lines that were modified in both commits and working tree
         if let Some(existing) = all_changes.get(&file_path) {
-            let total_additions = additions.saturating_add(existing.1);
-            let total_deletions = deletions.saturating_add(existing.2);
+            let total_additions = additions.max(existing.1);
+            let total_deletions = deletions.max(existing.2);
             all_changes.insert(file_path, (status, total_additions, total_deletions));
         } else {
             all_changes.insert(file_path, (status, additions, deletions));
@@ -912,6 +943,12 @@ pub async fn get_local_file_tree(worktree_path: String) -> Result<Vec<FileNode>,
             "-not", "-path", "*/build/*",
             "-not", "-path", "*/.cache/*",
             "-not", "-path", "*/target/*",
+            "-not", "-path", "*/.turbo/*",
+            "-not", "-path", "*/.venv/*",
+            "-not", "-path", "*/venv/*",
+            "-not", "-path", "*/coverage/*",
+            "-not", "-path", "*/.nyc_output/*",
+            "-not", "-path", "*/*.egg-info/*",
         ])
         .output()
         .map_err(|e| format!("Failed to run find command: {}", e))?;
@@ -989,6 +1026,7 @@ pub async fn read_local_file_at_branch(
     branch: String,
 ) -> Result<Option<FileContent>, String> {
     use std::process::Command;
+    use tracing::debug;
 
     // Validate the worktree path exists
     let path = std::path::Path::new(&worktree_path);
@@ -1044,9 +1082,22 @@ pub async fn read_local_file_at_branch(
                 language,
             }))
         }
-        _ => {
-            // File doesn't exist in the target branch (new file)
-            Ok(None)
+        Ok(result) => {
+            // Git command ran but failed - check if it's a "file not found" error
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            if stderr.contains("does not exist") || stderr.contains("exists on disk, but not in") || stderr.contains("fatal: path") {
+                // File genuinely doesn't exist in this branch (new file)
+                Ok(None)
+            } else {
+                // Log unexpected git errors for debugging
+                debug!(stderr = %stderr, git_ref = %git_ref, "git show failed with unexpected error");
+                // Still return None to avoid breaking the diff view, but we've logged the issue
+                Ok(None)
+            }
+        }
+        Err(e) => {
+            // Failed to run git command entirely
+            Err(format!("Failed to run git command: {}", e))
         }
     }
 }

@@ -137,13 +137,18 @@ export function FileViewerTab({
       try {
         if (isImage) {
           // Load image as base64
-          // Note: Local environment image loading not yet supported
           const mimeType = getImageMimeType(filePath);
           if (!mimeType) {
             throw new Error(`Unsupported image format: ${getFileExtension(filePath)}`);
           }
+          // Image viewing requires container environment (base64 transfer via Docker API)
           if (isLocalEnvironment) {
-            throw new Error("Image viewing not yet supported for local environments");
+            // Set a friendly error message instead of throwing
+            if (!cancelled) {
+              setError("Image preview is not yet available for local environments. You can open this file in your system image viewer.");
+              setIsLoading(false);
+            }
+            return;
           }
           if (!containerId) {
             throw new Error("Container ID required for image viewing");
