@@ -635,6 +635,44 @@ export async function writeContainerFile(
   return invoke<string>("write_container_file", { containerId, filePath, base64Data });
 }
 
+// --- Local Environment File Commands ---
+
+/** Get git changes for a local environment (worktree path) */
+export async function getLocalGitStatus(
+  worktreePath: string,
+  targetBranch: string
+): Promise<GitFileChange[]> {
+  return invoke<GitFileChange[]>("get_local_git_status", { worktreePath, targetBranch });
+}
+
+/** Get file tree from a local environment (worktree path) */
+export async function getLocalFileTree(worktreePath: string): Promise<FileNode[]> {
+  return invoke<FileNode[]>("get_local_file_tree", { worktreePath });
+}
+
+/** Read a file from a local environment (worktree path) */
+export async function readLocalFile(
+  worktreePath: string,
+  filePath: string
+): Promise<FileContent> {
+  return invoke<FileContent>("read_local_file", { worktreePath, filePath });
+}
+
+/** Read a file from a specific git branch in a local environment
+ * Returns null if the file doesn't exist in the specified branch (e.g., new file)
+ */
+export async function readLocalFileAtBranch(
+  worktreePath: string,
+  filePath: string,
+  branch: string
+): Promise<FileContent | null> {
+  return invoke<FileContent | null>("read_local_file_at_branch", {
+    worktreePath,
+    filePath,
+    branch,
+  });
+}
+
 // --- Port Mapping Commands ---
 
 /** Update port mappings for an environment (requires restart to apply) */

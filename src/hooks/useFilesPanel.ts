@@ -8,7 +8,8 @@ const AUTO_REFRESH_INTERVAL = 5000;
 
 /**
  * Hook for managing files panel data loading.
- * Loads git changes and file tree data from the active container.
+ * Loads git changes and file tree data from the active environment.
+ * Supports both containerized (Docker) and local (worktree) environments.
  * Auto-refreshes every 5 seconds when the panel is open.
  */
 export function useFilesPanel() {
@@ -28,9 +29,18 @@ export function useFilesPanel() {
   const selectedEnvironment = selectedEnvironmentId
     ? getEnvironmentById(selectedEnvironmentId)
     : null;
+
+  // Detect environment type and get appropriate identifiers
+  const isLocalEnvironment = selectedEnvironment?.environmentType === "local";
   const containerId = selectedEnvironment?.containerId ?? null;
+  const worktreePath = selectedEnvironment?.worktreePath ?? null;
   const projectId = selectedEnvironment?.projectId ?? null;
-  const isRunning = selectedEnvironment?.status === "running";
+
+  // Local environments are always "available" - they exist or don't exist
+  // Container environments need to be running
+  const isAvailable = isLocalEnvironment
+    ? !!worktreePath
+    : selectedEnvironment?.status === "running" && !!containerId;
 
   // Get the target branch for comparison from repository config
   const repoConfig = projectId ? getRepositoryConfig(projectId) : null;
@@ -46,9 +56,9 @@ export function useFilesPanel() {
     setTargetBranch(targetBranch);
   }, [targetBranch, setTargetBranch]);
 
-  // Load git changes from container (silent mode for auto-refresh)
+  // Load git changes from environment (silent mode for auto-refresh)
   const loadChanges = useCallback(async (silent = false) => {
-    if (!containerId || !isRunning) {
+    if (!isAvailable) {
       setChanges([]);
       return;
     }
@@ -63,7 +73,14 @@ export function useFilesPanel() {
     }
     try {
       // Compare against the target branch (prBaseBranch from repo config)
-      const changes = await tauri.getGitStatus(containerId, targetBranch);
+      let changes: tauri.GitFileChange[] = [];
+      if (isLocalEnvironment && worktreePath) {
+        // Local environment - use local git status command
+        changes = await tauri.getLocalGitStatus(worktreePath, targetBranch);
+      } else if (containerId) {
+        // Container environment - use container git status command
+        changes = await tauri.getGitStatus(containerId, targetBranch);
+      }
       setChanges(changes);
     } catch (err) {
       console.error("Failed to load git changes:", err);
@@ -77,11 +94,11 @@ export function useFilesPanel() {
         setLoadingChanges(false);
       }
     }
-  }, [containerId, isRunning, targetBranch, setChanges, setLoadingChanges]);
+  }, [isAvailable, isLocalEnvironment, worktreePath, containerId, targetBranch, setChanges, setLoadingChanges]);
 
-  // Load file tree from container (silent mode for auto-refresh)
+  // Load file tree from environment (silent mode for auto-refresh)
   const loadFileTree = useCallback(async (silent = false) => {
-    if (!containerId || !isRunning) {
+    if (!isAvailable) {
       setFileTree([]);
       return;
     }
@@ -94,7 +111,14 @@ export function useFilesPanel() {
       setLoadingTree(true);
     }
     try {
-      const tree = await tauri.getFileTree(containerId);
+      let tree: tauri.FileNode[] = [];
+      if (isLocalEnvironment && worktreePath) {
+        // Local environment - use local file tree command
+        tree = await tauri.getLocalFileTree(worktreePath);
+      } else if (containerId) {
+        // Container environment - use container file tree command
+        tree = await tauri.getFileTree(containerId);
+      }
       setFileTree(tree);
     } catch (err) {
       console.error("Failed to load file tree:", err);
@@ -107,7 +131,7 @@ export function useFilesPanel() {
         setLoadingTree(false);
       }
     }
-  }, [containerId, isRunning, setFileTree, setLoadingTree]);
+  }, [isAvailable, isLocalEnvironment, worktreePath, containerId, setFileTree, setLoadingTree]);
 
   // Refresh data based on active tab (manual refresh shows loading indicator)
   const refresh = useCallback(() => {
@@ -129,14 +153,14 @@ export function useFilesPanel() {
 
   // Load data when panel opens, tab changes, or environment changes
   useEffect(() => {
-    if (isOpen && isRunning) {
+    if (isOpen && isAvailable) {
       refresh();
     }
-  }, [isOpen, activeTab, isRunning, containerId, refresh]);
+  }, [isOpen, activeTab, isAvailable, containerId, worktreePath, refresh]);
 
-  // Auto-refresh when panel is open and container is running
+  // Auto-refresh when panel is open and environment is available
   useEffect(() => {
-    if (!isOpen || !isRunning || !containerId) {
+    if (!isOpen || !isAvailable) {
       return;
     }
 
@@ -147,21 +171,23 @@ export function useFilesPanel() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [isOpen, isRunning, containerId, silentRefresh]);
+  }, [isOpen, isAvailable, containerId, worktreePath, silentRefresh]);
 
-  // Clear data when environment stops or changes
+  // Clear data when environment becomes unavailable
   useEffect(() => {
-    if (!isRunning) {
+    if (!isAvailable) {
       setChanges([]);
       setFileTree([]);
     }
-  }, [isRunning, setChanges, setFileTree]);
+  }, [isAvailable, setChanges, setFileTree]);
 
   return {
     loadChanges,
     loadFileTree,
     refresh,
-    isRunning,
+    isAvailable,
     containerId,
+    worktreePath,
+    isLocalEnvironment,
   };
 }

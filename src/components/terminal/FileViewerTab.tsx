@@ -53,7 +53,12 @@ function getImageMimeType(filePath: string): string | undefined {
 interface FileViewerTabProps {
   tabId: string;
   filePath: string;
-  containerId: string;
+  /** Container ID (for containerized environments) */
+  containerId?: string;
+  /** Worktree path (for local environments) */
+  worktreePath?: string;
+  /** Whether this is a local environment */
+  isLocalEnvironment?: boolean;
   isActive: boolean;
   language?: string;
   // Diff-related props
@@ -66,6 +71,8 @@ export function FileViewerTab({
   tabId,
   filePath,
   containerId,
+  worktreePath,
+  isLocalEnvironment = false,
   isActive,
   language,
   isDiff,
@@ -130,17 +137,31 @@ export function FileViewerTab({
       try {
         if (isImage) {
           // Load image as base64
+          // Note: Local environment image loading not yet supported
           const mimeType = getImageMimeType(filePath);
           if (!mimeType) {
             throw new Error(`Unsupported image format: ${getFileExtension(filePath)}`);
+          }
+          if (isLocalEnvironment) {
+            throw new Error("Image viewing not yet supported for local environments");
+          }
+          if (!containerId) {
+            throw new Error("Container ID required for image viewing");
           }
           const base64Content = await tauri.readContainerFileBase64(containerId, filePath);
           if (!cancelled) {
             setImageDataUrl(`data:${mimeType};base64,${base64Content}`);
           }
         } else {
-          // Load text file normally
-          const fileContent = await tauri.readContainerFile(containerId, filePath);
+          // Load text file - use appropriate command based on environment type
+          let fileContent: tauri.FileContent;
+          if (isLocalEnvironment && worktreePath) {
+            fileContent = await tauri.readLocalFile(worktreePath, filePath);
+          } else if (containerId) {
+            fileContent = await tauri.readContainerFile(containerId, filePath);
+          } else {
+            throw new Error("No container ID or worktree path available");
+          }
           if (!cancelled) {
             setContent(fileContent.content);
             setDetectedLanguage(fileContent.language || language || "plaintext");
@@ -164,12 +185,27 @@ export function FileViewerTab({
       cancelled = true;
     };
   // Note: isImage is derived from filePath, so it doesn't need to be in the dependency array
-  }, [containerId, filePath, language, showDiff, tabId, setOriginalContent]);
+  }, [containerId, worktreePath, isLocalEnvironment, filePath, language, showDiff, tabId, setOriginalContent]);
 
-  // Save file to container
+  // Save file to container (saving to local environments not yet supported)
   const handleSave = useCallback(async () => {
     // Prevent concurrent saves
     if (isSaving) return;
+
+    // Local environment saving not yet supported
+    if (isLocalEnvironment) {
+      toast.error("Saving not supported", {
+        description: "File saving is not yet supported for local environments",
+      });
+      return;
+    }
+
+    if (!containerId) {
+      toast.error("Cannot save file", {
+        description: "No container ID available",
+      });
+      return;
+    }
 
     const contentToSave = getDirtyContent(tabId);
     if (contentToSave === null) return;
@@ -199,7 +235,7 @@ export function FileViewerTab({
     } finally {
       setIsSaving(false);
     }
-  }, [tabId, containerId, filePath, getDirtyContent, markSaved, isSaving]);
+  }, [tabId, containerId, isLocalEnvironment, filePath, getDirtyContent, markSaved, isSaving]);
 
   // Handle editor mount - set up Cmd+S keybinding
   const handleEditorMount: OnMount = useCallback(
@@ -230,6 +266,8 @@ export function FileViewerTab({
       <DiffViewerTab
         filePath={filePath}
         containerId={containerId}
+        worktreePath={worktreePath}
+        isLocalEnvironment={isLocalEnvironment}
         baseBranch={baseBranch}
         gitStatus={gitStatus}
         isActive={isActive}

@@ -3,6 +3,7 @@ import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClaudeStore } from "@/stores/claudeStore";
+import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
   createClient,
   getModels,
@@ -71,6 +72,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     pendingQuestions: pendingQuestionsMap,
   } = useClaudeStore();
 
+  // Activity state tracking - use environmentId as key for both local and container environments
+  const { setContainerState, removeContainerState } = useClaudeActivityStore();
+
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
   const session = useMemo(() => sessionsMap.get(tabId), [sessionsMap, tabId]);
 
@@ -87,6 +91,34 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
+
+  // Track Claude activity state based on session loading - update the environment icon in sidebar
+  // For native Claude mode, we use environmentId as the key (works for both local and containerized)
+  useEffect(() => {
+    if (connectionState !== "connected") {
+      // Not connected yet, show idle
+      setContainerState(environmentId, "idle");
+      return;
+    }
+
+    if (session?.isLoading) {
+      // Claude is working on a response
+      setContainerState(environmentId, "working");
+    } else if (pendingQuestions.length > 0) {
+      // Claude is waiting for user input (question)
+      setContainerState(environmentId, "waiting");
+    } else {
+      // Claude is idle
+      setContainerState(environmentId, "idle");
+    }
+  }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
+
+  // Cleanup activity state when tab unmounts
+  useEffect(() => {
+    return () => {
+      removeContainerState(environmentId);
+    };
+  }, [environmentId, removeContainerState]);
 
   useEffect(() => {
     if (!isActive) {
