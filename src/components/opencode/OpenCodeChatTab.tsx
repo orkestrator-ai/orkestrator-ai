@@ -13,7 +13,13 @@ import {
   ERROR_MESSAGE_PREFIX,
   type QuestionRequest,
 } from "@/lib/opencode-client";
-import { startOpenCodeServer, getOpenCodeServerStatus, getOpenCodeServerLog } from "@/lib/tauri";
+import {
+  startOpenCodeServer,
+  getOpenCodeServerStatus,
+  getOpenCodeServerLog,
+  startLocalOpencodeServer,
+  getLocalOpencodeServerStatus,
+} from "@/lib/tauri";
 import { OpenCodeMessage } from "./OpenCodeMessage";
 import { OpenCodeComposeBar } from "./OpenCodeComposeBar";
 import { OpenCodeQuestionCard } from "./OpenCodeQuestionCard";
@@ -31,7 +37,7 @@ interface OpenCodeChatTabProps {
 type ConnectionState = "connecting" | "connected" | "error";
 
 export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCodeChatTabProps) {
-  const { containerId, environmentId } = data;
+  const { containerId, environmentId, isLocal } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -112,28 +118,57 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         setConnectionState("connecting");
         setErrorMessage(null);
 
-        // Check if server is already running
-        let status = await getOpenCodeServerStatus(containerId);
+        let hostPort: number | null = null;
 
-        // Start server if not running
-        if (!status.running) {
-          const result = await startOpenCodeServer(containerId);
-          status = { running: true, hostPort: result.hostPort };
+        if (isLocal) {
+          // Local environment - use local server commands
+          let localStatus = await getLocalOpencodeServerStatus(environmentId);
+
+          if (!localStatus.running) {
+            const result = await startLocalOpencodeServer(environmentId);
+            localStatus = { running: true, port: result.port, pid: result.pid };
+          }
+
+          if (!mounted) return;
+
+          if (!localStatus.port) {
+            throw new Error("Local server started but no port available");
+          }
+
+          hostPort = localStatus.port;
+        } else {
+          // Containerized environment - use container server commands
+          if (!containerId) {
+            throw new Error("Container ID is required for containerized environments");
+          }
+
+          let status = await getOpenCodeServerStatus(containerId);
+
+          if (!status.running) {
+            const result = await startOpenCodeServer(containerId);
+            status = { running: true, hostPort: result.hostPort };
+          }
+
+          if (!mounted) return;
+
+          if (!status.hostPort) {
+            throw new Error("Server started but no port available");
+          }
+
+          hostPort = status.hostPort;
         }
 
-        if (!mounted) return;
-
-        if (!status.hostPort) {
-          throw new Error("Server started but no port available");
+        if (!hostPort) {
+          throw new Error("Failed to get server port");
         }
 
         setServerStatus(environmentId, {
           running: true,
-          hostPort: status.hostPort,
+          hostPort: hostPort,
         });
 
         // Create SDK client (shared per environment)
-        const baseUrl = `http://127.0.0.1:${status.hostPort}`;
+        const baseUrl = `http://127.0.0.1:${hostPort}`;
         console.debug("[OpenCodeChatTab] OpenCode server running at:", baseUrl);
         const sdkClient = createClient(baseUrl);
         setClient(environmentId, sdkClient);
@@ -195,8 +230,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         }
         setErrorMessage(message);
 
-        // Try to fetch server log for debugging if timeout error
-        if (message.includes("timeout")) {
+        // Try to fetch server log for debugging if timeout error (only for containerized environments)
+        if (message.includes("timeout") && !isLocal && containerId) {
           try {
             const log = await getOpenCodeServerLog(containerId);
             if (log) {
@@ -218,7 +253,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       // We also don't clear the client - it's shared per environment
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, isActive]);
+  }, [containerId, environmentId, tabId, isActive, isLocal]);
 
   // Start shared event subscription for the environment (only if not already running)
   const startSharedEventSubscription = useCallback(

@@ -261,7 +261,9 @@ export function ActionBar() {
     : null;
 
   const repoName = selectedProject?.name ?? null;
-  const isRunning = selectedEnvironment?.status === "running";
+  const isLocalEnvironment = selectedEnvironment?.environmentType === "local";
+  const isLocalReady = isLocalEnvironment && !!selectedEnvironment?.worktreePath;
+  const isRunning = isLocalReady || selectedEnvironment?.status === "running";
   const workspaceReady = selectedEnvironmentId ? isWorkspaceReady(selectedEnvironmentId) : false;
 
   const { prUrl, prState, hasMergeConflicts, viewPR } = usePullRequest({

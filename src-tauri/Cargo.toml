@@ -34,6 +34,7 @@ futures = "0.3"
 
 # Logging
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1.12.2"
 
 # HTTP client for health checks
@@ -43,6 +44,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 hex = "0.4"
 base64 = "0.22"
 tar = "0.4"
+
+# Local environment support
+rand = "0.8"
+portable-pty = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["signal", "process"] }
 
 # Note: macOS keychain access now uses the `security` CLI tool instead of
 # the security-framework crate. This allows us to retrieve credentials by

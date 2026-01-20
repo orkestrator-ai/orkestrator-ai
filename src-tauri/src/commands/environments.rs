@@ -9,7 +9,11 @@ use crate::docker::{
     remove_environment_container, start_environment_container, stop_environment_container,
     ContainerConfig, DockerError,
 };
-use crate::models::{Environment, EnvironmentStatus, NetworkAccessMode, PortMapping, PrState};
+use crate::local::{
+    allocate_ports, copy_env_files, create_worktree, delete_worktree,
+    stop_all_local_servers,
+};
+use crate::models::{Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState};
 use crate::storage::{get_config, get_storage, StorageError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -130,6 +134,7 @@ pub async fn create_environment(
     network_access_mode: Option<String>,
     initial_prompt: Option<String>,
     port_mappings: Option<Vec<PortMapping>>,
+    environment_type: Option<String>,
 ) -> Result<Environment, String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
 
@@ -144,12 +149,23 @@ pub async fn create_environment(
         .load_environments()
         .map_err(storage_error_to_string)?;
 
+    // Parse environment type (default to containerized for backward compatibility)
+    let env_type = match environment_type.as_deref() {
+        Some("local") => EnvironmentType::Local,
+        _ => EnvironmentType::Containerized,
+    };
+
     // Parse network access mode (default to full access).
     // Full access is the default because restricted mode has compatibility issues
     // with many tools and workflows, and most users prefer unrestricted networking.
-    let network_mode = match network_access_mode.as_deref() {
-        Some("restricted") => NetworkAccessMode::Restricted,
-        _ => NetworkAccessMode::Full,
+    // Local environments always have full network access.
+    let network_mode = if env_type == EnvironmentType::Local {
+        NetworkAccessMode::Full
+    } else {
+        match network_access_mode.as_deref() {
+            Some("restricted") => NetworkAccessMode::Restricted,
+            _ => NetworkAccessMode::Full,
+        }
     };
 
     // Determine if we should use background naming
@@ -166,10 +182,21 @@ pub async fn create_environment(
     };
 
     // Create the environment with a unique name
-    let mut environment = match base_name {
-        Some(name) => {
-            let unique_name = make_unique_name(&name, &existing_environments);
-            if unique_name != name {
+    let mut environment = match (&base_name, &env_type) {
+        (Some(name), EnvironmentType::Local) => {
+            let unique_name = make_unique_name(name, &existing_environments);
+            if unique_name != *name {
+                debug!(
+                    requested_name = %name,
+                    assigned_name = %unique_name,
+                    "Name already in use, using unique variant"
+                );
+            }
+            Environment::new_local(project_id.clone(), unique_name)
+        }
+        (Some(name), EnvironmentType::Containerized) => {
+            let unique_name = make_unique_name(name, &existing_environments);
+            if unique_name != *name {
                 debug!(
                     requested_name = %name,
                     assigned_name = %unique_name,
@@ -178,17 +205,37 @@ pub async fn create_environment(
             }
             Environment::with_name(project_id.clone(), unique_name)
         }
-        None => Environment::new(project_id.clone()),
+        (None, EnvironmentType::Local) => {
+            // Generate timestamp-based name for local environment
+            let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            Environment::new_local(project_id.clone(), timestamp)
+        }
+        (None, EnvironmentType::Containerized) => Environment::new(project_id.clone()),
     };
 
     // Set the network access mode
     environment.network_access_mode = network_mode;
 
-    // Set port mappings if provided
-    if let Some(mappings) = port_mappings {
-        if !mappings.is_empty() {
-            debug!(port_mappings = ?mappings, "Setting port mappings");
-            environment.port_mappings = Some(mappings);
+    // For local environments, allocate ports now
+    if env_type == EnvironmentType::Local {
+        let port_allocation = allocate_ports(&existing_environments)
+            .map_err(|e| format!("Failed to allocate ports: {}", e))?;
+        environment.local_opencode_port = Some(port_allocation.opencode_port);
+        environment.local_claude_port = Some(port_allocation.claude_port);
+        debug!(
+            opencode_port = port_allocation.opencode_port,
+            claude_port = port_allocation.claude_port,
+            "Allocated ports for local environment"
+        );
+    }
+
+    // Set port mappings if provided (only for containerized environments)
+    if env_type == EnvironmentType::Containerized {
+        if let Some(mappings) = port_mappings {
+            if !mappings.is_empty() {
+                debug!(port_mappings = ?mappings, "Setting port mappings");
+                environment.port_mappings = Some(mappings);
+            }
         }
     }
 
@@ -198,6 +245,7 @@ pub async fn create_environment(
         .map_err(storage_error_to_string)?;
 
     // If we have a prompt but no explicit name, spawn background task to generate name
+    // This applies to both containerized and local environments
     if should_background_name {
         // SAFETY: unwrap is safe here because should_background_name is only true when
         // initial_prompt.is_some() && !initial_prompt.as_ref().unwrap().trim().is_empty()
@@ -275,10 +323,46 @@ async fn background_rename_environment(
 
     debug!(environment_id = %environment_id, "Environment updated in storage");
 
-    // If container is running, rename the git branch inside the container
-    // We need to wait for the workspace setup to complete first (git clone happens there)
+    // Rename git branch based on environment type
     if let Ok(Some(env)) = storage.get_environment(&environment_id) {
-        if env.status == EnvironmentStatus::Running {
+        if env.is_local() {
+            // Local environment: rename branch in the worktree directly
+            if let Some(worktree_path) = &env.worktree_path {
+                debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Renaming git branch in local worktree");
+
+                // Use tokio Command to run git branch rename
+                match tokio::process::Command::new("git")
+                    .args(["-C", worktree_path, "branch", "-m", "--", &old_branch, &unique_name])
+                    .output()
+                    .await
+                {
+                    Ok(output) => {
+                        if output.status.success() {
+                            debug!(environment_id = %environment_id, "Git branch renamed in local worktree");
+                        } else {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            warn!(
+                                environment_id = %environment_id,
+                                old_branch = %old_branch,
+                                new_branch = %unique_name,
+                                stderr = %stderr,
+                                "Failed to rename git branch in local worktree"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            old_branch = %old_branch,
+                            new_branch = %unique_name,
+                            error = %e,
+                            "Failed to execute git branch rename command"
+                        );
+                    }
+                }
+            }
+        } else if env.status == EnvironmentStatus::Running {
+            // Containerized environment: rename branch inside the container
             if let Some(container_id) = &env.container_id {
                 debug!(environment_id = %environment_id, container_id = %container_id, "Renaming git branch in container");
                 if let Ok(docker) = get_docker_client() {
@@ -362,7 +446,7 @@ async fn background_rename_environment(
 pub async fn delete_environment(environment_id: String) -> Result<(), String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
 
-    // Get the environment first to check if we need to stop a container
+    // Get the environment first to check if we need to stop a container or delete a worktree
     // If this fails, we still try to remove the environment from storage
     let environment = match storage.get_environment(&environment_id) {
         Ok(env) => env,
@@ -373,23 +457,42 @@ pub async fn delete_environment(environment_id: String) -> Result<(), String> {
     };
 
     if let Some(env) = environment {
-        // If environment has a container, stop and remove it
-        if let Some(container_id) = &env.container_id {
-            // Stop container if running
-            if env.status == EnvironmentStatus::Running {
-                if let Err(e) = stop_environment_container(container_id).await {
-                    warn!(environment_id = %environment_id, error = %e, "Failed to stop container during deletion");
-                }
+        // Handle based on environment type
+        if env.is_local() {
+            // Local environment: stop servers and delete worktree
+            info!(environment_id = %environment_id, "Deleting local environment");
+
+            // Stop any running local servers
+            if let Err(e) = stop_all_local_servers(&environment_id).await {
+                warn!(environment_id = %environment_id, error = %e, "Failed to stop local servers during deletion");
             }
 
-            // Remove container (ignore errors - container may already be deleted)
-            if let Err(e) = remove_environment_container(container_id).await {
-                debug!(environment_id = %environment_id, error = %e, "Container removal skipped (may not exist)");
+            // Delete the worktree if it exists
+            if let (Some(worktree_path), Some(local_path)) = (&env.worktree_path, storage.get_project(&env.project_id).ok().flatten().and_then(|p| p.local_path)) {
+                debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Deleting worktree");
+                if let Err(e) = delete_worktree(&local_path, worktree_path).await {
+                    warn!(environment_id = %environment_id, error = %e, "Failed to delete worktree during deletion");
+                }
+            }
+        } else {
+            // Containerized environment: stop and remove container
+            if let Some(container_id) = &env.container_id {
+                // Stop container if running
+                if env.status == EnvironmentStatus::Running {
+                    if let Err(e) = stop_environment_container(container_id).await {
+                        warn!(environment_id = %environment_id, error = %e, "Failed to stop container during deletion");
+                    }
+                }
+
+                // Remove container (ignore errors - container may already be deleted)
+                if let Err(e) = remove_environment_container(container_id).await {
+                    debug!(environment_id = %environment_id, error = %e, "Container removal skipped (may not exist)");
+                }
             }
         }
     }
 
-    // Always try to remove from storage, even if container operations failed
+    // Always try to remove from storage, even if cleanup operations failed
     match storage.remove_environment(&environment_id) {
         Ok(()) => {
             info!(environment_id = %environment_id, "Environment deleted successfully");
@@ -716,7 +819,7 @@ pub async fn get_environment_status(environment_id: String) -> Result<Environmen
     Ok(environment.status)
 }
 
-/// Start an environment - creates and starts Docker container
+/// Start an environment - creates and starts Docker container or git worktree
 #[tauri::command]
 pub async fn start_environment(environment_id: String) -> Result<(), String> {
     info!(environment_id = %environment_id, "Starting environment");
@@ -737,6 +840,11 @@ pub async fn start_environment(environment_id: String) -> Result<(), String> {
         .ok_or_else(|| format!("Project not found: {}", environment.project_id))?;
 
     debug!(environment_id = %environment_id, project_name = %project.name, "Found project");
+
+    // Branch based on environment type
+    if environment.is_local() {
+        return start_local_environment(&environment_id, &environment, &project, &storage).await;
+    }
 
     // Get configuration
     let config = get_config().map_err(|e| e.to_string())?;
@@ -858,6 +966,91 @@ pub async fn start_environment(environment_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Start a local (worktree-based) environment
+async fn start_local_environment(
+    environment_id: &str,
+    environment: &Environment,
+    project: &crate::models::Project,
+    storage: &crate::storage::Storage,
+) -> Result<(), String> {
+    info!(
+        environment_id = %environment_id,
+        environment_name = %environment.name,
+        branch = %environment.branch,
+        project_id = %environment.project_id,
+        project_local_path = ?project.local_path,
+        existing_worktree_path = ?environment.worktree_path,
+        "Starting local environment"
+    );
+
+    // Update status to creating
+    storage
+        .update_environment(environment_id, json!({ "status": "creating" }))
+        .map_err(storage_error_to_string)?;
+
+    // Check if worktree already exists
+    if let Some(worktree_path) = &environment.worktree_path {
+        if std::path::Path::new(worktree_path).exists() {
+            debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Worktree already exists");
+            // Just update status to running
+            storage
+                .update_environment(environment_id, json!({ "status": "running" }))
+                .map_err(storage_error_to_string)?;
+            info!(environment_id = %environment_id, "Local environment started (existing worktree)");
+            return Ok(());
+        }
+    }
+
+    // Get the source repository path
+    let source_repo_path = project
+        .local_path
+        .as_ref()
+        .ok_or("Project has no local path - cannot create worktree")?;
+
+    // Create the git worktree
+    let worktree_result = create_worktree(source_repo_path, &environment.branch, &project.name)
+        .await
+        .map_err(|e| {
+            let err_msg = format!("Failed to create worktree: {}", e);
+            warn!(environment_id = %environment_id, error = %err_msg);
+            let _ = storage.update_environment(environment_id, json!({ "status": "error" }));
+            err_msg
+        })?;
+    let worktree_path = worktree_result.path;
+
+    if worktree_result.branch != environment.branch {
+        debug!(
+            environment_id = %environment_id,
+            old_branch = %environment.branch,
+            new_branch = %worktree_result.branch,
+            "Local environment branch was adjusted due to worktree conflict"
+        );
+    }
+
+    debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Worktree created");
+
+    // Copy .env files from source repo to worktree
+    if let Err(e) = copy_env_files(source_repo_path, &worktree_path) {
+        // Non-fatal - just log it
+        warn!(environment_id = %environment_id, error = %e, "Failed to copy env files (non-fatal)");
+    }
+
+    // Update environment with worktree path, branch (if adjusted), and status
+    storage
+        .update_environment(
+            environment_id,
+            json!({
+                "worktreePath": worktree_path,
+                "branch": worktree_result.branch,
+                "status": "running"
+            }),
+        )
+        .map_err(storage_error_to_string)?;
+
+    info!(environment_id = %environment_id, "Local environment started successfully");
+    Ok(())
+}
+
 /// Sync environment status with actual Docker container state
 #[tauri::command]
 pub async fn sync_environment_status(environment_id: String) -> Result<Environment, String> {
@@ -915,7 +1108,7 @@ pub async fn sync_environment_status(environment_id: String) -> Result<Environme
     Ok(environment)
 }
 
-/// Stop an environment - stops Docker container
+/// Stop an environment - stops Docker container or local servers
 #[tauri::command]
 pub async fn stop_environment(environment_id: String) -> Result<(), String> {
     info!(environment_id = %environment_id, "Stopping environment");
@@ -931,10 +1124,34 @@ pub async fn stop_environment(environment_id: String) -> Result<(), String> {
         environment_id = %environment_id,
         environment_name = %environment.name,
         container_id = ?environment.container_id,
+        environment_type = ?environment.environment_type,
         "Found environment"
     );
 
-    // Stop the container if it exists
+    // Handle local environments differently
+    if environment.is_local() {
+        // Stop any running local servers
+        if let Err(e) = stop_all_local_servers(&environment_id).await {
+            warn!(environment_id = %environment_id, error = %e, "Error stopping local servers");
+        }
+
+        // Clear PIDs and update status
+        storage
+            .update_environment(
+                &environment_id,
+                json!({
+                    "status": "stopped",
+                    "opencodePid": null,
+                    "claudeBridgePid": null
+                }),
+            )
+            .map_err(storage_error_to_string)?;
+
+        info!(environment_id = %environment_id, "Local environment stopped");
+        return Ok(());
+    }
+
+    // Stop the container if it exists (containerized environments)
     if let Some(container_id) = &environment.container_id {
         debug!(environment_id = %environment_id, container_id = %container_id, "Stopping container");
         let stop_result: Result<(), DockerError> =
@@ -959,6 +1176,7 @@ pub async fn stop_environment(environment_id: String) -> Result<(), String> {
 /// Recreate an environment - preserves filesystem state via docker commit, then creates new container with updated port mappings
 /// This is needed when port mappings change, as Docker port bindings are set at container creation time
 /// Note: All running processes will be terminated, but installed packages and file changes are preserved
+/// Note: This operation does not apply to local environments - they don't have containers to restart
 #[tauri::command]
 pub async fn recreate_environment(environment_id: String) -> Result<(), String> {
     info!(environment_id = %environment_id, "Recreating environment with docker commit (preserving filesystem state)");
@@ -971,6 +1189,12 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
         .get_environment(&environment_id)
         .map_err(storage_error_to_string)?
         .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    // Local environments don't support recreate/restart - they always "exist" as worktrees
+    if environment.is_local() {
+        debug!(environment_id = %environment_id, "Ignoring recreate request for local environment");
+        return Ok(());
+    }
 
     let project = storage
         .get_project(&environment.project_id)

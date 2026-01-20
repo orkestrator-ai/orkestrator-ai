@@ -6,11 +6,16 @@ import { eventEmitter } from "../services/event-emitter.js";
 const events = new Hono();
 
 events.get("/subscribe", (c) => {
+  const origin = c.req.header("origin");
+  const userAgent = c.req.header("user-agent");
+  console.debug("[events] SSE subscribe request", { origin, userAgent });
   return streamSSE(c, async (stream) => {
+    const connectedAt = new Date().toISOString();
+    console.debug("[events] SSE connection opened", { connectedAt });
     // Send initial connection event
     await stream.writeSSE({
       event: "connected",
-      data: JSON.stringify({ status: "connected", timestamp: new Date().toISOString() }),
+      data: JSON.stringify({ status: "connected", timestamp: connectedAt }),
     });
 
     // Keep track of whether the connection is still open
@@ -21,6 +26,10 @@ events.get("/subscribe", (c) => {
       if (!isOpen) return;
 
       try {
+        console.debug("[events] Forwarding event to SSE client", {
+          type: event.type,
+          sessionId: event.sessionId,
+        });
         await stream.writeSSE({
           event: event.type,
           data: JSON.stringify({
@@ -60,12 +69,14 @@ events.get("/subscribe", (c) => {
         // The stream will close when the client disconnects
         // We use onAbort to detect this
         c.req.raw.signal.addEventListener("abort", () => {
+          console.debug("[events] SSE connection aborted by client");
           resolve(undefined);
         });
       });
     } catch (error) {
       console.debug("[events] SSE connection closed:", error);
     } finally {
+      console.debug("[events] SSE connection cleanup");
       isOpen = false;
       clearInterval(keepaliveInterval);
       unsubscribe();

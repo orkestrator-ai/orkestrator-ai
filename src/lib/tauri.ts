@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Project,
   Environment,
+  EnvironmentType,
   AppConfig,
   GlobalConfig,
   RepositoryConfig,
@@ -70,9 +71,10 @@ export async function createEnvironment(
   name?: string,
   networkAccessMode?: NetworkAccessMode,
   initialPrompt?: string,
-  portMappings?: PortMapping[]
+  portMappings?: PortMapping[],
+  environmentType?: EnvironmentType
 ): Promise<Environment> {
-  return invoke<Environment>("create_environment", { projectId, name, networkAccessMode, initialPrompt, portMappings });
+  return invoke<Environment>("create_environment", { projectId, name, networkAccessMode, initialPrompt, portMappings, environmentType });
 }
 
 export async function deleteEnvironment(environmentId: string): Promise<void> {
@@ -762,4 +764,79 @@ export async function reorderSessions(
 /** Clean up orphaned buffer files (buffers without corresponding sessions) */
 export async function cleanupOrphanedBuffers(): Promise<string[]> {
   return invoke<string[]>("cleanup_orphaned_buffers", {});
+}
+
+// --- Local Server Commands (for local/worktree environments) ---
+
+export interface LocalServerStartResult {
+  port: number;
+  pid: number;
+  wasRunning: boolean;
+}
+
+export interface LocalServerStatus {
+  running: boolean;
+  port: number | null;
+  pid: number | null;
+}
+
+/** Start the local OpenCode server for a local environment */
+export async function startLocalOpencodeServer(environmentId: string): Promise<LocalServerStartResult> {
+  return invoke<LocalServerStartResult>("start_local_opencode_server_cmd", { environmentId });
+}
+
+/** Stop the local OpenCode server for a local environment */
+export async function stopLocalOpencodeServer(environmentId: string): Promise<void> {
+  return invoke("stop_local_opencode_server_cmd", { environmentId });
+}
+
+/** Get the status of the local OpenCode server for a local environment */
+export async function getLocalOpencodeServerStatus(environmentId: string): Promise<LocalServerStatus> {
+  return invoke<LocalServerStatus>("get_local_opencode_server_status", { environmentId });
+}
+
+/** Start the local Claude-bridge server for a local environment */
+export async function startLocalClaudeServer(environmentId: string): Promise<LocalServerStartResult> {
+  return invoke<LocalServerStartResult>("start_local_claude_server_cmd", { environmentId });
+}
+
+/** Stop the local Claude-bridge server for a local environment */
+export async function stopLocalClaudeServer(environmentId: string): Promise<void> {
+  return invoke("stop_local_claude_server_cmd", { environmentId });
+}
+
+/** Get the status of the local Claude-bridge server for a local environment */
+export async function getLocalClaudeServerStatus(environmentId: string): Promise<LocalServerStatus> {
+  return invoke<LocalServerStatus>("get_local_claude_server_status", { environmentId });
+}
+
+// --- Local Terminal Commands (for local/worktree environments) ---
+
+/** Create a local terminal session for a local environment */
+export async function createLocalTerminalSession(
+  environmentId: string,
+  cols: number,
+  rows: number
+): Promise<string> {
+  return invoke<string>("create_local_terminal_session", { environmentId, cols, rows });
+}
+
+/** Start a local terminal session and begin forwarding output */
+export async function startLocalTerminalSession(sessionId: string): Promise<void> {
+  return invoke("start_local_terminal_session", { sessionId });
+}
+
+/** Write data to a local terminal session */
+export async function writeLocalTerminal(sessionId: string, data: string): Promise<void> {
+  return invoke("local_terminal_write", { sessionId, data });
+}
+
+/** Resize a local terminal session */
+export async function resizeLocalTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
+  return invoke("local_terminal_resize", { sessionId, cols, rows });
+}
+
+/** Close a local terminal session */
+export async function closeLocalTerminalSession(sessionId: string): Promise<void> {
+  return invoke("close_local_terminal_session", { sessionId });
 }

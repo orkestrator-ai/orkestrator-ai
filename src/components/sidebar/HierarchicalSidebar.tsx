@@ -246,7 +246,8 @@ export function HierarchicalSidebar() {
         options.environmentName || undefined,
         options.networkAccessMode,
         options.initialPrompt || undefined,
-        options.portMappings.length > 0 ? options.portMappings : undefined
+        options.portMappings.length > 0 ? options.portMappings : undefined,
+        options.environmentType
       );
 
       // Store agent options for this environment (needed for terminal to know tab type)
@@ -341,6 +342,22 @@ export function HierarchicalSidebar() {
       const environment = allEnvironments.find((e) => e.id === environmentId);
       if (environment) {
         selectProjectAndEnvironment(environment.projectId, environmentId);
+        // Auto-start local environments on selection so a terminal can open
+        if (
+          environment.environmentType === "local" &&
+          !environment.worktreePath &&
+          environment.status !== "creating"
+        ) {
+          console.info("[HierarchicalSidebar] Auto-starting local environment:", {
+            environmentId: environment.id,
+            branch: environment.branch,
+            status: environment.status,
+            worktreePath: environment.worktreePath,
+          });
+          startEnvironment(environment.id).catch((err) => {
+            console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);
+          });
+        }
       }
     }
   };

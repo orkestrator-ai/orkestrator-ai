@@ -18,6 +18,9 @@ export type PrState = "open" | "merged" | "closed";
 /** Network access mode for environment containers */
 export type NetworkAccessMode = "full" | "restricted";
 
+/** Type of environment - containerized (Docker) or local (git worktree) */
+export type EnvironmentType = "containerized" | "local";
+
 /** Port protocol type for port mappings */
 export type PortProtocol = "tcp" | "udp";
 
@@ -53,6 +56,21 @@ export interface Environment {
   order: number;
   /** Port mappings for container (require restart to apply changes) */
   portMappings?: PortMapping[];
+
+  // === Local environment fields ===
+
+  /** Type of environment (containerized or local, defaults to containerized) */
+  environmentType: EnvironmentType;
+  /** Path to git worktree (only for local environments) */
+  worktreePath?: string;
+  /** PID of the opencode serve process (only for local environments) */
+  opencodePid?: number;
+  /** PID of the claude-bridge process (only for local environments) */
+  claudeBridgePid?: number;
+  /** Host port for opencode server (local mode) */
+  localOpencodePort?: number;
+  /** Host port for claude-bridge server (local mode) */
+  localClaudePort?: number;
 }
 
 /** Result of testing a domain for DNS resolution */

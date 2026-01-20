@@ -12,8 +12,20 @@ import events from "./routes/events.js";
 const app = new Hono();
 
 // Middleware
-app.use("*", cors());
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use("*", logger());
+app.use("*", async (c, next) => {
+  await next();
+  c.header("Access-Control-Allow-Private-Network", "true");
+});
+app.options("*", (c) => c.body(null, 204));
 
 // Mount routes
 app.route("/global", health);

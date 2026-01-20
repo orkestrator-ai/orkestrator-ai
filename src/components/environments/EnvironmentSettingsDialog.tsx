@@ -41,6 +41,8 @@ import {
   Network,
   Plus,
   Trash2,
+  Laptop,
+  FolderOpen,
 } from "lucide-react";
 import * as tauri from "@/lib/tauri";
 import { useConfigStore } from "@/stores";
@@ -334,6 +336,7 @@ export function EnvironmentSettingsDialog({
   };
 
   const isFullAccess = (environment.networkAccessMode ?? "restricted") === "full";
+  const isLocalEnvironment = environment.environmentType === "local";
   const hasErrors = nameError !== null || domainErrors.length > 0;
 
   return (
@@ -349,8 +352,8 @@ export function EnvironmentSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-6 py-4 overflow-y-auto flex-1 pr-2">
-          {/* LEFT COLUMN: Name and Network Access / Whitelist Domains */}
+        <div className={`${isLocalEnvironment ? "space-y-6" : "grid grid-cols-2 gap-6"} py-4 overflow-y-auto flex-1 pr-2`}>
+          {/* For local environments: single column, for containerized: two columns */}
           <div className="space-y-6">
             {/* Name section */}
             <div className="space-y-2">
@@ -366,7 +369,35 @@ export function EnvironmentSettingsDialog({
               )}
             </div>
 
-            {/* Network Access */}
+            {/* Local Environment Info */}
+            {isLocalEnvironment && (
+              <div className="space-y-4">
+                <Label>Environment Type</Label>
+                <div className="flex items-center gap-2 p-3 rounded-md bg-muted border border-input">
+                  <Laptop className="h-4 w-4 text-blue-500 shrink-0" />
+                  <div>
+                    <div className="font-medium text-sm">Local Environment</div>
+                    <div className="text-xs text-muted-foreground">
+                      Uses a git worktree on your machine (no Docker container)
+                    </div>
+                  </div>
+                </div>
+                {environment.worktreePath && (
+                  <div className="space-y-2">
+                    <Label>Worktree Location</Label>
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50 border border-input">
+                      <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm font-mono truncate">
+                        {environment.worktreePath}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Network Access - only for containerized environments */}
+            {!isLocalEnvironment && (
             <div className="space-y-4">
               <Label>Network Access</Label>
               <div className="flex items-center gap-2 p-3 rounded-md bg-muted border border-input">
@@ -488,9 +519,11 @@ export function EnvironmentSettingsDialog({
                 </>
               )}
             </div>
+            )}
           </div>
 
-          {/* RIGHT COLUMN: Port Mappings */}
+          {/* RIGHT COLUMN: Port Mappings - only for containerized environments */}
+          {!isLocalEnvironment && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -634,6 +667,7 @@ export function EnvironmentSettingsDialog({
               </div>
             )}
           </div>
+          )}
         </div>
 
         <DialogFooter className="shrink-0">

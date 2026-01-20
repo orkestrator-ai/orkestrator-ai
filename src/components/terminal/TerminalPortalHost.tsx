@@ -12,7 +12,7 @@ import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK } from "@/cons
 const DEFAULT_ROOT: PaneLeaf = { kind: "leaf", id: "default", tabs: [], activeTabId: null };
 
 interface TerminalPortalHostProps {
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
 }
 

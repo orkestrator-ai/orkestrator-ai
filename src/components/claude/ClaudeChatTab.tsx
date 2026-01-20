@@ -10,10 +10,17 @@ import {
   getSessionMessages,
   sendPrompt,
   subscribeToEvents,
+  checkHealth,
   ERROR_MESSAGE_PREFIX,
   type ClaudeQuestionRequest,
 } from "@/lib/claude-client";
-import { startClaudeServer, getClaudeServerStatus, getClaudeServerLog } from "@/lib/tauri";
+import {
+  startClaudeServer,
+  getClaudeServerStatus,
+  getClaudeServerLog,
+  startLocalClaudeServer,
+  getLocalClaudeServerStatus,
+} from "@/lib/tauri";
 import { ClaudeMessage } from "./ClaudeMessage";
 import { ClaudeComposeBar } from "./ClaudeComposeBar";
 import { ClaudeQuestionCard } from "./ClaudeQuestionCard";
@@ -30,7 +37,7 @@ interface ClaudeChatTabProps {
 type ConnectionState = "connecting" | "connected" | "error";
 
 export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeChatTabProps) {
-  const { containerId, environmentId } = data;
+  const { containerId, environmentId, isLocal } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -96,35 +103,83 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
     async function initialize() {
       try {
+        console.debug("[ClaudeChatTab] Initializing", {
+          tabId,
+          environmentId,
+          isLocal,
+          containerId,
+          connectionState,
+        });
         lastInitTimeRef.current = Date.now();
         setConnectionState("connecting");
         setErrorMessage(null);
 
-        let status = await getClaudeServerStatus(containerId);
+        let hostPort: number | null = null;
 
-        if (!status.running) {
-          const result = await startClaudeServer(containerId);
-          status = { running: true, hostPort: result.hostPort };
+        if (isLocal) {
+          // Local environment - use local server commands
+          let localStatus = await getLocalClaudeServerStatus(environmentId);
+          console.debug("[ClaudeChatTab] Local server status:", localStatus);
+
+          if (!localStatus.running) {
+            console.debug("[ClaudeChatTab] Starting local Claude server...");
+            const result = await startLocalClaudeServer(environmentId);
+            console.debug("[ClaudeChatTab] Local Claude server start result:", result);
+            localStatus = { running: true, port: result.port, pid: result.pid };
+          }
+
+          if (!mounted) return;
+
+          if (!localStatus.port) {
+            throw new Error("Local server started but no port available");
+          }
+
+          hostPort = localStatus.port;
+        } else {
+          // Containerized environment - use container server commands
+          if (!containerId) {
+            throw new Error("Container ID is required for containerized environments");
+          }
+
+          let status = await getClaudeServerStatus(containerId);
+          console.debug("[ClaudeChatTab] Container server status:", status);
+
+          if (!status.running) {
+            console.debug("[ClaudeChatTab] Starting container Claude server...");
+            const result = await startClaudeServer(containerId);
+            console.debug("[ClaudeChatTab] Container Claude server start result:", result);
+            status = { running: true, hostPort: result.hostPort };
+          }
+
+          if (!mounted) return;
+
+          if (!status.hostPort) {
+            throw new Error("Server started but no port available");
+          }
+
+          hostPort = status.hostPort;
         }
 
-        if (!mounted) return;
-
-        if (!status.hostPort) {
-          throw new Error("Server started but no port available");
+        if (!hostPort) {
+          throw new Error("Failed to get server port");
         }
 
         setServerStatus(environmentId, {
           running: true,
-          hostPort: status.hostPort,
+          hostPort: hostPort,
         });
 
-        const baseUrl = `http://127.0.0.1:${status.hostPort}`;
-        console.debug("[ClaudeChatTab] Claude bridge server running at:", baseUrl);
+        const baseUrl = `http://127.0.0.1:${hostPort}`;
+        console.debug("[ClaudeChatTab] Claude bridge server base URL:", baseUrl);
         const bridgeClient = createClient(baseUrl);
         setClient(environmentId, bridgeClient);
 
+        const healthy = await checkHealth(bridgeClient);
+        console.debug("[ClaudeChatTab] Claude bridge health:", healthy);
+        const modelsStart = Date.now();
         const availableModels = await getModels(bridgeClient);
         if (!mounted) return;
+        console.debug("[ClaudeChatTab] Available models:", availableModels, "durationMs:", Date.now() - modelsStart);
         setModels(availableModels);
 
         // Set default model if not already selected
@@ -148,6 +203,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
           tabSessionIdRef.current = newSession.sessionId;
           isInitializedRef.current = true;
+
+          console.debug("[ClaudeChatTab] Storing session in state", {
+            tabId,
+            sessionId: newSession.sessionId,
+            environmentId,
+          });
 
           setSession(tabId, {
             sessionId: newSession.sessionId,
@@ -175,7 +236,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         }
         setErrorMessage(message);
 
-        if (message.includes("timeout")) {
+        // Try to fetch server log for debugging if timeout error (only for containerized environments)
+        if (message.includes("timeout") && !isLocal && containerId) {
           try {
             const log = await getClaudeServerLog(containerId);
             if (log) {
@@ -194,7 +256,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       mounted = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, isActive]);
+  }, [containerId, environmentId, tabId, isActive, isLocal]);
 
   const startSharedEventSubscription = useCallback(
     async (bridgeClient: ReturnType<typeof createClient>) => {
@@ -210,6 +272,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       const { abortController } = subscriptionState;
 
       try {
+        console.debug("[ClaudeChatTab] Starting shared event subscription", { environmentId });
         const eventStream = subscribeToEvents(bridgeClient, abortController.signal);
         setEventStream(environmentId, eventStream);
 
@@ -227,6 +290,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           const doFetch = async () => {
             const now = Date.now();
             lastReloadTimeBySession.set(sessionId, now);
+            console.debug("[ClaudeChatTab] Fetching session messages", { sessionId, sessionTabId });
             const messages = await getSessionMessages(bridgeClient, sessionId);
             setMessages(sessionTabId, messages);
           };
@@ -255,6 +319,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
           const eventType = event?.type;
           const eventSessionId = event?.sessionId;
+          console.debug("[ClaudeChatTab] SSE event", { eventType, eventSessionId });
 
           if (!eventSessionId && !["question.asked", "question.answered"].includes(eventType || "")) {
             continue;
@@ -262,8 +327,16 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
           const sessions = useClaudeStore.getState().sessions;
 
+          // Debug: Log all stored sessions and whether we found a match
+          const sessionIds = Array.from(sessions.entries()).map(([tabId, state]) => ({
+            tabId,
+            sessionId: state.sessionId,
+          }));
+          let foundMatch = false;
+
           for (const [sessionTabId, sessionState] of sessions) {
             if (sessionState.sessionId !== eventSessionId) continue;
+            foundMatch = true;
 
             const isFinalEvent = eventType === "session.idle";
 
@@ -298,6 +371,15 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               };
               addMessage(sessionTabId, errorMessage);
             }
+          }
+
+          // Debug: Warn if no session matched the event
+          if (!foundMatch && eventSessionId && !["keepalive", "connected"].includes(eventType || "")) {
+            console.warn("[ClaudeChatTab] No session matched event", {
+              eventType,
+              eventSessionId,
+              storedSessions: sessionIds,
+            });
           }
 
           if (eventType === "question.asked") {

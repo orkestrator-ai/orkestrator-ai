@@ -13,8 +13,8 @@ import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK } from "@/cons
 export interface PersistentTerminalData {
   /** Unique tab ID */
   tabId: string;
-  /** Container ID for session scoping */
-  containerId: string;
+  /** Container ID for session scoping (null for local environments) */
+  containerId: string | null;
   /** Environment ID */
   environmentId: string;
   /** xterm.js Terminal instance */
@@ -52,7 +52,7 @@ export function createTerminalKey(environmentId: string, tabId: string): string 
  */
 export interface CreateTerminalOptions {
   tabId: string;
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
   appearance?: {
     fontFamily?: string;

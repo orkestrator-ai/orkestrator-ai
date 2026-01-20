@@ -14,7 +14,7 @@ const RESIZE_DEBOUNCE_MS = 100;
 
 interface PaneSplitContainerProps {
   split: PaneSplit;
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
   isActive: boolean;
   /** Currently dragged tab ID (for cross-pane visual feedback) */

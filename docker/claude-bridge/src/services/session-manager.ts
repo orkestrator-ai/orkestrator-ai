@@ -161,19 +161,43 @@ class ToolTracker {
   getTools(): NormalizedPart[] {
     return Array.from(this.tools.values());
   }
+
+  /** Get a specific tool by its ID */
+  getTool(toolUseId: string): NormalizedPart | undefined {
+    return this.tools.get(toolUseId);
+  }
+}
+
+/** Entry in the ordered parts sequence - either a thinking block or a tool reference */
+interface OrderedPartEntry {
+  type: "thinking" | "tool-ref";
+  /** For thinking: the thinking content. For tool-ref: the tool use ID */
+  value: string;
+  /** Message UUID this part belongs to (for streaming updates) */
+  messageUuid?: string;
 }
 
 /**
- * Parse SDK message content, extracting text/thinking parts and registering tools with tracker
+ * Parse SDK message content, extracting text/thinking parts, registering tools,
+ * and tracking the order of non-text parts for chronological display
  */
 function parseMessageContent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   message: any,
   toolTracker?: ToolTracker
-): { content: string; textParts: NormalizedPart[]; thinkingParts: NormalizedPart[] } {
+): {
+  content: string;
+  textParts: NormalizedPart[];
+  thinkingParts: NormalizedPart[];
+  /** Ordered sequence of thinking blocks and tool references as they appeared */
+  orderedParts: OrderedPartEntry[];
+} {
   const textParts: NormalizedPart[] = [];
   const thinkingParts: NormalizedPart[] = [];
+  const orderedParts: OrderedPartEntry[] = [];
   let textContent = "";
+
+  const messageUuid = message.uuid as string | undefined;
 
   // Handle message.message.content array (from Anthropic SDK format)
   const contentBlocks = message.message?.content || [];
@@ -186,9 +210,16 @@ function parseMessageContent(
         content: block.text || "",
       });
     } else if (block.type === "thinking") {
+      const thinkingContent = block.thinking || "";
       thinkingParts.push({
         type: "thinking",
-        content: block.thinking || "",
+        content: thinkingContent,
+      });
+      // Track order: add thinking entry
+      orderedParts.push({
+        type: "thinking",
+        value: thinkingContent,
+        messageUuid,
       });
     } else if (block.type === "tool_use" && toolTracker) {
       const toolName = block.name || "Unknown tool";
@@ -220,6 +251,12 @@ function parseMessageContent(
           toolDiff,
           toolUseId: block.id,
         });
+        // Track order: add tool reference
+        orderedParts.push({
+          type: "tool-ref",
+          value: block.id,
+          messageUuid,
+        });
       }
     } else if (block.type === "tool_result" && toolTracker) {
       // Update tool tracker with result
@@ -234,19 +271,41 @@ function parseMessageContent(
     }
   }
 
-  return { content: textContent, textParts, thinkingParts };
+  return { content: textContent, textParts, thinkingParts, orderedParts };
 }
 
 /**
- * Build message parts from parsed content and tracked tools
- * Order: thinking → tools → text
+ * Build message parts from ordered sequence and text
+ * Maintains chronological order of thinking blocks and tool invocations
  */
 function buildMessageParts(
-  thinkingParts: NormalizedPart[],
+  orderedParts: OrderedPartEntry[],
   toolTracker: ToolTracker,
   textParts: NormalizedPart[]
 ): NormalizedPart[] {
-  return [...thinkingParts, ...toolTracker.getTools(), ...textParts];
+  const result: NormalizedPart[] = [];
+
+  // Build parts in chronological order
+  for (const entry of orderedParts) {
+    if (entry.type === "thinking") {
+      result.push({
+        type: "thinking",
+        content: entry.value,
+        _messageUuid: entry.messageUuid,
+      });
+    } else if (entry.type === "tool-ref") {
+      // Look up the tool from the tracker
+      const tool = toolTracker.getTool(entry.value);
+      if (tool) {
+        result.push(tool);
+      }
+    }
+  }
+
+  // Add text parts at the end
+  result.push(...textParts);
+
+  return result;
 }
 
 /**
@@ -294,6 +353,12 @@ export async function sendPrompt(
     data: { status: "running" },
   });
 
+  const startedAt = Date.now();
+  let lastSdkMessageAt = Date.now();
+  let sdkMessageCount = 0;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let earlyWarningTimeout: ReturnType<typeof setTimeout> | null = null;
+
   try {
     // Build prompt parts
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -317,10 +382,20 @@ export async function sendPrompt(
     // Create the query with Claude Agent SDK
     // Extended thinking is enabled by default (thinking !== false)
     const thinkingEnabled = options?.thinking !== false;
+    const cwd = process.cwd();
+    console.log("[session-manager] Starting query", {
+      sessionId,
+      cwd,
+      model: options?.model,
+      resume: session.sdkSessionId ?? null,
+      thinkingEnabled,
+    });
+    const envPath = process.env.PATH;
+    console.log("[session-manager] SDK env PATH", { path: envPath });
     const queryIterator = query({
       prompt,
       options: {
-        cwd: "/workspace",
+        cwd,
         model: options?.model,
         permissionMode: "acceptEdits",
         // Enable extended thinking with up to 16K tokens (if enabled)
@@ -404,21 +479,62 @@ export async function sendPrompt(
       },
     });
 
+    // Log an early warning if SDK doesn't respond within 5 seconds
+    earlyWarningTimeout = setTimeout(() => {
+      if (sdkMessageCount === 0) {
+        console.warn("[session-manager] SDK has not responded after 5 seconds", {
+          sessionId,
+          cwd: process.cwd(),
+          model: options?.model,
+          status: session.status,
+        });
+      }
+    }, 5000);
+
+    heartbeat = setInterval(() => {
+      const idleMs = Date.now() - lastSdkMessageAt;
+      if (idleMs > 15000) {
+        console.warn("[session-manager] No SDK messages yet", {
+          sessionId,
+          idleMs,
+          sdkMessageCount,
+          status: session.status,
+        });
+      }
+    }, 15000);
+
     // Track current assistant message for updates
     let currentAssistantMessage: NormalizedMessage | null = null;
 
     // Tool tracker persists across all messages in this turn
     const toolTracker = new ToolTracker();
 
-    // Track accumulated text and thinking parts
+    // Track accumulated text parts and ordered non-text parts (thinking + tools in chronological order)
     let accumulatedTextParts: NormalizedPart[] = [];
-    let accumulatedThinkingParts: NormalizedPart[] = [];
+    let accumulatedOrderedParts: OrderedPartEntry[] = [];
+
+    // Track the last message UUID to detect when we're receiving a new assistant message
+    // vs streaming updates to the same message. This allows us to:
+    // - Replace parts during streaming (same UUID)
+    // - Accumulate parts across multiple assistant messages in a turn (different UUID)
+    let lastAssistantMessageUuid: string | null = null;
 
     // Process the async generator
     for await (const message of queryIterator) {
       if (abortController.signal.aborted) {
         break;
       }
+
+      sdkMessageCount += 1;
+      lastSdkMessageAt = Date.now();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const subtype = (message as any)?.subtype;
+      console.debug("[session-manager] SDK event received", {
+        sessionId,
+        type: message.type,
+        subtype,
+        sdkMessageCount,
+      });
 
       // Handle different message types from SDK
       if (message.type === "system" && message.subtype === "init") {
@@ -431,16 +547,40 @@ export async function sendPrompt(
         }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
-        const { content, textParts, thinkingParts } = parseMessageContent(message, toolTracker);
+        const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker);
 
-        // Update accumulated parts (replace, don't append - SDK sends full content each time)
+        // Get the message UUID to detect new messages vs streaming updates
+        const messageUuid = message.uuid as string | undefined;
+
+        // Update accumulated parts
+        // For text: always replace (SDK sends full text content each time)
         accumulatedTextParts = textParts;
-        if (thinkingParts.length > 0) {
-          accumulatedThinkingParts = thinkingParts;
+
+        // For ordered parts (thinking + tools): we need to handle two cases:
+        // 1. Streaming update to same message (same UUID): replace parts from this message
+        // 2. New assistant message (different UUID): accumulate parts
+        // This preserves chronological order across think → tool → think sequences
+        if (orderedParts.length > 0) {
+          if (messageUuid && messageUuid === lastAssistantMessageUuid) {
+            // Same message - replace (streaming update)
+            // Keep parts from previous messages, replace parts from this message
+            const previousParts = accumulatedOrderedParts.filter(
+              (p) => p.messageUuid !== messageUuid
+            );
+            accumulatedOrderedParts = [...previousParts, ...orderedParts];
+          } else {
+            // New message - accumulate ordered parts
+            accumulatedOrderedParts = [...accumulatedOrderedParts, ...orderedParts];
+          }
         }
 
-        // Build final parts: thinking → tools → text
-        const finalParts = buildMessageParts(accumulatedThinkingParts, toolTracker, accumulatedTextParts);
+        // Update the last message UUID
+        if (messageUuid) {
+          lastAssistantMessageUuid = messageUuid;
+        }
+
+        // Build final parts maintaining chronological order
+        const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker, accumulatedTextParts);
 
         if (!currentAssistantMessage) {
           currentAssistantMessage = {
@@ -451,9 +591,17 @@ export async function sendPrompt(
             timestamp: new Date().toISOString(),
           };
           session.messages.push(currentAssistantMessage);
+          console.debug("[session-manager] Created assistant message", {
+            sessionId,
+            messageId: currentAssistantMessage.id,
+          });
         } else {
           currentAssistantMessage.content = content;
           currentAssistantMessage.parts = finalParts;
+          console.debug("[session-manager] Updated assistant message", {
+            sessionId,
+            messageId: currentAssistantMessage.id,
+          });
         }
 
         eventEmitter.emit({
@@ -467,7 +615,7 @@ export async function sendPrompt(
 
         // Rebuild message parts with updated tool results
         if (currentAssistantMessage) {
-          const finalParts = buildMessageParts(accumulatedThinkingParts, toolTracker, accumulatedTextParts);
+          const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker, accumulatedTextParts);
           currentAssistantMessage.parts = finalParts;
 
           eventEmitter.emit({
@@ -480,9 +628,9 @@ export async function sendPrompt(
       } else if (message.type === "result") {
         // Query completed
         if (message.subtype === "success") {
-          console.log("[session-manager] Query completed successfully");
+          console.log("[session-manager] Query completed successfully", { sessionId });
         } else {
-          console.error("[session-manager] Query error:", message.subtype);
+          console.error("[session-manager] Query error:", message.subtype, { sessionId });
           if ("errors" in message && message.errors) {
             session.error = message.errors.join("\n");
           }
@@ -502,6 +650,12 @@ export async function sendPrompt(
       sessionId,
       data: { success: true },
     });
+
+    console.debug("[session-manager] Prompt completed", {
+      sessionId,
+      sdkMessageCount,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (error) {
     console.error("[session-manager] Error processing prompt:", error);
 
@@ -516,6 +670,13 @@ export async function sendPrompt(
     });
 
     throw error;
+  } finally {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
+    if (earlyWarningTimeout) {
+      clearTimeout(earlyWarningTimeout);
+    }
   }
 }
 
@@ -579,18 +740,21 @@ export async function getAvailableModels(): Promise<Array<{
   description?: string;
 }>> {
   try {
+    const cwd = process.cwd();
+    console.log("[session-manager] Fetching supported models", { cwd });
     // Create a query object to access supportedModels()
     // We use maxTurns: 0 to prevent any actual processing
     const q = query({
       prompt: "",
       options: {
         maxTurns: 0,
-        cwd: "/workspace",
+        cwd,
       },
     });
 
     // Get supported models from the query object
     const models = await q.supportedModels();
+    console.log("[session-manager] Supported models fetched", { count: models.length });
 
     // Clean up the query (don't consume the generator)
     if (q.return) {

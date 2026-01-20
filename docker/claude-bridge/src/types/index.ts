@@ -23,6 +23,8 @@ export interface NormalizedPart {
   toolDiff?: ToolDiffMetadata;
   /** Tool use ID for tracking tool invocations across messages */
   toolUseId?: string;
+  /** Internal: Message UUID for tracking thinking parts across streaming updates */
+  _messageUuid?: string;
 }
 
 /** Normalized message format */
