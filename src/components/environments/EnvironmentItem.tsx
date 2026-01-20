@@ -55,11 +55,14 @@ export function EnvironmentItem({
   // Local state to track transitioning - ensures spinner shows immediately
   const [isLocalTransitioning, setIsLocalTransitioning] = useState(false);
 
-  // Get Claude activity state for this container
+  // Get Claude activity state for this environment
+  // For terminal-based Claude, state is keyed by containerId
+  // For native Claude mode, state is keyed by environmentId
   const containerStates = useClaudeActivityStore((s) => s.containerStates);
-  const claudeActivityState = environment.containerId
-    ? containerStates[environment.containerId] || "idle"
-    : "idle";
+  const claudeActivityState =
+    containerStates[environment.id] ||  // Check by environmentId first (native mode)
+    (environment.containerId ? containerStates[environment.containerId] : null) ||  // Then by containerId (terminal mode)
+    "idle";
 
   // Check if this environment is being deleted
   const isEnvironmentDeleting = useEnvironmentStore((s) => s.isDeleting(environment.id));

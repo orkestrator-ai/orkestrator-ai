@@ -14,7 +14,12 @@ export function isGitFileStatus(value: unknown): value is GitFileStatus {
 // File data for file viewer tabs
 export interface FileTabData {
   filePath: string;
-  containerId: string;
+  /** Container ID (for containerized environments) */
+  containerId?: string;
+  /** Worktree path (for local environments) */
+  worktreePath?: string;
+  /** Whether this is a local environment */
+  isLocalEnvironment?: boolean;
   language?: string;
   // Diff-related fields
   /** Whether to show diff view instead of regular file view */

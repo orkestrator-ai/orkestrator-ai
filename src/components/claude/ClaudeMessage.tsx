@@ -814,75 +814,39 @@ function isTaskTool(toolName?: string): boolean {
   return toolName.toLowerCase() === "task";
 }
 
-/** Group tool parts so that non-Task tools following a Task are nested under it */
-interface GroupedTool {
-  part: ClaudeMessagePart;
-  childTools: ClaudeMessagePart[];
+/** Process parts to group tools under Tasks while preserving order */
+interface ProcessedPart {
+  type: "thinking" | "text" | "file" | "tool-group" | "task-group";
+  part?: ClaudeMessagePart;
+  childTools?: ClaudeMessagePart[];
 }
 
-function groupToolParts(toolParts: ClaudeMessagePart[]): GroupedTool[] {
-  const result: GroupedTool[] = [];
-  let currentTask: GroupedTool | null = null;
+function processPartsInOrder(parts: ClaudeMessagePart[]): ProcessedPart[] {
+  const result: ProcessedPart[] = [];
+  let currentTask: ProcessedPart | null = null;
 
-  for (const part of toolParts) {
-    if (isTaskTool(part.toolName)) {
-      // Start a new task group
-      currentTask = { part, childTools: [] };
-      result.push(currentTask);
-    } else if (currentTask) {
-      // Add to current task's children
-      currentTask.childTools.push(part);
-    } else {
-      // No current task, render as standalone
-      result.push({ part, childTools: [] });
+  for (const part of parts) {
+    if (part.type === "thinking" || part.type === "text" || part.type === "file") {
+      // Non-tool parts break any active Task context
+      currentTask = null;
+      result.push({ type: part.type, part });
+    } else if (part.type === "tool-invocation") {
+      if (isTaskTool(part.toolName)) {
+        // Start a new Task group
+        currentTask = { type: "task-group", part, childTools: [] };
+        result.push(currentTask);
+      } else if (currentTask) {
+        // Add to current Task's children
+        currentTask.childTools!.push(part);
+      } else {
+        // Standalone tool (no active Task)
+        result.push({ type: "tool-group", part });
+      }
     }
+    // Skip tool-result type - they're shown inline with invocations
   }
 
   return result;
-}
-
-/** Render a single message part based on its type */
-function MessagePart({ part }: { part: ClaudeMessagePart }) {
-  switch (part.type) {
-    case "thinking":
-      // Thinking parts are typically rendered directly in ClaudeMessage with isComplete
-      // If rendered through MessagePart, assume complete (collapsed by default)
-      return <ThinkingPart content={part.content || ""} isComplete={true} />;
-    case "text":
-      return <TextPart content={part.content || ""} />;
-    case "tool-invocation":
-      // Use specialized EditToolPart for edit/write tools
-      if (isEditTool(part.toolName)) {
-        return (
-          <EditToolPart
-            toolName={part.toolName}
-            toolState={part.toolState}
-            toolTitle={part.toolTitle}
-            toolOutput={part.toolOutput}
-            toolError={part.toolError}
-            toolDiff={part.toolDiff}
-          />
-        );
-      }
-      // Use generic ToolPart for other tools
-      return (
-        <ToolPart
-          toolName={part.toolName}
-          toolState={part.toolState}
-          toolTitle={part.toolTitle}
-          toolArgs={part.toolArgs}
-          toolOutput={part.toolOutput}
-          toolError={part.toolError}
-        />
-      );
-    case "tool-result":
-      // Tool results are typically shown inline with tool invocations
-      return null;
-    case "file":
-      return <FilePart path={part.content || ""} />;
-    default:
-      return null;
-  }
 }
 
 export const ClaudeMessage = memo(function ClaudeMessage({
@@ -891,17 +855,14 @@ export const ClaudeMessage = memo(function ClaudeMessage({
   const isUser = message.role === "user";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
 
-  // Group parts by type for better rendering order
-  const thinkingParts = message.parts.filter((p) => p.type === "thinking");
-  const toolParts = message.parts.filter((p) => p.type === "tool-invocation");
-  const textParts = message.parts.filter((p) => p.type === "text");
-  const fileParts = message.parts.filter((p) => p.type === "file");
+  // Process parts in order, grouping tools under Tasks
+  const processedParts = useMemo(
+    () => processPartsInOrder(message.parts),
+    [message.parts]
+  );
 
-  // Group tool parts to nest non-Task tools under Tasks
-  const groupedTools = useMemo(() => groupToolParts(toolParts), [toolParts]);
-
-  // Check if we have any text parts to show
-  const hasTextParts = textParts.length > 0;
+  // Check if we have any text parts (for determining if thinking is complete)
+  const hasTextParts = message.parts.some((p) => p.type === "text");
 
   // Render error messages with special styling
   if (isError) {
@@ -945,53 +906,67 @@ export const ClaudeMessage = memo(function ClaudeMessage({
           </span>
         </div>
 
-        {/* Message content - render parts in order: thinking, tools, text */}
+        {/* Message content - render parts in their natural order */}
         <div className="space-y-2">
-          {/* Thinking parts first (collapsible) - collapse when response is complete (has text parts) */}
-          {thinkingParts.map((part, i) => (
-            <ThinkingPart key={`thinking-${i}`} content={part.content || ""} isComplete={hasTextParts} />
-          ))}
-
-          {/* Tool invocations - grouped with Tasks containing their child tools */}
-          {groupedTools.length > 0 && (
-            <div className="space-y-1">
-              {groupedTools.map((group, i) => {
-                // Render Task tools with their children
-                if (isTaskTool(group.part.toolName)) {
+          {processedParts.map((processed, i) => {
+            switch (processed.type) {
+              case "thinking":
+                return (
+                  <ThinkingPart
+                    key={`thinking-${i}`}
+                    content={processed.part?.content || ""}
+                    isComplete={hasTextParts}
+                  />
+                );
+              case "text":
+                return <TextPart key={`text-${i}`} content={processed.part?.content || ""} />;
+              case "file":
+                return <FilePart key={`file-${i}`} path={processed.part?.content || ""} />;
+              case "task-group":
+                return (
+                  <TaskToolPart
+                    key={`task-${i}`}
+                    toolName={processed.part?.toolName}
+                    toolState={processed.part?.toolState}
+                    toolArgs={processed.part?.toolArgs}
+                    toolOutput={processed.part?.toolOutput}
+                    toolError={processed.part?.toolError}
+                    childTools={processed.childTools || []}
+                  />
+                );
+              case "tool-group":
+                // Use specialized EditToolPart for edit/write tools
+                if (isEditTool(processed.part?.toolName)) {
                   return (
-                    <TaskToolPart
-                      key={`task-${i}`}
-                      toolName={group.part.toolName}
-                      toolState={group.part.toolState}
-                      toolArgs={group.part.toolArgs}
-                      toolOutput={group.part.toolOutput}
-                      toolError={group.part.toolError}
-                      childTools={group.childTools}
+                    <EditToolPart
+                      key={`edit-${i}`}
+                      toolName={processed.part?.toolName}
+                      toolState={processed.part?.toolState}
+                      toolTitle={processed.part?.toolTitle}
+                      toolOutput={processed.part?.toolOutput}
+                      toolError={processed.part?.toolError}
+                      toolDiff={processed.part?.toolDiff}
                     />
                   );
                 }
-                // Render non-Task tools normally
-                return <MessagePart key={`tool-${i}`} part={group.part} />;
-              })}
-            </div>
-          )}
+                return (
+                  <ToolPart
+                    key={`tool-${i}`}
+                    toolName={processed.part?.toolName}
+                    toolState={processed.part?.toolState}
+                    toolTitle={processed.part?.toolTitle}
+                    toolArgs={processed.part?.toolArgs}
+                    toolOutput={processed.part?.toolOutput}
+                    toolError={processed.part?.toolError}
+                  />
+                );
+              default:
+                return null;
+            }
+          })}
 
-          {/* File attachments */}
-          {fileParts.length > 0 && (
-            <div className="space-y-1">
-              {fileParts.map((part, i) => (
-                <MessagePart key={`file-${i}`} part={part} />
-              ))}
-            </div>
-          )}
-
-          {/* Text content - the main response */}
-          {textParts.map((part, i) => (
-            <MessagePart key={`text-${i}`} part={part} />
-          ))}
-
-          {/* Fallback to raw content if no text parts were parsed */}
-          {!hasTextParts && message.content && (
+          {/* Fallback to raw content if no parts were processed */}
+          {processedParts.length === 0 && message.content && (
             <TextPart content={message.content} />
           )}
         </div>

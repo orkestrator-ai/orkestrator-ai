@@ -465,7 +465,11 @@ export function TerminalContainer({
   // Handler for creating file viewer tabs
   const handleCreateFileTab = useCallback(
     (filePath: string, options?: CreateFileTabOptions) => {
-      if (!containerId || !isContainerRunning) return;
+      // For container environments, need containerId and running state
+      // For local environments, need worktreePath
+      const canCreateForContainer = containerId && isContainerRunning;
+      const canCreateForLocal = isLocalEnvironment && worktreePath;
+      if (!canCreateForContainer && !canCreateForLocal) return;
 
       const allTabs = getAllTabs();
       if (allTabs.length >= MAX_TABS) {
@@ -501,17 +505,19 @@ export function TerminalContainer({
         type: "file",
         fileData: {
           filePath,
-          containerId,
+          containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
+          worktreePath: isLocalEnvironment ? worktreePath : undefined,
+          isLocalEnvironment,
           isDiff: options?.isDiff,
           gitStatus: validatedGitStatus,
           baseBranch: options?.isDiff ? targetBranch : undefined,
         },
       };
 
-      console.debug("[TerminalContainer] Creating file tab:", newTabId, "path:", filePath, "isDiff:", options?.isDiff, "for environment:", environmentId);
+      console.debug("[TerminalContainer] Creating file tab:", newTabId, "path:", filePath, "isDiff:", options?.isDiff, "isLocal:", isLocalEnvironment, "for environment:", environmentId);
       addTab(activePaneId, newTab, environmentId);
     },
-    [containerId, isContainerRunning, activePaneId, addTab, getAllTabs, targetBranch, environmentId]
+    [containerId, isContainerRunning, isLocalEnvironment, worktreePath, activePaneId, addTab, getAllTabs, targetBranch, environmentId]
   );
 
   // Handler for selecting a tab by index (for Ctrl+1, Ctrl+2, etc.)

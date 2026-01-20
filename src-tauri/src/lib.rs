@@ -218,13 +218,18 @@ pub fn run() {
             stop_claude_state_polling,
             // Editor commands
             open_in_editor,
-            // File commands
+            // File commands (container)
             get_git_status,
             get_file_tree,
             read_container_file,
             read_file_at_branch,
             read_container_file_base64,
             write_container_file,
+            // File commands (local environments)
+            get_local_git_status,
+            get_local_file_tree,
+            read_local_file,
+            read_local_file_at_branch,
             // OpenCode commands
             start_opencode_server,
             stop_opencode_server,

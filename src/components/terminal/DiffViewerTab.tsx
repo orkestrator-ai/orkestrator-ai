@@ -20,7 +20,12 @@ import type { GitFileStatus } from "@/types/paneLayout";
 
 interface DiffViewerTabProps {
   filePath: string;
-  containerId: string;
+  /** Container ID (for containerized environments) */
+  containerId?: string;
+  /** Worktree path (for local environments) */
+  worktreePath?: string;
+  /** Whether this is a local environment */
+  isLocalEnvironment?: boolean;
   baseBranch: string;
   gitStatus: GitFileStatus;
   isActive: boolean;
@@ -33,6 +38,8 @@ type DiffMode = "side-by-side" | "inline";
 export function DiffViewerTab({
   filePath,
   containerId,
+  worktreePath,
+  isLocalEnvironment = false,
   baseBranch,
   gitStatus,
   isActive,
@@ -91,10 +98,14 @@ export function DiffViewerTab({
         // Fetch current (modified) file content
         let modified: string | null = null;
         if (!isDeletedFile) {
-          const modifiedResult = await tauri.readContainerFile(
-            containerId,
-            filePath
-          );
+          let modifiedResult: tauri.FileContent;
+          if (isLocalEnvironment && worktreePath) {
+            modifiedResult = await tauri.readLocalFile(worktreePath, filePath);
+          } else if (containerId) {
+            modifiedResult = await tauri.readContainerFile(containerId, filePath);
+          } else {
+            throw new Error("No container ID or worktree path available");
+          }
           modified = modifiedResult.content;
           setDetectedLanguage(
             modifiedResult.language || language || "plaintext"
@@ -104,11 +115,14 @@ export function DiffViewerTab({
         // Fetch original file content from base branch
         let original: string | null = null;
         if (!isNewFile) {
-          const originalResult = await tauri.readFileAtBranch(
-            containerId,
-            filePath,
-            baseBranch
-          );
+          let originalResult: tauri.FileContent | null;
+          if (isLocalEnvironment && worktreePath) {
+            originalResult = await tauri.readLocalFileAtBranch(worktreePath, filePath, baseBranch);
+          } else if (containerId) {
+            originalResult = await tauri.readFileAtBranch(containerId, filePath, baseBranch);
+          } else {
+            throw new Error("No container ID or worktree path available");
+          }
           original = originalResult?.content ?? null;
         }
 
@@ -133,6 +147,8 @@ export function DiffViewerTab({
     };
   }, [
     containerId,
+    worktreePath,
+    isLocalEnvironment,
     filePath,
     baseBranch,
     gitStatus,
