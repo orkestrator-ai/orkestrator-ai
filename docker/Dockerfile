@@ -86,6 +86,12 @@ RUN claude install
 # Install OpenCode
 RUN curl -fsSL https://opencode.ai/install | bash
 
+# Copy and build Claude Bridge Server
+COPY --chown=node:node claude-bridge /opt/claude-bridge
+WORKDIR /opt/claude-bridge
+RUN npm install && npm run build && npm prune --production
+WORKDIR /workspace
+
 # Copy and set up firewall scripts
 COPY init-firewall.sh update-firewall.sh /usr/local/bin/
 USER root

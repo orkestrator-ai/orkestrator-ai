@@ -216,6 +216,11 @@ pub fn run() {
             stop_opencode_server,
             get_opencode_server_status,
             get_opencode_server_log,
+            // Claude bridge commands
+            start_claude_server,
+            stop_claude_server,
+            get_claude_server_status,
+            get_claude_server_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

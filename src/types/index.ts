@@ -113,6 +113,9 @@ export type DefaultAgent = "claude" | "opencode";
 /** OpenCode mode - terminal CLI or native chat interface */
 export type OpenCodeMode = "terminal" | "native";
 
+/** Claude mode - terminal CLI or native chat interface */
+export type ClaudeMode = "terminal" | "native";
+
 /** Terminal appearance settings */
 export interface TerminalAppearance {
   /** Font family for terminal and code editor */
@@ -138,6 +141,8 @@ export interface GlobalConfig {
   opencodeModel: string;
   /** OpenCode mode - terminal CLI or native chat interface */
   opencodeMode: OpenCodeMode;
+  /** Claude mode - terminal CLI or native chat interface */
+  claudeMode: ClaudeMode;
   /** Terminal appearance settings (font, size, colors) */
   terminalAppearance: TerminalAppearance;
   /** Terminal scrollback buffer size (lines) */

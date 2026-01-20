@@ -401,6 +401,38 @@ export async function getOpenCodeServerLog(containerId: string): Promise<string>
   return invoke<string>("get_opencode_server_log", { containerId });
 }
 
+// --- Claude Bridge Server Commands ---
+
+export interface ClaudeServerStartResult {
+  hostPort: number;
+  wasRunning: boolean;
+}
+
+export interface ClaudeServerStatus {
+  running: boolean;
+  hostPort: number | null;
+}
+
+/** Start the Claude bridge server in a container */
+export async function startClaudeServer(containerId: string): Promise<ClaudeServerStartResult> {
+  return invoke<ClaudeServerStartResult>("start_claude_server", { containerId });
+}
+
+/** Stop the Claude bridge server in a container */
+export async function stopClaudeServer(containerId: string): Promise<void> {
+  return invoke("stop_claude_server", { containerId });
+}
+
+/** Get the status of the Claude bridge server in a container */
+export async function getClaudeServerStatus(containerId: string): Promise<ClaudeServerStatus> {
+  return invoke<ClaudeServerStatus>("get_claude_server_status", { containerId });
+}
+
+/** Get the Claude bridge server log from a container (for debugging) */
+export async function getClaudeServerLog(containerId: string): Promise<string> {
+  return invoke<string>("get_claude_server_log", { containerId });
+}
+
 // --- Credential Commands ---
 
 export interface CredentialStatus {
