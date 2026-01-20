@@ -29,17 +29,17 @@ const questionResolvers = new Map<
 >();
 
 /**
- * Generate a unique session ID
+ * Generate a unique session ID using crypto.randomUUID for guaranteed uniqueness
  */
 function generateSessionId(): string {
-  return `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  return `session-${crypto.randomUUID()}`;
 }
 
 /**
- * Generate a unique message ID
+ * Generate a unique message ID using crypto.randomUUID for guaranteed uniqueness
  */
 function generateMessageId(): string {
-  return `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  return `msg-${crypto.randomUUID()}`;
 }
 
 /**
@@ -491,33 +491,7 @@ export async function sendPrompt(
         // Streaming partial message - could handle for real-time updates
         // For now, we rely on full assistant messages
       }
-
-      // Check for AskUserQuestion tool in assistant messages
-      // This would require inspecting tool_use blocks
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const msgContent = (message as any).message?.content || [];
-      for (const block of msgContent) {
-        if (block.type === "tool_use" && block.name === "AskUserQuestion") {
-          // Extract question info
-          const questionRequest: QuestionRequest = {
-            id: block.id || generateMessageId(),
-            sessionId,
-            questions: block.input?.questions || [],
-            toolUseId: block.id,
-          };
-
-          pendingQuestions.set(questionRequest.id, questionRequest);
-
-          eventEmitter.emit({
-            type: "question.asked",
-            sessionId,
-            data: questionRequest,
-          });
-
-          // Wait for answer (this would need to be handled differently
-          // in a real implementation with proper async handling)
-        }
-      }
+      // Note: AskUserQuestion tool handling is done in the canUseTool callback above
     }
 
     session.status = "idle";

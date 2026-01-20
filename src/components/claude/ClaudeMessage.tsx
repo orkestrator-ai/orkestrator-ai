@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useMemo, useRef, type AnchorHTMLAttributes } from "react";
+import { memo, useCallback, useState, useMemo, useRef, useEffect, type AnchorHTMLAttributes } from "react";
 import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -46,15 +46,18 @@ function ThinkingPart({ content, isComplete }: { content: string; isComplete: bo
   // Start expanded while thinking, collapse when complete
   const [isOpen, setIsOpen] = useState(!isComplete);
 
+  // Track previous isComplete value to detect changes
+  const prevIsCompleteRef = useRef(isComplete);
+
   // Auto-collapse when response completes (isComplete changes from false to true)
   // But don't auto-expand if user manually collapsed
-  const prevIsCompleteRef = useRef(isComplete);
-  if (prevIsCompleteRef.current !== isComplete) {
-    prevIsCompleteRef.current = isComplete;
-    if (isComplete) {
+  useEffect(() => {
+    // Only collapse when transitioning from incomplete to complete
+    if (isComplete && !prevIsCompleteRef.current) {
       setIsOpen(false);
     }
-  }
+    prevIsCompleteRef.current = isComplete;
+  }, [isComplete]);
 
   // Get truncated preview of thinking content for collapsed state
   const thinkingPreview = useMemo(() => {

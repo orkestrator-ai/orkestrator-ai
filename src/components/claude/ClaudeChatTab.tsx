@@ -58,6 +58,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     getOrCreateEventSubscription,
     setEventStream,
     hasActiveEventSubscription,
+    isThinkingEnabled,
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
@@ -388,9 +389,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     ) {
       initialPromptSentRef.current = true;
       console.debug("[ClaudeChatTab] Sending initial prompt for tab:", tabId);
-      handleSendRef.current?.(initialPrompt, [], true);
+      // Use the user's thinking preference instead of hardcoding true
+      const thinkingEnabled = isThinkingEnabled(environmentId);
+      handleSendRef.current?.(initialPrompt, [], thinkingEnabled);
     }
-  }, [connectionState, client, session, initialPrompt, tabId]);
+  }, [connectionState, client, session, initialPrompt, tabId, environmentId, isThinkingEnabled]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");

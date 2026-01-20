@@ -46,7 +46,8 @@ events.get("/subscribe", (c) => {
           event: "keepalive",
           data: JSON.stringify({ timestamp: new Date().toISOString() }),
         });
-      } catch {
+      } catch (error) {
+        console.debug("[events] Keepalive failed, closing connection:", error);
         isOpen = false;
         clearInterval(keepaliveInterval);
       }
@@ -62,8 +63,8 @@ events.get("/subscribe", (c) => {
           resolve(undefined);
         });
       });
-    } catch {
-      // Connection closed
+    } catch (error) {
+      console.debug("[events] SSE connection closed:", error);
     } finally {
       isOpen = false;
       clearInterval(keepaliveInterval);

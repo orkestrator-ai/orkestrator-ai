@@ -140,8 +140,25 @@ export function ClaudeComposeBar({
         addAttachment(environmentId, attachment);
       } catch (e) {
         // Clipboard read errors are expected when no image is present - ignore silently
+        // Check for known clipboard-related error patterns across platforms
+        const isExpectedClipboardError = (error: unknown): boolean => {
+          if (!(error instanceof Error)) return false;
+          const msg = error.message.toLowerCase();
+          const name = error.name?.toLowerCase() ?? "";
+          // Common clipboard error patterns across platforms/browsers
+          return (
+            msg.includes("clipboard") ||
+            msg.includes("no image") ||
+            msg.includes("not found") ||
+            msg.includes("empty") ||
+            msg.includes("unavailable") ||
+            name.includes("clipboard") ||
+            name.includes("notfounderror")
+          );
+        };
+
         // Log unexpected errors for debugging
-        if (e instanceof Error && !e.message.toLowerCase().includes("clipboard")) {
+        if (!isExpectedClipboardError(e)) {
           console.error("[ClaudeComposeBar] Unexpected paste error:", e);
         }
         // Let text paste through by not preventing default
