@@ -1,6 +1,7 @@
 // Tauri commands module
 // Commands are exposed to the frontend via the invoke API
 
+mod claude;
 mod claude_cli;
 mod claude_state;
 mod config;
@@ -16,6 +17,7 @@ mod projects;
 mod sessions;
 mod terminal;
 
+pub use claude::*;
 pub use claude_cli::*;
 pub use claude_state::*;
 pub use config::*;

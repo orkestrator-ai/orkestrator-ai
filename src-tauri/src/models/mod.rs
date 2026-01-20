@@ -463,6 +463,17 @@ pub enum OpenCodeMode {
     Native,
 }
 
+/// Claude mode - terminal CLI or native chat interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeMode {
+    /// Terminal mode - launches Claude CLI in terminal
+    #[default]
+    Terminal,
+    /// Native mode - uses Claude Agent SDK with chat interface
+    Native,
+}
+
 impl PreferredEditor {
     /// Get the CLI command for this editor
     pub fn cli_command(&self) -> &'static str {
@@ -553,6 +564,9 @@ pub struct GlobalConfig {
     /// OpenCode mode - terminal CLI or native chat interface
     #[serde(default)]
     pub opencode_mode: OpenCodeMode,
+    /// Claude mode - terminal CLI or native chat interface
+    #[serde(default)]
+    pub claude_mode: ClaudeMode,
     /// Terminal appearance settings (font, size, colors)
     #[serde(default)]
     pub terminal_appearance: TerminalAppearance,
@@ -573,6 +587,7 @@ impl Default for GlobalConfig {
             default_agent: DefaultAgent::default(),
             opencode_model: default_opencode_model(),
             opencode_mode: OpenCodeMode::default(),
+            claude_mode: ClaudeMode::default(),
             terminal_appearance: TerminalAppearance::default(),
             terminal_scrollback: default_terminal_scrollback(),
         }

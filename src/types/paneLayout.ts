@@ -37,6 +37,18 @@ export interface OpenCodeNativeData {
   sessionId?: string;
 }
 
+// Data for Claude native chat tabs
+export interface ClaudeNativeData {
+  /** Container ID for the environment */
+  containerId: string;
+  /** Environment ID */
+  environmentId: string;
+  /** Host port for the Claude bridge server (assigned on server start) */
+  hostPort?: number;
+  /** Active session ID */
+  sessionId?: string;
+}
+
 // Tab information stored in pane leaves
 export interface TabInfo {
   id: string;
@@ -44,6 +56,8 @@ export interface TabInfo {
   fileData?: FileTabData;
   /** Data for opencode-native tabs */
   openCodeNativeData?: OpenCodeNativeData;
+  /** Data for claude-native tabs */
+  claudeNativeData?: ClaudeNativeData;
   /** Initial prompt to send to agent (only for claude/opencode tabs) */
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */
