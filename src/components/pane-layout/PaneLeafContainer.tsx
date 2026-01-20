@@ -14,7 +14,7 @@ import { DropZoneOverlay } from "./DropZoneOverlay";
 
 interface PaneLeafContainerProps {
   pane: PaneLeaf;
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
   isActive: boolean;
   /** Currently dragged tab ID (for cross-pane visual feedback) */

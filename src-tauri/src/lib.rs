@@ -5,6 +5,7 @@ mod claude_cli;
 mod commands;
 mod credentials;
 mod docker;
+mod local;
 mod models;
 mod pty;
 mod storage;
@@ -13,16 +14,29 @@ use commands::*;
 use bollard::Docker;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
+use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,orkestrator_ai_lib=debug"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
+
     // Initialize terminal manager if Docker is available
     if Docker::connect_with_local_defaults().is_ok() {
         pty::init_terminal_manager();
-        println!("[init] Terminal manager initialized");
+        info!("Terminal manager initialized");
     } else {
-        println!("[init] Warning: Could not initialize terminal manager - Docker not available");
+        warn!("Could not initialize terminal manager - Docker not available");
     }
+
+    // Initialize local terminal manager (always available for local environments)
+    local::init_local_terminal_manager();
+    info!("Local terminal manager initialized");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -221,6 +235,19 @@ pub fn run() {
             stop_claude_server,
             get_claude_server_status,
             get_claude_server_log,
+            // Local server commands (for local/worktree environments)
+            start_local_opencode_server_cmd,
+            stop_local_opencode_server_cmd,
+            get_local_opencode_server_status,
+            start_local_claude_server_cmd,
+            stop_local_claude_server_cmd,
+            get_local_claude_server_status,
+            // Local terminal commands (for local/worktree environments)
+            create_local_terminal_session,
+            start_local_terminal_session,
+            local_terminal_write,
+            local_terminal_resize,
+            close_local_terminal_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

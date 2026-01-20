@@ -5,12 +5,12 @@ import { create } from "zustand";
  * This ensures tab IDs (which may be reused across environments, e.g., "default")
  * don't collide when multiple environments are running.
  *
- * @param containerId - The container ID (must be non-null when sessions exist)
+ * @param containerId - The container ID (null for local environments)
  * @param tabId - The tab ID within the environment
- * @returns A unique session key in the format "containerId:tabId"
+ * @returns A unique session key in the format "containerId:tabId" or "local:tabId"
  */
-export function createSessionKey(containerId: string, tabId: string): string {
-  return `${containerId}:${tabId}`;
+export function createSessionKey(containerId: string | null, tabId: string): string {
+  return `${containerId ?? "local"}:${tabId}`;
 }
 
 /**

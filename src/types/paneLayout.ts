@@ -27,26 +27,30 @@ export interface FileTabData {
 
 // Data for OpenCode native chat tabs
 export interface OpenCodeNativeData {
-  /** Container ID for the environment */
-  containerId: string;
+  /** Container ID for the environment (undefined for local environments) */
+  containerId?: string;
   /** Environment ID */
   environmentId: string;
   /** Host port for the OpenCode server (assigned on server start) */
   hostPort?: number;
   /** Active session ID */
   sessionId?: string;
+  /** Whether this is a local environment (no container) */
+  isLocal?: boolean;
 }
 
 // Data for Claude native chat tabs
 export interface ClaudeNativeData {
-  /** Container ID for the environment */
-  containerId: string;
+  /** Container ID for the environment (undefined for local environments) */
+  containerId?: string;
   /** Environment ID */
   environmentId: string;
   /** Host port for the Claude bridge server (assigned on server start) */
   hostPort?: number;
   /** Active session ID */
   sessionId?: string;
+  /** Whether this is a local environment (no container) */
+  isLocal?: boolean;
 }
 
 // Tab information stored in pane leaves

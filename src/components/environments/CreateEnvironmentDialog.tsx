@@ -24,10 +24,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Shield, Globe, Network, Plus, Trash2, ChevronDown } from "lucide-react";
+import { Loader2, Shield, Globe, Network, Plus, Trash2, ChevronDown, Container, Laptop } from "lucide-react";
 import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import { cn } from "@/lib/utils";
-import type { NetworkAccessMode, PortMapping, PortProtocol } from "@/types";
+import type { EnvironmentType, NetworkAccessMode, PortMapping, PortProtocol } from "@/types";
 import type { AgentType } from "@/stores";
 import { useConfigStore } from "@/stores";
 
@@ -35,6 +35,7 @@ import { useConfigStore } from "@/stores";
 const EMPTY_PORT_MAPPINGS: PortMapping[] = [];
 
 export interface ClaudeOptions {
+  environmentType: EnvironmentType;
   environmentName: string;
   launchAgent: boolean;
   agentType: AgentType;
@@ -62,6 +63,7 @@ export function CreateEnvironmentDialog({
   const { config } = useConfigStore();
   const configDefaultAgent = config.global.defaultAgent || "claude";
 
+  const [environmentType, setEnvironmentType] = useState<EnvironmentType>("containerized");
   const [environmentName, setEnvironmentName] = useState("");
   const [launchAgent, setLaunchAgent] = useState(true);
   const [agentType, setAgentType] = useState<AgentType>(configDefaultAgent);
@@ -84,6 +86,7 @@ export function CreateEnvironmentDialog({
   }, [open, launchAgent]);
 
   const resetForm = useCallback(() => {
+    setEnvironmentType("containerized");
     setEnvironmentName("");
     setLaunchAgent(true);
     setAgentType(configDefaultAgent);
@@ -161,6 +164,7 @@ export function CreateEnvironmentDialog({
 
       try {
         await onCreate({
+          environmentType,
           environmentName: environmentName.trim(),
           launchAgent,
           agentType,
@@ -173,7 +177,7 @@ export function CreateEnvironmentDialog({
         console.error("Failed to create environment:", err);
       }
     },
-    [environmentName, launchAgent, agentType, initialPrompt, networkAccessMode, portMappings, onCreate, handleOpenChange, validatePortMappings]
+    [environmentType, environmentName, launchAgent, agentType, initialPrompt, networkAccessMode, portMappings, onCreate, handleOpenChange, validatePortMappings]
   );
 
   const handlePromptKeyDown = useCallback(
@@ -210,8 +214,59 @@ export function CreateEnvironmentDialog({
         </DialogHeader>
 
         <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
+          {/* Environment Type Selector */}
+          <div className="space-y-2">
+            <Label>Environment Type</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setEnvironmentType("containerized")}
+                disabled={isLoading}
+                className={cn(
+                  "p-3 rounded-lg border-2 text-left transition-colors",
+                  environmentType === "containerized"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50",
+                  isLoading && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Container className="h-4 w-4" />
+                  <div>
+                    <div className="font-medium text-sm">Containerized</div>
+                    <div className="text-xs text-muted-foreground">Isolated Docker environment</div>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEnvironmentType("local")}
+                disabled={isLoading}
+                className={cn(
+                  "p-3 rounded-lg border-2 text-left transition-colors",
+                  environmentType === "local"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50",
+                  isLoading && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Laptop className="h-4 w-4" />
+                  <div>
+                    <div className="font-medium text-sm">Local</div>
+                    <div className="text-xs text-muted-foreground">Git worktree on your machine</div>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* Top row: Environment Name and Network Access */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className={cn(
+            "grid gap-4",
+            environmentType === "containerized" ? "grid-cols-2" : "grid-cols-1"
+          )}>
             {/* Environment Name */}
             <div className="space-y-2">
               <Label htmlFor="environment-name">
@@ -229,52 +284,54 @@ export function CreateEnvironmentDialog({
               </p>
             </div>
 
-            {/* Network Access Mode */}
-            <div className="space-y-2">
-              <Label>Network Access</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setNetworkAccessMode("restricted")}
-                  disabled={isLoading}
-                  className={cn(
-                    "p-2 rounded-lg border-2 text-left transition-colors",
-                    networkAccessMode === "restricted"
-                      ? "border-primary bg-primary/5"
-                      : "border-muted hover:border-muted-foreground/50",
-                    isLoading && "opacity-50 cursor-not-allowed"
-                  )}
-                >
-                  <div className="flex items-center gap-1.5 font-medium text-sm">
-                    <Shield className="h-3.5 w-3.5" />
-                    Restricted
-                  </div>
-                </button>
+            {/* Network Access Mode - only for containerized environments */}
+            {environmentType === "containerized" && (
+              <div className="space-y-2">
+                <Label>Network Access</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNetworkAccessMode("restricted")}
+                    disabled={isLoading}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      networkAccessMode === "restricted"
+                        ? "border-primary bg-primary/5"
+                        : "border-muted hover:border-muted-foreground/50",
+                      isLoading && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 font-medium text-sm">
+                      <Shield className="h-3.5 w-3.5" />
+                      Restricted
+                    </div>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setNetworkAccessMode("full")}
-                  disabled={isLoading}
-                  className={cn(
-                    "p-2 rounded-lg border-2 text-left transition-colors",
-                    networkAccessMode === "full"
-                      ? "border-primary bg-primary/5"
-                      : "border-muted hover:border-muted-foreground/50",
-                    isLoading && "opacity-50 cursor-not-allowed"
-                  )}
-                >
-                  <div className="flex items-center gap-1.5 font-medium text-sm">
-                    <Globe className="h-3.5 w-3.5" />
-                    Full Access
-                  </div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setNetworkAccessMode("full")}
+                    disabled={isLoading}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      networkAccessMode === "full"
+                        ? "border-primary bg-primary/5"
+                        : "border-muted hover:border-muted-foreground/50",
+                      isLoading && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 font-medium text-sm">
+                      <Globe className="h-3.5 w-3.5" />
+                      Full Access
+                    </div>
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {networkAccessMode === "restricted"
+                    ? "Only GitHub, npm, Anthropic API allowed."
+                    : "Unrestricted internet access."}
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                {networkAccessMode === "restricted"
-                  ? "Only GitHub, npm, Anthropic API allowed."
-                  : "Unrestricted internet access."}
-              </p>
-            </div>
+            )}
           </div>
 
           {/* Toggle switches row */}
@@ -344,7 +401,8 @@ export function CreateEnvironmentDialog({
             </div>
           </div>
 
-          {/* Port Configuration */}
+          {/* Port Configuration - only for containerized environments */}
+          {environmentType === "containerized" && (
           <Collapsible open={showPortConfig} onOpenChange={setShowPortConfig}>
             <CollapsibleTrigger asChild>
               <Button
@@ -458,6 +516,7 @@ export function CreateEnvironmentDialog({
               </Button>
             </CollapsibleContent>
           </Collapsible>
+          )}
 
           {/* Initial Prompt */}
           {launchAgent && (
@@ -488,7 +547,7 @@ export function CreateEnvironmentDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading || !validatePortMappings()}>
+            <Button type="submit" disabled={isLoading || (environmentType === "containerized" && !validatePortMappings())}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create Environment
             </Button>

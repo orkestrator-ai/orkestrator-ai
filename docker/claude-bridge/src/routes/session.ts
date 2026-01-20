@@ -26,6 +26,7 @@ session.post("/create", async (c) => {
     const title = body.title as string | undefined;
 
     const newSession = createSession(title);
+    console.debug("[session] Created session", { sessionId: newSession.id, title: newSession.title });
 
     const response: CreateSessionResponse = {
       sessionId: newSession.id,
@@ -120,11 +121,20 @@ session.post("/:id/prompt", async (c) => {
       return c.json({ error: "Prompt is required" }, 400);
     }
 
+    console.debug("[session] Prompt received", {
+      sessionId: id,
+      promptLength: prompt.length,
+      model,
+      thinking,
+      attachmentsCount: attachments?.length ?? 0,
+    });
+
     // Start processing in background (don't await)
     sendPrompt(id, prompt, { model, attachments, thinking }).catch((error) => {
       console.error("[session] Error processing prompt:", error);
     });
 
+    console.debug("[session] Prompt accepted", { sessionId: id });
     return c.json({ status: "processing" }, 202);
   } catch (error) {
     console.error("[session] Error sending prompt:", error);

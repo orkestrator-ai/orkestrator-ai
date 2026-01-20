@@ -13,8 +13,10 @@ class EventEmitter {
    */
   subscribe(callback: EventCallback): () => void {
     this.subscribers.add(callback);
+    console.debug("[event-emitter] Subscriber added", { count: this.subscribers.size });
     return () => {
       this.subscribers.delete(callback);
+      console.debug("[event-emitter] Subscriber removed", { count: this.subscribers.size });
     };
   }
 
@@ -22,6 +24,11 @@ class EventEmitter {
    * Broadcast an event to all subscribers
    */
   emit(event: SSEEvent): void {
+    console.debug("[event-emitter] Emitting event", {
+      type: event.type,
+      sessionId: event.sessionId,
+      subscribers: this.subscribers.size,
+    });
     for (const callback of this.subscribers) {
       try {
         callback(event);

@@ -1,0 +1,123 @@
+//! Port allocation for local environment servers
+//!
+//! Allocates unique ports for OpenCode and Claude-bridge servers
+//! running in local environments.
+
+use crate::models::Environment;
+use std::net::TcpListener;
+use tracing::{debug, warn};
+
+/// Port range for local servers (14096-15096)
+/// This range is chosen to avoid conflicts with common development ports
+const LOCAL_PORT_RANGE_START: u16 = 14096;
+const LOCAL_PORT_RANGE_END: u16 = 15096;
+
+/// Result of port allocation
+#[derive(Debug, Clone)]
+pub struct PortAllocation {
+    /// Port for OpenCode server
+    pub opencode_port: u16,
+    /// Port for Claude-bridge server
+    pub claude_port: u16,
+}
+
+/// Check if a port is available for binding
+pub fn is_port_available(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// Get all ports currently in use by local environments
+fn get_used_ports(environments: &[Environment]) -> Vec<u16> {
+    let mut ports = Vec::new();
+
+    for env in environments {
+        if let Some(port) = env.local_opencode_port {
+            ports.push(port);
+        }
+        if let Some(port) = env.local_claude_port {
+            ports.push(port);
+        }
+    }
+
+    ports
+}
+
+/// Allocate two unique ports for a new local environment
+///
+/// # Arguments
+/// * `existing_environments` - List of existing environments to check for port conflicts
+///
+/// # Returns
+/// A `PortAllocation` with two unique available ports
+pub fn allocate_ports(existing_environments: &[Environment]) -> Result<PortAllocation, String> {
+    let used_ports = get_used_ports(existing_environments);
+    debug!(used_ports = ?used_ports, "Checking existing port allocations");
+
+    let mut opencode_port: Option<u16> = None;
+    let mut claude_port: Option<u16> = None;
+
+    for port in LOCAL_PORT_RANGE_START..=LOCAL_PORT_RANGE_END {
+        // Skip if already in use by another environment
+        if used_ports.contains(&port) {
+            continue;
+        }
+
+        // Skip if port is not actually available (bound by another process)
+        if !is_port_available(port) {
+            continue;
+        }
+
+        // Allocate ports in order
+        if opencode_port.is_none() {
+            opencode_port = Some(port);
+            debug!(port = port, "Allocated OpenCode port");
+        } else if claude_port.is_none() {
+            claude_port = Some(port);
+            debug!(port = port, "Allocated Claude-bridge port");
+            break;
+        }
+    }
+
+    match (opencode_port, claude_port) {
+        (Some(oport), Some(cport)) => Ok(PortAllocation {
+            opencode_port: oport,
+            claude_port: cport,
+        }),
+        _ => {
+            warn!("Failed to allocate ports in range {}-{}", LOCAL_PORT_RANGE_START, LOCAL_PORT_RANGE_END);
+            Err(format!(
+                "No available ports in range {}-{}",
+                LOCAL_PORT_RANGE_START, LOCAL_PORT_RANGE_END
+            ))
+        }
+    }
+}
+
+/// Check if specific ports are available
+pub fn verify_ports_available(opencode_port: u16, claude_port: u16) -> bool {
+    is_port_available(opencode_port) && is_port_available(claude_port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_port_available() {
+        // This test might be flaky depending on what ports are in use
+        // but generally high ports should be available
+        let port = 59999;
+        // Just check that the function doesn't panic
+        let _ = is_port_available(port);
+    }
+
+    #[test]
+    fn test_allocate_ports_empty() {
+        let result = allocate_ports(&[]);
+        assert!(result.is_ok());
+        let allocation = result.unwrap();
+        assert!(allocation.opencode_port >= LOCAL_PORT_RANGE_START);
+        assert!(allocation.claude_port >= LOCAL_PORT_RANGE_START);
+        assert_ne!(allocation.opencode_port, allocation.claude_port);
+    }
+}

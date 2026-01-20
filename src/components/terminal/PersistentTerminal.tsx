@@ -4,7 +4,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useClaudeState } from "@/hooks/useClaudeState";
 import { useClipboardImagePaste, processClipboardPaste } from "@/hooks/useClipboardImagePaste";
-import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore } from "@/stores";
+import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore, useEnvironmentStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData } from "@/stores/terminalPortalStore";
 import { cn } from "@/lib/utils";
@@ -38,7 +38,7 @@ interface PersistentTerminalProps {
   terminalData: PersistentTerminalData;
   tabId: string;
   tabType: TabType;
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
   isActive: boolean;
   /** Whether this terminal is focused (active tab in the active pane) */
@@ -135,6 +135,11 @@ export function PersistentTerminal({
   );
   const terminalIsOpened = useTerminalPortalStore(
     (state) => state.terminals.get(terminalKey)?.isOpened ?? false
+  );
+
+  // Check if this is a local environment (uses worktree instead of Docker container)
+  const isLocalEnvironment = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.environmentType === "local"
   );
 
   // Extract terminal and addons from terminalData
@@ -334,6 +339,8 @@ export function PersistentTerminal({
   const { sessionId, isConnected, isConnecting, connect, resize, write } =
     useTerminal({
       containerId,
+      environmentId,
+      isLocal: isLocalEnvironment,
       onData: handleData,
       existingSessionId,
       persistSession: true,

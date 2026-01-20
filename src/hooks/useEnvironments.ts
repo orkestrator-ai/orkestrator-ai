@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useEnvironmentStore, useErrorDialogStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import * as tauri from "@/lib/tauri";
-import type { NetworkAccessMode, PortMapping, PrState } from "@/types";
+import type { EnvironmentType, NetworkAccessMode, PortMapping, PrState } from "@/types";
 
 /**
  * Extract error message from various error types.
@@ -115,11 +115,11 @@ export function useEnvironments(projectId: string | null) {
   );
 
   const createEnvironment = useCallback(
-    async (pid: string, name?: string, networkAccessMode?: NetworkAccessMode, initialPrompt?: string, portMappings?: PortMapping[]) => {
+    async (pid: string, name?: string, networkAccessMode?: NetworkAccessMode, initialPrompt?: string, portMappings?: PortMapping[], environmentType?: EnvironmentType) => {
       setLoading(true);
       setError(null);
       try {
-        const environment = await tauri.createEnvironment(pid, name, networkAccessMode, initialPrompt, portMappings);
+        const environment = await tauri.createEnvironment(pid, name, networkAccessMode, initialPrompt, portMappings, environmentType);
         addEnvironmentToStore(environment);
         toast.success("Environment created");
         return environment;
@@ -173,6 +173,17 @@ export function useEnvironments(projectId: string | null) {
   const startEnvironment = useCallback(
     async (environmentId: string) => {
       console.log("[useEnvironments] startEnvironment called:", environmentId);
+      const existingEnv = environments.find((env) => env.id === environmentId);
+      if (existingEnv) {
+        console.info("[useEnvironments] startEnvironment snapshot:", {
+          environmentId,
+          environmentType: existingEnv.environmentType,
+          status: existingEnv.status,
+          branch: existingEnv.branch,
+          worktreePath: existingEnv.worktreePath,
+          projectId: existingEnv.projectId,
+        });
+      }
       setError(null);
       try {
         console.log("[useEnvironments] Setting status to creating...");
@@ -184,6 +195,13 @@ export function useEnvironments(projectId: string | null) {
         const updatedEnv = await tauri.getEnvironment(environmentId);
         if (updatedEnv) {
           console.log("[useEnvironments] Got updated environment:", updatedEnv);
+          if (updatedEnv.environmentType === "local" && !updatedEnv.worktreePath) {
+            console.warn("[useEnvironments] Local environment started without worktreePath:", {
+              environmentId,
+              status: updatedEnv.status,
+              branch: updatedEnv.branch,
+            });
+          }
           updateEnvironmentInStore(environmentId, updatedEnv);
         }
         toast.success("Environment started");

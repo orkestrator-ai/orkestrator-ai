@@ -22,6 +22,8 @@ export interface ClaudeMessagePart {
   toolOutput?: string;
   toolError?: string;
   toolDiff?: ToolDiffMetadata;
+  /** Internal: Message UUID for tracking thinking parts (can be ignored by renderers) */
+  _messageUuid?: string;
 }
 
 export interface ClaudeMessage {
@@ -91,6 +93,22 @@ export interface ClaudeClient {
   baseUrl: string;
 }
 
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Create a Claude bridge client
  */
@@ -115,7 +133,7 @@ export async function checkHealth(client: ClaudeClient): Promise<boolean> {
  */
 export async function getModels(client: ClaudeClient): Promise<ClaudeModel[]> {
   try {
-    const response = await fetch(`${client.baseUrl}/config/models`);
+    const response = await fetchWithTimeout(`${client.baseUrl}/config/models`);
     if (!response.ok) return [];
     const data = await response.json();
     return data.models || [];
@@ -133,7 +151,7 @@ export async function createSession(
   title?: string
 ): Promise<{ sessionId: string; title?: string } | null> {
   try {
-    const response = await fetch(`${client.baseUrl}/session/create`, {
+    const response = await fetchWithTimeout(`${client.baseUrl}/session/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
@@ -227,6 +245,13 @@ export async function sendPrompt(
   }
 ): Promise<boolean> {
   try {
+    console.debug("[claude-client] Sending prompt", {
+      sessionId,
+      promptLength: prompt.length,
+      model: options?.model,
+      attachmentsCount: options?.attachments?.length ?? 0,
+      thinking: options?.thinking,
+    });
     const response = await fetch(`${client.baseUrl}/session/${sessionId}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -237,6 +262,15 @@ export async function sendPrompt(
         thinking: options?.thinking,
       }),
     });
+    console.debug("[claude-client] Prompt response", {
+      sessionId,
+      status: response.status,
+      ok: response.ok,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.error("[claude-client] Prompt failed", { sessionId, status: response.status, text });
+    }
     return response.ok;
   } catch (error) {
     console.error("[claude-client] Failed to send prompt:", error);
@@ -342,6 +376,10 @@ export function subscribeToEvents(
       const handleEvent = (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
+          console.debug("[claude-client] SSE event received", {
+            type: event.type,
+            sessionId: data.sessionId,
+          });
           const claudeEvent: ClaudeEvent = {
             type: event.type as ClaudeEvent["type"],
             sessionId: data.sessionId,
@@ -376,6 +414,9 @@ export function subscribeToEvents(
 
       // Create EventSource
       eventSource = new EventSource(`${client.baseUrl}/event/subscribe`);
+      eventSource.onopen = () => {
+        console.debug("[claude-client] SSE connection opened");
+      };
 
       // Listen for different event types
       const eventTypes = [
@@ -394,6 +435,9 @@ export function subscribeToEvents(
       }
 
       eventSource.onerror = () => {
+        console.error("[claude-client] SSE connection error", {
+          readyState: eventSource?.readyState,
+        });
         if (rejecter && !done) {
           rejecter(new Error("SSE connection error"));
           resolver = null;

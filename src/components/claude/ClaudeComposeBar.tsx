@@ -14,7 +14,8 @@ import type { ClaudeModel } from "@/lib/claude-client";
 
 interface ClaudeComposeBarProps {
   environmentId: string;
-  containerId: string;
+  /** Container ID for containerized environments, undefined for local */
+  containerId?: string;
   models: ClaudeModel[];
   onSend: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean) => void;
   disabled?: boolean;
@@ -125,19 +126,34 @@ export function ClaudeComposeBar({
         event.preventDefault();
         event.stopPropagation();
 
-        // Save to container and add as attachment
+        // Save to container and add as attachment (only for containerized environments)
         const filename = generateImageFilename();
         const filePath = `.orkestrator/clipboard/${filename}`;
-        await writeContainerFile(containerId, filePath, base64Data);
 
-        const attachment: ClaudeAttachment = {
-          id: Math.random().toString(36).substring(2, 9),
-          type: "image",
-          path: `/workspace/${filePath}`,
-          previewUrl: dataUrl,
-          name: filename,
-        };
-        addAttachment(environmentId, attachment);
+        if (containerId) {
+          // Containerized environment - write to container
+          await writeContainerFile(containerId, filePath, base64Data);
+
+          const attachment: ClaudeAttachment = {
+            id: Math.random().toString(36).substring(2, 9),
+            type: "image",
+            path: `/workspace/${filePath}`,
+            previewUrl: dataUrl,
+            name: filename,
+          };
+          addAttachment(environmentId, attachment);
+        } else {
+          // Local environment - for now, just use the data URL directly
+          // TODO: Write to local worktree path
+          const attachment: ClaudeAttachment = {
+            id: Math.random().toString(36).substring(2, 9),
+            type: "image",
+            path: filePath, // Use local path
+            previewUrl: dataUrl,
+            name: filename,
+          };
+          addAttachment(environmentId, attachment);
+        }
       } catch (e) {
         // Clipboard read errors are expected when no image is present - ignore silently
         // Check for known clipboard-related error patterns across platforms

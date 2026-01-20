@@ -5,7 +5,7 @@ import { PaneLeafContainer } from "./PaneLeafContainer";
 
 interface PaneTreeProps {
   node: PaneNode;
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
   isActive: boolean;
   /** Currently dragged tab ID (for cross-pane visual feedback) */
