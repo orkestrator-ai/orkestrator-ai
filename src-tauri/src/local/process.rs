@@ -297,11 +297,11 @@ impl Default for LocalProcessManager {
 /// Check if a process with the given PID is alive
 #[cfg(unix)]
 pub fn is_process_alive(pid: u32) -> bool {
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::kill;
     use nix::unistd::Pid;
 
-    // kill with signal 0 doesn't send a signal but checks if process exists
-    kill(Pid::from_raw(pid as i32), Signal::SIGCONT)
+    // kill with signal None (0) doesn't send a signal but checks if process exists
+    kill(Pid::from_raw(pid as i32), None)
         .map(|_| true)
         .unwrap_or(false)
 }
@@ -332,17 +332,17 @@ pub fn kill_process(pid: u32) -> Result<(), std::io::Error> {
 
     // Try SIGTERM first
     let pid = Pid::from_raw(pid as i32);
-    if let Err(e) = kill(pid, Signal::SIGTERM) {
+    if let Err(e) = kill(pid, Some(Signal::SIGTERM)) {
         warn!(pid = %pid, error = %e, "SIGTERM failed");
     }
 
     // Wait a bit for graceful shutdown
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    // Check if still alive and send SIGKILL if needed
-    if kill(pid, Signal::SIGCONT).is_ok() {
+    // Check if still alive (signal 0) and send SIGKILL if needed
+    if kill(pid, None).is_ok() {
         debug!(pid = %pid, "Process still alive, sending SIGKILL");
-        if let Err(e) = kill(pid, Signal::SIGKILL) {
+        if let Err(e) = kill(pid, Some(Signal::SIGKILL)) {
             error!(pid = %pid, error = %e, "SIGKILL failed");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,

@@ -23,10 +23,7 @@ pub struct PortAllocation {
 
 /// Check if a port is available for binding
 pub fn is_port_available(port: u16) -> bool {
-    match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
 /// Get all ports currently in use by local environments

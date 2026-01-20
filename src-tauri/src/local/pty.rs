@@ -3,7 +3,7 @@
 //! Handles terminal sessions that spawn local shell processes in worktree directories,
 //! as opposed to Docker exec sessions for containerized environments.
 
-use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -21,6 +21,14 @@ pub enum LocalPtyError {
     Io(#[from] std::io::Error),
 }
 
+/// Wrapper to hold either a full PtyPair (before start) or just the master (after start)
+enum PtyHandle {
+    /// Full pair before the session is started
+    Pair(PtyPair),
+    /// Just the master after start (for resize operations)
+    Master(Box<dyn MasterPty + Send>),
+}
+
 /// A local terminal session running a shell in a worktree directory
 pub struct LocalTerminalSession {
     pub session_id: String,
@@ -29,7 +37,7 @@ pub struct LocalTerminalSession {
     pub cols: u16,
     pub rows: u16,
     pub is_active: bool,
-    pair: Option<PtyPair>,
+    pty_handle: Option<PtyHandle>,
 }
 
 impl LocalTerminalSession {
@@ -41,7 +49,7 @@ impl LocalTerminalSession {
             cols,
             rows,
             is_active: false,
-            pair: None,
+            pty_handle: None,
         }
     }
 }
@@ -91,7 +99,7 @@ impl LocalTerminalManager {
 
         // Create and store session
         let mut session = LocalTerminalSession::new(environment_id, worktree_path, cols, rows);
-        session.pair = Some(pair);
+        session.pty_handle = Some(PtyHandle::Pair(pair));
         session.is_active = true;
 
         let session_id = session.session_id.clone();
@@ -118,10 +126,17 @@ impl LocalTerminalManager {
                 .get_mut(session_id)
                 .ok_or_else(|| LocalPtyError::SessionNotFound(session_id.to_string()))?;
 
-            let pair = session
-                .pair
+            let pty_handle = session
+                .pty_handle
                 .take()
-                .ok_or_else(|| LocalPtyError::Pty("PTY pair already taken".to_string()))?;
+                .ok_or_else(|| LocalPtyError::Pty("PTY handle already taken".to_string()))?;
+
+            let pair = match pty_handle {
+                PtyHandle::Pair(p) => p,
+                PtyHandle::Master(_) => {
+                    return Err(LocalPtyError::Pty("Session already started".to_string()));
+                }
+            };
 
             (session.worktree_path.clone(), pair)
         };
@@ -162,22 +177,11 @@ impl LocalTerminalManager {
         let mut reader = pair.master.try_clone_reader()
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
 
-        // Store the master for resize operations
+        // Store just the master for resize operations (no need for a dummy slave)
         {
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(session) = sessions.get_mut(session_id) {
-                session.pair = Some(PtyPair {
-                    master: pair.master,
-                    slave: portable_pty::native_pty_system()
-                        .openpty(PtySize {
-                            rows: 24,
-                            cols: 80,
-                            pixel_width: 0,
-                            pixel_height: 0,
-                        })
-                        .unwrap()
-                        .slave, // Dummy slave, won't be used
-                });
+                session.pty_handle = Some(PtyHandle::Master(pair.master));
             }
         }
 
@@ -284,8 +288,12 @@ impl LocalTerminalManager {
         session.cols = cols;
         session.rows = rows;
 
-        if let Some(ref pair) = session.pair {
-            pair.master
+        if let Some(ref pty_handle) = session.pty_handle {
+            let master: &dyn MasterPty = match pty_handle {
+                PtyHandle::Pair(pair) => pair.master.as_ref(),
+                PtyHandle::Master(m) => m.as_ref(),
+            };
+            master
                 .resize(PtySize {
                     rows,
                     cols,

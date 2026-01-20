@@ -735,21 +735,23 @@ export function TerminalContainer({
   // Local environments can show terminal without containerId, but need worktreePath
   const showTerminal = isEnvironmentRunning && (containerId || isLocalEnvironmentReady) && thisEnvTabs.length > 0;
 
-  // Debug logging for local environment display issues
-  console.log("[TerminalContainer] Display state:", {
-    environmentId,
-    isLocalEnvironment,
-    isLocalEnvironmentReady,
-    worktreePath,
-    isContainerRunning,
-    isEnvironmentRunning,
-    containerId,
-    tabsCount: thisEnvTabs.length,
-    showTerminal,
-    showNoEnvironmentOverlay,
-    showCreatingOverlay,
-    showNotRunningOverlay,
-  });
+  // Debug logging for local environment display issues (only in development)
+  if (import.meta.env.DEV) {
+    console.debug("[TerminalContainer] Display state:", {
+      environmentId,
+      isLocalEnvironment,
+      isLocalEnvironmentReady,
+      worktreePath,
+      isContainerRunning,
+      isEnvironmentRunning,
+      containerId,
+      tabsCount: thisEnvTabs.length,
+      showTerminal,
+      showNoEnvironmentOverlay,
+      showCreatingOverlay,
+      showNotRunningOverlay,
+    });
+  }
 
   return (
     <div className={cn("relative flex h-full min-h-0 flex-col bg-background", className)}>

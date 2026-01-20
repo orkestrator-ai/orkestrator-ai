@@ -63,6 +63,9 @@ fn generate_unique_suffix() -> String {
         .collect()
 }
 
+/// Maximum attempts to generate a unique worktree path
+const MAX_WORKTREE_PATH_ATTEMPTS: u32 = 100;
+
 /// Generate a unique worktree path, adding suffix if the base name already exists
 pub fn generate_worktree_path(project_name: &str) -> Result<PathBuf, WorktreeError> {
     let base_path = get_worktree_base_path()?;
@@ -72,15 +75,23 @@ pub fn generate_worktree_path(project_name: &str) -> Result<PathBuf, WorktreeErr
 
     // If it exists, add a unique suffix
     if worktree_path.exists() {
-        let suffix = generate_unique_suffix();
-        let name_with_suffix = format!("{}-{}", project_name, suffix);
-        worktree_path = base_path.join(name_with_suffix);
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            if attempts > MAX_WORKTREE_PATH_ATTEMPTS {
+                return Err(WorktreeError::DirectoryCreationFailed(format!(
+                    "Failed to generate unique worktree path after {} attempts for project: {}",
+                    MAX_WORKTREE_PATH_ATTEMPTS, project_name
+                )));
+            }
 
-        // In the unlikely event of another collision, keep trying
-        while worktree_path.exists() {
             let suffix = generate_unique_suffix();
             let name_with_suffix = format!("{}-{}", project_name, suffix);
             worktree_path = base_path.join(name_with_suffix);
+
+            if !worktree_path.exists() {
+                break;
+            }
         }
     }
 
