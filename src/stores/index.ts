@@ -15,3 +15,5 @@ export type { PersistentTerminalData, CreateTerminalOptions } from "./terminalPo
 export { useErrorDialogStore } from "./errorDialogStore";
 export type { ErrorDetails } from "./errorDialogStore";
 export { useFileDirtyStore } from "./fileDirtyStore";
+export { usePrMonitorStore, PR_MONITOR_INTERVALS, PR_MONITOR_TIMEOUTS } from "./prMonitorStore";
+export type { PrMonitoringMode, MonitoringState } from "./prMonitorStore";
