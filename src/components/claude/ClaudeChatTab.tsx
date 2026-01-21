@@ -352,7 +352,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       mounted = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, sessionKey, isActive, isLocal]);
+  }, [containerId, environmentId, tabId, isActive, isLocal]);
 
   const startSharedEventSubscription = useCallback(
     async (bridgeClient: ReturnType<typeof createClient>) => {
@@ -376,7 +376,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         const DEBOUNCE_MS = 200;
         const pendingReloads = new Map<string, NodeJS.Timeout>();
 
-        const fetchMessagesDebounced = (sessionId: string, sessionTabId: string, immediate = false) => {
+        // Note: sessionKey is the session key from the sessions Map (e.g., "env-{envId}:{tabId}")
+        const fetchMessagesDebounced = (sessionId: string, sessionKey: string, immediate = false) => {
           const pendingTimeout = pendingReloads.get(sessionId);
           if (pendingTimeout) {
             clearTimeout(pendingTimeout);
@@ -386,9 +387,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           const doFetch = async () => {
             const now = Date.now();
             lastReloadTimeBySession.set(sessionId, now);
-            console.debug("[ClaudeChatTab] Fetching session messages", { sessionId, sessionTabId });
+            console.debug("[ClaudeChatTab] Fetching session messages", { sessionId, sessionKey });
             const messages = await getSessionMessages(bridgeClient, sessionId);
-            setMessages(sessionTabId, messages);
+            setMessages(sessionKey, messages);
           };
 
           if (immediate) {

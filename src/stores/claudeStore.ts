@@ -7,19 +7,13 @@ import {
   type ClaudeQuestionRequest,
   type ClaudeEvent,
 } from "@/lib/claude-client";
+import { createSessionKey } from "@/lib/utils";
 
 /**
  * Creates a unique session key for Claude sessions.
- * This ensures tab IDs (which may be reused across environments, e.g., "default")
- * don't collide when multiple environments are running.
- *
- * @param environmentId - The environment ID (always required)
- * @param tabId - The tab ID within the environment
- * @returns A unique session key in the format "env-environmentId:tabId"
+ * Re-exported from utils for backwards compatibility.
  */
-export function createClaudeSessionKey(environmentId: string, tabId: string): string {
-  return `env-${environmentId}:${tabId}`;
-}
+export const createClaudeSessionKey = createSessionKey;
 
 /** Shared event subscription state per environment */
 export interface ClaudeEventSubscriptionState {

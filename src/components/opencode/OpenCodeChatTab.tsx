@@ -298,7 +298,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       // We also don't clear the client - it's shared per environment
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, sessionKey, isActive, isLocal]);
+  }, [containerId, environmentId, tabId, isActive, isLocal]);
 
   // Start shared event subscription for the environment (only if not already running)
   const startSharedEventSubscription = useCallback(
@@ -331,8 +331,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         const pendingReloads = new Map<string, NodeJS.Timeout>(); // Track pending debounced reloads
 
         // Helper to fetch messages with debouncing
-        // Note: sessionTabKey is the session key from the sessions Map (e.g., "env-{envId}:{tabId}")
-        const fetchMessagesDebounced = (sessionId: string, sessionTabKey: string, immediate = false) => {
+        // Note: sessionKey is the session key from the sessions Map (e.g., "env-{envId}:{tabId}")
+        const fetchMessagesDebounced = (sessionId: string, sessionKey: string, immediate = false) => {
           // Clear any pending reload for this session
           const pendingTimeout = pendingReloads.get(sessionId);
           if (pendingTimeout) {
@@ -344,7 +344,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
             const now = Date.now();
             lastReloadTimeBySession.set(sessionId, now);
             const messages = await getSessionMessages(sdkClient, sessionId);
-            setMessages(sessionTabKey, messages);
+            setMessages(sessionKey, messages);
           };
 
           if (immediate) {

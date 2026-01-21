@@ -8,19 +8,13 @@ import {
   type QuestionRequest,
   type OpenCodeEvent,
 } from "@/lib/opencode-client";
+import { createSessionKey } from "@/lib/utils";
 
 /**
  * Creates a unique session key for OpenCode sessions.
- * This ensures tab IDs (which may be reused across environments, e.g., "default")
- * don't collide when multiple environments are running.
- *
- * @param environmentId - The environment ID (always required)
- * @param tabId - The tab ID within the environment
- * @returns A unique session key in the format "env-environmentId:tabId"
+ * Re-exported from utils for backwards compatibility.
  */
-export function createOpenCodeSessionKey(environmentId: string, tabId: string): string {
-  return `env-${environmentId}:${tabId}`;
-}
+export const createOpenCodeSessionKey = createSessionKey;
 
 /** Shared event subscription state per environment */
 export interface EventSubscriptionState {
