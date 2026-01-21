@@ -609,56 +609,59 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
-      <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
-        <div className="py-4">
-          {session?.messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground">
-              <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
-            </div>
-          ) : (
-            session?.messages.map((message) => (
-              <ClaudeMessage key={message.id} message={message} />
-            ))
-          )}
+      <div className="relative flex-1 min-h-0">
+        <ScrollArea ref={scrollRef} className="h-full">
+          <div className="py-4">
+            {session?.messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground">
+                <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
+              </div>
+            ) : (
+              session?.messages.map((message) => (
+                <ClaudeMessage key={message.id} message={message} />
+              ))
+            )}
 
-          {session?.isLoading && (
-            <div className="px-4 py-3">
-              <div className="max-w-3xl mx-auto">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-xs">Claude is thinking...</span>
+            {session?.isLoading && (
+              <div className="px-4 py-3">
+                <div className="max-w-3xl mx-auto">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-xs">Claude is thinking...</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {session && client && pendingQuestions.length > 0 && (
-            <div className="max-w-3xl mx-auto">
-              {pendingQuestions.map((question) => (
-                <ClaudeQuestionCard
-                  key={question.id}
-                  question={question}
-                  client={client}
-                  sessionId={session.sessionId}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+            {session && client && pendingQuestions.length > 0 && (
+              <div className="max-w-3xl mx-auto">
+                {pendingQuestions.map((question) => (
+                  <ClaudeQuestionCard
+                    key={question.id}
+                    question={question}
+                    client={client}
+                    sessionId={session.sessionId}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
 
-      {/* Scroll to bottom button - positioned above compose bar */}
-      {!isAtBottom && (
-        <div className="flex justify-end px-4 py-1">
-          <button
-            onClick={scrollToBottom}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors shadow-sm"
-          >
-            <ArrowDown className="w-3.5 h-3.5" />
-            <span>Scroll down</span>
-          </button>
-        </div>
-      )}
+        {/* Floating scroll-to-bottom button */}
+        <button
+          onClick={scrollToBottom}
+          className={`absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-primary/90 hover:bg-primary text-primary-foreground shadow-lg transition-all duration-200 ${
+            isAtBottom
+              ? "opacity-0 pointer-events-none translate-y-2"
+              : "opacity-100 translate-y-0"
+          }`}
+          aria-hidden={isAtBottom}
+        >
+          <ArrowDown className="w-3.5 h-3.5" />
+          <span>Scroll down</span>
+        </button>
+      </div>
 
       <ClaudeComposeBar
         environmentId={environmentId}
