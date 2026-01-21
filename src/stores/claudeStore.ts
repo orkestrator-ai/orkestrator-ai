@@ -7,6 +7,13 @@ import {
   type ClaudeQuestionRequest,
   type ClaudeEvent,
 } from "@/lib/claude-client";
+import { createSessionKey } from "@/lib/utils";
+
+/**
+ * Creates a unique session key for Claude sessions.
+ * Re-exported from utils for backwards compatibility.
+ */
+export const createClaudeSessionKey = createSessionKey;
 
 /** Shared event subscription state per environment */
 export interface ClaudeEventSubscriptionState {

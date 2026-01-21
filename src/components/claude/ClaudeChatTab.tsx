@@ -3,7 +3,7 @@ import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useClaudeStore } from "@/stores/claudeStore";
+import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
   createClient,
@@ -77,8 +77,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   // Activity state tracking - use environmentId as key for both local and container environments
   const { setContainerState, removeContainerState } = useClaudeActivityStore();
 
+  // Create a unique session key that combines environmentId and tabId
+  // This prevents session collisions when multiple environments use the same tab IDs (e.g., "default")
+  const sessionKey = useMemo(() => createClaudeSessionKey(environmentId, tabId), [environmentId, tabId]);
+
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
-  const session = useMemo(() => sessionsMap.get(tabId), [sessionsMap, tabId]);
+  const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
 
   // Scroll lock - auto-scroll only when user is at bottom
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
@@ -231,7 +235,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         // Check for existing session - first from component ref, then from Zustand store
         // This handles reconnection after tab remount where refs are lost but store persists
         const existingSessionFromRef = tabSessionIdRef.current;
-        const existingSessionFromStore = useClaudeStore.getState().sessions.get(tabId);
+        const existingSessionFromStore = useClaudeStore.getState().sessions.get(sessionKey);
         const existingSessionId = existingSessionFromRef || existingSessionFromStore?.sessionId;
 
         if (existingSessionId) {
@@ -240,6 +244,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           isInitializedRef.current = true;
           console.debug("[ClaudeChatTab] Reconnecting to existing session", {
             tabId,
+            sessionKey,
             sessionId: existingSessionId,
             environmentId,
             fromRef: !!existingSessionFromRef,
@@ -262,9 +267,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               const serverMessageIds = new Set(messages.map((m) => m.id));
               const errorMessagesToKeep = errorMessages.filter((m) => !serverMessageIds.has(m.id));
               if (errorMessagesToKeep.length > 0) {
-                setMessages(tabId, [...messages, ...errorMessagesToKeep]);
+                setMessages(sessionKey, [...messages, ...errorMessagesToKeep]);
               } else {
-                setMessages(tabId, messages);
+                setMessages(sessionKey, messages);
               }
             } catch (err) {
               if (err instanceof SessionNotFoundError) {
@@ -274,7 +279,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                 if (!mounted) return;
                 if (newSession) {
                   tabSessionIdRef.current = newSession.sessionId;
-                  setSession(tabId, {
+                  setSession(sessionKey, {
                     sessionId: newSession.sessionId,
                     messages: [],
                     isLoading: false,
@@ -299,6 +304,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
           console.debug("[ClaudeChatTab] Created new session", {
             tabId,
+            sessionKey,
             sessionId: newSession.sessionId,
             environmentId,
           });
@@ -328,7 +334,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             });
 
             // Set session with the user message already included and loading state
-            setSession(tabId, {
+            setSession(sessionKey, {
               sessionId: newSession.sessionId,
               messages: [userMessage],
               isLoading: true,
@@ -351,7 +357,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
             if (!success) {
               console.error("[ClaudeChatTab] Failed to send initial prompt");
-              setSessionLoading(tabId, false);
+              setSessionLoading(sessionKey, false);
               // Show error message to user
               const errorMessage = {
                 id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -360,11 +366,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                 parts: [{ type: "text" as const, content: "Failed to send message. Please try again." }],
                 timestamp: new Date().toISOString(),
               };
-              addMessage(tabId, errorMessage);
+              addMessage(sessionKey, errorMessage);
             }
           } else {
             // No initial prompt - just set up the session normally
-            setSession(tabId, {
+            setSession(sessionKey, {
               sessionId: newSession.sessionId,
               messages: [],
               isLoading: false,
@@ -435,7 +441,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         const DEBOUNCE_MS = 200;
         const pendingReloads = new Map<string, NodeJS.Timeout>();
 
-        const fetchMessagesDebounced = (sessionId: string, sessionTabId: string, immediate = false) => {
+        // Note: sessionKey is the session key from the sessions Map (e.g., "env-{envId}:{tabId}")
+        const fetchMessagesDebounced = (sessionId: string, sessionKey: string, immediate = false) => {
           const pendingTimeout = pendingReloads.get(sessionId);
           if (pendingTimeout) {
             clearTimeout(pendingTimeout);
@@ -445,9 +452,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           const doFetch = async () => {
             const now = Date.now();
             lastReloadTimeBySession.set(sessionId, now);
-            console.debug("[ClaudeChatTab] Fetching session messages", { sessionId, sessionTabId });
+            console.debug("[ClaudeChatTab] Fetching session messages", { sessionId, sessionKey });
             const messages = await getSessionMessages(bridgeClient, sessionId);
-            setMessages(sessionTabId, messages);
+            setMessages(sessionKey, messages);
           };
 
           if (immediate) {
@@ -581,8 +588,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         parts: [{ type: "text" as const, content: text }],
         timestamp: new Date().toISOString(),
       };
-      addMessage(tabId, userMessage);
-      setSessionLoading(tabId, true);
+      addMessage(sessionKey, userMessage);
+      setSessionLoading(sessionKey, true);
 
       const sdkAttachments = attachments.map((att) => ({
         type: att.type,
@@ -599,10 +606,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
       if (!success) {
         console.error("[ClaudeChatTab] Failed to send prompt");
-        setSessionLoading(tabId, false);
+        setSessionLoading(sessionKey, false);
       }
     },
-    [client, session, tabId, environmentId, getSelectedModel, addMessage, setSessionLoading]
+    [client, session, sessionKey, environmentId, getSelectedModel, addMessage, setSessionLoading]
   );
 
   handleSendRef.current = handleSend;
@@ -632,9 +639,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     tabSessionIdRef.current = null;
     isInitializedRef.current = false;
     setClient(environmentId, null);
-    setSession(tabId, null);
+    setSession(sessionKey, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
-  }, [tabId, environmentId, setClient, setSession, setServerStatus]);
+  }, [sessionKey, environmentId, setClient, setSession, setServerStatus]);
 
   if (connectionState === "connecting") {
     return (

@@ -3,7 +3,7 @@ import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useOpenCodeStore } from "@/stores/openCodeStore";
+import { useOpenCodeStore, createOpenCodeSessionKey } from "@/stores/openCodeStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
   createClient,
@@ -82,10 +82,14 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   // Use reference counting to handle multiple tabs for the same environment
   const { setContainerState, incrementContainerRef, decrementContainerRef } = useClaudeActivityStore();
 
+  // Create a unique session key that combines environmentId and tabId
+  // This prevents session collisions when multiple environments use the same tab IDs (e.g., "default")
+  const sessionKey = useMemo(() => createOpenCodeSessionKey(environmentId, tabId), [environmentId, tabId]);
+
   // Get client from Map (shared per environment) - subscribing to the Map ensures re-render on changes
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
-  // Get session from Map keyed by tabId (each tab has its own session)
-  const session = useMemo(() => sessionsMap.get(tabId), [sessionsMap, tabId]);
+  // Get session from Map keyed by sessionKey (each tab has its own session, scoped by environment)
+  const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
 
   // Scroll lock - auto-scroll only when user is at bottom
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
@@ -241,7 +245,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
           tabSessionIdRef.current = newSession.id;
           isInitializedRef.current = true;
 
-          setSession(tabId, {
+          setSession(sessionKey, {
             sessionId: newSession.id,
             messages: [],
             isLoading: false,
@@ -327,7 +331,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         const pendingReloads = new Map<string, NodeJS.Timeout>(); // Track pending debounced reloads
 
         // Helper to fetch messages with debouncing
-        const fetchMessagesDebounced = (sessionId: string, tabId: string, immediate = false) => {
+        // Note: sessionKey is the session key from the sessions Map (e.g., "env-{envId}:{tabId}")
+        const fetchMessagesDebounced = (sessionId: string, sessionKey: string, immediate = false) => {
           // Clear any pending reload for this session
           const pendingTimeout = pendingReloads.get(sessionId);
           if (pendingTimeout) {
@@ -339,7 +344,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
             const now = Date.now();
             lastReloadTimeBySession.set(sessionId, now);
             const messages = await getSessionMessages(sdkClient, sessionId);
-            setMessages(tabId, messages);
+            setMessages(sessionKey, messages);
           };
 
           if (immediate) {
@@ -509,8 +514,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         parts: [{ type: "text" as const, content: text }],
         createdAt: new Date().toISOString(),
       };
-      addMessage(tabId, userMessage);
-      setSessionLoading(tabId, true);
+      addMessage(sessionKey, userMessage);
+      setSessionLoading(sessionKey, true);
 
       // Convert attachments to SDK format (include dataUrl for proper MIME/URL handling)
       const sdkAttachments = attachments.map((att) => ({
@@ -529,11 +534,11 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
 
       if (!success) {
         console.error("[OpenCodeChatTab] Failed to send prompt");
-        setSessionLoading(tabId, false);
+        setSessionLoading(sessionKey, false);
       }
       // Response will come via SSE events
     },
-    [client, session, tabId, environmentId, getSelectedModel, getSelectedMode, addMessage, setSessionLoading]
+    [client, session, sessionKey, environmentId, getSelectedModel, getSelectedMode, addMessage, setSessionLoading]
   );
 
   // Keep handleSendRef updated with the latest handleSend
@@ -564,9 +569,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     isInitializedRef.current = false;
     // Trigger re-initialization by clearing client
     setClient(environmentId, null);
-    setSession(tabId, null);
+    setSession(sessionKey, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
-  }, [tabId, environmentId, setClient, setSession, setServerStatus]);
+  }, [sessionKey, environmentId, setClient, setSession, setServerStatus]);
 
   // Render loading state
   if (connectionState === "connecting") {

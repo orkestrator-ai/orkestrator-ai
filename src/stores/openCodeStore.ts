@@ -8,6 +8,13 @@ import {
   type QuestionRequest,
   type OpenCodeEvent,
 } from "@/lib/opencode-client";
+import { createSessionKey } from "@/lib/utils";
+
+/**
+ * Creates a unique session key for OpenCode sessions.
+ * Re-exported from utils for backwards compatibility.
+ */
+export const createOpenCodeSessionKey = createSessionKey;
 
 /** Shared event subscription state per environment */
 export interface EventSubscriptionState {
