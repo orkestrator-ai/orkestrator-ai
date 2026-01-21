@@ -143,7 +143,14 @@ function configToSdkFormat(
   config: McpServerConfig
 ): SdkMcpServerConfig | null {
   if (isHttpConfig(config)) {
-    // HTTP servers use 'sse' type in SDK (they use Server-Sent Events)
+    // The Claude SDK's MCP implementation supports two remote transport types:
+    // - "sse": Server-Sent Events over HTTP (unidirectional streaming from server)
+    // - "http": Standard HTTP request/response (bidirectional via separate requests)
+    //
+    // The ~/.claude.json config uses "http" as a general remote server type.
+    // We map to "sse" here as it's the more common transport for MCP servers
+    // that support streaming responses. If a server requires strict HTTP transport,
+    // this may need to be configurable per-server in the future.
     return {
       type: "sse" as const,
       url: config.url,
@@ -213,13 +220,19 @@ export async function getMcpServersForSdk(
  * Get MCP server info for frontend display
  */
 export async function getMcpServerInfo(cwd: string): Promise<McpServerInfo[]> {
-  const [global, projectLocal] = await Promise.all([
+  // Load all config sources in parallel (single call for each source)
+  const [global, projectGlobal, projectLocal] = await Promise.all([
     loadGlobalMcpServers(),
+    loadProjectOverridesFromGlobal(cwd),
     loadProjectMcpServers(cwd),
   ]);
 
-  const projectGlobal = await loadProjectOverridesFromGlobal(cwd);
-  const merged = await getMergedMcpServers(cwd);
+  // Merge with priority: local > projectGlobal > global
+  const merged = {
+    ...global,
+    ...projectGlobal,
+    ...projectLocal,
+  };
   const result: McpServerInfo[] = [];
 
   for (const [name, config] of Object.entries(merged)) {

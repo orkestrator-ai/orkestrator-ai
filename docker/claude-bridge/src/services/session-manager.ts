@@ -12,6 +12,7 @@ import type {
 } from "../types/index.js";
 import { eventEmitter } from "./event-emitter.js";
 import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
+import type { McpToolMetadata } from "../types/mcp.js";
 
 // Store for active sessions
 const sessions = new Map<string, SessionState>();
@@ -181,28 +182,66 @@ interface OrderedPartEntry {
 /**
  * Check if a tool name is from an MCP server and extract server name
  * MCP tool names have format: mcp_servername_toolname
+ *
+ * @param toolName - The tool name to parse
+ * @param knownServerNames - Set of known MCP server names for accurate matching
+ *                           when server names contain underscores
  */
-function parseMcpToolName(toolName: string): { isMcpTool: boolean; mcpServerName?: string } {
-  if (toolName.startsWith("mcp_")) {
-    // Format: mcp_servername_toolname
-    const parts = toolName.split("_");
-    if (parts.length >= 3) {
-      // Server name is the second part
-      return { isMcpTool: true, mcpServerName: parts[1] };
-    }
-    return { isMcpTool: true };
+function parseMcpToolName(
+  toolName: string,
+  knownServerNames?: Set<string>
+): McpToolMetadata {
+  if (!toolName.startsWith("mcp_")) {
+    return { isMcpTool: false };
   }
-  return { isMcpTool: false };
+
+  // Remove the "mcp_" prefix
+  const remainder = toolName.slice(4);
+
+  // If we have known server names, find the longest matching prefix
+  // This handles server names with underscores (e.g., "my_server")
+  if (knownServerNames && knownServerNames.size > 0) {
+    let matchedServer: string | undefined;
+    let maxLength = 0;
+
+    for (const serverName of knownServerNames) {
+      // Check if remainder starts with "servername_"
+      if (
+        remainder.startsWith(serverName + "_") &&
+        serverName.length > maxLength
+      ) {
+        matchedServer = serverName;
+        maxLength = serverName.length;
+      }
+    }
+
+    if (matchedServer) {
+      return { isMcpTool: true, mcpServerName: matchedServer };
+    }
+  }
+
+  // Fallback: assume server name is the first segment (no underscores in name)
+  const parts = remainder.split("_");
+  if (parts.length >= 2) {
+    return { isMcpTool: true, mcpServerName: parts[0] };
+  }
+
+  return { isMcpTool: true };
 }
 
 /**
  * Parse SDK message content, extracting text/thinking parts, registering tools,
  * and tracking the order of non-text parts for chronological display
+ *
+ * @param message - The SDK message to parse
+ * @param toolTracker - Tool tracker for managing tool invocations
+ * @param mcpServerNames - Set of known MCP server names for accurate tool parsing
  */
 function parseMessageContent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   message: any,
-  toolTracker?: ToolTracker
+  toolTracker?: ToolTracker,
+  mcpServerNames?: Set<string>
 ): {
   content: string;
   textParts: NormalizedPart[];
@@ -259,7 +298,7 @@ function parseMessageContent(
       }
 
       // Check if this is an MCP tool
-      const { isMcpTool, mcpServerName } = parseMcpToolName(toolName);
+      const { isMcpTool, mcpServerName } = parseMcpToolName(toolName, mcpServerNames);
 
       // Register tool with tracker
       if (block.id) {
@@ -578,7 +617,7 @@ export async function sendPrompt(
         }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
-        const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker);
+        const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker, mcpServerNames);
 
         // Get the message UUID to detect new messages vs streaming updates
         const messageUuid = message.uuid as string | undefined;
@@ -642,7 +681,7 @@ export async function sendPrompt(
         });
       } else if (message.type === "user") {
         // User message with tool results - parse to update tool tracker
-        parseMessageContent(message, toolTracker);
+        parseMessageContent(message, toolTracker, mcpServerNames);
 
         // Rebuild message parts with updated tool results
         if (currentAssistantMessage) {
