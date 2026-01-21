@@ -156,11 +156,6 @@ impl ContainerConfig {
         self.files_to_copy = files;
         self
     }
-
-    pub fn with_opencode_model(mut self, model: String) -> Self {
-        self.opencode_model = model;
-        self
-    }
 }
 
 /// Create a new container for an environment
