@@ -82,6 +82,12 @@ export interface DomainTestResult {
   error: string | null;
 }
 
+/** Result from starting an environment */
+export interface StartEnvironmentResult {
+  /** Setup commands to run in a terminal (for local environments with orkestrator-ai.json) */
+  setupCommands?: string[];
+}
+
 // Session types - Terminal session tracking for environments
 
 /** Type of terminal session */
