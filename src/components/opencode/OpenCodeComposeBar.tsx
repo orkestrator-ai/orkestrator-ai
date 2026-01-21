@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
+import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useOpenCodeStore, type OpenCodeAttachment } from "@/stores/openCodeStore";
 import type { OpenCodeModel, OpenCodeConversationMode } from "@/lib/opencode-client";
@@ -165,7 +166,9 @@ export function OpenCodeComposeBar({
           };
           addAttachment(environmentId, attachment);
         } else {
-          console.error("[OpenCodeComposeBar] Cannot save image: no containerId or worktreePath");
+          toast.error("Cannot save image", {
+            description: "Environment not properly configured for attachments",
+          });
         }
       } catch (e) {
         // Clipboard read errors are expected when no image is present - ignore silently
