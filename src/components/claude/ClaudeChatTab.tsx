@@ -3,7 +3,7 @@ import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useClaudeStore } from "@/stores/claudeStore";
+import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
   createClient,
@@ -77,8 +77,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   // Activity state tracking - use environmentId as key for both local and container environments
   const { setContainerState, removeContainerState } = useClaudeActivityStore();
 
+  // Create a unique session key that combines environmentId and tabId
+  // This prevents session collisions when multiple environments use the same tab IDs (e.g., "default")
+  const sessionKey = useMemo(() => createClaudeSessionKey(environmentId, tabId), [environmentId, tabId]);
+
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
-  const session = useMemo(() => sessionsMap.get(tabId), [sessionsMap, tabId]);
+  const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
 
   // Scroll lock - auto-scroll only when user is at bottom
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
@@ -231,7 +235,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         // Check for existing session - first from component ref, then from Zustand store
         // This handles reconnection after tab remount where refs are lost but store persists
         const existingSessionFromRef = tabSessionIdRef.current;
-        const existingSessionFromStore = useClaudeStore.getState().sessions.get(tabId);
+        const existingSessionFromStore = useClaudeStore.getState().sessions.get(sessionKey);
         const existingSessionId = existingSessionFromRef || existingSessionFromStore?.sessionId;
 
         if (existingSessionId) {
@@ -240,6 +244,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           isInitializedRef.current = true;
           console.debug("[ClaudeChatTab] Reconnecting to existing session", {
             tabId,
+            sessionKey,
             sessionId: existingSessionId,
             environmentId,
             fromRef: !!existingSessionFromRef,
@@ -259,9 +264,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               const serverMessageIds = new Set(messages.map((m) => m.id));
               const errorMessagesToKeep = errorMessages.filter((m) => !serverMessageIds.has(m.id));
               if (errorMessagesToKeep.length > 0) {
-                setMessages(tabId, [...messages, ...errorMessagesToKeep]);
+                setMessages(sessionKey, [...messages, ...errorMessagesToKeep]);
               } else {
-                setMessages(tabId, messages);
+                setMessages(sessionKey, messages);
               }
             } catch (err) {
               if (err instanceof SessionNotFoundError) {
@@ -271,7 +276,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                 if (!mounted) return;
                 if (newSession) {
                   tabSessionIdRef.current = newSession.sessionId;
-                  setSession(tabId, {
+                  setSession(sessionKey, {
                     sessionId: newSession.sessionId,
                     messages: [],
                     isLoading: false,
@@ -296,11 +301,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
           console.debug("[ClaudeChatTab] Created new session", {
             tabId,
+            sessionKey,
             sessionId: newSession.sessionId,
             environmentId,
           });
 
-          setSession(tabId, {
+          setSession(sessionKey, {
             sessionId: newSession.sessionId,
             messages: [],
             isLoading: false,
@@ -346,7 +352,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       mounted = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, isActive, isLocal]);
+  }, [containerId, environmentId, tabId, sessionKey, isActive, isLocal]);
 
   const startSharedEventSubscription = useCallback(
     async (bridgeClient: ReturnType<typeof createClient>) => {
@@ -516,8 +522,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         parts: [{ type: "text" as const, content: text }],
         timestamp: new Date().toISOString(),
       };
-      addMessage(tabId, userMessage);
-      setSessionLoading(tabId, true);
+      addMessage(sessionKey, userMessage);
+      setSessionLoading(sessionKey, true);
 
       const sdkAttachments = attachments.map((att) => ({
         type: att.type,
@@ -534,10 +540,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
       if (!success) {
         console.error("[ClaudeChatTab] Failed to send prompt");
-        setSessionLoading(tabId, false);
+        setSessionLoading(sessionKey, false);
       }
     },
-    [client, session, tabId, environmentId, getSelectedModel, addMessage, setSessionLoading]
+    [client, session, sessionKey, environmentId, getSelectedModel, addMessage, setSessionLoading]
   );
 
   handleSendRef.current = handleSend;
@@ -564,9 +570,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     tabSessionIdRef.current = null;
     isInitializedRef.current = false;
     setClient(environmentId, null);
-    setSession(tabId, null);
+    setSession(sessionKey, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
-  }, [tabId, environmentId, setClient, setSession, setServerStatus]);
+  }, [sessionKey, environmentId, setClient, setSession, setServerStatus]);
 
   if (connectionState === "connecting") {
     return (

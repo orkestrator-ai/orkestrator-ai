@@ -9,6 +9,19 @@ import {
   type OpenCodeEvent,
 } from "@/lib/opencode-client";
 
+/**
+ * Creates a unique session key for OpenCode sessions.
+ * This ensures tab IDs (which may be reused across environments, e.g., "default")
+ * don't collide when multiple environments are running.
+ *
+ * @param environmentId - The environment ID (always required)
+ * @param tabId - The tab ID within the environment
+ * @returns A unique session key in the format "env-environmentId:tabId"
+ */
+export function createOpenCodeSessionKey(environmentId: string, tabId: string): string {
+  return `env-${environmentId}:${tabId}`;
+}
+
 /** Shared event subscription state per environment */
 export interface EventSubscriptionState {
   /** Abort controller for the subscription */
