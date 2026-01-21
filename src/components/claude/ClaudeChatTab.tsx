@@ -251,6 +251,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             fromStore: !!existingSessionFromStore,
           });
           setConnectionState("connected");
+
+          // Start SSE subscription BEFORE sending initial prompt to avoid race condition
+          // where SSE events could wipe locally-added messages
           startSharedEventSubscription(bridgeClient);
 
           // Refresh messages from server to ensure we have latest state
@@ -306,14 +309,76 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             environmentId,
           });
 
-          setSession(sessionKey, {
-            sessionId: newSession.sessionId,
-            messages: [],
-            isLoading: false,
-          });
+          // Check if we have an initial prompt to send
+          // We send it BEFORE starting SSE to avoid race conditions where
+          // SSE events could wipe locally-added messages before they're synced
+          const shouldSendInitialPrompt = initialPrompt && !initialPromptSentRef.current;
 
-          setConnectionState("connected");
-          startSharedEventSubscription(bridgeClient);
+          if (shouldSendInitialPrompt) {
+            // Mark as sent immediately to prevent double-sending
+            initialPromptSentRef.current = true;
+
+            // Create user message
+            const userMessage = {
+              id: crypto.randomUUID(),
+              role: "user" as const,
+              content: initialPrompt,
+              parts: [{ type: "text" as const, content: initialPrompt }],
+              timestamp: new Date().toISOString(),
+            };
+
+            console.debug("[ClaudeChatTab] Sending initial prompt during initialization", {
+              tabId,
+              sessionId: newSession.sessionId,
+              promptLength: initialPrompt.length,
+            });
+
+            // Set session with the user message already included and loading state
+            setSession(sessionKey, {
+              sessionId: newSession.sessionId,
+              messages: [userMessage],
+              isLoading: true,
+            });
+
+            setConnectionState("connected");
+
+            // Send the prompt to the server
+            const selectedModel = getSelectedModel(environmentId);
+            const thinkingEnabled = isThinkingEnabled(environmentId);
+
+            // Start SSE subscription first so we can receive the response
+            startSharedEventSubscription(bridgeClient);
+
+            // Now send the prompt
+            const success = await sendPrompt(bridgeClient, newSession.sessionId, initialPrompt, {
+              model: selectedModel,
+              thinking: thinkingEnabled,
+            });
+
+            if (!success) {
+              console.error("[ClaudeChatTab] Failed to send initial prompt");
+              setSessionLoading(sessionKey, false);
+              // Show error message to user
+              const errorMessage = {
+                id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                role: "assistant" as const,
+                content: "Failed to send message. Please try again.",
+                parts: [{ type: "text" as const, content: "Failed to send message. Please try again." }],
+                timestamp: new Date().toISOString(),
+              };
+              addMessage(sessionKey, errorMessage);
+            }
+          } else {
+            // No initial prompt - just set up the session normally
+            setSession(sessionKey, {
+              sessionId: newSession.sessionId,
+              messages: [],
+              isLoading: false,
+            });
+
+            setConnectionState("connected");
+            startSharedEventSubscription(bridgeClient);
+          }
         }
       } catch (error) {
         console.error("[ClaudeChatTab] Initialization failed:", error);
@@ -549,6 +614,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   handleSendRef.current = handleSend;
 
+  // Send initial prompt on RECONNECTION to existing session only.
+  // New sessions handle initial prompt directly in initialize() to avoid race conditions.
+  // This effect catches the case where we reconnect to an existing session that had an initial prompt.
   useEffect(() => {
     if (
       connectionState === "connected" &&
@@ -558,7 +626,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       !initialPromptSentRef.current
     ) {
       initialPromptSentRef.current = true;
-      console.debug("[ClaudeChatTab] Sending initial prompt for tab:", tabId);
+      console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
       // Use the user's thinking preference instead of hardcoding true
       const thinkingEnabled = isThinkingEnabled(environmentId);
       handleSendRef.current?.(initialPrompt, [], thinkingEnabled);
@@ -616,56 +684,59 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
-      <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
-        <div className="py-4">
-          {session?.messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground">
-              <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
-            </div>
-          ) : (
-            session?.messages.map((message) => (
-              <ClaudeMessage key={message.id} message={message} />
-            ))
-          )}
+      <div className="relative flex-1 min-h-0">
+        <ScrollArea ref={scrollRef} className="h-full">
+          <div className="py-4">
+            {session?.messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground">
+                <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
+              </div>
+            ) : (
+              session?.messages.map((message) => (
+                <ClaudeMessage key={message.id} message={message} />
+              ))
+            )}
 
-          {session?.isLoading && (
-            <div className="px-4 py-3">
-              <div className="max-w-3xl mx-auto">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-xs">Claude is thinking...</span>
+            {session?.isLoading && (
+              <div className="px-4 py-3">
+                <div className="max-w-3xl mx-auto">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-xs">Claude is thinking...</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {session && client && pendingQuestions.length > 0 && (
-            <div className="max-w-3xl mx-auto">
-              {pendingQuestions.map((question) => (
-                <ClaudeQuestionCard
-                  key={question.id}
-                  question={question}
-                  client={client}
-                  sessionId={session.sessionId}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+            {session && client && pendingQuestions.length > 0 && (
+              <div className="max-w-3xl mx-auto">
+                {pendingQuestions.map((question) => (
+                  <ClaudeQuestionCard
+                    key={question.id}
+                    question={question}
+                    client={client}
+                    sessionId={session.sessionId}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
 
-      {/* Scroll to bottom button - positioned above compose bar */}
-      {!isAtBottom && (
-        <div className="flex justify-end px-4 py-1">
-          <button
-            onClick={scrollToBottom}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors shadow-sm"
-          >
-            <ArrowDown className="w-3.5 h-3.5" />
-            <span>Scroll down</span>
-          </button>
-        </div>
-      )}
+        {/* Floating scroll-to-bottom button */}
+        <button
+          onClick={scrollToBottom}
+          className={`absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-primary/90 hover:bg-primary text-primary-foreground shadow-lg transition-all duration-200 ${
+            isAtBottom
+              ? "opacity-0 pointer-events-none translate-y-2"
+              : "opacity-100 translate-y-0"
+          }`}
+          aria-hidden={isAtBottom}
+        >
+          <ArrowDown className="w-3.5 h-3.5" />
+          <span>Scroll down</span>
+        </button>
+      </div>
 
       <ClaudeComposeBar
         environmentId={environmentId}
