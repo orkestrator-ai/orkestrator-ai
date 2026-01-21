@@ -1,6 +1,6 @@
 import { memo, useCallback, useState, useMemo, useRef, useEffect, type AnchorHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
-import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X } from "lucide-react";
+import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X, ListTodo, Square, CheckSquare } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
@@ -717,6 +717,118 @@ function TaskToolPart({
   );
 }
 
+/** Todo item interface for TodoWrite tool */
+interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm: string;
+}
+
+/** Render a TodoWrite tool with completion status */
+function TodoToolPart({
+  toolName,
+  toolState,
+  toolArgs,
+}: {
+  toolName?: string;
+  toolState?: "success" | "failure" | "pending";
+  toolArgs?: Record<string, unknown>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const stateColors = {
+    success: "text-green-600",
+    failure: "text-red-600",
+    pending: "text-yellow-600 animate-pulse",
+  };
+
+  // Extract todos from toolArgs
+  const todos = (toolArgs?.todos as TodoItem[] | undefined) || [];
+  const completedCount = todos.filter((t) => t.status === "completed").length;
+  const totalCount = todos.length;
+
+  // Determine if there's content to show when expanded
+  const hasExpandableContent = todos.length > 0;
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-1.5">
+      <CollapsibleTrigger
+        className={cn(
+          "flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors",
+          hasExpandableContent && "cursor-pointer",
+          !hasExpandableContent && "cursor-default"
+        )}
+        disabled={!hasExpandableContent}
+      >
+        <ChevronRight
+          className={cn(
+            "w-3 h-3 transition-transform shrink-0",
+            isOpen && "rotate-90",
+            !hasExpandableContent && "opacity-0"
+          )}
+        />
+        <ListTodo className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium shrink-0">{toolName || "TodoWrite"}</span>
+        {totalCount > 0 && (
+          <span className="text-muted-foreground/80 flex-1 text-left">
+            {completedCount}/{totalCount} complete
+          </span>
+        )}
+        {toolState && (
+          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+            {toolState === "pending" ? "running..." : toolState}
+          </span>
+        )}
+      </CollapsibleTrigger>
+
+      {hasExpandableContent && (
+        <CollapsibleContent className="mt-1">
+          <div className="rounded-md bg-muted/30 border border-border/50 overflow-hidden">
+            <div className="px-3 py-2 space-y-1.5">
+              {todos.map((todo, i) => (
+                <div
+                  key={`todo-${i}`}
+                  className={cn(
+                    "flex items-start gap-2 text-xs",
+                    todo.status === "completed" && "text-muted-foreground/60"
+                  )}
+                >
+                  {todo.status === "completed" ? (
+                    <CheckSquare className="w-3.5 h-3.5 shrink-0 mt-0.5 text-green-500" />
+                  ) : (
+                    <Square
+                      className={cn(
+                        "w-3.5 h-3.5 shrink-0 mt-0.5",
+                        todo.status === "in_progress"
+                          ? "text-yellow-500"
+                          : "text-muted-foreground/50"
+                      )}
+                    />
+                  )}
+                  <span
+                    className={cn(
+                      "flex-1",
+                      todo.status === "completed" && "line-through",
+                      todo.status === "in_progress" && "text-foreground font-medium"
+                    )}
+                  >
+                    {todo.content}
+                  </span>
+                  {todo.status === "in_progress" && (
+                    <span className="text-yellow-500 text-[10px] shrink-0">
+                      in progress
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </CollapsibleContent>
+      )}
+    </Collapsible>
+  );
+}
+
 /** Render a child tool under a Task - simplified version */
 function ChildToolPart({ part }: { part: ClaudeMessagePart }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -1020,6 +1132,12 @@ function isTaskTool(toolName?: string): boolean {
   return toolName.toLowerCase() === "task";
 }
 
+/** Check if a tool name is a TodoWrite tool */
+function isTodoTool(toolName?: string): boolean {
+  if (!toolName) return false;
+  return toolName.toLowerCase() === "todowrite";
+}
+
 /** Process parts to group tools under Tasks while preserving order */
 interface ProcessedPart {
   type: "thinking" | "text" | "file" | "tool-group" | "task-group";
@@ -1167,6 +1285,17 @@ export const ClaudeMessage = memo(function ClaudeMessage({
                           toolOutput={processed.part?.toolOutput}
                           toolError={processed.part?.toolError}
                           toolDiff={processed.part?.toolDiff}
+                        />
+                      );
+                    }
+                    // Use specialized TodoToolPart for TodoWrite tools
+                    if (isTodoTool(processed.part?.toolName)) {
+                      return (
+                        <TodoToolPart
+                          key={`todo-${i}`}
+                          toolName={processed.part?.toolName}
+                          toolState={processed.part?.toolState}
+                          toolArgs={processed.part?.toolArgs}
                         />
                       );
                     }
