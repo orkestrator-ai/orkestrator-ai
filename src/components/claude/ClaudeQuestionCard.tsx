@@ -189,6 +189,11 @@ export function ClaudeQuestionCard({
     });
   }, [question.questions, answers]);
 
+  // Count answered questions for progress display
+  const answeredCount = useMemo(() => {
+    return answers.filter((a) => a && a.length > 0).length;
+  }, [answers]);
+
   // Handle answer change for current question
   const handleAnswerChange = useCallback((newAnswer: string[]) => {
     setAnswers((prev) => {
@@ -240,29 +245,48 @@ export function ClaudeQuestionCard({
       <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/50 border-b border-border">
         <HelpCircle className="w-4 h-4 text-muted-foreground" />
         <span className="text-sm font-medium text-foreground">Claude needs your input</span>
-        <span className="text-xs text-muted-foreground">
-          {questionCount} {questionCount === 1 ? "question" : "questions"}
-        </span>
+        {questionCount === 1 ? (
+          <span className="text-xs text-muted-foreground">1 question</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            {answeredCount}/{questionCount} answered
+          </span>
+        )}
+        {questionCount > 1 && answeredCount === questionCount && (
+          <Check className="w-3.5 h-3.5 text-green-500 ml-auto" />
+        )}
       </div>
 
       {/* Question tabs (if multiple questions) */}
       {questionCount > 1 && (
         <div className="flex items-center gap-1 px-4 py-2 border-b border-border bg-muted/20">
-          {question.questions.map((q, index) => (
-            <button
-              key={index}
-              type="button"
-              onClick={() => setCurrentQuestionIndex(index)}
-              className={cn(
-                "px-3 py-1 text-xs rounded-md transition-colors",
-                index === currentQuestionIndex
-                  ? "bg-background text-foreground font-medium shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              )}
-            >
-              {q.header || `Question ${index + 1}`}
-            </button>
-          ))}
+          {question.questions.map((q, index) => {
+            const isAnswered = answers[index] && answers[index].length > 0;
+            const isActive = index === currentQuestionIndex;
+            return (
+              <button
+                key={index}
+                type="button"
+                onClick={() => setCurrentQuestionIndex(index)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors",
+                  isActive
+                    ? "bg-background text-foreground font-medium shadow-sm"
+                    : isAnswered
+                      ? "text-foreground/80 hover:text-foreground hover:bg-muted/50"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                )}
+              >
+                {isAnswered && !isActive && (
+                  <Check className="w-3 h-3 text-green-500" />
+                )}
+                {q.header || `Question ${index + 1}`}
+              </button>
+            );
+          })}
+          <span className="ml-auto text-xs text-muted-foreground">
+            {currentQuestionIndex + 1} of {questionCount}
+          </span>
         </div>
       )}
 
@@ -278,6 +302,7 @@ export function ClaudeQuestionCard({
       {/* Question content */}
       <div className="p-4">
         <QuestionItem
+          key={currentQuestionIndex}
           info={currentQuestion}
           answer={currentAnswer}
           onAnswerChange={handleAnswerChange}
@@ -285,7 +310,7 @@ export function ClaudeQuestionCard({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center justify-end gap-2 px-4 py-3 bg-muted/30 border-t border-border">
+      <div className="flex items-center justify-between px-4 py-3 bg-muted/30 border-t border-border">
         <Button
           variant="ghost"
           size="sm"
@@ -295,13 +320,25 @@ export function ClaudeQuestionCard({
         >
           Dismiss
         </Button>
-        <Button
-          size="sm"
-          onClick={handleNext}
-          disabled={!hasCurrentAnswer || isSubmitting}
-        >
-          {nextButtonText}
-        </Button>
+        <div className="flex items-center gap-2">
+          {questionCount > 1 && currentQuestionIndex > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentQuestionIndex((prev) => prev - 1)}
+              disabled={isSubmitting}
+            >
+              Back
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={handleNext}
+            disabled={!hasCurrentAnswer || isSubmitting}
+          >
+            {nextButtonText}
+          </Button>
+        </div>
       </div>
     </div>
   );
