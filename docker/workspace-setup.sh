@@ -96,6 +96,17 @@ fi
 
 echo -e "${BLUE}=== Workspace Setup ===${NC}"
 
+# Function to add .orkestrator to .git/info/exclude
+add_orkestrator_to_git_exclude() {
+    if [ -d "/workspace/.git" ]; then
+        mkdir -p /workspace/.git/info
+        if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
+            echo ".orkestrator" >> /workspace/.git/info/exclude
+            echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
+        fi
+    fi
+}
+
 # Function to convert SSH URLs to HTTPS for token-based authentication
 convert_ssh_to_https() {
     local url="$1"
@@ -225,13 +236,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
         fi
 
         # Add .orkestrator to .git/info/exclude so it's ignored locally
-        if [ -d "/workspace/.git" ]; then
-            mkdir -p /workspace/.git/info
-            if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
-                echo ".orkestrator" >> /workspace/.git/info/exclude
-                echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
-            fi
-        fi
+        add_orkestrator_to_git_exclude
 
         echo ""
         echo -e "${GREEN}Repository ready:${NC}"
@@ -258,11 +263,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
                 echo -e "${GREEN}Fallback succeeded!${NC}"
                 cd /workspace
                 # Add .orkestrator to .git/info/exclude so it's ignored locally
-                mkdir -p /workspace/.git/info
-                if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
-                    echo ".orkestrator" >> /workspace/.git/info/exclude
-                    echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
-                fi
+                add_orkestrator_to_git_exclude
             else
                 echo -e "${RED}Fallback failed - no .git directory${NC}"
             fi
