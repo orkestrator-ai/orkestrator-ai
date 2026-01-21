@@ -152,6 +152,79 @@ pub async fn get_default_branch(repo_path: &str) -> Result<String, WorktreeError
     Ok("main".to_string())
 }
 
+/// Add a pattern to the .git/info/exclude file
+///
+/// For worktrees, this resolves the actual git directory from the .git file.
+/// The pattern is only added if it doesn't already exist in the exclude file.
+async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
+    let worktree = Path::new(worktree_path);
+    let git_path = worktree.join(".git");
+
+    // For worktrees, .git is a file containing "gitdir: <path>"
+    // We need to resolve the actual git directory
+    let git_dir = if git_path.is_file() {
+        let content = std::fs::read_to_string(&git_path)
+            .map_err(|e| WorktreeError::Io(e))?;
+        let gitdir_line = content
+            .lines()
+            .find(|line| line.starts_with("gitdir:"))
+            .ok_or_else(|| WorktreeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "No gitdir line found in .git file",
+            )))?;
+        let gitdir = gitdir_line
+            .strip_prefix("gitdir:")
+            .unwrap()
+            .trim();
+        PathBuf::from(gitdir)
+    } else if git_path.is_dir() {
+        git_path
+    } else {
+        return Err(WorktreeError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(".git not found at {}", git_path.display()),
+        )));
+    };
+
+    // Create info directory if it doesn't exist
+    let info_dir = git_dir.join("info");
+    if !info_dir.exists() {
+        std::fs::create_dir_all(&info_dir)
+            .map_err(|e| WorktreeError::Io(e))?;
+    }
+
+    let exclude_file = info_dir.join("exclude");
+
+    // Read existing content if file exists
+    let existing_content = if exclude_file.exists() {
+        std::fs::read_to_string(&exclude_file)
+            .map_err(|e| WorktreeError::Io(e))?
+    } else {
+        String::new()
+    };
+
+    // Check if pattern already exists
+    if existing_content.lines().any(|line| line.trim() == pattern) {
+        debug!(pattern = %pattern, "Pattern already in git exclude");
+        return Ok(());
+    }
+
+    // Append the pattern
+    let mut new_content = existing_content;
+    if !new_content.is_empty() && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str(pattern);
+    new_content.push('\n');
+
+    std::fs::write(&exclude_file, new_content)
+        .map_err(|e| WorktreeError::Io(e))?;
+
+    debug!(pattern = %pattern, exclude_file = %exclude_file.display(), "Added pattern to git exclude");
+
+    Ok(())
+}
+
 /// Create a git worktree for a local environment
 ///
 /// # Arguments
@@ -300,6 +373,11 @@ pub async fn create_worktree(
         branch = %branch_name,
         "Successfully created git worktree"
     );
+
+    // Add .orkestrator to git exclude file so it's ignored locally
+    if let Err(e) = add_to_git_exclude(&worktree_path_str, ".orkestrator").await {
+        warn!(error = %e, "Failed to add .orkestrator to git exclude (non-fatal)");
+    }
 
     Ok(WorktreeCreateResult {
         path: worktree_path_str,
