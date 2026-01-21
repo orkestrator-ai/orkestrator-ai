@@ -203,6 +203,7 @@ pub async fn get_local_opencode_status(
 /// * `worktree_path` - Path to the git worktree (working directory)
 /// * `port` - Port to run the server on
 /// * `bridge_path` - Path to the claude-bridge dist directory
+/// * `bundled_bun_path` - Optional path to bundled bun binary (for packaged apps)
 ///
 /// # Returns
 /// Result with server start information
@@ -211,6 +212,7 @@ pub async fn start_local_claude_bridge(
     worktree_path: &str,
     port: u16,
     bridge_path: &str,
+    bundled_bun_path: Option<&str>,
 ) -> Result<LocalServerStartResult, String> {
     let start_lock = get_start_lock(environment_id);
     let _guard = start_lock.lock().await;
@@ -260,13 +262,40 @@ pub async fn start_local_claude_bridge(
     // Bind to localhost to avoid PNA/CORS restrictions in WebView
     env_vars.insert("HOSTNAME".to_string(), "127.0.0.1".to_string());
     env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
-    // Ensure node is discoverable when the SDK spawns it
+
+    // Build a comprehensive PATH for packaged apps
+    // Start with the current PATH or common locations
+    let mut path = std::env::var("PATH").unwrap_or_else(|_| String::new());
+
+    // Add common binary locations that might be missing in packaged apps
+    let common_paths = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ];
+    for common in common_paths {
+        if !path.contains(common) {
+            path = if path.is_empty() {
+                common.to_string()
+            } else {
+                format!("{}:{}", path, common)
+            };
+        }
+    }
+
+    // Add bun's directory if found
+    if let Some(bun_path) = find_bun_binary() {
+        if let Some(parent) = PathBuf::from(&bun_path).parent() {
+            let parent_str = parent.to_string_lossy();
+            if !path.contains(parent_str.as_ref()) {
+                path = format!("{}:{}", parent_str, path);
+            }
+        }
+    }
+
+    // Add node's directory if found
     let node_binary = resolve_node_binary();
-    let mut path = std::env::var("PATH").unwrap_or_else(|_| {
-        "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin".to_string()
-    });
-    // Also ensure common Node locations are present
-    path = format!("{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", path);
     if let Some(ref node_path) = node_binary {
         if let Some(parent) = PathBuf::from(node_path).parent() {
             let parent_str = parent.to_string_lossy();
@@ -281,7 +310,19 @@ pub async fn start_local_claude_bridge(
         env_vars.insert("NODE_BINARY".to_string(), "node".to_string());
         env_vars.insert("NODE".to_string(), "node".to_string());
     }
-    env_vars.insert("PATH".to_string(), path);
+
+    // Add bundled bun directory to PATH if available
+    if let Some(bun_path) = bundled_bun_path {
+        if let Some(parent) = PathBuf::from(bun_path).parent() {
+            let parent_str = parent.to_string_lossy();
+            if !path.contains(parent_str.as_ref()) {
+                path = format!("{}:{}", parent_str, path);
+            }
+        }
+    }
+
+    env_vars.insert("PATH".to_string(), path.clone());
+    debug!(path = %path, "Set PATH for claude-bridge process");
 
     // The bridge is a Node.js application
     // We need to run: node/bun <bridge_path>/dist/index.js
@@ -294,7 +335,7 @@ pub async fn start_local_claude_bridge(
         ));
     }
 
-    let (runtime_cmd, runtime_args) = resolve_js_runtime(&entry_point);
+    let (runtime_cmd, runtime_args) = resolve_js_runtime(&entry_point, bundled_bun_path);
     let runtime_args_ref: Vec<&str> = runtime_args.iter().map(String::as_str).collect();
     let pid = manager
         .spawn(
@@ -460,44 +501,186 @@ async fn ensure_claude_bridge_ready(bridge_path: &str, entry_point: &str) -> Res
     Ok(())
 }
 
-fn resolve_js_runtime(entry_point: &str) -> (&'static str, Vec<String>) {
-    if command_available("bun") {
-        return ("bun", vec![entry_point.to_string()]);
+fn resolve_js_runtime(entry_point: &str, bundled_bun_path: Option<&str>) -> (&'static str, Vec<String>) {
+    // First, try the bundled bun binary (highest priority for packaged apps)
+    if let Some(bun_path) = bundled_bun_path {
+        let path = PathBuf::from(bun_path);
+        if path.exists() {
+            // Ensure the bundled binary has executable permissions
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    let mut perms = metadata.permissions();
+                    let mode = perms.mode();
+                    // Check if executable bit is set for owner
+                    if mode & 0o100 == 0 {
+                        debug!(bun_path = %bun_path, "Setting executable permission on bundled bun");
+                        perms.set_mode(mode | 0o755);
+                        let _ = std::fs::set_permissions(&path, perms);
+                    }
+                }
+            }
+            debug!(bun_path = %bun_path, "Using bundled bun runtime");
+            let bun_static: &'static str = Box::leak(bun_path.to_string().into_boxed_str());
+            return (bun_static, vec![entry_point.to_string()]);
+        }
     }
+
+    // Try to find bun in system locations
+    if let Some(bun_path) = find_bun_binary() {
+        debug!(bun_path = %bun_path, "Using system bun runtime");
+        // Leak the string to get a static lifetime - this is fine as we only call this once per server start
+        let bun_static: &'static str = Box::leak(bun_path.into_boxed_str());
+        return (bun_static, vec![entry_point.to_string()]);
+    }
+
+    // Fall back to node
+    if let Some(node_path) = resolve_node_binary() {
+        debug!(node_path = %node_path, "Using node runtime");
+        let node_static: &'static str = Box::leak(node_path.into_boxed_str());
+        return (node_static, vec![entry_point.to_string()]);
+    }
+
+    // Last resort - try bare commands (works in dev, may fail in packaged app)
+    warn!("Could not find bun or node in known locations, falling back to bare command");
     ("node", vec![entry_point.to_string()])
 }
 
-fn command_available(cmd: &str) -> bool {
-    std::process::Command::new(cmd)
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Get the user's home directory using multiple methods
+fn get_home_dir() -> Option<PathBuf> {
+    // Try dirs crate first (most reliable)
+    if let Some(home) = dirs::home_dir() {
+        return Some(home);
+    }
+    // Fallback to HOME env var
+    std::env::var("HOME").ok().map(PathBuf::from)
+}
+
+/// Find bun binary by checking common installation locations
+fn find_bun_binary() -> Option<String> {
+    // Check environment variable first
+    if let Ok(path) = std::env::var("BUN_INSTALL") {
+        let bun_path = PathBuf::from(&path).join("bin").join("bun");
+        if bun_path.exists() {
+            return Some(bun_path.to_string_lossy().to_string());
+        }
+    }
+
+    // Get home directory for user-specific paths
+    let home = get_home_dir();
+
+    // Common bun installation locations on macOS
+    let candidates: Vec<PathBuf> = vec![
+        // Homebrew on Apple Silicon
+        PathBuf::from("/opt/homebrew/bin/bun"),
+        // Homebrew on Intel
+        PathBuf::from("/usr/local/bin/bun"),
+        // Bun's default install location
+        home.as_ref().map(|h| PathBuf::from(h).join(".bun/bin/bun")).unwrap_or_default(),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() && candidate.to_string_lossy() != "" {
+            debug!(path = %candidate.display(), "Found bun binary");
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    // Try which as last resort (works if PATH is set correctly)
+    if let Ok(output) = std::process::Command::new("which").arg("bun").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() && PathBuf::from(&path).exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_node_binary() -> Option<String> {
+    // Check environment variable first
     if let Ok(path) = std::env::var("NODE_BINARY") {
-        if !path.is_empty() {
+        if !path.is_empty() && PathBuf::from(&path).exists() {
             return Some(path);
         }
     }
 
-    std::process::Command::new("which")
-        .arg("node")
-        .output()
-        .ok()
-        .and_then(|output| {
-            if !output.status.success() {
-                return None;
+    // Get home directory for user-specific paths
+    let home = std::env::var("HOME").ok();
+
+    // Common node installation locations on macOS
+    let mut candidates: Vec<PathBuf> = vec![
+        // Homebrew on Apple Silicon
+        PathBuf::from("/opt/homebrew/bin/node"),
+        // Homebrew on Intel
+        PathBuf::from("/usr/local/bin/node"),
+        // System node
+        PathBuf::from("/usr/bin/node"),
+    ];
+
+    // Add NVM paths if home is available
+    if let Some(ref h) = home {
+        let nvm_dir = PathBuf::from(h).join(".nvm/versions/node");
+        if nvm_dir.exists() {
+            // Try to find the default or latest node version
+            if let Ok(entries) = std::fs::read_dir(&nvm_dir) {
+                let mut versions: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .collect();
+                // Sort by name descending to get latest version first
+                versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                for version in versions {
+                    let node_path = version.path().join("bin/node");
+                    if node_path.exists() {
+                        candidates.insert(0, node_path);
+                        break;
+                    }
+                }
             }
-            let raw = String::from_utf8_lossy(&output.stdout);
-            let resolved = raw.lines().next()?.trim();
-            if resolved.is_empty() {
-                None
-            } else {
-                Some(resolved.to_string())
+        }
+
+        // Also check fnm (Fast Node Manager)
+        let fnm_dir = PathBuf::from(h).join(".fnm/node-versions");
+        if fnm_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&fnm_dir) {
+                let mut versions: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .collect();
+                versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                for version in versions {
+                    let node_path = version.path().join("installation/bin/node");
+                    if node_path.exists() {
+                        candidates.insert(0, node_path);
+                        break;
+                    }
+                }
             }
-        })
+        }
+    }
+
+    for candidate in candidates {
+        if candidate.exists() {
+            debug!(path = %candidate.display(), "Found node binary");
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    // Try which as last resort
+    if let Ok(output) = std::process::Command::new("which").arg("node").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() && PathBuf::from(&path).exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
