@@ -1,0 +1,4 @@
+{
+  "script": ["curl -fsSL https://bun.sh/install | bash", "bun install"],
+  "run": ["bun run tauri dev"]
+}

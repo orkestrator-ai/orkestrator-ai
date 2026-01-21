@@ -224,6 +224,15 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
             fi
         fi
 
+        # Add .orkestrator to .git/info/exclude so it's ignored locally
+        if [ -d "/workspace/.git" ]; then
+            mkdir -p /workspace/.git/info
+            if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
+                echo ".orkestrator" >> /workspace/.git/info/exclude
+                echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
+            fi
+        fi
+
         echo ""
         echo -e "${GREEN}Repository ready:${NC}"
         echo "  Branch: $(git branch --show-current)"
@@ -248,6 +257,12 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
             if [ -d "/workspace/.git" ]; then
                 echo -e "${GREEN}Fallback succeeded!${NC}"
                 cd /workspace
+                # Add .orkestrator to .git/info/exclude so it's ignored locally
+                mkdir -p /workspace/.git/info
+                if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
+                    echo ".orkestrator" >> /workspace/.git/info/exclude
+                    echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
+                fi
             else
                 echo -e "${RED}Fallback failed - no .git directory${NC}"
             fi
