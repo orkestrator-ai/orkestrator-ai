@@ -246,6 +246,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             fromStore: !!existingSessionFromStore,
           });
           setConnectionState("connected");
+
+          // Start SSE subscription BEFORE sending initial prompt to avoid race condition
+          // where SSE events could wipe locally-added messages
           startSharedEventSubscription(bridgeClient);
 
           // Refresh messages from server to ensure we have latest state
@@ -300,14 +303,67 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             environmentId,
           });
 
-          setSession(tabId, {
-            sessionId: newSession.sessionId,
-            messages: [],
-            isLoading: false,
-          });
+          // Check if we have an initial prompt to send
+          // We send it BEFORE starting SSE to avoid race conditions where
+          // SSE events could wipe locally-added messages before they're synced
+          const shouldSendInitialPrompt = initialPrompt && !initialPromptSentRef.current;
 
-          setConnectionState("connected");
-          startSharedEventSubscription(bridgeClient);
+          if (shouldSendInitialPrompt) {
+            // Mark as sent immediately to prevent double-sending
+            initialPromptSentRef.current = true;
+
+            // Create user message
+            const userMessage = {
+              id: crypto.randomUUID(),
+              role: "user" as const,
+              content: initialPrompt,
+              parts: [{ type: "text" as const, content: initialPrompt }],
+              timestamp: new Date().toISOString(),
+            };
+
+            console.debug("[ClaudeChatTab] Sending initial prompt during initialization", {
+              tabId,
+              sessionId: newSession.sessionId,
+              promptLength: initialPrompt.length,
+            });
+
+            // Set session with the user message already included and loading state
+            setSession(tabId, {
+              sessionId: newSession.sessionId,
+              messages: [userMessage],
+              isLoading: true,
+            });
+
+            setConnectionState("connected");
+
+            // Send the prompt to the server
+            const selectedModel = getSelectedModel(environmentId);
+            const thinkingEnabled = isThinkingEnabled(environmentId);
+
+            // Start SSE subscription first so we can receive the response
+            startSharedEventSubscription(bridgeClient);
+
+            // Now send the prompt
+            const success = await sendPrompt(bridgeClient, newSession.sessionId, initialPrompt, {
+              model: selectedModel,
+              thinking: thinkingEnabled,
+            });
+
+            if (!success) {
+              console.error("[ClaudeChatTab] Failed to send initial prompt");
+              setSessionLoading(tabId, false);
+            }
+          } else {
+            // No initial prompt - just set up the session normally
+            setSession(tabId, {
+              sessionId: newSession.sessionId,
+              messages: [],
+              isLoading: false,
+            });
+
+            setConnectionState("connected");
+            startSharedEventSubscription(bridgeClient);
+          }
         }
       } catch (error) {
         console.error("[ClaudeChatTab] Initialization failed:", error);
