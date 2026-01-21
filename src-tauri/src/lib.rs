@@ -5,6 +5,7 @@ mod claude_cli;
 mod commands;
 mod credentials;
 mod docker;
+mod fix_path_env;
 mod local;
 mod models;
 mod pty;
@@ -19,6 +20,10 @@ use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Fix PATH environment on macOS before any CLI detection
+    // This must be called before logging is initialized to ensure CLI tools are found
+    fix_path_env::fix_path_env();
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,orkestrator_ai_lib=debug"));
     tracing_subscriber::fmt()
