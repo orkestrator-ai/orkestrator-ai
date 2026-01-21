@@ -8,3 +8,4 @@ export type { ClaudeStateCallback } from "./useClaudeStateCallbacks";
 export { useClipboardImagePaste } from "./useClipboardImagePaste";
 export { useTerminalClipboard } from "./useTerminalClipboard";
 export type { UseTerminalClipboardOptions, UseTerminalClipboardReturn } from "./useTerminalClipboard";
+export { useScrollLock } from "./useScrollLock";
