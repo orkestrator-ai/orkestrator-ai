@@ -25,6 +25,10 @@ export interface NormalizedPart {
   toolUseId?: string;
   /** Internal: Message UUID for tracking thinking parts across streaming updates */
   _messageUuid?: string;
+  /** Whether this tool is from an MCP server */
+  isMcpTool?: boolean;
+  /** The MCP server name if this is an MCP tool */
+  mcpServerName?: string;
 }
 
 /** Normalized message format */

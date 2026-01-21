@@ -11,6 +11,7 @@ import type {
   PromptOptions,
 } from "../types/index.js";
 import { eventEmitter } from "./event-emitter.js";
+import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
 
 // Store for active sessions
 const sessions = new Map<string, SessionState>();
@@ -178,6 +179,23 @@ interface OrderedPartEntry {
 }
 
 /**
+ * Check if a tool name is from an MCP server and extract server name
+ * MCP tool names have format: mcp_servername_toolname
+ */
+function parseMcpToolName(toolName: string): { isMcpTool: boolean; mcpServerName?: string } {
+  if (toolName.startsWith("mcp_")) {
+    // Format: mcp_servername_toolname
+    const parts = toolName.split("_");
+    if (parts.length >= 3) {
+      // Server name is the second part
+      return { isMcpTool: true, mcpServerName: parts[1] };
+    }
+    return { isMcpTool: true };
+  }
+  return { isMcpTool: false };
+}
+
+/**
  * Parse SDK message content, extracting text/thinking parts, registering tools,
  * and tracking the order of non-text parts for chronological display
  */
@@ -240,6 +258,9 @@ function parseMessageContent(
         };
       }
 
+      // Check if this is an MCP tool
+      const { isMcpTool, mcpServerName } = parseMcpToolName(toolName);
+
       // Register tool with tracker
       if (block.id) {
         toolTracker.addTool(block.id, {
@@ -250,6 +271,9 @@ function parseMessageContent(
           toolState: "pending",
           toolDiff,
           toolUseId: block.id,
+          // MCP tool metadata
+          isMcpTool,
+          mcpServerName,
         });
         // Track order: add tool reference
         orderedParts.push({
@@ -378,12 +402,20 @@ export async function sendPrompt(
     // Use CWD env var if set (for local environments where bridge runs from its own dir)
     // This allows the Claude SDK to operate on the actual project directory
     const cwd = process.env.CWD || process.cwd();
+
+    // Load MCP servers from config files
+    const mcpServers = await getMcpServersForSdk(cwd);
+    const mcpServerNames = await getMcpServerNames(cwd);
+
+    const mcpServerCount = Object.keys(mcpServers).length;
     console.log("[session-manager] Starting query", {
       sessionId,
       cwd,
       model: options?.model,
       resume: session.sdkSessionId ?? null,
       thinkingEnabled,
+      mcpServerCount,
+      mcpServerNames: Array.from(mcpServerNames),
     });
     const envPath = process.env.PATH;
     console.log("[session-manager] SDK env PATH", { path: envPath });
@@ -407,6 +439,8 @@ export async function sendPrompt(
           "AskUserQuestion",
           "Task",
           "TodoWrite",
+          // Allow all MCP tools
+          "mcp:*",
         ],
         abortController,
         // Resume session if we have a previous SDK session ID
@@ -418,6 +452,8 @@ export async function sendPrompt(
         },
         // Load project settings (CLAUDE.md files)
         settingSources: ["project"],
+        // Load MCP servers from user config
+        mcpServers: mcpServerCount > 0 ? mcpServers : undefined,
         // Handle AskUserQuestion tool to get user input
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         canUseTool: async (toolName: string, input: any) => {

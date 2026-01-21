@@ -8,6 +8,7 @@ import health from "./routes/health.js";
 import config from "./routes/config.js";
 import session from "./routes/session.js";
 import events from "./routes/events.js";
+import mcp from "./routes/mcp.js";
 
 const app = new Hono();
 
@@ -32,6 +33,7 @@ app.route("/global", health);
 app.route("/config", config);
 app.route("/session", session);
 app.route("/event", events);
+app.route("/mcp", mcp);
 
 // Root endpoint
 app.get("/", (c) => {
@@ -43,6 +45,7 @@ app.get("/", (c) => {
       models: "/config/models",
       sessions: "/session/list",
       events: "/event/subscribe",
+      mcp: "/mcp/servers",
     },
   });
 });
