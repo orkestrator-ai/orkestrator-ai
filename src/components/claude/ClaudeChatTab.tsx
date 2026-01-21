@@ -352,6 +352,15 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             if (!success) {
               console.error("[ClaudeChatTab] Failed to send initial prompt");
               setSessionLoading(tabId, false);
+              // Show error message to user
+              const errorMessage = {
+                id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                role: "assistant" as const,
+                content: "Failed to send message. Please try again.",
+                parts: [{ type: "text" as const, content: "Failed to send message. Please try again." }],
+                timestamp: new Date().toISOString(),
+              };
+              addMessage(tabId, errorMessage);
             }
           } else {
             // No initial prompt - just set up the session normally
@@ -598,6 +607,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   handleSendRef.current = handleSend;
 
+  // Send initial prompt on RECONNECTION to existing session only.
+  // New sessions handle initial prompt directly in initialize() to avoid race conditions.
+  // This effect catches the case where we reconnect to an existing session that had an initial prompt.
   useEffect(() => {
     if (
       connectionState === "connected" &&
@@ -607,7 +619,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       !initialPromptSentRef.current
     ) {
       initialPromptSentRef.current = true;
-      console.debug("[ClaudeChatTab] Sending initial prompt for tab:", tabId);
+      console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
       // Use the user's thinking preference instead of hardcoding true
       const thinkingEnabled = isThinkingEnabled(environmentId);
       handleSendRef.current?.(initialPrompt, [], thinkingEnabled);
