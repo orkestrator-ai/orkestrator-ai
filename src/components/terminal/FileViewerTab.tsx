@@ -192,20 +192,20 @@ export function FileViewerTab({
   // Note: isImage is derived from filePath, so it doesn't need to be in the dependency array
   }, [containerId, worktreePath, isLocalEnvironment, filePath, language, showDiff, tabId, setOriginalContent]);
 
-  // Save file to container (saving to local environments not yet supported)
+  // Save file to container or local environment
   const handleSave = useCallback(async () => {
     // Prevent concurrent saves
     if (isSaving) return;
 
-    // Local environment saving not yet supported
-    if (isLocalEnvironment) {
-      toast.error("Saving not supported", {
-        description: "File saving is not yet supported for local environments",
+    // Check for required identifiers based on environment type
+    if (isLocalEnvironment && !worktreePath) {
+      toast.error("Cannot save file", {
+        description: "No worktree path available",
       });
       return;
     }
 
-    if (!containerId) {
+    if (!isLocalEnvironment && !containerId) {
       toast.error("Cannot save file", {
         description: "No container ID available",
       });
@@ -228,7 +228,14 @@ export function FileViewerTab({
         binary += String.fromCharCode.apply(null, Array.from(chunk));
       }
       const base64Data = btoa(binary);
-      await tauri.writeContainerFile(containerId, filePath, base64Data);
+
+      // Save to appropriate target based on environment type
+      if (isLocalEnvironment && worktreePath) {
+        await tauri.writeLocalFile(worktreePath, filePath, base64Data);
+      } else if (containerId) {
+        await tauri.writeContainerFile(containerId, filePath, base64Data);
+      }
+
       // Update dirty state - file is now saved
       markSaved(tabId, contentToSave);
       setContent(contentToSave);
@@ -240,7 +247,7 @@ export function FileViewerTab({
     } finally {
       setIsSaving(false);
     }
-  }, [tabId, containerId, isLocalEnvironment, filePath, getDirtyContent, markSaved, isSaving]);
+  }, [tabId, containerId, worktreePath, isLocalEnvironment, filePath, getDirtyContent, markSaved, isSaving]);
 
   // Handle editor mount - set up Cmd+S keybinding
   const handleEditorMount: OnMount = useCallback(
