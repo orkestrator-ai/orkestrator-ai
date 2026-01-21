@@ -11,7 +11,7 @@ use crate::docker::{
 };
 use crate::local::{
     allocate_ports, copy_env_files, create_worktree, delete_worktree,
-    stop_all_local_servers,
+    run_setup_local, stop_all_local_servers,
 };
 use crate::models::{Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState};
 use crate::storage::{get_config, get_storage, StorageError};
@@ -1033,6 +1033,24 @@ async fn start_local_environment(
     if let Err(e) = copy_env_files(source_repo_path, &worktree_path) {
         // Non-fatal - just log it
         warn!(environment_id = %environment_id, error = %e, "Failed to copy env files (non-fatal)");
+    }
+
+    // Run setupLocal commands from orkestrator-ai.json if present
+    let setup_result = run_setup_local(&worktree_path).await;
+    if !setup_result.success {
+        let err_msg = setup_result.error.unwrap_or_else(|| "Unknown error".to_string());
+        warn!(
+            environment_id = %environment_id,
+            error = %err_msg,
+            commands_run = setup_result.commands_run,
+            "setupLocal commands failed (non-fatal)"
+        );
+    } else if setup_result.commands_run > 0 {
+        info!(
+            environment_id = %environment_id,
+            commands_run = setup_result.commands_run,
+            "setupLocal commands completed successfully"
+        );
     }
 
     // Update environment with worktree path, branch (if adjusted), and status

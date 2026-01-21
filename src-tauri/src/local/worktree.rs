@@ -531,6 +531,204 @@ pub fn copy_env_files(source_path: &str, dest_path: &str) -> Result<(), Worktree
     Ok(())
 }
 
+/// Result of running setup commands
+#[derive(Debug)]
+pub struct SetupLocalResult {
+    /// Whether all commands succeeded
+    pub success: bool,
+    /// Number of commands executed
+    pub commands_run: usize,
+    /// Error message if any command failed
+    pub error: Option<String>,
+}
+
+/// Run setupLocal commands from orkestrator-ai.json in the worktree
+///
+/// Reads the orkestrator-ai.json file from the worktree directory and executes
+/// any commands specified in the `setupLocal` field. Commands are run sequentially
+/// in the worktree directory.
+///
+/// # Arguments
+/// * `worktree_path` - Path to the worktree directory
+///
+/// # Returns
+/// SetupLocalResult indicating success/failure and command count
+pub async fn run_setup_local(worktree_path: &str) -> SetupLocalResult {
+    let config_path = Path::new(worktree_path).join("orkestrator-ai.json");
+
+    // Check if config file exists
+    if !config_path.exists() {
+        debug!(worktree_path = %worktree_path, "No orkestrator-ai.json found, skipping setupLocal");
+        return SetupLocalResult {
+            success: true,
+            commands_run: 0,
+            error: None,
+        };
+    }
+
+    // Read and parse the config file
+    let config_content = match std::fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(e) => {
+            warn!(error = %e, "Failed to read orkestrator-ai.json");
+            return SetupLocalResult {
+                success: false,
+                commands_run: 0,
+                error: Some(format!("Failed to read orkestrator-ai.json: {}", e)),
+            };
+        }
+    };
+
+    let config: serde_json::Value = match serde_json::from_str(&config_content) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "Failed to parse orkestrator-ai.json");
+            return SetupLocalResult {
+                success: false,
+                commands_run: 0,
+                error: Some(format!("Failed to parse orkestrator-ai.json: {}", e)),
+            };
+        }
+    };
+
+    // Extract setupLocal field - can be string or array of strings
+    let commands: Vec<String> = match config.get("setupLocal") {
+        Some(serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                vec![]
+            } else {
+                vec![s.clone()]
+            }
+        }
+        Some(serde_json::Value::Array(arr)) => {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+        _ => {
+            debug!(worktree_path = %worktree_path, "No setupLocal field found in orkestrator-ai.json");
+            return SetupLocalResult {
+                success: true,
+                commands_run: 0,
+                error: None,
+            };
+        }
+    };
+
+    if commands.is_empty() {
+        debug!(worktree_path = %worktree_path, "setupLocal is empty, nothing to run");
+        return SetupLocalResult {
+            success: true,
+            commands_run: 0,
+            error: None,
+        };
+    }
+
+    info!(
+        worktree_path = %worktree_path,
+        command_count = commands.len(),
+        "Running setupLocal commands"
+    );
+
+    let mut commands_run = 0;
+
+    for (idx, cmd) in commands.iter().enumerate() {
+        info!(
+            worktree_path = %worktree_path,
+            command_index = idx + 1,
+            total_commands = commands.len(),
+            command = %cmd,
+            "Running setupLocal command"
+        );
+
+        // Use shell to execute the command (supports pipes, redirects, etc.)
+        let output = Command::new("sh")
+            .args(["-c", cmd])
+            .current_dir(worktree_path)
+            .output()
+            .await;
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if !stdout.is_empty() {
+                    debug!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        stdout = %stdout,
+                        "setupLocal command stdout"
+                    );
+                }
+
+                if !stderr.is_empty() {
+                    debug!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        stderr = %stderr,
+                        "setupLocal command stderr"
+                    );
+                }
+
+                if output.status.success() {
+                    commands_run += 1;
+                    info!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        "setupLocal command completed successfully"
+                    );
+                } else {
+                    let exit_code = output.status.code().unwrap_or(-1);
+                    error!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        exit_code = exit_code,
+                        stderr = %stderr,
+                        "setupLocal command failed"
+                    );
+                    return SetupLocalResult {
+                        success: false,
+                        commands_run,
+                        error: Some(format!(
+                            "Command '{}' failed with exit code {}: {}",
+                            cmd,
+                            exit_code,
+                            stderr.trim()
+                        )),
+                    };
+                }
+            }
+            Err(e) => {
+                error!(
+                    worktree_path = %worktree_path,
+                    command = %cmd,
+                    error = %e,
+                    "Failed to execute setupLocal command"
+                );
+                return SetupLocalResult {
+                    success: false,
+                    commands_run,
+                    error: Some(format!("Failed to execute command '{}': {}", cmd, e)),
+                };
+            }
+        }
+    }
+
+    info!(
+        worktree_path = %worktree_path,
+        commands_run = commands_run,
+        "All setupLocal commands completed successfully"
+    );
+
+    SetupLocalResult {
+        success: true,
+        commands_run,
+        error: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
