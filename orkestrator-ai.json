@@ -1,4 +1,5 @@
 {
   "setupContainer": ["curl -fsSL https://bun.sh/install | bash", "bun install"],
+  "setupLocal": ["bun install"],
   "run": ["bun run tauri dev"]
 }

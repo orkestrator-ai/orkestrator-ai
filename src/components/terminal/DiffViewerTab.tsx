@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { DiffEditor } from "@monaco-editor/react";
+import { DiffEditor, type BeforeMount } from "@monaco-editor/react";
 import type * as monaco from "monaco-editor";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
@@ -61,6 +61,23 @@ export function DiffViewerTab({
 
   // Track editor instance for proper cleanup
   const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+
+  // Disable linting/diagnostics before editor mounts
+  const handleEditorWillMount: BeforeMount = useCallback((monacoInstance) => {
+    // Disable TypeScript/JavaScript diagnostics
+    monacoInstance.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
+    monacoInstance.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
+    // Disable JSON validation
+    monacoInstance.languages.json.jsonDefaults.setDiagnosticsOptions({
+      validate: false,
+    });
+  }, []);
 
   // Handle editor mount - capture the editor instance
   const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneDiffEditor) => {
@@ -222,6 +239,7 @@ export function DiffViewerTab({
             original={originalContent ?? ""}
             modified=""
             theme="vs-dark"
+            beforeMount={handleEditorWillMount}
             onMount={handleEditorMount}
             options={{
               readOnly: true,
@@ -269,6 +287,7 @@ export function DiffViewerTab({
           original={originalContent ?? ""}
           modified={modifiedContent ?? ""}
           theme="vs-dark"
+          beforeMount={handleEditorWillMount}
           onMount={handleEditorMount}
           options={{
             readOnly: true,
