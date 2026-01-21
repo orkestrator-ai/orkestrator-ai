@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { exit } from "@tauri-apps/plugin-process";
 import { AppShell } from "@/components/layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TerminalContainer } from "@/components/terminal";
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
 import { checkDocker, checkClaudeCli, checkClaudeConfig, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
+import { usePrMonitorService } from "@/hooks/usePrMonitorService";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +29,9 @@ function App() {
   const { setConfig } = useConfigStore();
   const [dockerAvailable, setDockerAvailable] = useState<boolean | null>(null);
   const [isCheckingDocker, setIsCheckingDocker] = useState(false);
+
+  // Initialize centralized PR monitoring service
+  usePrMonitorService();
   const [claudeCliAvailable, setClaudeCliAvailable] = useState<boolean | null>(null);
   const [claudeConfigAvailable, setClaudeConfigAvailable] = useState<boolean | null>(null);
   const [opencodeCliAvailable, setOpencodeCliAvailable] = useState<boolean | null>(null);
@@ -123,7 +127,13 @@ function App() {
 
   // Handle closing the app when Docker is not available
   const handleCloseApp = async () => {
-    await getCurrentWindow().close();
+    try {
+      await exit(0);
+    } catch (error) {
+      console.error("[App] Failed to exit via plugin:", error);
+      // Fallback: try using window.close() for webview
+      window.close();
+    }
   };
 
   // Handle retrying Docker check
@@ -354,9 +364,9 @@ function App() {
                   "Retry"
                 )}
               </Button>
-              <AlertDialogAction onClick={handleCloseApp}>
+              <Button onClick={handleCloseApp}>
                 Close Application
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -370,11 +380,11 @@ function App() {
                 No compatible AI CLI is installed on your system. Orkestrator AI requires Claude Code or OpenCode to create and manage AI-powered development environments.
                 <br /><br />
                 <strong>Option 1: Install Claude Code (recommended)</strong>
-                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">npm install -g @anthropic-ai/claude-code</pre>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">curl -fsSL https://claude.ai/install.sh | bash</pre>
                 Then run <code className="rounded bg-muted px-1 font-mono">claude</code> to complete the setup.
                 <br /><br />
                 <strong>Option 2: Install OpenCode</strong>
-                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">npm install -g opencode</pre>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">curl -fsSL https://opencode.ai/install | bash</pre>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -392,9 +402,9 @@ function App() {
                   "Retry"
                 )}
               </Button>
-              <AlertDialogAction onClick={handleCloseApp}>
+              <Button onClick={handleCloseApp}>
                 Close Application
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -427,9 +437,9 @@ function App() {
                   "Retry"
                 )}
               </Button>
-              <AlertDialogAction onClick={handleCloseApp}>
+              <Button onClick={handleCloseApp}>
                 Close Application
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

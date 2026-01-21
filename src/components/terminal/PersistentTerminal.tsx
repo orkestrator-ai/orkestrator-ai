@@ -4,14 +4,21 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useClaudeState } from "@/hooks/useClaudeState";
 import { useClipboardImagePaste, processClipboardPaste } from "@/hooks/useClipboardImagePaste";
-import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore } from "@/stores";
+import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore, useEnvironmentStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData } from "@/stores/terminalPortalStore";
 import { cn } from "@/lib/utils";
 import { loadSessionBuffer, setSessionHasLaunchedCommand } from "@/lib/tauri";
 import type { TabType } from "@/contexts";
 import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK, ROOT_TERMINAL_USER } from "@/constants/terminal";
-import { stripAnsi, tabTypeToSessionType, ENVIRONMENT_READY_MARKER, SHELL_PROMPT_PATTERNS } from "@/lib/terminal-utils";
+import {
+  stripAnsi,
+  tabTypeToSessionType,
+  ENVIRONMENT_READY_MARKER,
+  ENVIRONMENT_READY_MARKER_ALT_TILDE,
+  ENVIRONMENT_READY_MARKER_ALT_DASH,
+  SETUP_COMPLETE_MARKER,
+} from "@/lib/terminal-utils";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -31,7 +38,7 @@ interface PersistentTerminalProps {
   terminalData: PersistentTerminalData;
   tabId: string;
   tabType: TabType;
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
   isActive: boolean;
   /** Whether this terminal is focused (active tab in the active pane) */
@@ -109,6 +116,12 @@ export function PersistentTerminal({
   const existingHasLaunchedCommand = existingSession?.hasLaunchedCommand ?? false;
   const isReconnecting = !!existingSessionId;
 
+  // Track if there was an existing session when component mounted (genuine reconnection)
+  // This distinguishes between:
+  // 1. App restart/tab switch where we're reconnecting to existing session
+  // 2. Newly created environment where session ID gets stored during this mount cycle
+  const hadExistingSessionAtMountRef = useRef(!!existingSessionId);
+
   const [hasReconnected, setHasReconnected] = useState(false);
 
   // Get terminal store functions
@@ -122,6 +135,11 @@ export function PersistentTerminal({
   );
   const terminalIsOpened = useTerminalPortalStore(
     (state) => state.terminals.get(terminalKey)?.isOpened ?? false
+  );
+
+  // Check if this is a local environment (uses worktree instead of Docker container)
+  const isLocalEnvironment = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.environmentType === "local"
   );
 
   // Extract terminal and addons from terminalData
@@ -223,8 +241,7 @@ export function PersistentTerminal({
         await writeRef.current("\r");
       }
 
-      // Close the compose bar and refocus terminal
-      setIsComposeBarOpen(false);
+      // Keep compose bar open but refocus terminal
       terminal.focus();
     },
     [terminal]
@@ -261,64 +278,36 @@ export function PersistentTerminal({
       const text = new TextDecoder().decode(data);
 
       // For first tab only: detect environment ready state
+      // IMPORTANT: For the first tab, we ONLY detect explicit completion markers.
+      // We must NOT use shell prompt fallbacks because:
+      // 1. Shell prompts (➜) appear between setup commands
+      // 2. Git clone output contains "workspace", "main", etc.
+      // 3. We need to wait for ALL setup scripts in orkestrator-ai.json to complete
       if (isFirstTab && !isEnvironmentReady) {
         dataBufferRef.current += text;
         const strippedBuffer = stripAnsi(dataBufferRef.current);
 
-        let readyDetected =
+        // Only detect explicit completion markers
+        // These appear at the END of workspace-setup.sh after ALL scripts finish
+        const readyDetected =
           strippedBuffer.includes(ENVIRONMENT_READY_MARKER) ||
-          dataBufferRef.current.includes(ENVIRONMENT_READY_MARKER);
-
-        if (!readyDetected) {
-          for (const pattern of SHELL_PROMPT_PATTERNS) {
-            if (typeof pattern === "string") {
-              if (strippedBuffer.includes(pattern)) {
-                readyDetected = true;
-                break;
-              }
-            } else if (pattern.test(strippedBuffer)) {
-              readyDetected = true;
-              break;
-            }
-          }
-        }
-
-        // Fallback detection
-        if (!readyDetected && strippedBuffer.length > 200) {
-          const hasWorkspacePrompt =
-            strippedBuffer.includes("workspace") &&
-            (strippedBuffer.includes("main") || strippedBuffer.includes("master"));
-          const hasZshPrompt = strippedBuffer.includes("➜") || strippedBuffer.includes("❯");
-          const hasGitBranch = /git:\([^)]+\)/.test(strippedBuffer);
-          const hasPowerlevel10k =
-            strippedBuffer.includes("node") && strippedBuffer.includes("/workspace");
-
-          if ((hasWorkspacePrompt && hasZshPrompt) || hasGitBranch || hasPowerlevel10k) {
-            readyDetected = true;
-          }
-        }
-
-        if (!readyDetected && strippedBuffer.length > 600) {
-          const hasCloneComplete =
-            strippedBuffer.includes("Cloning into") ||
-            strippedBuffer.includes("100%") ||
-            strippedBuffer.includes("Resolving deltas");
-          const hasWorkspaceRef = strippedBuffer.includes("/workspace");
-
-          if (hasCloneComplete && hasWorkspaceRef) {
-            readyDetected = true;
-          }
-        }
+          dataBufferRef.current.includes(ENVIRONMENT_READY_MARKER) ||
+          // Also check for alternate marker formats (with different delimiters)
+          strippedBuffer.includes(ENVIRONMENT_READY_MARKER_ALT_TILDE) ||
+          strippedBuffer.includes(ENVIRONMENT_READY_MARKER_ALT_DASH) ||
+          // Setup complete marker appears right before "Workspace Ready"
+          strippedBuffer.includes(SETUP_COMPLETE_MARKER);
 
         if (readyDetected) {
-          console.debug("[PersistentTerminal] Environment ready detected for tab:", tabId);
+          console.log("[PersistentTerminal] Environment ready detected for tab:", tabId, "isFirstTab:", isFirstTab);
           setIsEnvironmentReady(true);
           dataBufferRef.current = "";
           onReady?.();
         }
 
-        if (dataBufferRef.current.length > 2048) {
-          dataBufferRef.current = dataBufferRef.current.slice(-1024);
+        // Keep buffer from growing indefinitely, but use a larger window to catch markers
+        if (dataBufferRef.current.length > 4096) {
+          dataBufferRef.current = dataBufferRef.current.slice(-2048);
         }
       }
 
@@ -350,6 +339,8 @@ export function PersistentTerminal({
   const { sessionId, isConnected, isConnecting, connect, resize, write } =
     useTerminal({
       containerId,
+      environmentId,
+      isLocal: isLocalEnvironment,
       onData: handleData,
       existingSessionId,
       persistSession: true,
@@ -537,11 +528,26 @@ export function PersistentTerminal({
       // Mark initial restoration as complete - cleanup can now safely serialize
       initialRestorationCompleteRef.current = true;
       setHasReconnected(true);
-      setIsEnvironmentReady(true);
       hasLaunchedCommandRef.current = existingHasLaunchedCommand;
-      onReady?.();
+
+      // Only call onReady from reconnection path if:
+      // 1. This is not the first tab, OR
+      // 2. This is the first tab but there was already a session at mount time (genuine reconnection)
+      //
+      // For the first tab on a NEW environment (no session at mount), we let handleData
+      // detect when setup scripts have finished before calling onReady.
+      // IMPORTANT: Don't set isEnvironmentReady to true in that case either, so handleData can
+      // continue to monitor for setup completion.
+      if (!isFirstTab || hadExistingSessionAtMountRef.current) {
+        setIsEnvironmentReady(true);
+        console.log("[PersistentTerminal] Reconnection complete, calling onReady for tab:", tabId);
+        onReady?.();
+      } else {
+        // Leave isEnvironmentReady as false so handleData can detect setup completion
+        console.log("[PersistentTerminal] First tab on new environment, waiting for setup detection before calling onReady, tab:", tabId);
+      }
     }
-  }, [isReconnecting, isConnected, hasReconnected, tabId, environmentId, onReady, serializedBuffer, existingHasLaunchedCommand, terminal, fitAddon]);
+  }, [isReconnecting, isConnected, hasReconnected, tabId, environmentId, onReady, serializedBuffer, existingHasLaunchedCommand, terminal, fitAddon, isFirstTab]);
 
   // Monitor Claude activity state
   useClaudeState(containerId, tabId);

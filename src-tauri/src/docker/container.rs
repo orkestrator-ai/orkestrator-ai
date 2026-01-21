@@ -156,11 +156,6 @@ impl ContainerConfig {
         self.files_to_copy = files;
         self
     }
-
-    pub fn with_opencode_model(mut self, model: String) -> Self {
-        self.opencode_model = model;
-        self
-    }
 }
 
 /// Create a new container for an environment
@@ -361,8 +356,32 @@ pub async fn create_environment_container(
         port_bindings.insert(key, Some(vec![binding]));
     }
 
+    // Always expose port 4096 for OpenCode server (native mode)
+    // Use dynamic host port allocation (empty string) to allow multiple environments
+    const OPENCODE_SERVER_PORT: u16 = 4096;
+    let opencode_key = format!("{}/tcp", OPENCODE_SERVER_PORT);
+    exposed_ports.insert(opencode_key.clone(), HashMap::new());
+    let opencode_binding = PortBinding {
+        host_ip: Some("127.0.0.1".to_string()),
+        host_port: Some("".to_string()), // Empty string = dynamic allocation
+    };
+    port_bindings.insert(opencode_key, Some(vec![opencode_binding]));
+    debug!("Added OpenCode server port {} with dynamic host allocation", OPENCODE_SERVER_PORT);
+
+    // Always expose port 4097 for Claude Bridge server (Claude native mode)
+    // Use dynamic host port allocation (empty string) to allow multiple environments
+    const CLAUDE_BRIDGE_PORT: u16 = 4097;
+    let claude_key = format!("{}/tcp", CLAUDE_BRIDGE_PORT);
+    exposed_ports.insert(claude_key.clone(), HashMap::new());
+    let claude_binding = PortBinding {
+        host_ip: Some("127.0.0.1".to_string()),
+        host_port: Some("".to_string()), // Empty string = dynamic allocation
+    };
+    port_bindings.insert(claude_key, Some(vec![claude_binding]));
+    debug!("Added Claude Bridge server port {} with dynamic host allocation", CLAUDE_BRIDGE_PORT);
+
     if !config.port_mappings.is_empty() {
-        println!("[create_container] Port mappings: {:?}", config.port_mappings);
+        debug!("User port mappings: {:?}", config.port_mappings);
     }
 
     // Build container configuration with capabilities and resource limits

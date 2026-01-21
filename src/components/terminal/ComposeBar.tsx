@@ -17,7 +17,7 @@ interface ComposeBarProps {
   isOpen: boolean;
   onClose: () => void;
   onSend: (images: ImageAttachment[], text: string) => void;
-  containerId: string;
+  containerId: string | null;
 }
 
 const MAX_LINES = 10;
@@ -162,16 +162,19 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       // Save images to container and get file paths.
       // Note: We reuse the ImageAttachment type but repurpose the `id` field to store
       // the container file path. This path is then written to the terminal by the caller.
+      // For local environments (no containerId), we skip image saving to container.
       const savedImages: ImageAttachment[] = [];
-      for (const img of images) {
-        try {
-          const filename = generateImageFilename();
-          const filePath = `.orkestrator/clipboard/${filename}`;
-          await writeContainerFile(containerId, filePath, img.base64Data);
-          savedImages.push({ ...img, id: `/workspace/${filePath}` });
-        } catch (imgError) {
-          console.error("[ComposeBar] Failed to save image:", imgError);
-          // Continue with remaining images rather than failing entirely
+      if (containerId) {
+        for (const img of images) {
+          try {
+            const filename = generateImageFilename();
+            const filePath = `.orkestrator/clipboard/${filename}`;
+            await writeContainerFile(containerId, filePath, img.base64Data);
+            savedImages.push({ ...img, id: `/workspace/${filePath}` });
+          } catch (imgError) {
+            console.error("[ComposeBar] Failed to save image:", imgError);
+            // Continue with remaining images rather than failing entirely
+          }
         }
       }
 

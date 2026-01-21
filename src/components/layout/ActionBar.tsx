@@ -15,8 +15,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Settings, GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Settings2, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle } from "lucide-react";
-import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
+import { GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle, FolderGit2 } from "lucide-react";
+import { ClaudeIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
 import { useUIStore, useEnvironmentStore, useProjectStore, useConfigStore, useFilesPanelStore } from "@/stores";
 import { useShallow } from "zustand/react/shallow";
 import { useTerminalContext, MAX_TABS } from "@/contexts";
@@ -218,12 +218,11 @@ Begin by fetching the latest changes.`;
 
 export function ActionBar() {
   const { selectedEnvironmentId, selectedProjectId } = useUIStore();
-  const { getEnvironmentById, updateEnvironment, isWorkspaceReady, setEnvironmentPR } = useEnvironmentStore(
+  const { getEnvironmentById, updateEnvironment, isWorkspaceReady } = useEnvironmentStore(
     useShallow((state) => ({
       getEnvironmentById: state.getEnvironmentById,
       updateEnvironment: state.updateEnvironment,
       isWorkspaceReady: state.isWorkspaceReady,
-      setEnvironmentPR: state.setEnvironmentPR,
     }))
   );
   const { getProjectById } = useProjectStore();
@@ -261,14 +260,13 @@ export function ActionBar() {
     : null;
 
   const repoName = selectedProject?.name ?? null;
-  const isRunning = selectedEnvironment?.status === "running";
+  const isLocalEnvironment = selectedEnvironment?.environmentType === "local";
+  const isLocalReady = isLocalEnvironment && !!selectedEnvironment?.worktreePath;
+  const isRunning = isLocalReady || selectedEnvironment?.status === "running";
   const workspaceReady = selectedEnvironmentId ? isWorkspaceReady(selectedEnvironmentId) : false;
 
-  const { prUrl, prState, hasMergeConflicts, viewPR } = usePullRequest({
+  const { prUrl, prState, hasMergeConflicts, viewPR, setModeCreatePending, setModeMergePending } = usePullRequest({
     environmentId: selectedEnvironmentId,
-    containerId: selectedEnvironment?.containerId,
-    isRunning,
-    isActive: true, // ActionBar is always for the active environment
   });
 
   const { deleteEnvironment } = useEnvironments(selectedProjectId);
@@ -473,8 +471,11 @@ export function ActionBar() {
     const targetBranch = repoConfig?.prBaseBranch || "main";
     const prPrompt = createPRPrompt(targetBranch);
 
+    // Set monitoring mode to create-pending for faster PR detection (5s intervals)
+    setModeCreatePending();
+
     createTab(defaultAgent, { initialPrompt: prPrompt });
-  }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent]);
+  }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent, setModeCreatePending]);
 
   // Handler for pushing changes to an existing PR - launches agent tab with commit/push prompt
   const handlePushChanges = useCallback(() => {
@@ -515,24 +516,43 @@ export function ActionBar() {
 
   // Handler for merging a PR
   const handleMergePR = useCallback(async () => {
-    if (!selectedEnvironment?.containerId || !selectedEnvironmentId || !prUrl) return;
+    if (!selectedEnvironmentId || !prUrl) return;
 
+    // For container environments, we need a containerId
+    // For local environments, we use the environmentId
+    if (!isLocalEnvironment && !selectedEnvironment?.containerId) return;
+
+    // Close dialog immediately and show spinner on main button
+    setMergeDialogOpen(false);
     setIsMerging(true);
     setMergeError(null);
+
     try {
-      await tauri.mergePr(selectedEnvironment.containerId, "squash", true);
-      setMergeDialogOpen(false);
-      // Directly set PR state to "merged" - we can't detect it because the branch was deleted
-      await tauri.setEnvironmentPr(selectedEnvironmentId, prUrl, "merged", false);
-      setEnvironmentPR(selectedEnvironmentId, prUrl, "merged", false);
+      // Use appropriate merge method based on environment type
+      console.log("[ActionBar] Starting PR merge...");
+      if (isLocalEnvironment) {
+        await tauri.mergePrLocal(selectedEnvironmentId, "squash", true);
+      } else {
+        await tauri.mergePr(selectedEnvironment!.containerId!, "squash", true);
+      }
+      console.log("[ActionBar] Merge command completed, starting merge-pending monitoring...");
+
+      // Set monitoring mode to merge-pending for fast PR state detection (1s intervals for 20s)
+      // The prMonitorService will automatically detect when PR is merged and update the state
+      setModeMergePending();
+
+      // Clear the merging spinner - the PR state will update automatically via monitoring
+      setIsMerging(false);
+
     } catch (err) {
       console.error("[ActionBar] Failed to merge PR:", err);
-      const message = err instanceof Error ? err.message : "An unexpected error occurred";
+      // Tauri invoke errors come as strings, not Error objects
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : "An unexpected error occurred";
       setMergeError(message);
-    } finally {
+      setMergeDialogOpen(true); // Re-open dialog to show error
       setIsMerging(false);
     }
-  }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, setEnvironmentPR]);
+  }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, isLocalEnvironment, setModeMergePending]);
 
   return (
     <>
@@ -571,7 +591,7 @@ export function ActionBar() {
                 className="h-8 w-8"
                 onClick={() => setDockerStatsOpen(true)}
               >
-                <Container className="h-4 w-4" />
+                <DockerIcon className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Docker configuration</TooltipContent>
@@ -586,7 +606,7 @@ export function ActionBar() {
                   className="h-8 w-8"
                   onClick={() => setRepoSettingsOpen(true)}
                 >
-                  <Settings className="h-4 w-4" />
+                  <FolderGit2 className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Repository settings</TooltipContent>
@@ -602,7 +622,7 @@ export function ActionBar() {
                   className="h-8 w-8"
                   onClick={() => setEnvSettingsOpen(true)}
                 >
-                  <Settings2 className="h-4 w-4" />
+                  <Container className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Environment settings</TooltipContent>
@@ -818,17 +838,28 @@ export function ActionBar() {
                       variant="default"
                       size="sm"
                       className="gap-2 bg-green-600 text-white hover:bg-green-700"
-                      onClick={() => setMergeDialogOpen(true)}
-                      disabled={!isRunning}
+                      onClick={() => !isMerging && setMergeDialogOpen(true)}
+                      disabled={!isRunning || isMerging}
                     >
-                      <GitMerge className="h-4 w-4" />
-                      Merge PR
+                      {isMerging ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Merging...
+                        </>
+                      ) : (
+                        <>
+                          <GitMerge className="h-4 w-4" />
+                          Merge PR
+                        </>
+                      )}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {!isRunning
-                      ? "Container must be running"
-                      : "Squash and merge this PR"}
+                    {isMerging
+                      ? "Merge in progress..."
+                      : !isRunning
+                        ? (isLocalEnvironment ? "Environment must be ready" : "Container must be running")
+                        : "Squash and merge this PR"}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -849,7 +880,7 @@ export function ActionBar() {
                   </TooltipTrigger>
                   <TooltipContent>
                     {!isRunning
-                      ? "Container must be running"
+                      ? (isLocalEnvironment ? "Environment must be ready" : "Container must be running")
                       : !canCreateTab
                         ? "Maximum tabs reached"
                         : "PR has merge conflicts - launch agent to resolve them"}
@@ -1049,20 +1080,12 @@ export function ActionBar() {
             </div>
           )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isMerging}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleMergePR}
-              disabled={isMerging}
               className="bg-green-600 text-white hover:bg-green-700"
             >
-              {isMerging ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Merging...
-                </>
-              ) : (
-                "Merge PR"
-              )}
+              Merge PR
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

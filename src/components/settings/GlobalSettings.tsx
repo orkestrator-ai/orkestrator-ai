@@ -18,7 +18,7 @@ import { Loader2, Eye, EyeOff, Key, Github, Shield, CheckCircle2, XCircle, Alert
 import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { DomainTestResult, PreferredEditor, TerminalAppearance, DefaultAgent } from "@/types";
+import type { DomainTestResult, PreferredEditor, TerminalAppearance, DefaultAgent, OpenCodeMode, ClaudeMode } from "@/types";
 import {
   DEFAULT_TERMINAL_APPEARANCE,
   DEFAULT_TERMINAL_SCROLLBACK,
@@ -54,6 +54,12 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
   );
   const [opencodeModel, setOpencodeModel] = useState(
     global.opencodeModel || "opencode/grok-code"
+  );
+  const [opencodeMode, setOpencodeMode] = useState<OpenCodeMode>(
+    global.opencodeMode || "terminal"
+  );
+  const [claudeMode, setClaudeMode] = useState<ClaudeMode>(
+    global.claudeMode || "terminal"
   );
   const [terminalFontFamily, setTerminalFontFamily] = useState(
     global.terminalAppearance?.fontFamily || DEFAULT_TERMINAL_APPEARANCE.fontFamily
@@ -92,6 +98,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
     setPreferredEditor(global.preferredEditor || "vscode");
     setDefaultAgent(global.defaultAgent || "claude");
     setOpencodeModel(global.opencodeModel || "opencode/grok-code");
+    setOpencodeMode(global.opencodeMode || "terminal");
+    setClaudeMode(global.claudeMode || "terminal");
     setTerminalFontFamily(global.terminalAppearance?.fontFamily || DEFAULT_TERMINAL_APPEARANCE.fontFamily);
     setTerminalFontSize(global.terminalAppearance?.fontSize || DEFAULT_TERMINAL_APPEARANCE.fontSize);
     setTerminalBackgroundColor(global.terminalAppearance?.backgroundColor || DEFAULT_TERMINAL_APPEARANCE.backgroundColor);
@@ -115,6 +123,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
       preferredEditor !== (global.preferredEditor || "vscode") ||
       defaultAgent !== (global.defaultAgent || "claude") ||
       opencodeModel !== (global.opencodeModel || "opencode/grok-code") ||
+      opencodeMode !== (global.opencodeMode || "terminal") ||
+      claudeMode !== (global.claudeMode || "terminal") ||
       terminalFontFamily !== terminalAppearance.fontFamily ||
       terminalFontSize !== terminalAppearance.fontSize ||
       terminalBackgroundColor !== terminalAppearance.backgroundColor ||
@@ -124,7 +134,7 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
     if (changed) {
       setSaveSuccess(false);
     }
-  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, global]);
+  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, global]);
 
   // Validate domains on change
   const validateDomainsLocally = useCallback((domainsText: string) => {
@@ -211,6 +221,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
         preferredEditor?: PreferredEditor;
         defaultAgent: DefaultAgent;
         opencodeModel: string;
+        opencodeMode: OpenCodeMode;
+        claudeMode: ClaudeMode;
         terminalAppearance: TerminalAppearance;
         terminalScrollback: number;
       } = {
@@ -223,6 +235,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
         preferredEditor,
         defaultAgent,
         opencodeModel,
+        opencodeMode,
+        claudeMode,
         terminalAppearance: {
           fontFamily: terminalFontFamily,
           fontSize: terminalFontSize,
@@ -274,6 +288,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
     setPreferredEditor(global.preferredEditor || "vscode");
     setDefaultAgent(global.defaultAgent || "claude");
     setOpencodeModel(global.opencodeModel || "opencode/grok-code");
+    setOpencodeMode(global.opencodeMode || "terminal");
+    setClaudeMode(global.claudeMode || "terminal");
     setTerminalFontFamily(global.terminalAppearance?.fontFamily || DEFAULT_TERMINAL_APPEARANCE.fontFamily);
     setTerminalFontSize(global.terminalAppearance?.fontSize || DEFAULT_TERMINAL_APPEARANCE.fontSize);
     setTerminalBackgroundColor(global.terminalAppearance?.backgroundColor || DEFAULT_TERMINAL_APPEARANCE.backgroundColor);
@@ -383,6 +399,50 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                 </div>
               </button>
             </div>
+            {/* Claude Mode Toggle - shown when Claude is selected */}
+            <div className={cn(
+              "mt-3 space-y-1.5 transition-opacity",
+              defaultAgent !== "claude" && "opacity-50"
+            )}>
+              <Label className="text-xs text-muted-foreground">
+                Claude Mode
+              </Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setClaudeMode("terminal")}
+                  className={cn(
+                    "p-2 rounded-lg border-2 text-left transition-colors",
+                    claudeMode === "terminal"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Terminal className="h-3.5 w-3.5" />
+                    Terminal
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClaudeMode("native")}
+                  className={cn(
+                    "p-2 rounded-lg border-2 text-left transition-colors",
+                    claudeMode === "native"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Bot className="h-3.5 w-3.5" />
+                    Native
+                  </div>
+                </button>
+              </div>
+              <span className="text-xs text-muted-foreground/60">
+                Native mode opens a chat interface instead of terminal
+              </span>
+            </div>
             {/* OpenCode Model Input - shown below the agent selector */}
             <div className={cn(
               "mt-3 space-y-1.5 transition-opacity",
@@ -398,6 +458,50 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                 placeholder="opencode/grok-code"
                 className="font-mono text-sm h-8"
               />
+            </div>
+            {/* OpenCode Mode Toggle - shown below model input */}
+            <div className={cn(
+              "mt-3 space-y-1.5 transition-opacity",
+              defaultAgent !== "opencode" && "opacity-50"
+            )}>
+              <Label className="text-xs text-muted-foreground">
+                OpenCode Mode
+              </Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOpencodeMode("terminal")}
+                  className={cn(
+                    "p-2 rounded-lg border-2 text-left transition-colors",
+                    opencodeMode === "terminal"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Terminal className="h-3.5 w-3.5" />
+                    Terminal
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpencodeMode("native")}
+                  className={cn(
+                    "p-2 rounded-lg border-2 text-left transition-colors",
+                    opencodeMode === "native"
+                      ? "border-primary bg-primary/5"
+                      : "border-muted hover:border-muted-foreground/50"
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Bot className="h-3.5 w-3.5" />
+                    Native
+                  </div>
+                </button>
+              </div>
+              <span className="text-xs text-muted-foreground/60">
+                Native mode opens a chat interface instead of terminal
+              </span>
             </div>
           </CardContent>
         </Card>

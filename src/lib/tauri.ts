@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Project,
   Environment,
+  EnvironmentType,
   AppConfig,
   GlobalConfig,
   RepositoryConfig,
@@ -70,9 +71,10 @@ export async function createEnvironment(
   name?: string,
   networkAccessMode?: NetworkAccessMode,
   initialPrompt?: string,
-  portMappings?: PortMapping[]
+  portMappings?: PortMapping[],
+  environmentType?: EnvironmentType
 ): Promise<Environment> {
-  return invoke<Environment>("create_environment", { projectId, name, networkAccessMode, initialPrompt, portMappings });
+  return invoke<Environment>("create_environment", { projectId, name, networkAccessMode, initialPrompt, portMappings, environmentType });
 }
 
 export async function deleteEnvironment(environmentId: string): Promise<void> {
@@ -222,6 +224,11 @@ export async function detectPr(containerId: string): Promise<PrDetectionResult |
   return invoke<PrDetectionResult | null>("detect_pr", { containerId });
 }
 
+/** Detect PR URL and state for local (worktree-based) environments */
+export async function detectPrLocal(environmentId: string): Promise<PrDetectionResult | null> {
+  return invoke<PrDetectionResult | null>("detect_pr_local", { environmentId });
+}
+
 /** Merge method options for PR merging */
 export type MergeMethod = "squash" | "merge" | "rebase";
 
@@ -232,6 +239,15 @@ export async function mergePr(
   deleteBranch?: boolean
 ): Promise<void> {
   return invoke("merge_pr", { containerId, method, deleteBranch });
+}
+
+/** Merge the current branch's PR locally using gh pr merge */
+export async function mergePrLocal(
+  environmentId: string,
+  method?: MergeMethod,
+  deleteBranch?: boolean
+): Promise<void> {
+  return invoke("merge_pr_local", { environmentId, method, deleteBranch });
 }
 
 // --- Docker Commands ---
@@ -362,6 +378,75 @@ export async function getContainerLogs(containerId: string, tail?: string): Prom
 /** Start streaming container logs to the frontend via "container-log" events */
 export async function streamContainerLogs(containerId: string): Promise<void> {
   return invoke("stream_container_logs", { containerId });
+}
+
+/** Get the host port mapped to a specific container port */
+export async function getContainerHostPort(containerId: string, containerPort: number): Promise<number | null> {
+  return invoke<number | null>("get_container_host_port", { containerId, containerPort });
+}
+
+// --- OpenCode Server Commands ---
+
+export interface OpenCodeServerStartResult {
+  hostPort: number;
+  wasRunning: boolean;
+}
+
+export interface OpenCodeServerStatus {
+  running: boolean;
+  hostPort: number | null;
+}
+
+/** Start the OpenCode server in a container */
+export async function startOpenCodeServer(containerId: string): Promise<OpenCodeServerStartResult> {
+  return invoke<OpenCodeServerStartResult>("start_opencode_server", { containerId });
+}
+
+/** Stop the OpenCode server in a container */
+export async function stopOpenCodeServer(containerId: string): Promise<void> {
+  return invoke("stop_opencode_server", { containerId });
+}
+
+/** Get the status of the OpenCode server in a container */
+export async function getOpenCodeServerStatus(containerId: string): Promise<OpenCodeServerStatus> {
+  return invoke<OpenCodeServerStatus>("get_opencode_server_status", { containerId });
+}
+
+/** Get the OpenCode server log from a container (for debugging) */
+export async function getOpenCodeServerLog(containerId: string): Promise<string> {
+  return invoke<string>("get_opencode_server_log", { containerId });
+}
+
+// --- Claude Bridge Server Commands ---
+
+export interface ClaudeServerStartResult {
+  hostPort: number;
+  wasRunning: boolean;
+}
+
+export interface ClaudeServerStatus {
+  running: boolean;
+  hostPort: number | null;
+}
+
+/** Start the Claude bridge server in a container */
+export async function startClaudeServer(containerId: string): Promise<ClaudeServerStartResult> {
+  return invoke<ClaudeServerStartResult>("start_claude_server", { containerId });
+}
+
+/** Stop the Claude bridge server in a container */
+export async function stopClaudeServer(containerId: string): Promise<void> {
+  return invoke("stop_claude_server", { containerId });
+}
+
+/** Get the status of the Claude bridge server in a container */
+export async function getClaudeServerStatus(containerId: string): Promise<ClaudeServerStatus> {
+  return invoke<ClaudeServerStatus>("get_claude_server_status", { containerId });
+}
+
+/** Get the Claude bridge server log from a container (for debugging) */
+export async function getClaudeServerLog(containerId: string): Promise<string> {
+  return invoke<string>("get_claude_server_log", { containerId });
 }
 
 // --- Credential Commands ---
@@ -564,6 +649,44 @@ export async function writeContainerFile(
   return invoke<string>("write_container_file", { containerId, filePath, base64Data });
 }
 
+// --- Local Environment File Commands ---
+
+/** Get git changes for a local environment (worktree path) */
+export async function getLocalGitStatus(
+  worktreePath: string,
+  targetBranch: string
+): Promise<GitFileChange[]> {
+  return invoke<GitFileChange[]>("get_local_git_status", { worktreePath, targetBranch });
+}
+
+/** Get file tree from a local environment (worktree path) */
+export async function getLocalFileTree(worktreePath: string): Promise<FileNode[]> {
+  return invoke<FileNode[]>("get_local_file_tree", { worktreePath });
+}
+
+/** Read a file from a local environment (worktree path) */
+export async function readLocalFile(
+  worktreePath: string,
+  filePath: string
+): Promise<FileContent> {
+  return invoke<FileContent>("read_local_file", { worktreePath, filePath });
+}
+
+/** Read a file from a specific git branch in a local environment
+ * Returns null if the file doesn't exist in the specified branch (e.g., new file)
+ */
+export async function readLocalFileAtBranch(
+  worktreePath: string,
+  filePath: string,
+  branch: string
+): Promise<FileContent | null> {
+  return invoke<FileContent | null>("read_local_file_at_branch", {
+    worktreePath,
+    filePath,
+    branch,
+  });
+}
+
 // --- Port Mapping Commands ---
 
 /** Update port mappings for an environment (requires restart to apply) */
@@ -693,4 +816,79 @@ export async function reorderSessions(
 /** Clean up orphaned buffer files (buffers without corresponding sessions) */
 export async function cleanupOrphanedBuffers(): Promise<string[]> {
   return invoke<string[]>("cleanup_orphaned_buffers", {});
+}
+
+// --- Local Server Commands (for local/worktree environments) ---
+
+export interface LocalServerStartResult {
+  port: number;
+  pid: number;
+  wasRunning: boolean;
+}
+
+export interface LocalServerStatus {
+  running: boolean;
+  port: number | null;
+  pid: number | null;
+}
+
+/** Start the local OpenCode server for a local environment */
+export async function startLocalOpencodeServer(environmentId: string): Promise<LocalServerStartResult> {
+  return invoke<LocalServerStartResult>("start_local_opencode_server_cmd", { environmentId });
+}
+
+/** Stop the local OpenCode server for a local environment */
+export async function stopLocalOpencodeServer(environmentId: string): Promise<void> {
+  return invoke("stop_local_opencode_server_cmd", { environmentId });
+}
+
+/** Get the status of the local OpenCode server for a local environment */
+export async function getLocalOpencodeServerStatus(environmentId: string): Promise<LocalServerStatus> {
+  return invoke<LocalServerStatus>("get_local_opencode_server_status", { environmentId });
+}
+
+/** Start the local Claude-bridge server for a local environment */
+export async function startLocalClaudeServer(environmentId: string): Promise<LocalServerStartResult> {
+  return invoke<LocalServerStartResult>("start_local_claude_server_cmd", { environmentId });
+}
+
+/** Stop the local Claude-bridge server for a local environment */
+export async function stopLocalClaudeServer(environmentId: string): Promise<void> {
+  return invoke("stop_local_claude_server_cmd", { environmentId });
+}
+
+/** Get the status of the local Claude-bridge server for a local environment */
+export async function getLocalClaudeServerStatus(environmentId: string): Promise<LocalServerStatus> {
+  return invoke<LocalServerStatus>("get_local_claude_server_status", { environmentId });
+}
+
+// --- Local Terminal Commands (for local/worktree environments) ---
+
+/** Create a local terminal session for a local environment */
+export async function createLocalTerminalSession(
+  environmentId: string,
+  cols: number,
+  rows: number
+): Promise<string> {
+  return invoke<string>("create_local_terminal_session", { environmentId, cols, rows });
+}
+
+/** Start a local terminal session and begin forwarding output */
+export async function startLocalTerminalSession(sessionId: string): Promise<void> {
+  return invoke("start_local_terminal_session", { sessionId });
+}
+
+/** Write data to a local terminal session */
+export async function writeLocalTerminal(sessionId: string, data: string): Promise<void> {
+  return invoke("local_terminal_write", { sessionId, data });
+}
+
+/** Resize a local terminal session */
+export async function resizeLocalTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
+  return invoke("local_terminal_resize", { sessionId, cols, rows });
+}
+
+/** Close a local terminal session */
+export async function closeLocalTerminalSession(sessionId: string): Promise<void> {
+  return invoke("close_local_terminal_session", { sessionId });
 }

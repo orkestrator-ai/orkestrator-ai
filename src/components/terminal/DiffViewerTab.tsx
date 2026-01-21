@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { DiffEditor } from "@monaco-editor/react";
+import type * as monaco from "monaco-editor";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
 import {
@@ -19,7 +20,12 @@ import type { GitFileStatus } from "@/types/paneLayout";
 
 interface DiffViewerTabProps {
   filePath: string;
-  containerId: string;
+  /** Container ID (for containerized environments) */
+  containerId?: string;
+  /** Worktree path (for local environments) */
+  worktreePath?: string;
+  /** Whether this is a local environment */
+  isLocalEnvironment?: boolean;
   baseBranch: string;
   gitStatus: GitFileStatus;
   isActive: boolean;
@@ -32,6 +38,8 @@ type DiffMode = "side-by-side" | "inline";
 export function DiffViewerTab({
   filePath,
   containerId,
+  worktreePath,
+  isLocalEnvironment = false,
   baseBranch,
   gitStatus,
   isActive,
@@ -51,6 +59,29 @@ export function DiffViewerTab({
   const [isLoading, setIsLoading] = useState(true);
   const [diffMode, setDiffMode] = useState<DiffMode>("side-by-side");
 
+  // Track editor instance for proper cleanup
+  const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+
+  // Handle editor mount - capture the editor instance
+  const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneDiffEditor) => {
+    editorRef.current = editor;
+  }, []);
+
+  // Cleanup effect - dispose editor before unmount to prevent errors
+  useEffect(() => {
+    return () => {
+      if (editorRef.current) {
+        try {
+          // Dispose the editor instance before React unmounts the component
+          editorRef.current.dispose();
+        } catch {
+          // Ignore disposal errors - the editor may already be disposed
+        }
+        editorRef.current = null;
+      }
+    };
+  }, []);
+
   // Determine file state
   const isNewFile = gitStatus === "?" || gitStatus === "A";
   const isDeletedFile = gitStatus === "D";
@@ -67,10 +98,14 @@ export function DiffViewerTab({
         // Fetch current (modified) file content
         let modified: string | null = null;
         if (!isDeletedFile) {
-          const modifiedResult = await tauri.readContainerFile(
-            containerId,
-            filePath
-          );
+          let modifiedResult: tauri.FileContent;
+          if (isLocalEnvironment && worktreePath) {
+            modifiedResult = await tauri.readLocalFile(worktreePath, filePath);
+          } else if (containerId) {
+            modifiedResult = await tauri.readContainerFile(containerId, filePath);
+          } else {
+            throw new Error("No container ID or worktree path available");
+          }
           modified = modifiedResult.content;
           setDetectedLanguage(
             modifiedResult.language || language || "plaintext"
@@ -80,11 +115,14 @@ export function DiffViewerTab({
         // Fetch original file content from base branch
         let original: string | null = null;
         if (!isNewFile) {
-          const originalResult = await tauri.readFileAtBranch(
-            containerId,
-            filePath,
-            baseBranch
-          );
+          let originalResult: tauri.FileContent | null;
+          if (isLocalEnvironment && worktreePath) {
+            originalResult = await tauri.readLocalFileAtBranch(worktreePath, filePath, baseBranch);
+          } else if (containerId) {
+            originalResult = await tauri.readFileAtBranch(containerId, filePath, baseBranch);
+          } else {
+            throw new Error("No container ID or worktree path available");
+          }
           original = originalResult?.content ?? null;
         }
 
@@ -109,6 +147,8 @@ export function DiffViewerTab({
     };
   }, [
     containerId,
+    worktreePath,
+    isLocalEnvironment,
     filePath,
     baseBranch,
     gitStatus,
@@ -182,6 +222,7 @@ export function DiffViewerTab({
             original={originalContent ?? ""}
             modified=""
             theme="vs-dark"
+            onMount={handleEditorMount}
             options={{
               readOnly: true,
               renderSideBySide: diffMode === "side-by-side",
@@ -228,6 +269,7 @@ export function DiffViewerTab({
           original={originalContent ?? ""}
           modified={modifiedContent ?? ""}
           theme="vs-dark"
+          onMount={handleEditorMount}
           options={{
             readOnly: true,
             renderSideBySide: diffMode === "side-by-side",

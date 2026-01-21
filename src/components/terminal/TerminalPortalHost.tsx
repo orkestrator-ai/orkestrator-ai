@@ -12,7 +12,7 @@ import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK } from "@/cons
 const DEFAULT_ROOT: PaneLeaf = { kind: "leaf", id: "default", tabs: [], activeTabId: null };
 
 interface TerminalPortalHostProps {
-  containerId: string;
+  containerId: string | null;
   environmentId: string;
 }
 
@@ -56,13 +56,8 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     hasTerminal,
   } = useTerminalPortalStore();
 
-  // Get workspace ready state and setter from environment store
-  const { setWorkspaceReady, isWorkspaceReady } = useEnvironmentStore(
-    useShallow((state) => ({
-      setWorkspaceReady: state.setWorkspaceReady,
-      isWorkspaceReady: state.isWorkspaceReady,
-    }))
-  );
+  // Get workspace ready setter from environment store
+  const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
 
   const terminalAppearance = useConfigStore(
     (state) => state.config.global.terminalAppearance
@@ -71,15 +66,13 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     (state) => state.config.global.terminalScrollback
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
 
-  const workspaceAlreadyReady = isWorkspaceReady(environmentId);
-
   // Handle workspace ready callback - fires when any terminal becomes ready
+  // Always set the state to true - this ensures the state is updated even if it was
+  // reset to false by TerminalContainer for a new container startup
   const handleWorkspaceReady = useCallback(() => {
-    if (!workspaceAlreadyReady) {
-      console.debug("[TerminalPortalHost] Workspace ready for environment:", environmentId);
-      setWorkspaceReady(environmentId, true);
-    }
-  }, [environmentId, setWorkspaceReady, workspaceAlreadyReady]);
+    console.log("[TerminalPortalHost] handleWorkspaceReady called - setting workspace ready for environment:", environmentId);
+    setWorkspaceReady(environmentId, true);
+  }, [environmentId, setWorkspaceReady]);
 
   // Build a map of tabId -> paneId for all terminal tabs
   // Memoize to prevent new Map on every render

@@ -62,6 +62,8 @@ const DEFAULT_CONFIG: AppConfig = {
     ],
     defaultAgent: "claude",
     opencodeModel: "opencode/grok-code",
+    opencodeMode: "terminal",
+    claudeMode: "terminal",
     terminalAppearance: {
       fontFamily: "FiraCode Nerd Font",
       fontSize: 14,

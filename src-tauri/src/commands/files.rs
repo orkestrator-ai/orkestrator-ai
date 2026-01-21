@@ -4,6 +4,33 @@
 use crate::docker::client::get_docker_client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// Cache for git fetch operations to avoid fetching on every status check.
+/// Key is (container_id or worktree_path, branch), value is last fetch time.
+static FETCH_CACHE: Mutex<Option<HashMap<(String, String), Instant>>> = Mutex::new(None);
+
+/// Time-to-live for fetch cache entries (30 seconds)
+const FETCH_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Check if we should fetch based on cache TTL
+fn should_fetch(key: &(String, String)) -> bool {
+    let mut cache_guard = FETCH_CACHE.lock().unwrap();
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+
+    match cache.get(key) {
+        Some(last_fetch) => last_fetch.elapsed() >= FETCH_CACHE_TTL,
+        None => true,
+    }
+}
+
+/// Mark that a fetch was performed
+fn mark_fetched(key: (String, String)) {
+    let mut cache_guard = FETCH_CACHE.lock().unwrap();
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+    cache.insert(key, Instant::now());
+}
 
 /// Represents a file changed in the git working tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,7 +339,7 @@ pub async fn get_git_status(
     container_id: String,
     target_branch: String,
 ) -> Result<Vec<GitFileChange>, String> {
-    use tracing::debug;
+    use tracing::{debug, warn};
 
     let client = get_docker_client().map_err(|e| e.to_string())?;
 
@@ -326,13 +353,46 @@ pub async fn get_git_status(
         return Err("Container is not running".to_string());
     }
 
+    // Fetch latest from origin to ensure remote refs are up to date (with caching)
+    // Only fetch if more than FETCH_CACHE_TTL has passed since last fetch
+    let fetch_key = (container_id.clone(), target_branch.clone());
+    if should_fetch(&fetch_key) {
+        debug!(target_branch = %target_branch, "Fetching from origin (cache expired or first fetch)");
+
+        // Use timeout to prevent hanging on network issues (10 seconds)
+        let fetch_future = client.exec_command(
+            &container_id,
+            vec!["git", "-C", "/workspace", "fetch", "origin", &target_branch],
+        );
+
+        match tokio::time::timeout(Duration::from_secs(10), fetch_future).await {
+            Ok(Ok(output)) => {
+                // Check for error indicators in output (exec_command doesn't check exit codes)
+                if output.contains("fatal:") || output.contains("error:") {
+                    warn!(target_branch = %target_branch, output = %output, "git fetch origin returned errors (continuing with local refs)");
+                } else {
+                    mark_fetched(fetch_key);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch origin failed (continuing with local refs)");
+            }
+            Err(_) => {
+                warn!(target_branch = %target_branch, "git fetch origin timed out after 10s (continuing with local refs)");
+            }
+        }
+    } else {
+        debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
+    }
+
     // Use a HashMap to collect all changes, keyed by path
     // This allows us to merge branch changes with uncommitted changes
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // 1. Get files changed between target_branch and HEAD (committed changes on this branch)
-    //    Using target_branch...HEAD to get changes since the merge-base
-    let branch_diff_ref = format!("{}...HEAD", target_branch);
+    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
+    //    Using origin/target_branch...HEAD to compare against the remote default branch
+    //    This ensures we always compare against the remote state, not local (potentially stale) refs
+    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
 
     let branch_name_status = client
         .exec_command(
@@ -609,7 +669,13 @@ pub async fn read_container_file(
     })
 }
 
-/// Read a file from a specific git branch inside a container
+/// Read a file from the remote version of a branch inside a container.
+/// Uses `origin/<branch>` to ensure comparison against remote state.
+///
+/// Note: This function does NOT fetch from origin. It relies on a recent fetch
+/// having been performed by `get_git_status()` (which caches fetches for 30 seconds).
+/// This is intentional to avoid redundant network calls when viewing diffs.
+///
 /// Returns None if the file doesn't exist in the specified branch (e.g., new file)
 #[tauri::command]
 pub async fn read_file_at_branch(
@@ -666,9 +732,10 @@ pub async fn read_file_at_branch(
         &file_path
     };
 
-    // Use git show to read file content from the specified branch
-    // Format: git show <branch>:<path>
-    let git_ref = format!("{}:{}", branch, relative_path);
+    // Use git show to read file content from the remote branch
+    // Format: git show origin/<branch>:<path>
+    // Using origin/ prefix ensures we compare against remote state, not local refs
+    let git_ref = format!("origin/{}:{}", branch, relative_path);
 
     let result = client
         .exec_command(
@@ -749,6 +816,403 @@ pub async fn read_container_file_base64(
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
     Ok(base64_content.trim().to_string())
+}
+
+// ============================================================================
+// LOCAL ENVIRONMENT FILE COMMANDS
+// These commands operate directly on the local filesystem for worktree-based
+// environments, without requiring Docker
+// ============================================================================
+
+/// Get git changes for a local environment (worktree path)
+/// Shows all changes since the branch diverged from target_branch, plus uncommitted changes
+#[tauri::command]
+pub async fn get_local_git_status(
+    worktree_path: String,
+    target_branch: String,
+) -> Result<Vec<GitFileChange>, String> {
+    use std::process::Command;
+    use tracing::{debug, warn};
+
+    // Validate the worktree path exists
+    let path = std::path::Path::new(&worktree_path);
+    if !path.exists() {
+        return Err(format!("Worktree path does not exist: {}", worktree_path));
+    }
+    if !path.is_dir() {
+        return Err(format!("Worktree path is not a directory: {}", worktree_path));
+    }
+
+    // Use a HashMap to collect all changes, keyed by path
+    let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
+
+    // Fetch latest from origin to ensure remote refs are up to date (with caching)
+    // Only fetch if more than FETCH_CACHE_TTL has passed since last fetch
+    let fetch_key = (worktree_path.clone(), target_branch.clone());
+    if should_fetch(&fetch_key) {
+        debug!(target_branch = %target_branch, "Fetching from origin (cache expired or first fetch)");
+
+        // Spawn fetch with timeout to prevent hanging on network issues
+        let worktree_for_fetch = worktree_path.clone();
+        let branch_for_fetch = target_branch.clone();
+        let fetch_task = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["-C", &worktree_for_fetch, "fetch", "origin", &branch_for_fetch])
+                .output()
+        });
+
+        match tokio::time::timeout(Duration::from_secs(10), fetch_task).await {
+            Ok(Ok(Ok(result))) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    warn!(target_branch = %target_branch, stderr = %stderr, "git fetch origin failed (continuing with local refs)");
+                } else {
+                    mark_fetched(fetch_key);
+                }
+            }
+            Ok(Ok(Err(e))) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch command failed to execute (continuing with local refs)");
+            }
+            Ok(Err(e)) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch task panicked (continuing with local refs)");
+            }
+            Err(_) => {
+                warn!(target_branch = %target_branch, "git fetch origin timed out after 10s (continuing with local refs)");
+            }
+        }
+    } else {
+        debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
+    }
+
+    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
+    //    Using origin/target_branch...HEAD to compare against the remote default branch
+    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
+
+    let branch_name_status = Command::new("git")
+        .args(["-C", &worktree_path, "diff", "--name-status", &branch_diff_ref])
+        .output()
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --name-status failed for branch comparison");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
+        .unwrap_or_default();
+
+    let branch_numstat = Command::new("git")
+        .args(["-C", &worktree_path, "diff", "--numstat", &branch_diff_ref])
+        .output()
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --numstat failed for branch comparison");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
+        .unwrap_or_default();
+
+    debug!(target_branch = %target_branch, "Local branch diff output: {} files", branch_name_status.lines().count());
+
+    let branch_files = parse_diff_name_status(&branch_name_status);
+    let branch_stats = parse_numstat(&branch_numstat);
+
+    // Add branch changes to our map
+    for (path, status) in branch_files {
+        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..") {
+            continue;
+        }
+        let (additions, deletions) = branch_stats.get(&path).copied().unwrap_or((0, 0));
+        all_changes.insert(path, (status, additions, deletions));
+    }
+
+    // 2. Get uncommitted changes (working tree + staged)
+    let status_output = Command::new("git")
+        .args(["-C", &worktree_path, "status", "--porcelain", "-uall"])
+        .output()
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git status failed");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
+        .unwrap_or_default();
+
+    let unstaged_numstat = Command::new("git")
+        .args(["-C", &worktree_path, "diff", "--numstat"])
+        .output()
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --numstat (unstaged) failed");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
+        .unwrap_or_default();
+
+    let staged_numstat = Command::new("git")
+        .args(["-C", &worktree_path, "diff", "--cached", "--numstat"])
+        .output()
+        .map(|o| {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                debug!(stderr = %stderr, "git diff --cached --numstat (staged) failed");
+            }
+            String::from_utf8_lossy(&o.stdout).to_string()
+        })
+        .unwrap_or_default();
+
+    let uncommitted_files = parse_git_status(&status_output);
+    let unstaged_stats = parse_numstat(&unstaged_numstat);
+    let staged_stats = parse_numstat(&staged_numstat);
+
+    // Merge uncommitted changes into our map
+    for (file_path, status) in uncommitted_files {
+        if file_path.contains('\0') || file_path.contains('\n') || file_path.contains('\r') || file_path.contains("..") {
+            continue;
+        }
+
+        let (additions, deletions) = if status == "?" {
+            // Untracked file - count lines with wc -l
+            let full_path = std::path::Path::new(&worktree_path).join(&file_path);
+            let line_count = std::fs::read_to_string(&full_path)
+                .map(|content| content.lines().count() as u32)
+                .unwrap_or(0);
+            (line_count, 0u32)
+        } else {
+            // Get stats from unstaged or staged diff
+            unstaged_stats
+                .get(&file_path)
+                .or_else(|| staged_stats.get(&file_path))
+                .copied()
+                .unwrap_or((0, 0))
+        };
+
+        // For uncommitted changes, take the max of uncommitted vs branch stats
+        // to avoid double-counting lines that were modified in both commits and working tree
+        if let Some(existing) = all_changes.get(&file_path) {
+            let total_additions = additions.max(existing.1);
+            let total_deletions = deletions.max(existing.2);
+            all_changes.insert(file_path, (status, total_additions, total_deletions));
+        } else {
+            all_changes.insert(file_path, (status, additions, deletions));
+        }
+    }
+
+    // 3. Build final changes vector
+    let mut changes: Vec<GitFileChange> = Vec::new();
+
+    for (path, (status, additions, deletions)) in all_changes {
+        let (directory, filename) = split_path(&path);
+
+        changes.push(GitFileChange {
+            path,
+            filename,
+            directory,
+            additions,
+            deletions,
+            status,
+        });
+    }
+
+    // Sort by path for consistent ordering
+    changes.sort_by(|a, b| a.path.cmp(&b.path));
+
+    Ok(changes)
+}
+
+/// Get file tree from a local environment (worktree path)
+#[tauri::command]
+pub async fn get_local_file_tree(worktree_path: String) -> Result<Vec<FileNode>, String> {
+    use std::process::Command;
+
+    // Validate the worktree path exists
+    let path = std::path::Path::new(&worktree_path);
+    if !path.exists() {
+        return Err(format!("Worktree path does not exist: {}", worktree_path));
+    }
+    if !path.is_dir() {
+        return Err(format!("Worktree path is not a directory: {}", worktree_path));
+    }
+
+    // Use find command to list files, excluding common directories
+    let output = Command::new("find")
+        .args([
+            &worktree_path,
+            "-type", "f",
+            "-not", "-path", "*/.git/*",
+            "-not", "-path", "*/node_modules/*",
+            "-not", "-path", "*/__pycache__/*",
+            "-not", "-path", "*/.next/*",
+            "-not", "-path", "*/dist/*",
+            "-not", "-path", "*/build/*",
+            "-not", "-path", "*/.cache/*",
+            "-not", "-path", "*/target/*",
+            "-not", "-path", "*/.turbo/*",
+            "-not", "-path", "*/.venv/*",
+            "-not", "-path", "*/venv/*",
+            "-not", "-path", "*/coverage/*",
+            "-not", "-path", "*/.nyc_output/*",
+            "-not", "-path", "*/*.egg-info/*",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run find command: {}", e))?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+
+    // Parse file paths (remove worktree_path prefix)
+    let prefix = format!("{}/", worktree_path.trim_end_matches('/'));
+    let file_paths: Vec<String> = output_str
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            trimmed.strip_prefix(&prefix).map(|s| s.to_string())
+        })
+        .collect();
+
+    // Build tree structure
+    let tree = build_file_tree(file_paths);
+
+    Ok(tree)
+}
+
+/// Read a file from a local environment (worktree path)
+#[tauri::command]
+pub async fn read_local_file(
+    worktree_path: String,
+    file_path: String,
+) -> Result<FileContent, String> {
+    // Validate the worktree path exists
+    let base_path = std::path::Path::new(&worktree_path);
+    if !base_path.exists() {
+        return Err(format!("Worktree path does not exist: {}", worktree_path));
+    }
+
+    // Build full path and validate it's within worktree
+    let full_path = if file_path.starts_with('/') {
+        std::path::PathBuf::from(&file_path)
+    } else {
+        base_path.join(&file_path)
+    };
+
+    // Security check: ensure the resolved path is within the worktree
+    let canonical_base = base_path.canonicalize()
+        .map_err(|e| format!("Failed to resolve worktree path: {}", e))?;
+    let canonical_file = full_path.canonicalize()
+        .map_err(|e| format!("Failed to resolve file path: {}", e))?;
+
+    if !canonical_file.starts_with(&canonical_base) {
+        return Err("Invalid file path: escapes worktree directory".to_string());
+    }
+
+    // Read file content
+    let content = std::fs::read_to_string(&canonical_file)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    // Detect language
+    let language = detect_language(&file_path);
+
+    Ok(FileContent {
+        path: file_path,
+        content,
+        language,
+    })
+}
+
+/// Read a file from the remote version of a branch in a local environment.
+/// Uses `origin/<branch>` to ensure comparison against remote state.
+///
+/// Note: This function does NOT fetch from origin. It relies on a recent fetch
+/// having been performed by `get_local_git_status()` (which caches fetches for 30 seconds).
+/// This is intentional to avoid redundant network calls when viewing diffs.
+///
+/// Returns None if the file doesn't exist in the specified branch (e.g., new file)
+#[tauri::command]
+pub async fn read_local_file_at_branch(
+    worktree_path: String,
+    file_path: String,
+    branch: String,
+) -> Result<Option<FileContent>, String> {
+    use std::process::Command;
+    use tracing::debug;
+
+    // Validate the worktree path exists
+    let path = std::path::Path::new(&worktree_path);
+    if !path.exists() {
+        return Err(format!("Worktree path does not exist: {}", worktree_path));
+    }
+
+    // Validate the file path
+    if file_path.contains('\0') || file_path.contains('\n') || file_path.contains('\r') {
+        return Err("Invalid file path".to_string());
+    }
+
+    // Validate the branch name to prevent injection attacks
+    if branch.is_empty()
+        || branch.contains('\0')
+        || branch.contains('\n')
+        || branch.contains('\r')
+        || branch.contains(' ')
+        || branch.contains('~')
+        || branch.contains('^')
+        || branch.contains(':')
+        || branch.contains('?')
+        || branch.contains('*')
+        || branch.contains('[')
+        || branch.contains('\\')
+        || branch.contains(';')
+        || branch.contains('&')
+        || branch.contains('|')
+        || branch.contains('$')
+        || branch.contains('`')
+        || branch.starts_with('-')
+    {
+        return Err("Invalid branch name".to_string());
+    }
+
+    // Normalize the path - remove leading slashes for git show
+    let relative_path = file_path.trim_start_matches('/');
+
+    // Use git show to read file content from the remote branch
+    // Using origin/ prefix ensures we compare against remote state, not local refs
+    let git_ref = format!("origin/{}:{}", branch, relative_path);
+
+    let output = Command::new("git")
+        .args(["-C", &worktree_path, "show", &git_ref])
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            let content = String::from_utf8_lossy(&result.stdout).to_string();
+            let language = detect_language(&file_path);
+            Ok(Some(FileContent {
+                path: file_path,
+                content,
+                language,
+            }))
+        }
+        Ok(result) => {
+            // Git command ran but failed - check if it's a "file not found" error
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            if stderr.contains("does not exist") || stderr.contains("exists on disk, but not in") || stderr.contains("fatal: path") {
+                // File genuinely doesn't exist in this branch (new file)
+                Ok(None)
+            } else {
+                // Log unexpected git errors for debugging
+                debug!(stderr = %stderr, git_ref = %git_ref, "git show failed with unexpected error");
+                // Still return None to avoid breaking the diff view, but we've logged the issue
+                Ok(None)
+            }
+        }
+        Err(e) => {
+            // Failed to run git command entirely
+            Err(format!("Failed to run git command: {}", e))
+        }
+    }
 }
 
 /// Write a file to inside a container from base64-encoded data

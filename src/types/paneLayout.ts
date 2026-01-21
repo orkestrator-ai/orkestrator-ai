@@ -14,7 +14,12 @@ export function isGitFileStatus(value: unknown): value is GitFileStatus {
 // File data for file viewer tabs
 export interface FileTabData {
   filePath: string;
-  containerId: string;
+  /** Container ID (for containerized environments) */
+  containerId?: string;
+  /** Worktree path (for local environments) */
+  worktreePath?: string;
+  /** Whether this is a local environment */
+  isLocalEnvironment?: boolean;
   language?: string;
   // Diff-related fields
   /** Whether to show diff view instead of regular file view */
@@ -25,11 +30,43 @@ export interface FileTabData {
   baseBranch?: string;
 }
 
+// Data for OpenCode native chat tabs
+export interface OpenCodeNativeData {
+  /** Container ID for the environment (undefined for local environments) */
+  containerId?: string;
+  /** Environment ID */
+  environmentId: string;
+  /** Host port for the OpenCode server (assigned on server start) */
+  hostPort?: number;
+  /** Active session ID */
+  sessionId?: string;
+  /** Whether this is a local environment (no container) */
+  isLocal?: boolean;
+}
+
+// Data for Claude native chat tabs
+export interface ClaudeNativeData {
+  /** Container ID for the environment (undefined for local environments) */
+  containerId?: string;
+  /** Environment ID */
+  environmentId: string;
+  /** Host port for the Claude bridge server (assigned on server start) */
+  hostPort?: number;
+  /** Active session ID */
+  sessionId?: string;
+  /** Whether this is a local environment (no container) */
+  isLocal?: boolean;
+}
+
 // Tab information stored in pane leaves
 export interface TabInfo {
   id: string;
   type: TabType;
   fileData?: FileTabData;
+  /** Data for opencode-native tabs */
+  openCodeNativeData?: OpenCodeNativeData;
+  /** Data for claude-native tabs */
+  claudeNativeData?: ClaudeNativeData;
   /** Initial prompt to send to agent (only for claude/opencode tabs) */
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */

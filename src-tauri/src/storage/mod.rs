@@ -404,6 +404,11 @@ impl Storage {
         Ok(filtered)
     }
 
+    /// Get all environments
+    pub fn get_all_environments(&self) -> Result<Vec<Environment>, StorageError> {
+        self.load_environments()
+    }
+
     /// Get an environment by ID
     pub fn get_environment(&self, environment_id: &str) -> Result<Option<Environment>, StorageError> {
         let environments = self.load_environments()?;
@@ -440,6 +445,25 @@ impl Storage {
         }
         if let Some(port_mappings) = updates.get("portMappings") {
             environment.port_mappings = serde_json::from_value(port_mappings.clone()).ok();
+        }
+        if let Some(env_type) = updates.get("environmentType").and_then(|v| v.as_str()) {
+            environment.environment_type = serde_json::from_value(serde_json::json!(env_type))
+                .unwrap_or(environment.environment_type.clone());
+        }
+        if let Some(worktree_path) = updates.get("worktreePath") {
+            environment.worktree_path = worktree_path.as_str().map(String::from);
+        }
+        if let Some(opencode_pid) = updates.get("opencodePid") {
+            environment.opencode_pid = opencode_pid.as_u64().map(|v| v as u32);
+        }
+        if let Some(claude_pid) = updates.get("claudeBridgePid") {
+            environment.claude_bridge_pid = claude_pid.as_u64().map(|v| v as u32);
+        }
+        if let Some(opencode_port) = updates.get("localOpencodePort") {
+            environment.local_opencode_port = opencode_port.as_u64().map(|v| v as u16);
+        }
+        if let Some(claude_port) = updates.get("localClaudePort") {
+            environment.local_claude_port = claude_port.as_u64().map(|v| v as u16);
         }
 
         let updated = environment.clone();

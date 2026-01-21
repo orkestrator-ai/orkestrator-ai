@@ -18,6 +18,9 @@ export type PrState = "open" | "merged" | "closed";
 /** Network access mode for environment containers */
 export type NetworkAccessMode = "full" | "restricted";
 
+/** Type of environment - containerized (Docker) or local (git worktree) */
+export type EnvironmentType = "containerized" | "local";
+
 /** Port protocol type for port mappings */
 export type PortProtocol = "tcp" | "udp";
 
@@ -53,6 +56,21 @@ export interface Environment {
   order: number;
   /** Port mappings for container (require restart to apply changes) */
   portMappings?: PortMapping[];
+
+  // === Local environment fields ===
+
+  /** Type of environment (containerized or local, defaults to containerized) */
+  environmentType: EnvironmentType;
+  /** Path to git worktree (only for local environments) */
+  worktreePath?: string;
+  /** PID of the opencode serve process (only for local environments) */
+  opencodePid?: number;
+  /** PID of the claude-bridge process (only for local environments) */
+  claudeBridgePid?: number;
+  /** Host port for opencode server (local mode) */
+  localOpencodePort?: number;
+  /** Host port for claude-bridge server (local mode) */
+  localClaudePort?: number;
 }
 
 /** Result of testing a domain for DNS resolution */
@@ -110,6 +128,12 @@ export type PreferredEditor = "vscode" | "cursor";
 /** Default agent for new environments */
 export type DefaultAgent = "claude" | "opencode";
 
+/** OpenCode mode - terminal CLI or native chat interface */
+export type OpenCodeMode = "terminal" | "native";
+
+/** Claude mode - terminal CLI or native chat interface */
+export type ClaudeMode = "terminal" | "native";
+
 /** Terminal appearance settings */
 export interface TerminalAppearance {
   /** Font family for terminal and code editor */
@@ -133,6 +157,10 @@ export interface GlobalConfig {
   defaultAgent: DefaultAgent;
   /** Default model for OpenCode */
   opencodeModel: string;
+  /** OpenCode mode - terminal CLI or native chat interface */
+  opencodeMode: OpenCodeMode;
+  /** Claude mode - terminal CLI or native chat interface */
+  claudeMode: ClaudeMode;
   /** Terminal appearance settings (font, size, colors) */
   terminalAppearance: TerminalAppearance;
   /** Terminal scrollback buffer size (lines) */

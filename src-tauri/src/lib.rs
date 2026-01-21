@@ -5,6 +5,8 @@ mod claude_cli;
 mod commands;
 mod credentials;
 mod docker;
+mod fix_path_env;
+mod local;
 mod models;
 mod pty;
 mod storage;
@@ -13,16 +15,33 @@ use commands::*;
 use bollard::Docker;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
+use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Fix PATH environment on macOS before any CLI detection
+    // This must be called before logging is initialized to ensure CLI tools are found
+    fix_path_env::fix_path_env();
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,orkestrator_ai_lib=debug"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
+
     // Initialize terminal manager if Docker is available
     if Docker::connect_with_local_defaults().is_ok() {
         pty::init_terminal_manager();
-        println!("[init] Terminal manager initialized");
+        info!("Terminal manager initialized");
     } else {
-        println!("[init] Warning: Could not initialize terminal manager - Docker not available");
+        warn!("Could not initialize terminal manager - Docker not available");
     }
+
+    // Initialize local terminal manager (always available for local environments)
+    local::init_local_terminal_manager();
+    info!("Local terminal manager initialized");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -30,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Create App menu with About and Quit (CMD+Q)
             let app_menu = SubmenuBuilder::new(app, "Orkestrator AI")
@@ -145,6 +165,7 @@ pub fn run() {
             docker_system_prune,
             get_container_logs,
             stream_container_logs,
+            get_container_host_port,
             // Terminal commands
             attach_terminal,
             create_terminal_session,
@@ -176,7 +197,9 @@ pub fn run() {
             clear_environment_pr,
             detect_pr_url,
             detect_pr,
+            detect_pr_local,
             merge_pr,
+            merge_pr_local,
             // Config commands
             get_config,
             save_config,
@@ -202,13 +225,41 @@ pub fn run() {
             stop_claude_state_polling,
             // Editor commands
             open_in_editor,
-            // File commands
+            // File commands (container)
             get_git_status,
             get_file_tree,
             read_container_file,
             read_file_at_branch,
             read_container_file_base64,
             write_container_file,
+            // File commands (local environments)
+            get_local_git_status,
+            get_local_file_tree,
+            read_local_file,
+            read_local_file_at_branch,
+            // OpenCode commands
+            start_opencode_server,
+            stop_opencode_server,
+            get_opencode_server_status,
+            get_opencode_server_log,
+            // Claude bridge commands
+            start_claude_server,
+            stop_claude_server,
+            get_claude_server_status,
+            get_claude_server_log,
+            // Local server commands (for local/worktree environments)
+            start_local_opencode_server_cmd,
+            stop_local_opencode_server_cmd,
+            get_local_opencode_server_status,
+            start_local_claude_server_cmd,
+            stop_local_claude_server_cmd,
+            get_local_claude_server_status,
+            // Local terminal commands (for local/worktree environments)
+            create_local_terminal_session,
+            start_local_terminal_session,
+            local_terminal_write,
+            local_terminal_resize,
+            close_local_terminal_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

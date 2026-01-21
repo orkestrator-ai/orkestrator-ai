@@ -18,7 +18,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Trash2, Play, Square, Container, Shield, Globe, Settings2, RotateCw, Loader2 } from "lucide-react";
+import { Trash2, Play, Square, Container, Laptop, Shield, Globe, Settings2, RotateCw, Loader2 } from "lucide-react";
 import type { Environment } from "@/types";
 import { useClaudeActivityStore, useEnvironmentStore } from "@/stores";
 import { EnvironmentSettingsDialog } from "./EnvironmentSettingsDialog";
@@ -55,20 +55,25 @@ export function EnvironmentItem({
   // Local state to track transitioning - ensures spinner shows immediately
   const [isLocalTransitioning, setIsLocalTransitioning] = useState(false);
 
-  // Get Claude activity state for this container
+  // Get Claude activity state for this environment
+  // For terminal-based Claude, state is keyed by containerId
+  // For native Claude mode, state is keyed by environmentId
   const containerStates = useClaudeActivityStore((s) => s.containerStates);
-  const claudeActivityState = environment.containerId
-    ? containerStates[environment.containerId] || "idle"
-    : "idle";
+  const claudeActivityState =
+    containerStates[environment.id] ||  // Check by environmentId first (native mode)
+    (environment.containerId ? containerStates[environment.containerId] : null) ||  // Then by containerId (terminal mode)
+    "idle";
 
   // Check if this environment is being deleted
   const isEnvironmentDeleting = useEnvironmentStore((s) => s.isDeleting(environment.id));
 
-  const isRunning = environment.status === "running";
+  const isLocalEnvironment = environment.environmentType === "local";
+  // Local environments are always considered "running" - they exist or they don't
+  const isRunning = isLocalEnvironment || environment.status === "running";
   const isCreating = environment.status === "creating";
   const isStopping = environment.status === "stopping";
-  // Use local state OR prop status for transitioning
-  const isTransitioning = isLocalTransitioning || isCreating || isStopping;
+  // Use local state OR prop status for transitioning (not applicable for local environments)
+  const isTransitioning = !isLocalEnvironment && (isLocalTransitioning || isCreating || isStopping);
 
   // Clear local transitioning state when environment status changes to non-transitioning
   useEffect(() => {
@@ -161,17 +166,24 @@ export function EnvironmentItem({
                   // Show spinner when creating/stopping
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-500" />
                 ) : (
-                  <Container className={cn(
-                    "h-4 w-4 shrink-0 transition-colors",
-                    // Stopped/error: gray (default)
-                    !isRunning && "text-muted-foreground",
-                    // Running + waiting for input: yellow pulsing
-                    isRunning && claudeActivityState === "waiting" && "text-amber-500 animate-pulse",
-                    // Running + working: blue pulsing
-                    isRunning && claudeActivityState === "working" && "text-blue-500 animate-pulse",
-                    // Running + idle: green
-                    isRunning && claudeActivityState === "idle" && "text-green-500"
-                  )} />
+                  // Show Laptop for local environments, Container for containerized
+                  environment.environmentType === "local" ? (
+                    <Laptop className={cn(
+                      "h-4 w-4 shrink-0 transition-colors",
+                      !isRunning && "text-muted-foreground",
+                      isRunning && claudeActivityState === "waiting" && "text-amber-500 animate-pulse",
+                      isRunning && claudeActivityState === "working" && "text-blue-500 animate-pulse",
+                      isRunning && claudeActivityState === "idle" && "text-green-500"
+                    )} />
+                  ) : (
+                    <Container className={cn(
+                      "h-4 w-4 shrink-0 transition-colors",
+                      !isRunning && "text-muted-foreground",
+                      isRunning && claudeActivityState === "waiting" && "text-amber-500 animate-pulse",
+                      isRunning && claudeActivityState === "working" && "text-blue-500 animate-pulse",
+                      isRunning && claudeActivityState === "idle" && "text-green-500"
+                    )} />
+                  )
                 )}
                 <span className="flex-1 truncate">{environment.name}</span>
               </div>
@@ -181,19 +193,26 @@ export function EnvironmentItem({
             <div className="space-y-1">
               <p className="font-medium">{environment.name}</p>
               <p className="text-xs text-muted-foreground">Created: {createdDate}</p>
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                {networkMode === "full" ? (
-                  <>
-                    <Globe className="h-3 w-3" />
-                    Full network access
-                  </>
-                ) : (
-                  <>
-                    <Shield className="h-3 w-3" />
-                    Restricted network
-                  </>
-                )}
-              </p>
+              {isLocalEnvironment ? (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Laptop className="h-3 w-3" />
+                  Local worktree
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  {networkMode === "full" ? (
+                    <>
+                      <Globe className="h-3 w-3" />
+                      Full network access
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="h-3 w-3" />
+                      Restricted network
+                    </>
+                  )}
+                </p>
+              )}
               {environment.prUrl && (
                 <p className="text-xs text-blue-400">PR: {environment.prUrl}</p>
               )}
@@ -205,24 +224,29 @@ export function EnvironmentItem({
             <Settings2 className="h-4 w-4 mr-2" />
             Settings
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => isRunning ? onStop(environment.id) : onStart(environment.id)} disabled={isTransitioning}>
-            {isRunning ? (
-              <>
-                <Square className="h-4 w-4 mr-2" />
-                Stop
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4 mr-2" />
-                Start
-              </>
-            )}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => onRestart(environment.id)} disabled={!isRunning || isTransitioning}>
-            <RotateCw className="h-4 w-4 mr-2" />
-            Restart
-          </ContextMenuItem>
+          {/* Start/Stop/Restart only applicable for containerized environments */}
+          {!isLocalEnvironment && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => isRunning ? onStop(environment.id) : onStart(environment.id)} disabled={isTransitioning}>
+                {isRunning ? (
+                  <>
+                    <Square className="h-4 w-4 mr-2" />
+                    Stop
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Start
+                  </>
+                )}
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => onRestart(environment.id)} disabled={!isRunning || isTransitioning}>
+                <RotateCw className="h-4 w-4 mr-2" />
+                Restart
+              </ContextMenuItem>
+            </>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" onClick={() => setShowDeleteDialog(true)}>
             <Trash2 className="h-4 w-4 mr-2" />
@@ -238,10 +262,16 @@ export function EnvironmentItem({
             <AlertDialogTitle>Delete Environment</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete <strong>{environment.name}</strong>?
-              {isRunning && (
+              {isLocalEnvironment ? (
                 <span className="block mt-2 text-orange-500">
-                  Warning: This environment is currently running. It will be stopped before deletion.
+                  This will delete the git worktree from your machine.
                 </span>
+              ) : (
+                isRunning && (
+                  <span className="block mt-2 text-orange-500">
+                    Warning: This environment is currently running. It will be stopped before deletion.
+                  </span>
+                )
               )}
               {environment.prUrl && (
                 <span className="block mt-2">

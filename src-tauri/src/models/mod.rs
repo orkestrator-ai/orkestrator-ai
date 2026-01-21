@@ -94,6 +94,17 @@ pub enum NetworkAccessMode {
     Restricted,
 }
 
+/// Type of environment - containerized (Docker) or local (git worktree)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvironmentType {
+    /// Docker container-based environment (default for backward compatibility)
+    #[default]
+    Containerized,
+    /// Local git worktree-based environment
+    Local,
+}
+
 /// Port protocol type for port mappings
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -137,7 +148,8 @@ impl std::fmt::Display for EnvironmentStatus {
     }
 }
 
-/// Environment represents an isolated Docker container for a project
+/// Environment represents an isolated development environment for a project
+/// Can be either a Docker container or a local git worktree
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Environment {
@@ -174,6 +186,29 @@ pub struct Environment {
     /// Port mappings for container (require restart to apply changes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_mappings: Option<Vec<PortMapping>>,
+
+    // === Local environment fields ===
+
+    /// Type of environment (containerized or local)
+    /// Defaults to Containerized for backward compatibility
+    #[serde(default)]
+    pub environment_type: EnvironmentType,
+    /// Path to git worktree (only for local environments)
+    /// e.g., ~/orkestrator-ai/workspaces/project-name-abc123
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    /// PID of the opencode serve process (only for local environments)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_pid: Option<u32>,
+    /// PID of the claude-bridge process (only for local environments)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_bridge_pid: Option<u32>,
+    /// Host port for opencode server (local mode - static allocation)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_opencode_port: Option<u16>,
+    /// Host port for claude-bridge server (local mode - static allocation)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_claude_port: Option<u16>,
 }
 
 /// Default branch for backward compatibility with existing environments
@@ -244,6 +279,13 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            // Local environment fields default to None/Containerized
+            environment_type: EnvironmentType::default(),
+            worktree_path: None,
+            opencode_pid: None,
+            claude_bridge_pid: None,
+            local_opencode_port: None,
+            local_claude_port: None,
         }
     }
 
@@ -267,7 +309,54 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            // Local environment fields default to None/Containerized
+            environment_type: EnvironmentType::default(),
+            worktree_path: None,
+            opencode_pid: None,
+            claude_bridge_pid: None,
+            local_opencode_port: None,
+            local_claude_port: None,
         }
+    }
+
+    /// Create a local environment with a custom name
+    pub fn new_local(project_id: String, name: String) -> Self {
+        let branch = sanitize_branch_name(&name);
+
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id,
+            name,
+            branch,
+            container_id: None,
+            status: EnvironmentStatus::Stopped,
+            pr_url: None,
+            pr_state: None,
+            has_merge_conflicts: None,
+            created_at: Utc::now(),
+            debug_mode: false,
+            network_access_mode: NetworkAccessMode::Full, // Local environments have full network access
+            allowed_domains: None,
+            order: 0,
+            port_mappings: None,
+            // Local environment specific
+            environment_type: EnvironmentType::Local,
+            worktree_path: None,
+            opencode_pid: None,
+            claude_bridge_pid: None,
+            local_opencode_port: None,
+            local_claude_port: None,
+        }
+    }
+
+    /// Check if this is a local (worktree-based) environment
+    pub fn is_local(&self) -> bool {
+        matches!(self.environment_type, EnvironmentType::Local)
+    }
+
+    /// Check if this is a containerized (Docker-based) environment
+    pub fn is_containerized(&self) -> bool {
+        matches!(self.environment_type, EnvironmentType::Containerized)
     }
 }
 
@@ -452,6 +541,28 @@ pub enum DefaultAgent {
     Opencode,
 }
 
+/// OpenCode mode - terminal CLI or native chat interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenCodeMode {
+    /// Terminal mode - launches OpenCode CLI in terminal
+    #[default]
+    Terminal,
+    /// Native mode - uses OpenCode SDK with chat interface
+    Native,
+}
+
+/// Claude mode - terminal CLI or native chat interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeMode {
+    /// Terminal mode - launches Claude CLI in terminal
+    #[default]
+    Terminal,
+    /// Native mode - uses Claude Agent SDK with chat interface
+    Native,
+}
+
 impl PreferredEditor {
     /// Get the CLI command for this editor
     pub fn cli_command(&self) -> &'static str {
@@ -539,6 +650,12 @@ pub struct GlobalConfig {
     /// Default model for OpenCode (e.g., "opencode/grok-code")
     #[serde(default = "default_opencode_model")]
     pub opencode_model: String,
+    /// OpenCode mode - terminal CLI or native chat interface
+    #[serde(default)]
+    pub opencode_mode: OpenCodeMode,
+    /// Claude mode - terminal CLI or native chat interface
+    #[serde(default)]
+    pub claude_mode: ClaudeMode,
     /// Terminal appearance settings (font, size, colors)
     #[serde(default)]
     pub terminal_appearance: TerminalAppearance,
@@ -558,6 +675,8 @@ impl Default for GlobalConfig {
             preferred_editor: None,
             default_agent: DefaultAgent::default(),
             opencode_model: default_opencode_model(),
+            opencode_mode: OpenCodeMode::default(),
+            claude_mode: ClaudeMode::default(),
             terminal_appearance: TerminalAppearance::default(),
             terminal_scrollback: default_terminal_scrollback(),
         }

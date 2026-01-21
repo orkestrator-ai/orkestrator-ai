@@ -4,8 +4,8 @@ import { createContext, useContext, useCallback, useState, ReactNode } from "rea
 // Terminal-specific tab types
 export type TerminalTabType = "plain" | "claude" | "opencode" | "root";
 
-// All tab types including file viewer
-export type TabType = TerminalTabType | "file";
+// All tab types including file viewer, opencode native, and claude native
+export type TabType = TerminalTabType | "file" | "opencode-native" | "claude-native";
 
 // Maximum number of tabs allowed (matches Ctrl+1-9 shortcuts)
 export const MAX_TABS = 9;
