@@ -19,6 +19,11 @@ export function createSessionKey(containerId: string | null, tabId: string, envi
     return `local-${environmentId}:${tabId}`;
   }
   // Fallback for cases where environmentId is not available (should be rare)
+  // Warn in development to help catch missing environmentId for local environments
+  console.warn(
+    `[terminalSessionStore] createSessionKey called for local environment without environmentId. ` +
+    `This may cause session collisions. tabId: ${tabId}`
+  );
   return `local:${tabId}`;
 }
 
