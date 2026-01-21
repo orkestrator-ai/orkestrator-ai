@@ -46,6 +46,7 @@ interface ClaudeState {
   models: ClaudeModel[];
   selectedModel: Map<string, string>;
   attachments: Map<string, ClaudeAttachment[]>;
+  draftText: Map<string, string>;
   isComposing: Map<string, boolean>;
   pendingQuestions: Map<string, ClaudeQuestionRequest>;
   eventSubscriptions: Map<string, ClaudeEventSubscriptionState>;
@@ -65,6 +66,7 @@ interface ClaudeState {
   addAttachment: (environmentId: string, attachment: ClaudeAttachment) => void;
   removeAttachment: (environmentId: string, attachmentId: string) => void;
   clearAttachments: (environmentId: string) => void;
+  setDraftText: (environmentId: string, text: string) => void;
   setComposing: (environmentId: string, isComposing: boolean) => void;
   setThinkingEnabled: (environmentId: string, enabled: boolean) => void;
   clearEnvironment: (environmentId: string) => void;
@@ -80,6 +82,7 @@ interface ClaudeState {
   getSession: (environmentId: string) => ClaudeSessionState | undefined;
   getSelectedModel: (environmentId: string) => string | undefined;
   getAttachments: (environmentId: string) => ClaudeAttachment[];
+  getDraftText: (environmentId: string) => string;
   isComposingFor: (environmentId: string) => boolean;
   isThinkingEnabled: (environmentId: string) => boolean;
   getPendingQuestionsForSession: (sessionId: string) => ClaudeQuestionRequest[];
@@ -94,6 +97,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   models: [],
   selectedModel: new Map(),
   attachments: new Map(),
+  draftText: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
   eventSubscriptions: new Map(),
@@ -250,6 +254,17 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { attachments: newMap };
     }),
 
+  setDraftText: (environmentId, text) =>
+    set((state) => {
+      const newMap = new Map(state.draftText);
+      if (text) {
+        newMap.set(environmentId, text);
+      } else {
+        newMap.delete(environmentId);
+      }
+      return { draftText: newMap };
+    }),
+
   setComposing: (environmentId, isComposing) =>
     set((state) => {
       const newMap = new Map(state.isComposing);
@@ -285,6 +300,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newClients = new Map(state.clients);
       const newSelectedModel = new Map(state.selectedModel);
       const newAttachments = new Map(state.attachments);
+      const newDraftText = new Map(state.draftText);
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
@@ -294,6 +310,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       newClients.delete(environmentId);
       newSelectedModel.delete(environmentId);
       newAttachments.delete(environmentId);
+      newDraftText.delete(environmentId);
       newIsComposing.delete(environmentId);
       newEventSubscriptions.delete(environmentId);
       state.thinkingEnabled.delete(environmentId);
@@ -312,6 +329,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         clients: newClients,
         selectedModel: newSelectedModel,
         attachments: newAttachments,
+        draftText: newDraftText,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         eventSubscriptions: newEventSubscriptions,
@@ -402,6 +420,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   getSelectedModel: (environmentId) => get().selectedModel.get(environmentId),
 
   getAttachments: (environmentId) => get().attachments.get(environmentId) || [],
+
+  getDraftText: (environmentId) => get().draftText.get(environmentId) || "",
 
   isComposingFor: (environmentId) => get().isComposing.get(environmentId) || false,
 
