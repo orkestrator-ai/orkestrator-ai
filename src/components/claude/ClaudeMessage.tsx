@@ -172,12 +172,6 @@ function ToolPart({
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const stateColors = {
-    success: "text-green-600",
-    failure: "text-red-600",
-    pending: "text-yellow-600 animate-pulse",
-  };
-
   // Determine if there's content to show when expanded
   const hasExpandableContent = toolOutput || toolError || (toolArgs && Object.keys(toolArgs).length > 0);
 
@@ -282,7 +276,7 @@ function ToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+          <span className={cn("ml-auto shrink-0", TOOL_STATE_COLORS[toolState] || "")}>
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}
@@ -435,12 +429,6 @@ function EditToolPart({
   const [isOpen, setIsOpen] = useState(false);
   const { createFileTab } = useTerminalContext();
 
-  const stateColors = {
-    success: "text-green-600",
-    failure: "text-red-600",
-    pending: "text-yellow-600 animate-pulse",
-  };
-
   // Get file path from diff metadata
   const filePath = toolDiff?.filePath;
   const fileName = filePath ? filePath.split("/").pop() : null;
@@ -536,7 +524,7 @@ function EditToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+          <span className={cn("ml-auto shrink-0", TOOL_STATE_COLORS[toolState] || "")}>
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}
@@ -630,12 +618,6 @@ function TaskToolPart({
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const stateColors = {
-    success: "text-green-600",
-    failure: "text-red-600",
-    pending: "text-yellow-600 animate-pulse",
-  };
-
   // Get description from toolArgs
   const description = (toolArgs?.description as string) || "";
 
@@ -676,7 +658,7 @@ function TaskToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("shrink-0", stateColors[toolState] || "")}>
+          <span className={cn("shrink-0", TOOL_STATE_COLORS[toolState] || "")}>
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}
@@ -724,6 +706,24 @@ interface TodoItem {
   activeForm: string;
 }
 
+/** Type guard to validate a TodoItem */
+function isTodoItem(item: unknown): item is TodoItem {
+  if (typeof item !== "object" || item === null) return false;
+  const obj = item as Record<string, unknown>;
+  return (
+    typeof obj.content === "string" &&
+    typeof obj.status === "string" &&
+    ["pending", "in_progress", "completed"].includes(obj.status)
+  );
+}
+
+/** Shared tool state colors */
+const TOOL_STATE_COLORS = {
+  success: "text-green-600",
+  failure: "text-red-600",
+  pending: "text-yellow-600 animate-pulse",
+} as const;
+
 /** Render a TodoWrite tool with completion status */
 function TodoToolPart({
   toolName,
@@ -736,14 +736,9 @@ function TodoToolPart({
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const stateColors = {
-    success: "text-green-600",
-    failure: "text-red-600",
-    pending: "text-yellow-600 animate-pulse",
-  };
-
-  // Extract todos from toolArgs
-  const todos = (toolArgs?.todos as TodoItem[] | undefined) || [];
+  // Extract and validate todos from toolArgs
+  const rawTodos = Array.isArray(toolArgs?.todos) ? toolArgs.todos : [];
+  const todos = rawTodos.filter(isTodoItem);
   const completedCount = todos.filter((t) => t.status === "completed").length;
   const totalCount = todos.length;
 
@@ -775,7 +770,7 @@ function TodoToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+          <span className={cn("ml-auto shrink-0", TOOL_STATE_COLORS[toolState] || "")}>
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}
@@ -787,7 +782,7 @@ function TodoToolPart({
             <div className="px-3 py-2 space-y-1.5">
               {todos.map((todo, i) => (
                 <div
-                  key={`todo-${i}`}
+                  key={`todo-${i}-${todo.content.slice(0, 30)}`}
                   className={cn(
                     "flex items-start gap-2 text-xs",
                     todo.status === "completed" && "text-muted-foreground/60"
@@ -832,12 +827,6 @@ function TodoToolPart({
 /** Render a child tool under a Task - simplified version */
 function ChildToolPart({ part }: { part: ClaudeMessagePart }) {
   const [isOpen, setIsOpen] = useState(false);
-
-  const stateColors = {
-    success: "text-green-600",
-    failure: "text-red-600",
-    pending: "text-yellow-600 animate-pulse",
-  };
 
   const toolName = part.toolName;
   const toolArgs = part.toolArgs;
@@ -918,7 +907,7 @@ function ChildToolPart({ part }: { part: ClaudeMessagePart }) {
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+          <span className={cn("ml-auto shrink-0", TOOL_STATE_COLORS[toolState] || "")}>
             {toolState === "pending" ? "..." : toolState}
           </span>
         )}
