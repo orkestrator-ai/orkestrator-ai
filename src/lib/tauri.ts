@@ -568,6 +568,13 @@ export async function openInEditor(
   return invoke("open_in_editor", { containerId, editor });
 }
 
+export async function openLocalInEditor(
+  path: string,
+  editor: PreferredEditor
+): Promise<void> {
+  return invoke("open_local_in_editor", { path, editor });
+}
+
 // --- File Commands ---
 
 /** Represents a file changed in git */
