@@ -193,10 +193,32 @@ pub async fn create_worktree(
 
     // Get the default branch to base the worktree on
     let default_branch = get_default_branch(source_repo_path).await?;
+
+    // Fetch from origin to ensure we have the latest commits
+    debug!(source = %source_repo_path, "Fetching from origin to get latest commits");
+    let fetch_output = Command::new("git")
+        .args(["fetch", "origin", &default_branch])
+        .current_dir(source_repo_path)
+        .output()
+        .await;
+
+    if let Err(e) = &fetch_output {
+        warn!(error = %e, "Failed to fetch from origin, will branch from local");
+    } else if let Ok(output) = &fetch_output {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(error = %stderr, "Git fetch failed, will branch from local");
+        }
+    }
+
+    // Use origin/<default_branch> as the start point to get latest remote commits
+    let start_point = format!("origin/{}", default_branch);
+
     debug!(
         source = %source_repo_path,
         branch = %branch_name,
         default_branch = %default_branch,
+        start_point = %start_point,
         worktree_path = %worktree_path_str,
         "Preparing git worktree command"
     );
@@ -241,7 +263,7 @@ pub async fn create_worktree(
                     "-b",
                     &target_branch,
                     &worktree_path_str,
-                    &default_branch,
+                    &start_point,
                 ])
                 .current_dir(source_repo_path)
                 .output()
@@ -258,7 +280,7 @@ pub async fn create_worktree(
         error!(
             branch = %target_branch,
             worktree_path = %worktree_path_str,
-            default_branch = %default_branch,
+            start_point = %start_point,
             status = ?output.status.code(),
             stdout = %stdout,
             stderr = %stderr,
