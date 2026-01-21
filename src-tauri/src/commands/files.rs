@@ -330,9 +330,10 @@ pub async fn get_git_status(
     // This allows us to merge branch changes with uncommitted changes
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // 1. Get files changed between target_branch and HEAD (committed changes on this branch)
-    //    Using target_branch...HEAD to get changes since the merge-base
-    let branch_diff_ref = format!("{}...HEAD", target_branch);
+    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
+    //    Using origin/target_branch...HEAD to compare against the remote default branch
+    //    This ensures we always compare against the remote state, not local (potentially stale) refs
+    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
 
     let branch_name_status = client
         .exec_command(
@@ -666,9 +667,10 @@ pub async fn read_file_at_branch(
         &file_path
     };
 
-    // Use git show to read file content from the specified branch
-    // Format: git show <branch>:<path>
-    let git_ref = format!("{}:{}", branch, relative_path);
+    // Use git show to read file content from the remote branch
+    // Format: git show origin/<branch>:<path>
+    // Using origin/ prefix ensures we compare against remote state, not local refs
+    let git_ref = format!("origin/{}:{}", branch, relative_path);
 
     let result = client
         .exec_command(
@@ -779,8 +781,22 @@ pub async fn get_local_git_status(
     // Use a HashMap to collect all changes, keyed by path
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // 1. Get files changed between target_branch and HEAD (committed changes on this branch)
-    let branch_diff_ref = format!("{}...HEAD", target_branch);
+    // Fetch latest from origin to ensure remote refs are up to date
+    // This ensures we compare against the current remote state, not stale local refs
+    let fetch_output = Command::new("git")
+        .args(["-C", &worktree_path, "fetch", "origin", &target_branch])
+        .output();
+
+    if let Ok(result) = &fetch_output {
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            debug!(stderr = %stderr, "git fetch origin failed (continuing with local refs)");
+        }
+    }
+
+    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
+    //    Using origin/target_branch...HEAD to compare against the remote default branch
+    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
 
     let branch_name_status = Command::new("git")
         .args(["-C", &worktree_path, "diff", "--name-status", &branch_diff_ref])
@@ -1065,8 +1081,9 @@ pub async fn read_local_file_at_branch(
     // Normalize the path - remove leading slashes for git show
     let relative_path = file_path.trim_start_matches('/');
 
-    // Use git show to read file content from the specified branch
-    let git_ref = format!("{}:{}", branch, relative_path);
+    // Use git show to read file content from the remote branch
+    // Using origin/ prefix ensures we compare against remote state, not local refs
+    let git_ref = format!("origin/{}:{}", branch, relative_path);
 
     let output = Command::new("git")
         .args(["-C", &worktree_path, "show", &git_ref])
