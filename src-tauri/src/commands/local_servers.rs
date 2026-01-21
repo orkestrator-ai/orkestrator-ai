@@ -250,23 +250,18 @@ pub async fn start_local_claude_server_cmd(
 
     // Get the path to the claude-bridge
     // In development, it's in the docker/claude-bridge directory
-    // In production, we'll need to bundle it or expect it to be installed
-    let resource_path = app_handle.path().resource_dir().ok();
-    let bridge_path = if let Some(ref res) = resource_path {
-        let bundled = res.join("claude-bridge");
-        if bundled.exists() {
-            bundled.to_string_lossy().to_string()
-        } else {
-            // Fallback to development path
-            dev_claude_bridge_path().unwrap_or_else(|| "docker/claude-bridge".to_string())
-        }
-    } else {
-        dev_claude_bridge_path().unwrap_or_else(|| "docker/claude-bridge".to_string())
-    };
+    // In production, it's bundled as a resource
+    let bridge_path = resolve_claude_bridge_path(&app_handle);
     debug!(environment_id = %environment_id, bridge_path = %bridge_path, "Resolved claude-bridge path");
 
+    // Get the path to the bundled bun binary (for packaged apps)
+    let bundled_bun_path = resolve_bundled_bun_path(&app_handle);
+    if let Some(ref bun_path) = bundled_bun_path {
+        debug!(environment_id = %environment_id, bun_path = %bun_path, "Resolved bundled bun path");
+    }
+
     // Start the server
-    let result = start_local_claude_bridge(&environment_id, worktree_path, port, &bridge_path).await?;
+    let result = start_local_claude_bridge(&environment_id, worktree_path, port, &bridge_path, bundled_bun_path.as_deref()).await?;
 
     // Update the PID in storage if it changed
     if !result.was_running {
@@ -297,6 +292,68 @@ fn dev_claude_bridge_path() -> Option<String> {
     let workspace_root = manifest_path.parent()?;
     let bridge_path = workspace_root.join("docker").join("claude-bridge");
     Some(bridge_path.to_string_lossy().to_string())
+}
+
+/// Resolve the claude-bridge path for both development and production
+fn resolve_claude_bridge_path(app_handle: &tauri::AppHandle) -> String {
+    // Try bundled resource path first (production)
+    // Use resolve_resource which is the Tauri v2 way to access bundled resources
+    if let Ok(bundled) = app_handle.path().resolve("claude-bridge", tauri::path::BaseDirectory::Resource) {
+        debug!(path = %bundled.display(), "Checking bundled claude-bridge path");
+        if bundled.exists() {
+            debug!(path = %bundled.display(), "Found bundled claude-bridge");
+            return bundled.to_string_lossy().to_string();
+        }
+    }
+
+    // Also try resource_dir() directly as a fallback
+    if let Ok(res_dir) = app_handle.path().resource_dir() {
+        let bundled = res_dir.join("claude-bridge");
+        debug!(resource_dir = %res_dir.display(), path = %bundled.display(), "Checking resource_dir claude-bridge path");
+        if bundled.exists() {
+            debug!(path = %bundled.display(), "Found claude-bridge via resource_dir");
+            return bundled.to_string_lossy().to_string();
+        }
+    }
+
+    // Fallback to development path
+    if let Some(dev_path) = dev_claude_bridge_path() {
+        let dev_pathbuf = PathBuf::from(&dev_path);
+        if dev_pathbuf.exists() {
+            debug!(path = %dev_path, "Found dev claude-bridge path");
+            return dev_path;
+        }
+    }
+
+    // Last resort - relative path (will likely fail but provides a clear error)
+    warn!("Could not resolve claude-bridge path, using fallback");
+    "docker/claude-bridge".to_string()
+}
+
+/// Resolve the bundled bun binary path for packaged apps
+fn resolve_bundled_bun_path(app_handle: &tauri::AppHandle) -> Option<String> {
+    // Try bundled resource path (production)
+    if let Ok(bundled) = app_handle.path().resolve("bin/bun", tauri::path::BaseDirectory::Resource) {
+        debug!(path = %bundled.display(), "Checking bundled bun path");
+        if bundled.exists() {
+            debug!(path = %bundled.display(), "Found bundled bun");
+            return Some(bundled.to_string_lossy().to_string());
+        }
+    }
+
+    // Also try resource_dir() directly as a fallback
+    if let Ok(res_dir) = app_handle.path().resource_dir() {
+        let bundled = res_dir.join("bin").join("bun");
+        debug!(resource_dir = %res_dir.display(), path = %bundled.display(), "Checking resource_dir bun path");
+        if bundled.exists() {
+            debug!(path = %bundled.display(), "Found bun via resource_dir");
+            return Some(bundled.to_string_lossy().to_string());
+        }
+    }
+
+    // No bundled bun found - that's okay, we'll fall back to system bun/node
+    debug!("No bundled bun found, will use system runtime");
+    None
 }
 
 /// Stop the Claude-bridge server for a local environment

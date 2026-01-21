@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run build:all",
     "frontendDist": "../dist"
   },
   "app": {
@@ -34,6 +34,11 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../docker/claude-bridge/dist": "claude-bridge/dist",
+      "../docker/claude-bridge/package.json": "claude-bridge/package.json",
+      "../binaries/bun": "bin/bun"
+    }
   }
 }

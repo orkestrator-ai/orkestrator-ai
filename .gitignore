@@ -11,6 +11,9 @@ out/
 release/
 build/
 
+# Downloaded binaries (downloaded during build)
+binaries/
+
 # Tauri
 src-tauri/target/
 
