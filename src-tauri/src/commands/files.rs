@@ -4,6 +4,33 @@
 use crate::docker::client::get_docker_client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// Cache for git fetch operations to avoid fetching on every status check.
+/// Key is (container_id or worktree_path, branch), value is last fetch time.
+static FETCH_CACHE: Mutex<Option<HashMap<(String, String), Instant>>> = Mutex::new(None);
+
+/// Time-to-live for fetch cache entries (30 seconds)
+const FETCH_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Check if we should fetch based on cache TTL
+fn should_fetch(key: &(String, String)) -> bool {
+    let mut cache_guard = FETCH_CACHE.lock().unwrap();
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+
+    match cache.get(key) {
+        Some(last_fetch) => last_fetch.elapsed() >= FETCH_CACHE_TTL,
+        None => true,
+    }
+}
+
+/// Mark that a fetch was performed
+fn mark_fetched(key: (String, String)) {
+    let mut cache_guard = FETCH_CACHE.lock().unwrap();
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+    cache.insert(key, Instant::now());
+}
 
 /// Represents a file changed in the git working tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,7 +339,7 @@ pub async fn get_git_status(
     container_id: String,
     target_branch: String,
 ) -> Result<Vec<GitFileChange>, String> {
-    use tracing::debug;
+    use tracing::{debug, warn};
 
     let client = get_docker_client().map_err(|e| e.to_string())?;
 
@@ -326,13 +353,46 @@ pub async fn get_git_status(
         return Err("Container is not running".to_string());
     }
 
+    // Fetch latest from origin to ensure remote refs are up to date (with caching)
+    // Only fetch if more than FETCH_CACHE_TTL has passed since last fetch
+    let fetch_key = (container_id.clone(), target_branch.clone());
+    if should_fetch(&fetch_key) {
+        debug!(target_branch = %target_branch, "Fetching from origin (cache expired or first fetch)");
+
+        // Use timeout to prevent hanging on network issues (10 seconds)
+        let fetch_future = client.exec_command(
+            &container_id,
+            vec!["git", "-C", "/workspace", "fetch", "origin", &target_branch],
+        );
+
+        match tokio::time::timeout(Duration::from_secs(10), fetch_future).await {
+            Ok(Ok(output)) => {
+                // Check for error indicators in output (exec_command doesn't check exit codes)
+                if output.contains("fatal:") || output.contains("error:") {
+                    warn!(target_branch = %target_branch, output = %output, "git fetch origin returned errors (continuing with local refs)");
+                } else {
+                    mark_fetched(fetch_key);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch origin failed (continuing with local refs)");
+            }
+            Err(_) => {
+                warn!(target_branch = %target_branch, "git fetch origin timed out after 10s (continuing with local refs)");
+            }
+        }
+    } else {
+        debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
+    }
+
     // Use a HashMap to collect all changes, keyed by path
     // This allows us to merge branch changes with uncommitted changes
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // 1. Get files changed between target_branch and HEAD (committed changes on this branch)
-    //    Using target_branch...HEAD to get changes since the merge-base
-    let branch_diff_ref = format!("{}...HEAD", target_branch);
+    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
+    //    Using origin/target_branch...HEAD to compare against the remote default branch
+    //    This ensures we always compare against the remote state, not local (potentially stale) refs
+    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
 
     let branch_name_status = client
         .exec_command(
@@ -609,7 +669,13 @@ pub async fn read_container_file(
     })
 }
 
-/// Read a file from a specific git branch inside a container
+/// Read a file from the remote version of a branch inside a container.
+/// Uses `origin/<branch>` to ensure comparison against remote state.
+///
+/// Note: This function does NOT fetch from origin. It relies on a recent fetch
+/// having been performed by `get_git_status()` (which caches fetches for 30 seconds).
+/// This is intentional to avoid redundant network calls when viewing diffs.
+///
 /// Returns None if the file doesn't exist in the specified branch (e.g., new file)
 #[tauri::command]
 pub async fn read_file_at_branch(
@@ -666,9 +732,10 @@ pub async fn read_file_at_branch(
         &file_path
     };
 
-    // Use git show to read file content from the specified branch
-    // Format: git show <branch>:<path>
-    let git_ref = format!("{}:{}", branch, relative_path);
+    // Use git show to read file content from the remote branch
+    // Format: git show origin/<branch>:<path>
+    // Using origin/ prefix ensures we compare against remote state, not local refs
+    let git_ref = format!("origin/{}:{}", branch, relative_path);
 
     let result = client
         .exec_command(
@@ -765,7 +832,7 @@ pub async fn get_local_git_status(
     target_branch: String,
 ) -> Result<Vec<GitFileChange>, String> {
     use std::process::Command;
-    use tracing::debug;
+    use tracing::{debug, warn};
 
     // Validate the worktree path exists
     let path = std::path::Path::new(&worktree_path);
@@ -779,8 +846,47 @@ pub async fn get_local_git_status(
     // Use a HashMap to collect all changes, keyed by path
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // 1. Get files changed between target_branch and HEAD (committed changes on this branch)
-    let branch_diff_ref = format!("{}...HEAD", target_branch);
+    // Fetch latest from origin to ensure remote refs are up to date (with caching)
+    // Only fetch if more than FETCH_CACHE_TTL has passed since last fetch
+    let fetch_key = (worktree_path.clone(), target_branch.clone());
+    if should_fetch(&fetch_key) {
+        debug!(target_branch = %target_branch, "Fetching from origin (cache expired or first fetch)");
+
+        // Spawn fetch with timeout to prevent hanging on network issues
+        let worktree_for_fetch = worktree_path.clone();
+        let branch_for_fetch = target_branch.clone();
+        let fetch_task = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["-C", &worktree_for_fetch, "fetch", "origin", &branch_for_fetch])
+                .output()
+        });
+
+        match tokio::time::timeout(Duration::from_secs(10), fetch_task).await {
+            Ok(Ok(Ok(result))) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    warn!(target_branch = %target_branch, stderr = %stderr, "git fetch origin failed (continuing with local refs)");
+                } else {
+                    mark_fetched(fetch_key);
+                }
+            }
+            Ok(Ok(Err(e))) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch command failed to execute (continuing with local refs)");
+            }
+            Ok(Err(e)) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch task panicked (continuing with local refs)");
+            }
+            Err(_) => {
+                warn!(target_branch = %target_branch, "git fetch origin timed out after 10s (continuing with local refs)");
+            }
+        }
+    } else {
+        debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
+    }
+
+    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
+    //    Using origin/target_branch...HEAD to compare against the remote default branch
+    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
 
     let branch_name_status = Command::new("git")
         .args(["-C", &worktree_path, "diff", "--name-status", &branch_diff_ref])
@@ -1017,7 +1123,13 @@ pub async fn read_local_file(
     })
 }
 
-/// Read a file from a specific git branch in a local environment
+/// Read a file from the remote version of a branch in a local environment.
+/// Uses `origin/<branch>` to ensure comparison against remote state.
+///
+/// Note: This function does NOT fetch from origin. It relies on a recent fetch
+/// having been performed by `get_local_git_status()` (which caches fetches for 30 seconds).
+/// This is intentional to avoid redundant network calls when viewing diffs.
+///
 /// Returns None if the file doesn't exist in the specified branch (e.g., new file)
 #[tauri::command]
 pub async fn read_local_file_at_branch(
@@ -1065,8 +1177,9 @@ pub async fn read_local_file_at_branch(
     // Normalize the path - remove leading slashes for git show
     let relative_path = file_path.trim_start_matches('/');
 
-    // Use git show to read file content from the specified branch
-    let git_ref = format!("{}:{}", branch, relative_path);
+    // Use git show to read file content from the remote branch
+    // Using origin/ prefix ensures we compare against remote state, not local refs
+    let git_ref = format!("origin/{}:{}", branch, relative_path);
 
     let output = Command::new("git")
         .args(["-C", &worktree_path, "show", &git_ref])
