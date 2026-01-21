@@ -326,10 +326,14 @@ export function ActionBar() {
 
   // Load run commands from orkestrator-ai.json when workspace is ready
   useEffect(() => {
+    // Extract values for type safety
+    const worktreePath = selectedEnvironment?.worktreePath;
+    const containerId = selectedEnvironment?.containerId;
+
     // For container environments, we need containerId
     // For local environments, we need worktreePath
-    const hasContainer = !isLocalEnvironment && !!selectedEnvironment?.containerId;
-    const hasWorktree = isLocalEnvironment && !!selectedEnvironment?.worktreePath;
+    const hasContainer = !isLocalEnvironment && !!containerId;
+    const hasWorktree = isLocalEnvironment && !!worktreePath;
 
     if ((!hasContainer && !hasWorktree) || !isRunning || !workspaceReady) {
       setRunCommands(null);
@@ -339,9 +343,16 @@ export function ActionBar() {
     let cancelled = false;
     setIsLoadingRunCommands(true);
 
-    const readConfigPromise = isLocalEnvironment
-      ? tauri.readLocalFile(selectedEnvironment!.worktreePath!, "orkestrator-ai.json")
-      : tauri.readContainerFile(selectedEnvironment!.containerId!, "orkestrator-ai.json");
+    const readConfigPromise = isLocalEnvironment && worktreePath
+      ? tauri.readLocalFile(worktreePath, "orkestrator-ai.json")
+      : containerId
+        ? tauri.readContainerFile(containerId, "orkestrator-ai.json")
+        : null;
+
+    if (!readConfigPromise) {
+      setIsLoadingRunCommands(false);
+      return;
+    }
 
     readConfigPromise
       .then((result) => {

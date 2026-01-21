@@ -696,6 +696,15 @@ export async function readLocalFileAtBranch(
   });
 }
 
+/** Write a file to a local environment (worktree path) from base64-encoded data */
+export async function writeLocalFile(
+  worktreePath: string,
+  filePath: string,
+  base64Data: string
+): Promise<string> {
+  return invoke<string>("write_local_file", { worktreePath, filePath, base64Data });
+}
+
 // --- Port Mapping Commands ---
 
 /** Update port mappings for an environment (requires restart to apply) */
@@ -900,4 +909,24 @@ export async function resizeLocalTerminal(sessionId: string, cols: number, rows:
 /** Close a local terminal session */
 export async function closeLocalTerminalSession(sessionId: string): Promise<void> {
   return invoke("close_local_terminal_session", { sessionId });
+}
+
+// --- File System Utilities ---
+
+/** Read a binary file from the local filesystem as base64 */
+export async function readFileBase64(path: string): Promise<string> {
+  return invoke<string>("read_file_base64", { filePath: path });
+}
+
+/** Read a binary file from the local filesystem (deprecated: use readFileBase64 instead) */
+export async function readBinaryFile(path: string): Promise<Uint8Array> {
+  // Use our custom Tauri command instead of the fs plugin (which has permission issues)
+  const base64 = await readFileBase64(path);
+  // Convert base64 to Uint8Array
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }

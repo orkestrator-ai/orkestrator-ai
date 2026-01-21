@@ -331,12 +331,24 @@ export async function sendPrompt(
   session.status = "running";
   session.lastActivity = new Date();
 
-  // Add user message
+  // Build the final prompt - append attachment references as XML tags
+  // The model can use its Read tool to access these files
+  // This must happen BEFORE creating the user message so the XML tags are included
+  let finalPrompt = prompt;
+
+  if (options?.attachments && options.attachments.length > 0) {
+    const attachmentTags = options.attachments
+      .map((att) => `<attachment type="${att.type}" path="${att.path}" filename="${att.filename || ""}" />`)
+      .join("\n");
+    finalPrompt = `${prompt}\n\n<attached-files>\n${attachmentTags}\n</attached-files>`;
+  }
+
+  // Add user message with finalPrompt (includes attachment XML tags)
   const userMessage: NormalizedMessage = {
     id: generateMessageId(),
     role: "user",
-    content: prompt,
-    parts: [{ type: "text", content: prompt }],
+    content: finalPrompt,
+    parts: [{ type: "text", content: finalPrompt }],
     timestamp: new Date().toISOString(),
   };
   session.messages.push(userMessage);
@@ -360,29 +372,12 @@ export async function sendPrompt(
   let earlyWarningTimeout: ReturnType<typeof setTimeout> | null = null;
 
   try {
-    // Build prompt parts
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const promptParts: any[] = [{ type: "text", text: prompt }];
-
-    if (options?.attachments) {
-      for (const attachment of options.attachments) {
-        let mime = "application/octet-stream";
-        if (attachment.type === "image") {
-          mime = "image/png";
-        }
-        promptParts.push({
-          type: "file",
-          mime,
-          url: attachment.dataUrl || `file://${attachment.path}`,
-          filename: attachment.filename,
-        });
-      }
-    }
-
     // Create the query with Claude Agent SDK
     // Extended thinking is enabled by default (thinking !== false)
     const thinkingEnabled = options?.thinking !== false;
-    const cwd = process.cwd();
+    // Use CWD env var if set (for local environments where bridge runs from its own dir)
+    // This allows the Claude SDK to operate on the actual project directory
+    const cwd = process.env.CWD || process.cwd();
     console.log("[session-manager] Starting query", {
       sessionId,
       cwd,
@@ -393,7 +388,7 @@ export async function sendPrompt(
     const envPath = process.env.PATH;
     console.log("[session-manager] SDK env PATH", { path: envPath });
     const queryIterator = query({
-      prompt,
+      prompt: finalPrompt,
       options: {
         cwd,
         model: options?.model,
@@ -484,7 +479,7 @@ export async function sendPrompt(
       if (sdkMessageCount === 0) {
         console.warn("[session-manager] SDK has not responded after 5 seconds", {
           sessionId,
-          cwd: process.cwd(),
+          cwd,
           model: options?.model,
           status: session.status,
         });
@@ -740,7 +735,7 @@ export async function getAvailableModels(): Promise<Array<{
   description?: string;
 }>> {
   try {
-    const cwd = process.cwd();
+    const cwd = process.env.CWD || process.cwd();
     console.log("[session-manager] Fetching supported models", { cwd });
     // Create a query object to access supportedModels()
     // We use maxTurns: 0 to prevent any actual processing

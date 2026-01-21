@@ -12,7 +12,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
-import { writeContainerFile } from "@/lib/tauri";
+import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
+import { toast } from "sonner";
+import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useOpenCodeStore, type OpenCodeAttachment } from "@/stores/openCodeStore";
 import type { OpenCodeModel, OpenCodeConversationMode } from "@/lib/opencode-client";
 
@@ -66,6 +68,11 @@ export function OpenCodeComposeBar({
   const attachments = getAttachments(environmentId);
   const selectedModel = getSelectedModel(environmentId);
   const selectedMode = getSelectedMode(environmentId);
+
+  // Get worktree path for local environments
+  const worktreePath = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.worktreePath
+  );
 
   // Focus textarea on mount
   useEffect(() => {
@@ -146,17 +153,22 @@ export function OpenCodeComposeBar({
             name: filename,
           };
           addAttachment(environmentId, attachment);
-        } else {
-          // Local environment - for now, just use the data URL directly
-          // TODO: Write to local worktree path
+        } else if (worktreePath) {
+          // Local environment - write to worktree path
+          const fullPath = await writeLocalFile(worktreePath, filePath, base64Data);
+
           const attachment: OpenCodeAttachment = {
             id: Math.random().toString(36).substring(2, 9),
             type: "image",
-            path: filePath, // Use local path
+            path: fullPath,
             previewUrl: dataUrl,
             name: filename,
           };
           addAttachment(environmentId, attachment);
+        } else {
+          toast.error("Cannot save image", {
+            description: "Environment not properly configured for attachments",
+          });
         }
       } catch (e) {
         // Clipboard read errors are expected when no image is present - ignore silently
@@ -167,7 +179,7 @@ export function OpenCodeComposeBar({
         // Let text paste through by not preventing default
       }
     },
-    [containerId, environmentId, addAttachment]
+    [containerId, environmentId, worktreePath, addAttachment]
   );
 
   useEffect(() => {

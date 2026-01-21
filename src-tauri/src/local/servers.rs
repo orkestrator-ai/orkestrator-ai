@@ -337,18 +337,23 @@ pub async fn start_local_claude_bridge(
 
     let (runtime_cmd, runtime_args) = resolve_js_runtime(&entry_point, bundled_bun_path);
     let runtime_args_ref: Vec<&str> = runtime_args.iter().map(String::as_str).collect();
+
+    // The bridge must run from its own directory (where node_modules is located)
+    // But we set CWD env var so the Claude SDK operates on the worktree
+    env_vars.insert("CWD".to_string(), worktree_path.to_string());
+
     let pid = manager
         .spawn(
             environment_id,
             ProcessType::ClaudeBridge,
             runtime_cmd,
             &runtime_args_ref,
-            worktree_path,
+            bridge_path, // Run from bridge directory so node_modules is accessible
             env_vars,
         )
         .await
         .map_err(|e| format!("Failed to spawn Claude-bridge server: {}", e))?;
-    debug!(environment_id = %environment_id, pid = pid, "Spawned claude-bridge process");
+    debug!(environment_id = %environment_id, pid = pid, cwd = %bridge_path, "Spawned claude-bridge process");
 
     // Wait for server to become healthy
     if !wait_for_server_health(port).await {
