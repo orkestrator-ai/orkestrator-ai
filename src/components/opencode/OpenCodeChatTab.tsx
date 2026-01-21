@@ -78,7 +78,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   } = useOpenCodeStore();
 
   // Activity state tracking - use environmentId as key for both local and container environments
-  const { setContainerState, removeContainerState } = useClaudeActivityStore();
+  // Use reference counting to handle multiple tabs for the same environment
+  const { setContainerState, incrementContainerRef, decrementContainerRef } = useClaudeActivityStore();
 
   // Get client from Map (shared per environment) - subscribing to the Map ensures re-render on changes
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
@@ -118,12 +119,14 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     }
   }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
 
-  // Cleanup activity state when tab unmounts
+  // Track container reference count for activity state management
+  // Increment on mount, decrement on unmount - state is only removed when last tab closes
   useEffect(() => {
+    incrementContainerRef(environmentId);
     return () => {
-      removeContainerState(environmentId);
+      decrementContainerRef(environmentId);
     };
-  }, [environmentId, removeContainerState]);
+  }, [environmentId, incrementContainerRef, decrementContainerRef]);
 
   // Track last initialization time to prevent rapid re-initialization
   const lastInitTimeRef = useRef<number>(0);

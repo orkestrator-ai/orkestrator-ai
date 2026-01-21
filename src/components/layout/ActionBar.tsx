@@ -278,11 +278,6 @@ export function ActionBar() {
   const canCreateTab = !!createTab && tabCount < MAX_TABS;
   const canOpenEditor = isRunning && !!selectedEnvironment?.containerId;
 
-  // Debug: Log PR state changes
-  useEffect(() => {
-    console.log("[ActionBar] PR state changed:", { prUrl, prState, hasMergeConflicts, isPRFinished });
-  }, [prUrl, prState, hasMergeConflicts, isPRFinished]);
-
   // Handler for opening in editor
   const handleOpenInEditor = useCallback(async () => {
     if (!selectedEnvironment?.containerId) return;

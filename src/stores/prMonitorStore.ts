@@ -22,6 +22,34 @@ export const PR_MONITOR_TIMEOUTS: Partial<Record<PrMonitoringMode, number>> = {
   "merge-pending": 20_000,  // 20 seconds max for merge pending
 };
 
+/** Exponential backoff configuration for consecutive errors */
+export const PR_MONITOR_BACKOFF = {
+  /** Maximum number of errors before capping backoff */
+  maxErrors: 5,
+  /** Maximum backoff interval (5 minutes) */
+  maxInterval: 300_000,
+} as const;
+
+/**
+ * Calculate the effective polling interval with exponential backoff.
+ * Formula: baseInterval * 2^min(consecutiveErrors, maxErrors)
+ * Capped at maxInterval (5 minutes).
+ */
+export function getEffectiveInterval(
+  mode: PrMonitoringMode,
+  consecutiveErrors: number
+): number {
+  const baseInterval = PR_MONITOR_INTERVALS[mode];
+  if (baseInterval === Infinity) return Infinity;
+  if (consecutiveErrors === 0) return baseInterval;
+
+  const cappedErrors = Math.min(consecutiveErrors, PR_MONITOR_BACKOFF.maxErrors);
+  const multiplier = Math.pow(2, cappedErrors);
+  const backoffInterval = baseInterval * multiplier;
+
+  return Math.min(backoffInterval, PR_MONITOR_BACKOFF.maxInterval);
+}
+
 /** Per-environment monitoring state */
 export interface MonitoringState {
   mode: PrMonitoringMode;

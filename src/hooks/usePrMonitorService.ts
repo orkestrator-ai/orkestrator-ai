@@ -14,8 +14,8 @@
 import { useEffect, useRef, useCallback } from "react";
 import {
   usePrMonitorStore,
-  PR_MONITOR_INTERVALS,
   PR_MONITOR_TIMEOUTS,
+  getEffectiveInterval,
 } from "@/stores/prMonitorStore";
 import { useEnvironmentStore, useUIStore, useClaudeActivityStore } from "@/stores";
 import * as tauri from "@/lib/tauri";
@@ -26,34 +26,52 @@ import type { PrState } from "@/types";
 const TICK_INTERVAL_MS = 1000;
 
 /**
+ * Result of a PR detection attempt.
+ * Discriminated union to distinguish between:
+ * - success: PR was found
+ * - not-found: No PR exists for this branch (not an error)
+ * - error: An actual error occurred during detection
+ */
+type DetectionResult =
+  | { status: "success"; data: PrDetectionResult }
+  | { status: "not-found" }
+  | { status: "error"; error: unknown };
+
+/**
  * Perform a PR detection for an environment.
- * Returns the detection result or null if no PR found.
+ * Returns a discriminated union to distinguish between no PR and actual errors.
  */
 async function detectPR(
   environmentId: string,
   containerId: string | null,
   isLocal: boolean
-): Promise<PrDetectionResult | null> {
-  if (!environmentId) return null;
-  if (!isLocal && !containerId) return null;
+): Promise<DetectionResult> {
+  if (!environmentId) return { status: "not-found" };
+  if (!isLocal && !containerId) return { status: "not-found" };
 
   try {
     const result = isLocal
       ? await tauri.detectPrLocal(environmentId)
       : await tauri.detectPr(containerId!);
-    return result;
+
+    if (result) {
+      return { status: "success", data: result };
+    }
+    return { status: "not-found" };
   } catch (error) {
-    console.debug("[PrMonitorService] Detection error:", error);
-    return null;
+    // Log actual errors at warn level, not debug
+    console.warn("[PrMonitorService] Detection error:", error);
+    return { status: "error", error };
   }
 }
 
 /**
  * Save PR state to both backend (Tauri) and frontend (Zustand) stores.
+ * Only updates state on successful detection or when clearing a previously stored PR.
  */
 async function savePRState(
   environmentId: string,
-  result: PrDetectionResult | null,
+  detectionResult: DetectionResult,
   currentPrUrl: string | null,
   setEnvironmentPR: (
     id: string,
@@ -62,26 +80,29 @@ async function savePRState(
     conflicts: boolean | null
   ) => void
 ): Promise<void> {
-  if (result) {
+  if (detectionResult.status === "success") {
+    const { data } = detectionResult;
     // Save to backend
     await tauri.setEnvironmentPr(
       environmentId,
-      result.url,
-      result.state,
-      result.hasMergeConflicts
+      data.url,
+      data.state,
+      data.hasMergeConflicts
     );
     // Update frontend store
     setEnvironmentPR(
       environmentId,
-      result.url,
-      result.state,
-      result.hasMergeConflicts
+      data.url,
+      data.state,
+      data.hasMergeConflicts
     );
-  } else if (currentPrUrl) {
+  } else if (detectionResult.status === "not-found" && currentPrUrl) {
     // No PR found but we had one stored - clear it
+    // Don't clear on error - keep existing state
     await tauri.clearEnvironmentPr(environmentId);
     setEnvironmentPR(environmentId, null, null, null);
   }
+  // On error, keep existing state - don't update
 }
 
 /**
@@ -146,37 +167,44 @@ export function usePrMonitorService(): void {
       _setCheckInProgress(environmentId, true);
 
       try {
-        const result = await detectPR(environmentId, environment.containerId ?? null, isLocal);
+        const detectionResult = await detectPR(environmentId, environment.containerId ?? null, isLocal);
+
+        // Only increment errors on actual errors, not on "not found"
+        if (detectionResult.status === "error") {
+          _incrementErrors(environmentId);
+        } else {
+          _resetErrors(environmentId);
+        }
 
         await savePRState(
           environmentId,
-          result,
+          detectionResult,
           environment.prUrl ?? null,
           useEnvironmentStore.getState().setEnvironmentPR
         );
-
-        _resetErrors(environmentId);
 
         // Handle mode transitions based on result
         const currentMode = usePrMonitorStore.getState().getMonitoringState(environmentId)?.mode;
 
         // create-pending → normal: When PR is detected
-        if (currentMode === "create-pending" && result) {
+        if (currentMode === "create-pending" && detectionResult.status === "success") {
           console.log(`[PrMonitorService] PR detected, transitioning ${environmentId} from create-pending to normal`);
           setMonitoringMode(environmentId, "normal");
         }
 
         // merge-pending → normal: When PR state becomes merged/closed
-        if (currentMode === "merge-pending" && result) {
-          if (result.state === "merged" || result.state === "closed") {
+        if (currentMode === "merge-pending" && detectionResult.status === "success") {
+          const prState = detectionResult.data.state;
+          if (prState === "merged" || prState === "closed") {
             console.log(
-              `[PrMonitorService] PR ${result.state}, transitioning ${environmentId} from merge-pending to normal`
+              `[PrMonitorService] PR ${prState}, transitioning ${environmentId} from merge-pending to normal`
             );
             setMonitoringMode(environmentId, "normal");
           }
         }
       } catch (error) {
-        console.error(`[PrMonitorService] Check failed for ${environmentId}:`, error);
+        // This catch is for unexpected errors in savePRState or mode transitions
+        console.error(`[PrMonitorService] Unexpected error for ${environmentId}:`, error);
         _incrementErrors(environmentId);
       } finally {
         _setCheckInProgress(environmentId, false);
@@ -188,6 +216,10 @@ export function usePrMonitorService(): void {
 
   /**
    * Main tick function - runs every second to check if any environment needs polling.
+   *
+   * Note: This callback uses getState() to access fresh store state on each tick,
+   * avoiding stale closure issues. The setInterval in the mount effect captures this
+   * callback, but since we read state dynamically, it remains current.
    */
   const tick = useCallback(() => {
     const now = Date.now();
@@ -199,10 +231,12 @@ export function usePrMonitorService(): void {
     const monitorState = state.monitoredEnvironments[activeEnvId];
     if (!monitorState) return;
 
-    const mode = monitorState.mode;
-    const interval = PR_MONITOR_INTERVALS[mode];
+    const { mode, consecutiveErrors } = monitorState;
 
-    // Skip if idle mode
+    // Calculate effective interval with exponential backoff for errors
+    const interval = getEffectiveInterval(mode, consecutiveErrors);
+
+    // Skip if idle mode (interval is Infinity)
     if (interval === Infinity) return;
 
     // Check mode timeout (e.g., merge-pending should revert to normal after 20s)
@@ -210,6 +244,8 @@ export function usePrMonitorService(): void {
     if (modeTimeout && now - monitorState.modeStartTime > modeTimeout) {
       console.log(`[PrMonitorService] Mode timeout for ${activeEnvId}, reverting to normal`);
       usePrMonitorStore.getState().setMonitoringMode(activeEnvId, "normal");
+      // Trigger immediate check after mode timeout to ensure we have fresh state
+      performCheck(activeEnvId);
       return;
     }
 
