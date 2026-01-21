@@ -242,40 +242,38 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     const envState = state.environments.get(envId);
     if (!envState) return;
 
-    // Only clear terminal sessions for this environment's tabs
-    // Sessions only exist when containerId is valid, so skip cleanup if null
+    // Clear terminal sessions for this environment's tabs
+    // Handle both container environments (containerId set) and local environments (containerId null)
     const sessionStore = useTerminalSessionStore.getState();
     const terminalPortalStore = useTerminalPortalStore.getState();
     const containerId = envState.containerId;
 
-    if (containerId) {
-      const envTabs = getAllLeaves(envState.root).flatMap((leaf) => leaf.tabs);
-      envTabs.forEach((tab) => {
-        const sessionKey = createSessionKey(containerId, tab.id);
-        const sessionData = sessionStore.sessions.get(sessionKey);
-        if (sessionData) {
-          console.debug("[PaneLayout] Cleaning up terminal session on reset:", sessionKey, sessionData.sessionId);
-          // Only detach if we have a PTY session ID (may be undefined if restored from persistent)
-          if (sessionData.sessionId) {
-            tauri.detachTerminal(sessionData.sessionId).catch((err) => {
-              console.error("[PaneLayout] Error detaching terminal session:", err);
-            });
-          }
-          // Update persistent session status to disconnected
-          if (sessionData.persistentSessionId) {
-            useSessionStore.getState().updateSessionStatus(sessionData.persistentSessionId, "disconnected")
-              .catch((err) => {
-                console.error("[PaneLayout] Error updating persistent session status:", err);
-              });
-          }
-          sessionStore.removeSession(sessionKey);
+    const envTabs = getAllLeaves(envState.root).flatMap((leaf) => leaf.tabs);
+    envTabs.forEach((tab) => {
+      const sessionKey = createSessionKey(containerId, tab.id, envId);
+      const sessionData = sessionStore.sessions.get(sessionKey);
+      if (sessionData) {
+        console.debug("[PaneLayout] Cleaning up terminal session on reset:", sessionKey, sessionData.sessionId);
+        // Only detach if we have a PTY session ID (may be undefined if restored from persistent)
+        if (sessionData.sessionId) {
+          tauri.detachTerminal(sessionData.sessionId).catch((err) => {
+            console.error("[PaneLayout] Error detaching terminal session:", err);
+          });
         }
-      });
+        // Update persistent session status to disconnected
+        if (sessionData.persistentSessionId) {
+          useSessionStore.getState().updateSessionStatus(sessionData.persistentSessionId, "disconnected")
+            .catch((err) => {
+              console.error("[PaneLayout] Error updating persistent session status:", err);
+            });
+        }
+        sessionStore.removeSession(sessionKey);
+      }
+    });
 
-      // Clear all terminal instances from portal store for this environment
-      console.debug("[PaneLayout] Clearing terminal instances for environment on reset:", envId);
-      terminalPortalStore.clearTerminalsForEnvironment(envId);
-    }
+    // Clear all terminal instances from portal store for this environment
+    console.debug("[PaneLayout] Clearing terminal instances for environment on reset:", envId);
+    terminalPortalStore.clearTerminalsForEnvironment(envId);
 
     const newEnvs = new Map(state.environments);
     newEnvs.set(envId, {
@@ -334,30 +332,28 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     if (!leaf) return;
 
     // Clean up terminal session for this tab (if it exists)
-    // Sessions only exist when containerId is valid
-    if (envState.containerId) {
-      const sessionStore = useTerminalSessionStore.getState();
-      const terminalPortalStore = useTerminalPortalStore.getState();
-      const sessionKey = createSessionKey(envState.containerId, tabId);
-      const sessionId = sessionStore.getSessionId(sessionKey);
-      if (sessionId) {
-        console.debug("[PaneLayout] Cleaning up terminal session for closed tab:", sessionKey, sessionId);
-        // Remove from session store
-        sessionStore.removeSession(sessionKey);
-        // Detach the terminal session (async, fire and forget)
-        tauri.detachTerminal(sessionId).catch((err) => {
-          console.error("[PaneLayout] Error detaching terminal session:", err);
+    // Handle both container environments (containerId set) and local environments (containerId null)
+    const sessionStore = useTerminalSessionStore.getState();
+    const terminalPortalStore = useTerminalPortalStore.getState();
+    const sessionKey = createSessionKey(envState.containerId, tabId, envId);
+    const sessionId = sessionStore.getSessionId(sessionKey);
+    if (sessionId) {
+      console.debug("[PaneLayout] Cleaning up terminal session for closed tab:", sessionKey, sessionId);
+      // Remove from session store
+      sessionStore.removeSession(sessionKey);
+      // Detach the terminal session (async, fire and forget)
+      tauri.detachTerminal(sessionId).catch((err) => {
+        console.error("[PaneLayout] Error detaching terminal session:", err);
+      });
+      // Update persistent session status to disconnected (for sidebar display)
+      useSessionStore.getState().updateSessionStatus(sessionId, "disconnected")
+        .catch((err) => {
+          console.error("[PaneLayout] Error updating persistent session status:", err);
         });
-        // Update persistent session status to disconnected (for sidebar display)
-        useSessionStore.getState().updateSessionStatus(sessionId, "disconnected")
-          .catch((err) => {
-            console.error("[PaneLayout] Error updating persistent session status:", err);
-          });
-      }
-
-      // Dispose the terminal instance from portal store
-      terminalPortalStore.disposeTerminal(envId, tabId);
     }
+
+    // Dispose the terminal instance from portal store
+    terminalPortalStore.disposeTerminal(envId, tabId);
 
     const remainingTabs = leaf.tabs.filter((t) => t.id !== tabId);
 

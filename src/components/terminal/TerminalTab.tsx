@@ -70,7 +70,8 @@ export function TerminalTab({
 
   // Create a container-scoped session key to avoid collisions across environments
   // This is critical because tabId (e.g., "default") is not unique across environments
-  const sessionKey = createSessionKey(containerId, tabId);
+  // For local environments (containerId is null), use environmentId to ensure uniqueness
+  const sessionKey = createSessionKey(containerId, tabId, environmentId);
 
   // Session persistence - use selector for memoized session lookup
   // This prevents re-renders when other sessions in the store change

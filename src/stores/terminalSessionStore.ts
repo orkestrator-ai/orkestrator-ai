@@ -7,10 +7,19 @@ import { create } from "zustand";
  *
  * @param containerId - The container ID (null for local environments)
  * @param tabId - The tab ID within the environment
- * @returns A unique session key in the format "containerId:tabId" or "local:tabId"
+ * @param environmentId - The environment ID (required for local environments to ensure uniqueness)
+ * @returns A unique session key in the format "containerId:tabId" or "local-environmentId:tabId"
  */
-export function createSessionKey(containerId: string | null, tabId: string): string {
-  return `${containerId ?? "local"}:${tabId}`;
+export function createSessionKey(containerId: string | null, tabId: string, environmentId?: string): string {
+  if (containerId) {
+    return `${containerId}:${tabId}`;
+  }
+  // For local environments, use environmentId to ensure each environment gets its own session
+  if (environmentId) {
+    return `local-${environmentId}:${tabId}`;
+  }
+  // Fallback for cases where environmentId is not available (should be rare)
+  return `local:${tabId}`;
 }
 
 /**
