@@ -34,9 +34,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useProjects } from "@/hooks/useProjects";
 import { useEnvironments } from "@/hooks/useEnvironments";
-import { useUIStore, useClaudeOptionsStore, useConfigStore } from "@/stores";
+import { useUIStore, useClaudeOptionsStore, useConfigStore, useEnvironmentStore } from "@/stores";
 import { RepositorySettings } from "@/components/settings/RepositorySettings";
-import { useTerminalContext } from "@/contexts/TerminalContext";
 import type { Environment, Project } from "@/types";
 
 export function HierarchicalSidebar() {
@@ -74,7 +73,7 @@ export function HierarchicalSidebar() {
     clearMultiSelection,
   } = useUIStore();
 
-  const { createTab } = useTerminalContext();
+  const { setPendingSetupCommands, setSetupCommandsResolved } = useEnvironmentStore();
 
   const isMultiSelectMode = selectedEnvironmentIds.length >= 1;
 
@@ -267,17 +266,22 @@ export function HierarchicalSidebar() {
       // The tab type (plain terminal vs agent) is determined by agentOptions.launchAgent
       try {
         const setupCommands = await startEnvironment(environment.id);
-        // If setup commands were returned (local env with orkestrator-ai.json), create a setup tab
-        if (setupCommands && setupCommands.length > 0 && createTab) {
-          console.info("[HierarchicalSidebar] Creating setup tab for local environment:", {
+        // Mark setup commands as resolved (whether or not there are any)
+        // This tells TerminalContainer it can proceed with tab creation
+        setSetupCommandsResolved(environment.id, true);
+        // If setup commands were returned (local env with orkestrator-ai.json), store them
+        if (setupCommands && setupCommands.length > 0) {
+          console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
             environmentId: environment.id,
             commandCount: setupCommands.length,
           });
-          createTab("plain", { initialCommands: setupCommands });
+          setPendingSetupCommands(environment.id, setupCommands);
         }
       } catch (startErr) {
         console.error("Failed to auto-start environment:", startErr);
         // Environment was created successfully, user can manually start it
+        // Mark as resolved even on error so TerminalContainer can proceed
+        setSetupCommandsResolved(environment.id, true);
       }
 
       setShowCreateEnvDialog(false);
@@ -367,17 +371,21 @@ export function HierarchicalSidebar() {
           });
           startEnvironment(environment.id)
             .then((setupCommands) => {
-              // If setup commands were returned, create a setup tab
-              if (setupCommands && setupCommands.length > 0 && createTab) {
-                console.info("[HierarchicalSidebar] Creating setup tab for local environment:", {
+              // Mark setup commands as resolved
+              setSetupCommandsResolved(environment.id, true);
+              // If setup commands were returned, store them for TerminalContainer to pick up
+              if (setupCommands && setupCommands.length > 0) {
+                console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
                   environmentId: environment.id,
                   commandCount: setupCommands.length,
                 });
-                createTab("plain", { initialCommands: setupCommands });
+                setPendingSetupCommands(environment.id, setupCommands);
               }
             })
             .catch((err) => {
               console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);
+              // Mark as resolved even on error
+              setSetupCommandsResolved(environment.id, true);
             });
         }
       }

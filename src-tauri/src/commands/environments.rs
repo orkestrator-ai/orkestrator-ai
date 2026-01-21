@@ -1231,7 +1231,7 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
         Some(id) => id.clone(),
         None => {
             info!(environment_id = %environment_id, "No existing container, creating fresh");
-            return start_environment(environment_id).await;
+            return start_environment(environment_id).await.map(|_| ());
         }
     };
 
@@ -1263,7 +1263,7 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
         storage
             .update_environment(&environment_id, json!({ "containerId": null, "status": "stopped" }))
             .map_err(storage_error_to_string)?;
-        return start_environment(environment_id).await;
+        return start_environment(environment_id).await.map(|_| ());
     }
 
     let temp_image_full = format!("{}:{}", temp_image_name, temp_image_tag);

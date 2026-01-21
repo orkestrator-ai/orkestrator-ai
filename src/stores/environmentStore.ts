@@ -14,6 +14,10 @@ interface EnvironmentState {
   workspaceReadyEnvironments: Set<string>;
   /** Runtime state: environments currently being deleted */
   deletingEnvironments: Set<string>;
+  /** Runtime state: pending setup commands to run in terminal (from orkestrator-ai.json setupLocal) */
+  pendingSetupCommands: Map<string, string[]>;
+  /** Runtime state: tracks whether setup commands have been resolved for an environment (true = we know if there are commands or not) */
+  setupCommandsResolved: Set<string>;
 
   // Actions
   setEnvironments: (environments: Environment[]) => void;
@@ -38,6 +42,12 @@ interface EnvironmentState {
   setWorkspaceReady: (environmentId: string, isReady: boolean) => void;
   /** Mark an environment as being deleted */
   setDeleting: (environmentId: string, isDeleting: boolean) => void;
+  /** Set pending setup commands for an environment (to be run in terminal) */
+  setPendingSetupCommands: (environmentId: string, commands: string[]) => void;
+  /** Get and clear pending setup commands for an environment */
+  consumePendingSetupCommands: (environmentId: string) => string[] | undefined;
+  /** Mark setup commands as resolved for an environment (we know if there are commands or not) */
+  setSetupCommandsResolved: (environmentId: string, resolved: boolean) => void;
 
   // Selectors
   getEnvironmentById: (environmentId: string) => Environment | undefined;
@@ -46,6 +56,8 @@ interface EnvironmentState {
   isWorkspaceReady: (environmentId: string) => boolean;
   /** Check if an environment is being deleted */
   isDeleting: (environmentId: string) => boolean;
+  /** Check if setup commands have been resolved for an environment */
+  isSetupCommandsResolved: (environmentId: string) => boolean;
 }
 
 export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
@@ -55,6 +67,8 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
   error: null,
   workspaceReadyEnvironments: new Set<string>(),
   deletingEnvironments: new Set<string>(),
+  pendingSetupCommands: new Map<string, string[]>(),
+  setupCommandsResolved: new Set<string>(),
 
   // Actions
   setEnvironments: (environments) => set({ environments: sortByOrder(environments) }),
@@ -146,6 +160,36 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
       return { deletingEnvironments: newSet };
     }),
 
+  setPendingSetupCommands: (environmentId, commands) =>
+    set((state) => {
+      const newMap = new Map(state.pendingSetupCommands);
+      newMap.set(environmentId, commands);
+      return { pendingSetupCommands: newMap };
+    }),
+
+  consumePendingSetupCommands: (environmentId) => {
+    const commands = get().pendingSetupCommands.get(environmentId);
+    if (commands) {
+      set((state) => {
+        const newMap = new Map(state.pendingSetupCommands);
+        newMap.delete(environmentId);
+        return { pendingSetupCommands: newMap };
+      });
+    }
+    return commands;
+  },
+
+  setSetupCommandsResolved: (environmentId, resolved) =>
+    set((state) => {
+      const newSet = new Set(state.setupCommandsResolved);
+      if (resolved) {
+        newSet.add(environmentId);
+      } else {
+        newSet.delete(environmentId);
+      }
+      return { setupCommandsResolved: newSet };
+    }),
+
   // Selectors
   getEnvironmentById: (environmentId) =>
     get().environments.find((e) => e.id === environmentId),
@@ -158,4 +202,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   isDeleting: (environmentId) =>
     get().deletingEnvironments.has(environmentId),
+
+  isSetupCommandsResolved: (environmentId) =>
+    get().setupCommandsResolved.has(environmentId),
 }));

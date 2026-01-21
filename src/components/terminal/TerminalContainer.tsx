@@ -115,6 +115,9 @@ export function TerminalContainer({
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
   const isWorkspaceReady = useEnvironmentStore((state) => state.isWorkspaceReady);
   const getEnvironmentById = useEnvironmentStore((state) => state.getEnvironmentById);
+  const consumePendingSetupCommands = useEnvironmentStore((state) => state.consumePendingSetupCommands);
+  // Subscribe to setup commands resolved state - needed for local environments to know when we can create tabs
+  const setupCommandsResolved = useEnvironmentStore((state) => state.setupCommandsResolved.has(environmentId));
   const workspaceReady = isWorkspaceReady(environmentId);
 
   // Check if this is a local environment (no container)
@@ -194,54 +197,117 @@ export function TerminalContainer({
   );
 
   // Initialize pane layout when container starts running (or local environment starts)
-  // For local environments, wait for worktreePath to be set (happens during start_environment)
+  // For local environments, wait for setupCommandsResolved to know if there are setup commands
   useEffect(() => {
-    if (isEnvironmentRunning && (containerId || isLocalEnvironmentReady)) {
-      // First ensure this environment is active in the store
-      setActiveEnvironment(environmentId);
+    if (!isEnvironmentRunning || (!containerId && !isLocalEnvironmentReady)) return;
 
-      // Check if we need to initialize (no tabs yet for THIS environment)
-      // Use currentEnvState which is already derived above from environments.get(environmentId)
-      const currentTabs = currentEnvState
-        ? getAllLeaves(currentEnvState.root).flatMap((leaf) => leaf.tabs)
-        : [];
+    // For local environments, wait until we know about setup commands
+    if (isLocalEnvironment && !setupCommandsResolved) {
+      console.log("[TerminalContainer] Local environment waiting for setup commands to be resolved");
+      return;
+    }
 
-      if (currentTabs.length === 0) {
-        initialize(containerId);
+    // First ensure this environment is active in the store
+    setActiveEnvironment(environmentId);
 
-        // Determine initial tab type based on agent options
-        let initialTabType: TerminalTabType = "plain";
-        let pendingInitialPrompt: string | undefined;
-        if (claudeOptions?.launchAgent) {
-          initialTabType = claudeOptions.agentType;
-          hasAppliedClaudeOptionsRef.current = true;
-          // Capture the initial prompt for the first tab
-          if (claudeOptions.initialPrompt?.trim()) {
-            pendingInitialPrompt = claudeOptions.initialPrompt.trim();
-            initialPromptRef.current = pendingInitialPrompt;
-          }
+    // Check if we need to initialize (no tabs yet for THIS environment)
+    const currentTabs = currentEnvState
+      ? getAllLeaves(currentEnvState.root).flatMap((leaf) => leaf.tabs)
+      : [];
+
+    if (currentTabs.length === 0) {
+      initialize(containerId);
+
+      // Determine initial tab type based on agent options
+      let initialTabType: TerminalTabType = "plain";
+      let pendingInitialPrompt: string | undefined;
+      const launchAgent = claudeOptions?.launchAgent ?? false;
+      if (launchAgent) {
+        initialTabType = claudeOptions!.agentType;
+        hasAppliedClaudeOptionsRef.current = true;
+        if (claudeOptions!.initialPrompt?.trim()) {
+          pendingInitialPrompt = claudeOptions!.initialPrompt.trim();
+          initialPromptRef.current = pendingInitialPrompt;
         }
+      }
 
-        // Check if we should use native mode instead of terminal
-        const useNativeOpenCode = initialTabType === "opencode" && opencodeMode === "native";
-        const useNativeClaude = initialTabType === "claude" && claudeMode === "native";
-        console.log("[TerminalContainer] Initial tab decision - agentType:", claudeOptions?.agentType, "launchAgent:", claudeOptions?.launchAgent, "opencodeMode:", opencodeMode, "claudeMode:", claudeMode, "useNativeOpenCode:", useNativeOpenCode, "useNativeClaude:", useNativeClaude, "isLocalEnvironment:", isLocalEnvironment);
+      // Check if we should use native mode instead of terminal
+      const useNativeOpenCode = initialTabType === "opencode" && opencodeMode === "native";
+      const useNativeClaude = initialTabType === "claude" && claudeMode === "native";
 
-        // For local environments with native mode, directly create the native tab
-        // (no setup scripts to wait for since the worktree is already ready)
-        if (isLocalEnvironment && (useNativeOpenCode || useNativeClaude)) {
-          const isClaudeNative = useNativeClaude;
-          console.log("[TerminalContainer] Local environment - directly creating native", isClaudeNative ? "Claude" : "OpenCode", "tab");
+      // For local environments, check for pending setup commands
+      const setupCommands = isLocalEnvironment ? consumePendingSetupCommands(environmentId) : undefined;
+      const hasSetupCommands = setupCommands && setupCommands.length > 0;
 
-          if (isClaudeNative) {
+      console.log("[TerminalContainer] Initial tab decision:", {
+        agentType: claudeOptions?.agentType,
+        launchAgent,
+        opencodeMode,
+        claudeMode,
+        useNativeOpenCode,
+        useNativeClaude,
+        isLocalEnvironment,
+        hasSetupCommands,
+        setupCommandsResolved,
+      });
+
+      // Handle local environments
+      if (isLocalEnvironment) {
+        if (hasSetupCommands && launchAgent) {
+          // Local + Claude ON + setup commands: create setup tab first, then agent tab (active)
+          console.log("[TerminalContainer] Local environment with setup commands and agent - creating setup tab then agent tab");
+
+          // Create setup tab first
+          const setupTab: TabInfo = {
+            id: "setup-" + Date.now(),
+            type: "plain",
+            initialCommands: setupCommands,
+          };
+          addTab("default", setupTab, environmentId);
+
+          // Then create agent tab (which becomes active)
+          if (useNativeClaude) {
+            const agentTab: TabInfo = {
+              id: "default",
+              type: "claude-native",
+              claudeNativeData: { containerId: undefined, environmentId, isLocal: true },
+              initialPrompt: pendingInitialPrompt,
+            };
+            addTab("default", agentTab, environmentId);
+          } else if (useNativeOpenCode) {
+            const agentTab: TabInfo = {
+              id: "default",
+              type: "opencode-native",
+              openCodeNativeData: { containerId: undefined, environmentId, isLocal: true },
+              initialPrompt: pendingInitialPrompt,
+            };
+            addTab("default", agentTab, environmentId);
+          } else {
+            // Terminal mode agent (claude or opencode)
+            const agentTab: TabInfo = {
+              id: "default",
+              type: initialTabType,
+              initialPrompt: pendingInitialPrompt,
+            };
+            addTab("default", agentTab, environmentId);
+          }
+        } else if (hasSetupCommands && !launchAgent) {
+          // Local + Claude OFF + setup commands: single terminal with setup commands
+          console.log("[TerminalContainer] Local environment with setup commands, no agent - creating terminal with setup commands");
+          const initialTab: TabInfo = {
+            id: "default",
+            type: "plain",
+            initialCommands: setupCommands,
+          };
+          addTab("default", initialTab, environmentId);
+        } else if (useNativeOpenCode || useNativeClaude) {
+          // Local + native mode + no setup commands: directly create native tab
+          console.log("[TerminalContainer] Local environment - directly creating native", useNativeClaude ? "Claude" : "OpenCode", "tab");
+          if (useNativeClaude) {
             const initialTab: TabInfo = {
               id: "default",
               type: "claude-native",
-              claudeNativeData: {
-                containerId: undefined,
-                environmentId,
-                isLocal: true,
-              },
+              claudeNativeData: { containerId: undefined, environmentId, isLocal: true },
               initialPrompt: pendingInitialPrompt,
             };
             addTab("default", initialTab, environmentId);
@@ -249,41 +315,13 @@ export function TerminalContainer({
             const initialTab: TabInfo = {
               id: "default",
               type: "opencode-native",
-              openCodeNativeData: {
-                containerId: undefined,
-                environmentId,
-                isLocal: true,
-              },
+              openCodeNativeData: { containerId: undefined, environmentId, isLocal: true },
               initialPrompt: pendingInitialPrompt,
             };
             addTab("default", initialTab, environmentId);
           }
-        } else if (useNativeOpenCode || useNativeClaude) {
-          // For containerized environments with native mode: start with plain terminal
-          // so user can see setup scripts, then open native tab after workspace is ready
-          // Reset workspace ready state to ensure we wait for THIS container's setup to complete
-          // (the state might be true from a previous run)
-          setWorkspaceReady(environmentId, false);
-
-          // Store pending native launch for after workspace setup
-          // Use "default" as the target pane since that's where the plain terminal is added
-          pendingNativeOpenCodeRef.current = {
-            containerId,
-            environmentId,
-            initialPrompt: pendingInitialPrompt,
-            targetPaneId: "default",
-            agentType: useNativeClaude ? "claude" : "opencode",
-          };
-          console.log("[TerminalContainer] Pending native", useNativeClaude ? "Claude" : "OpenCode", "launch stored for environment:", environmentId, "prompt:", !!pendingInitialPrompt);
-
-          // Start with plain terminal to show setup scripts
-          const initialTab: TabInfo = {
-            id: "default",
-            type: "plain",
-          };
-          addTab("default", initialTab, environmentId);
-        } else if (isLocalEnvironment) {
-          // Local environment without native mode - create terminal tab (spawns shell in worktree directory)
+        } else {
+          // Local + terminal mode + no setup commands: create terminal tab
           console.log("[TerminalContainer] Local environment - creating terminal tab with initial type:", initialTabType);
           const initialTab: TabInfo = {
             id: "default",
@@ -291,19 +329,31 @@ export function TerminalContainer({
             initialPrompt: pendingInitialPrompt,
           };
           addTab("default", initialTab, environmentId);
-        } else {
-          // For containerized environments with terminal mode (claude, plain), use them directly
-          const initialTab: TabInfo = {
-            id: "default",
-            type: initialTabType,
-            initialPrompt: pendingInitialPrompt,
-          };
-          addTab("default", initialTab, environmentId);
         }
+      } else if (useNativeOpenCode || useNativeClaude) {
+        // Container + native mode: start with plain terminal for setup scripts
+        setWorkspaceReady(environmentId, false);
+        pendingNativeOpenCodeRef.current = {
+          containerId,
+          environmentId,
+          initialPrompt: pendingInitialPrompt,
+          targetPaneId: "default",
+          agentType: useNativeClaude ? "claude" : "opencode",
+        };
+        console.log("[TerminalContainer] Pending native", useNativeClaude ? "Claude" : "OpenCode", "launch stored for environment:", environmentId);
+        const initialTab: TabInfo = { id: "default", type: "plain" };
+        addTab("default", initialTab, environmentId);
+      } else {
+        // Container + terminal mode: create agent/plain tab directly
+        const initialTab: TabInfo = {
+          id: "default",
+          type: initialTabType,
+          initialPrompt: pendingInitialPrompt,
+        };
+        addTab("default", initialTab, environmentId);
       }
     }
-    // Note: currentEnvState is derived from environments, so we don't need both in deps
-  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady]);
+  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady, consumePendingSetupCommands]);
 
   // Reset pane layout when container changes within the same environment
   // (e.g., container was stopped and restarted with a new ID)
