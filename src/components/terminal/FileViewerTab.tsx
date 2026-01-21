@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
+import Editor, { type OnMount, type OnChange, type BeforeMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
@@ -249,6 +249,23 @@ export function FileViewerTab({
     }
   }, [tabId, containerId, worktreePath, isLocalEnvironment, filePath, getDirtyContent, markSaved, isSaving]);
 
+  // Disable linting/diagnostics before editor mounts
+  const handleEditorWillMount: BeforeMount = useCallback((monaco) => {
+    // Disable TypeScript/JavaScript diagnostics
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
+    monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
+    // Disable JSON validation
+    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+      validate: false,
+    });
+  }, []);
+
   // Handle editor mount - set up Cmd+S keybinding
   const handleEditorMount: OnMount = useCallback(
     (editor, monaco) => {
@@ -367,6 +384,7 @@ export function FileViewerTab({
             language={detectedLanguage}
             value={content ?? ""}
             theme="vs-dark"
+            beforeMount={handleEditorWillMount}
             onMount={handleEditorMount}
             onChange={handleEditorChange}
             options={{
