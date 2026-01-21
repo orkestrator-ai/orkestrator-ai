@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, type RefObject } from "react";
+import { useEffect, useState, useCallback, useRef, type RefObject } from "react";
 
 /** Pixels from bottom to consider "at bottom" */
 const SCROLL_THRESHOLD = 50;
@@ -35,6 +35,10 @@ export function useScrollLock(
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
+  // Use a ref to track scroll lock for sync access in effects
+  // This prevents race conditions where state hasn't updated yet
+  const isScrollLockedRef = useRef(true);
+
   // Check initial scroll position on mount
   useEffect(() => {
     const scrollElement = scrollRef.current?.querySelector(
@@ -48,6 +52,7 @@ export function useScrollLock(
 
     setIsAtBottom(atBottom);
     setIsScrollLocked(atBottom);
+    isScrollLockedRef.current = atBottom;
   }, [scrollRef]);
 
   // Track scroll position to manage scroll lock
@@ -67,9 +72,11 @@ export function useScrollLock(
       // Auto-enable scroll lock when user scrolls to bottom manually
       if (atBottom) {
         setIsScrollLocked(true);
+        isScrollLockedRef.current = true;
       } else {
         // User scrolled up - disable scroll lock
         setIsScrollLocked(false);
+        isScrollLockedRef.current = false;
       }
     };
 
@@ -79,8 +86,9 @@ export function useScrollLock(
 
   // Auto-scroll to bottom when trigger changes (only if scroll-locked)
   // Uses instant scrolling to keep up with rapid message streaming
+  // Uses ref instead of state to avoid race conditions with scroll events
   useEffect(() => {
-    if (!isScrollLocked) return;
+    if (!isScrollLockedRef.current) return;
 
     const scrollElement = scrollRef.current?.querySelector(
       "[data-radix-scroll-area-viewport]"
@@ -88,7 +96,7 @@ export function useScrollLock(
     if (scrollElement) {
       scrollElement.scrollTop = scrollElement.scrollHeight;
     }
-  }, [scrollTrigger, isScrollLocked, scrollRef]);
+  }, [scrollTrigger, scrollRef]);
 
   // Handle scroll to bottom button click
   const scrollToBottom = useCallback(() => {
@@ -100,7 +108,9 @@ export function useScrollLock(
         top: scrollElement.scrollHeight,
         behavior: "smooth",
       });
+      // Update both state and ref immediately for sync behavior
       setIsScrollLocked(true);
+      isScrollLockedRef.current = true;
     }
   }, [scrollRef]);
 
