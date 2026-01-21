@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
-import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
+import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useOpenCodeStore } from "@/stores/openCodeStore";
@@ -80,6 +81,11 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
   // Get session from Map keyed by tabId (each tab has its own session)
   const session = useMemo(() => sessionsMap.get(tabId), [sessionsMap, tabId]);
+
+  // Scroll lock - auto-scroll only when user is at bottom
+  const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
+    scrollTrigger: session?.messages,
+  });
 
   // Get pending questions for this session - subscribe to the Map for reactivity
   const pendingQuestions = useMemo(() => {
@@ -452,16 +458,6 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion]
   );
 
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    if (scrollRef.current && session?.messages) {
-      const scrollElement = scrollRef.current.querySelector("[data-radix-scroll-area-viewport]");
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
-      }
-    }
-  }, [session?.messages]);
-
   // Handle sending a message
   const handleSend = useCallback(
     async (text: string, attachments: OpenCodeAttachment[]) => {
@@ -619,6 +615,19 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
           )}
         </div>
       </ScrollArea>
+
+      {/* Scroll to bottom button - positioned above compose bar */}
+      {!isAtBottom && (
+        <div className="flex justify-end px-4 py-1">
+          <button
+            onClick={scrollToBottom}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors shadow-sm"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+            <span>Scroll down</span>
+          </button>
+        </div>
+      )}
 
       {/* Compose bar */}
       <OpenCodeComposeBar

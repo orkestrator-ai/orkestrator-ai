@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
-import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
+import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClaudeStore } from "@/stores/claudeStore";
@@ -77,6 +78,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
   const session = useMemo(() => sessionsMap.get(tabId), [sessionsMap, tabId]);
+
+  // Scroll lock - auto-scroll only when user is at bottom
+  const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
+    scrollTrigger: session?.messages,
+  });
 
   const pendingQuestions = useMemo(() => {
     if (!session?.sessionId) return [];
@@ -445,15 +451,6 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion]
   );
 
-  useEffect(() => {
-    if (scrollRef.current && session?.messages) {
-      const scrollElement = scrollRef.current.querySelector("[data-radix-scroll-area-viewport]");
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
-      }
-    }
-  }, [session?.messages]);
-
   const handleSend = useCallback(
     async (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean) => {
       if (!client || !session) return;
@@ -597,6 +594,19 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           )}
         </div>
       </ScrollArea>
+
+      {/* Scroll to bottom button - positioned above compose bar */}
+      {!isAtBottom && (
+        <div className="flex justify-end px-4 py-1">
+          <button
+            onClick={scrollToBottom}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors shadow-sm"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+            <span>Scroll down</span>
+          </button>
+        </div>
+      )}
 
       <ClaudeComposeBar
         environmentId={environmentId}
