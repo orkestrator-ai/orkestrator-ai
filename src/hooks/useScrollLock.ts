@@ -35,6 +35,21 @@ export function useScrollLock(
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
+  // Check initial scroll position on mount
+  useEffect(() => {
+    const scrollElement = scrollRef.current?.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    );
+    if (!scrollElement) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    const atBottom = distanceFromBottom <= SCROLL_THRESHOLD;
+
+    setIsAtBottom(atBottom);
+    setIsScrollLocked(atBottom);
+  }, [scrollRef]);
+
   // Track scroll position to manage scroll lock
   useEffect(() => {
     const scrollElement = scrollRef.current?.querySelector(
@@ -63,6 +78,7 @@ export function useScrollLock(
   }, [scrollRef]);
 
   // Auto-scroll to bottom when trigger changes (only if scroll-locked)
+  // Uses instant scrolling to keep up with rapid message streaming
   useEffect(() => {
     if (!isScrollLocked) return;
 
@@ -70,10 +86,7 @@ export function useScrollLock(
       "[data-radix-scroll-area-viewport]"
     );
     if (scrollElement) {
-      scrollElement.scrollTo({
-        top: scrollElement.scrollHeight,
-        behavior: "smooth",
-      });
+      scrollElement.scrollTop = scrollElement.scrollHeight;
     }
   }, [scrollTrigger, isScrollLocked, scrollRef]);
 
