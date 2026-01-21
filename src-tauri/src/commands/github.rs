@@ -401,7 +401,7 @@ pub async fn merge_pr(
 pub async fn merge_pr_local(
     environment_id: String,
     method: Option<MergeMethod>,
-    delete_branch: Option<bool>,
+    _delete_branch: Option<bool>,
 ) -> Result<(), String> {
     use crate::storage::get_storage;
     use tokio::process::Command;
@@ -420,23 +420,23 @@ pub async fn merge_pr_local(
         .ok_or_else(|| "Environment is not a local environment (no worktree path)".to_string())?;
 
     let merge_method = method.unwrap_or_default();
-    let should_delete_branch = delete_branch.unwrap_or(true);
+
+    // Note: We intentionally do NOT use --delete-branch for worktree-based environments.
+    // Worktrees cannot switch to another branch (like main) after merge because that branch
+    // is already checked out in the main repository. The user should delete the environment
+    // when done, which properly removes the worktree.
 
     info!(
         environment_id = %environment_id,
         worktree_path = %worktree_path,
         method = ?merge_method.as_flag(),
-        delete_branch = should_delete_branch,
         "Merging PR (local)"
     );
 
-    // Build the command arguments
-    let mut args = vec!["pr", "merge", merge_method.as_flag()];
-    if should_delete_branch {
-        args.push("--delete-branch");
-    }
+    // Build the command arguments - no --delete-branch for worktrees
+    let args = vec!["pr", "merge", merge_method.as_flag()];
 
-    // Run: gh pr merge --squash --delete-branch (or other options)
+    // Run: gh pr merge --squash (or --merge/--rebase)
     let output = Command::new("gh")
         .args(&args)
         .current_dir(&worktree_path)
