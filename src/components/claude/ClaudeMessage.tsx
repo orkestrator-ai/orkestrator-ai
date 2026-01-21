@@ -1,4 +1,5 @@
 import { memo, useCallback, useState, useMemo, useRef, useEffect, type AnchorHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
 import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +17,23 @@ interface ParsedAttachment {
   filename: string;
 }
 
+/** Parse a single attachment tag with flexible attribute ordering */
+function parseAttachmentTag(tagContent: string): ParsedAttachment | null {
+  // Extract attributes from the tag content regardless of order
+  const typeMatch = tagContent.match(/type="([^"]*)"/);
+  const pathMatch = tagContent.match(/path="([^"]*)"/);
+  const filenameMatch = tagContent.match(/filename="([^"]*)"/);
+
+  const type = typeMatch?.[1];
+  const path = pathMatch?.[1];
+  const filename = filenameMatch?.[1] || "";
+
+  if (type && path) {
+    return { type, path, filename };
+  }
+  return null;
+}
+
 /** Parse attached-files XML block from message content */
 function parseAttachmentsFromContent(content: string): { cleanContent: string; attachments: ParsedAttachment[] } {
   const attachments: ParsedAttachment[] = [];
@@ -29,17 +47,14 @@ function parseAttachmentsFromContent(content: string): { cleanContent: string; a
     const block = match[0];
     const innerContent = match[1] || "";
 
-    // Parse individual attachment tags
-    const attachmentRegex = /<attachment\s+type="([^"]*)"\s+path="([^"]*)"\s+filename="([^"]*)"\s*\/>/g;
+    // Parse individual attachment tags - flexible regex that captures all attributes
+    const attachmentRegex = /<attachment\s+([^>]*)\s*\/>/g;
     let attachmentMatch;
     while ((attachmentMatch = attachmentRegex.exec(innerContent)) !== null) {
-      const [, type, path, filename] = attachmentMatch;
-      if (type && path) {
-        attachments.push({
-          type,
-          path,
-          filename: filename || "",
-        });
+      const tagContent = attachmentMatch[1] || "";
+      const parsed = parseAttachmentTag(tagContent);
+      if (parsed) {
+        attachments.push(parsed);
       }
     }
 
@@ -833,7 +848,7 @@ function FilePart({ path }: { path: string }) {
   );
 }
 
-/** Image preview overlay */
+/** Image preview overlay - rendered via portal to avoid stacking context issues */
 function ImagePreviewOverlay({
   imageSrc,
   filename,
@@ -843,16 +858,19 @@ function ImagePreviewOverlay({
   filename: string;
   onClose: () => void;
 }) {
-  // Close on escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+  // Memoize the keydown handler to ensure stable reference for cleanup
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === "Escape") onClose();
   }, [onClose]);
 
-  return (
+  // Close on escape key
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Use portal to render at document.body level, avoiding overflow/stacking context issues
+  return createPortal(
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
       onClick={onClose}
@@ -871,8 +889,27 @@ function ImagePreviewOverlay({
           className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
         />
       </div>
-    </div>
+    </div>,
+    document.body
   );
+}
+
+/** Get MIME type from file path extension */
+function getMimeType(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+    bmp: 'image/bmp',
+    ico: 'image/x-icon',
+    tiff: 'image/tiff',
+    tif: 'image/tiff',
+  };
+  return mimeTypes[ext || ''] || 'image/png';
 }
 
 /** Clickable attachment thumbnail for user messages */
@@ -900,7 +937,8 @@ function AttachmentPart({ attachment }: { attachment: ParsedAttachment }) {
     try {
       // Use our custom Tauri command that bypasses fs plugin permission issues
       const base64 = await readFileBase64(attachment.path);
-      const dataUrl = `data:image/png;base64,${base64}`;
+      const mimeType = getMimeType(attachment.path);
+      const dataUrl = `data:${mimeType};base64,${base64}`;
       setImageSrc(dataUrl);
       setPreviewOpen(true);
     } catch (err) {

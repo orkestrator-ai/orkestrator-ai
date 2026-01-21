@@ -286,8 +286,19 @@ pub async fn start_local_claude_server_cmd(
 }
 
 fn dev_claude_bridge_path() -> Option<String> {
-    // In dev, CARGO_MANIFEST_DIR points to src-tauri; claude-bridge lives at ../docker/claude-bridge
-    // Use env!() macro to capture the value at compile time (not runtime)
+    // In dev, CARGO_MANIFEST_DIR points to src-tauri; claude-bridge lives at ../docker/claude-bridge.
+    //
+    // IMPORTANT: env!() captures the path at COMPILE TIME, not runtime. This means:
+    // - In debug builds: Points to the developer's local src-tauri directory
+    // - In release builds: Points to wherever the build was performed (CI server, etc.)
+    //
+    // This is INTENTIONAL for dev builds only. In production (release builds), the bundled
+    // resource path takes precedence via resolve_claude_bridge_path(), which checks bundled
+    // paths first. The #[cfg(debug_assertions)] guard in resolve_claude_bridge_path() ensures
+    // this dev path is only preferred in debug mode.
+    //
+    // If this path doesn't exist at runtime (e.g., in a packaged release app), the fallback
+    // logic in resolve_claude_bridge_path() will handle it gracefully.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);
     let workspace_root = manifest_path.parent()?;

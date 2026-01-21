@@ -1125,6 +1125,11 @@ pub async fn read_local_file(
 
 /// Read a binary file from an absolute path as base64
 /// Used for reading attachment images that are stored in .orkestrator/clipboard/
+/// or within workspace directories.
+///
+/// For security, paths are validated to ensure they are within allowed directories:
+/// - .orkestrator/ directories (for clipboard attachments)
+/// - workspaces/ directories (for worktree files)
 #[tauri::command]
 pub async fn read_file_base64(
     file_path: String,
@@ -1132,6 +1137,19 @@ pub async fn read_file_base64(
     use base64::Engine;
 
     let path = std::path::Path::new(&file_path);
+
+    // Validate path doesn't contain dangerous characters
+    if file_path.contains('\0') || file_path.contains('\n') || file_path.contains('\r') {
+        return Err("Invalid file path: contains invalid characters".to_string());
+    }
+
+    // Check for path traversal attempts before canonicalization
+    // This catches obvious attempts like "../../../etc/passwd"
+    for component in path.components() {
+        if let std::path::Component::ParentDir = component {
+            return Err("Invalid file path: parent directory traversal not allowed".to_string());
+        }
+    }
 
     // Validate file exists
     if !path.exists() {
@@ -1142,10 +1160,24 @@ pub async fn read_file_base64(
         return Err(format!("Path is not a file: {}", file_path));
     }
 
+    // Canonicalize path to resolve symlinks and get absolute path
+    let canonical_path = path.canonicalize()
+        .map_err(|e| format!("Failed to resolve file path: {}", e))?;
+    let canonical_str = canonical_path.to_string_lossy();
+
+    // Validate path is within allowed directories
+    // Allowed: .orkestrator/ directories (clipboard attachments) or workspaces/ directories (worktree files)
+    let is_orkestrator_dir = canonical_str.contains("/.orkestrator/");
+    let is_workspace_dir = canonical_str.contains("/workspaces/");
+
+    if !is_orkestrator_dir && !is_workspace_dir {
+        return Err("Invalid file path: must be within .orkestrator/ or workspaces/ directory".to_string());
+    }
+
     // Size limit: 10MB for binary files
     const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-    let metadata = std::fs::metadata(path)
+    let metadata = std::fs::metadata(&canonical_path)
         .map_err(|e| format!("Failed to read file metadata: {}", e))?;
 
     if metadata.len() > MAX_FILE_SIZE {
@@ -1156,7 +1188,7 @@ pub async fn read_file_base64(
     }
 
     // Read file bytes
-    let bytes = std::fs::read(path)
+    let bytes = std::fs::read(&canonical_path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
     // Encode as base64
