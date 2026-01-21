@@ -213,22 +213,29 @@ export async function getSession(
   }
 }
 
+/** Error thrown when a session is not found on the server */
+export class SessionNotFoundError extends Error {
+  constructor(sessionId: string) {
+    super(`Session not found: ${sessionId}`);
+    this.name = "SessionNotFoundError";
+  }
+}
+
 /**
  * Get messages for a session
+ * @throws {SessionNotFoundError} if the session does not exist on the server
  */
 export async function getSessionMessages(
   client: ClaudeClient,
   sessionId: string
 ): Promise<ClaudeMessage[]> {
-  try {
-    const response = await fetch(`${client.baseUrl}/session/${sessionId}/messages`);
-    if (!response.ok) return [];
-    const data = await response.json();
-    return data.messages || [];
-  } catch (error) {
-    console.error("[claude-client] Failed to get messages:", error);
-    return [];
+  const response = await fetch(`${client.baseUrl}/session/${sessionId}/messages`);
+  if (response.status === 404) {
+    throw new SessionNotFoundError(sessionId);
   }
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.messages || [];
 }
 
 /**

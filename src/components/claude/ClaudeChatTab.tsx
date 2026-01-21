@@ -14,6 +14,7 @@ import {
   subscribeToEvents,
   checkHealth,
   ERROR_MESSAGE_PREFIX,
+  SessionNotFoundError,
   type ClaudeQuestionRequest,
 } from "@/lib/claude-client";
 import {
@@ -227,10 +228,61 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           setSelectedModel(environmentId, firstModel.id);
         }
 
-        const existingSessionId = tabSessionIdRef.current;
-        if (existingSessionId && isInitializedRef.current) {
+        // Check for existing session - first from component ref, then from Zustand store
+        // This handles reconnection after tab remount where refs are lost but store persists
+        const existingSessionFromRef = tabSessionIdRef.current;
+        const existingSessionFromStore = useClaudeStore.getState().sessions.get(tabId);
+        const existingSessionId = existingSessionFromRef || existingSessionFromStore?.sessionId;
+
+        if (existingSessionId) {
+          // Restore session from store - component may have remounted
+          tabSessionIdRef.current = existingSessionId;
+          isInitializedRef.current = true;
+          console.debug("[ClaudeChatTab] Reconnecting to existing session", {
+            tabId,
+            sessionId: existingSessionId,
+            environmentId,
+            fromRef: !!existingSessionFromRef,
+            fromStore: !!existingSessionFromStore,
+          });
           setConnectionState("connected");
           startSharedEventSubscription(bridgeClient);
+
+          // Refresh messages from server to ensure we have latest state
+          if (existingSessionFromStore) {
+            try {
+              const messages = await getSessionMessages(bridgeClient, existingSessionId);
+              if (!mounted) return;
+              // Preserve any client-side error messages that may not be on the server
+              const currentMessages = existingSessionFromStore.messages || [];
+              const errorMessages = currentMessages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
+              const serverMessageIds = new Set(messages.map((m) => m.id));
+              const errorMessagesToKeep = errorMessages.filter((m) => !serverMessageIds.has(m.id));
+              if (errorMessagesToKeep.length > 0) {
+                setMessages(tabId, [...messages, ...errorMessagesToKeep]);
+              } else {
+                setMessages(tabId, messages);
+              }
+            } catch (err) {
+              if (err instanceof SessionNotFoundError) {
+                // Session expired on server - create a new one
+                console.warn("[ClaudeChatTab] Session expired on server, creating new session");
+                const newSession = await createSession(bridgeClient);
+                if (!mounted) return;
+                if (newSession) {
+                  tabSessionIdRef.current = newSession.sessionId;
+                  setSession(tabId, {
+                    sessionId: newSession.sessionId,
+                    messages: [],
+                    isLoading: false,
+                  });
+                }
+              } else {
+                console.warn("[ClaudeChatTab] Failed to refresh messages on reconnect:", err);
+                // Keep existing messages from store if refresh fails
+              }
+            }
+          }
         } else {
           const newSession = await createSession(bridgeClient);
           if (!mounted) return;
@@ -242,7 +294,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           tabSessionIdRef.current = newSession.sessionId;
           isInitializedRef.current = true;
 
-          console.debug("[ClaudeChatTab] Storing session in state", {
+          console.debug("[ClaudeChatTab] Created new session", {
             tabId,
             sessionId: newSession.sessionId,
             environmentId,

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
+import { useRef, useState, useEffect, useCallback, KeyboardEvent } from "react";
 import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain } from "lucide-react";
 import {
   DropdownMenu,
@@ -44,7 +44,6 @@ export function ClaudeComposeBar({
   onSend,
   disabled = false,
 }: ClaudeComposeBarProps) {
-  const [text, setText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -55,6 +54,8 @@ export function ClaudeComposeBar({
     addAttachment,
     removeAttachment,
     clearAttachments,
+    getDraftText,
+    setDraftText,
     getSelectedModel,
     setSelectedModel,
     isThinkingEnabled,
@@ -62,8 +63,14 @@ export function ClaudeComposeBar({
   } = useClaudeStore();
 
   const attachments = getAttachments(environmentId);
+  const text = getDraftText(environmentId);
   const selectedModel = getSelectedModel(environmentId);
   const thinkingEnabled = isThinkingEnabled(environmentId);
+
+  const setText = useCallback(
+    (newText: string) => setDraftText(environmentId, newText),
+    [environmentId, setDraftText]
+  );
 
   // Get worktree path for local environments
   const worktreePath = useEnvironmentStore(
