@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "build:claude-bridge": "cd docker/claude-bridge && bun install && bun run build",
     "download:bun": "./scripts/download-bun.sh",
+    "setup": "bun run download:bun && bun install && bun run build:claude-bridge",
     "build:all": "bun run download:bun && bun run build:claude-bridge && bun run build",
     "preview": "vite preview",
     "tauri": "tauri",

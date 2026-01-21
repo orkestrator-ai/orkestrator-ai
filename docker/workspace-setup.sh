@@ -96,6 +96,17 @@ fi
 
 echo -e "${BLUE}=== Workspace Setup ===${NC}"
 
+# Function to add .orkestrator to .git/info/exclude
+add_orkestrator_to_git_exclude() {
+    if [ -d "/workspace/.git" ]; then
+        mkdir -p /workspace/.git/info
+        if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
+            echo ".orkestrator" >> /workspace/.git/info/exclude
+            echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
+        fi
+    fi
+}
+
 # Function to convert SSH URLs to HTTPS for token-based authentication
 convert_ssh_to_https() {
     local url="$1"
@@ -225,13 +236,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
         fi
 
         # Add .orkestrator to .git/info/exclude so it's ignored locally
-        if [ -d "/workspace/.git" ]; then
-            mkdir -p /workspace/.git/info
-            if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
-                echo ".orkestrator" >> /workspace/.git/info/exclude
-                echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
-            fi
-        fi
+        add_orkestrator_to_git_exclude
 
         echo ""
         echo -e "${GREEN}Repository ready:${NC}"
@@ -258,11 +263,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
                 echo -e "${GREEN}Fallback succeeded!${NC}"
                 cd /workspace
                 # Add .orkestrator to .git/info/exclude so it's ignored locally
-                mkdir -p /workspace/.git/info
-                if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
-                    echo ".orkestrator" >> /workspace/.git/info/exclude
-                    echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
-                fi
+                add_orkestrator_to_git_exclude
             else
                 echo -e "${RED}Fallback failed - no .git directory${NC}"
             fi
@@ -415,13 +416,13 @@ if [ -f /workspace/orkestrator-ai.json ]; then
         echo "  No root setup defined (root field is empty)"
     fi
 
-    # Parse the script field (string or array)
-    SETUP_SCRIPT=$(jq -r '.script // empty' /workspace/orkestrator-ai.json 2>/dev/null)
-    SETUP_SCRIPT_TYPE=$(jq -r 'if .script==null then "empty" elif (.script|type)=="array" then "array" elif (.script|type)=="string" then "string" else "other" end' /workspace/orkestrator-ai.json 2>/dev/null)
+    # Parse the setupContainer field (string or array) - runs for container environments
+    SETUP_SCRIPT=$(jq -r '.setupContainer // empty' /workspace/orkestrator-ai.json 2>/dev/null)
+    SETUP_SCRIPT_TYPE=$(jq -r 'if .setupContainer==null then "empty" elif (.setupContainer|type)=="array" then "array" elif (.setupContainer|type)=="string" then "string" else "other" end' /workspace/orkestrator-ai.json 2>/dev/null)
 
     if [ -n "$SETUP_SCRIPT" ] || [ "$SETUP_SCRIPT_TYPE" = "array" ]; then
         echo ""
-        echo -e "${BLUE}=== Running Project Setup ===${NC}"
+        echo -e "${BLUE}=== Running Container Setup ===${NC}"
         echo ""
 
         cd /workspace
@@ -447,7 +448,7 @@ if [ -f /workspace/orkestrator-ai.json ]; then
                 if [ $SCRIPT_EXIT -ne 0 ]; then
                     break
                 fi
-            done < <(jq -r '.script[]' /workspace/orkestrator-ai.json 2>/dev/null)
+            done < <(jq -r '.setupContainer[]' /workspace/orkestrator-ai.json 2>/dev/null)
         else
             # Single command string
             run_setup_step "$SETUP_SCRIPT"
@@ -457,12 +458,12 @@ if [ -f /workspace/orkestrator-ai.json ]; then
 
         echo ""
         if [ $SCRIPT_EXIT -eq 0 ]; then
-            echo -e "${GREEN}Setup script completed successfully!${NC}"
+            echo -e "${GREEN}Container setup completed successfully!${NC}"
         else
-            echo -e "${YELLOW}Setup script exited with code $SCRIPT_EXIT${NC}"
+            echo -e "${YELLOW}Container setup exited with code $SCRIPT_EXIT${NC}"
         fi
     else
-        echo "  No setup script defined (script field is empty)"
+        echo "  No container setup defined (setupContainer field is empty)"
     fi
 else
     echo "  No orkestrator-ai.json found"

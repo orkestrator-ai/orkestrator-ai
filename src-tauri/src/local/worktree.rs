@@ -163,19 +163,19 @@ async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), Wo
     // For worktrees, .git is a file containing "gitdir: <path>"
     // We need to resolve the actual git directory
     let git_dir = if git_path.is_file() {
-        let content = std::fs::read_to_string(&git_path)
-            .map_err(|e| WorktreeError::Io(e))?;
+        let content = tokio::fs::read_to_string(&git_path)
+            .await
+            .map_err(WorktreeError::Io)?;
         let gitdir_line = content
             .lines()
             .find(|line| line.starts_with("gitdir:"))
-            .ok_or_else(|| WorktreeError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "No gitdir line found in .git file",
-            )))?;
-        let gitdir = gitdir_line
-            .strip_prefix("gitdir:")
-            .unwrap()
-            .trim();
+            .ok_or_else(|| {
+                WorktreeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No gitdir line found in .git file",
+                ))
+            })?;
+        let gitdir = gitdir_line.strip_prefix("gitdir:").unwrap().trim();
         PathBuf::from(gitdir)
     } else if git_path.is_dir() {
         git_path
@@ -189,18 +189,18 @@ async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), Wo
     // Create info directory if it doesn't exist
     let info_dir = git_dir.join("info");
     if !info_dir.exists() {
-        std::fs::create_dir_all(&info_dir)
-            .map_err(|e| WorktreeError::Io(e))?;
+        tokio::fs::create_dir_all(&info_dir)
+            .await
+            .map_err(WorktreeError::Io)?;
     }
 
     let exclude_file = info_dir.join("exclude");
 
     // Read existing content if file exists
-    let existing_content = if exclude_file.exists() {
-        std::fs::read_to_string(&exclude_file)
-            .map_err(|e| WorktreeError::Io(e))?
-    } else {
-        String::new()
+    let existing_content = match tokio::fs::read_to_string(&exclude_file).await {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(WorktreeError::Io(e)),
     };
 
     // Check if pattern already exists
@@ -217,8 +217,9 @@ async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), Wo
     new_content.push_str(pattern);
     new_content.push('\n');
 
-    std::fs::write(&exclude_file, new_content)
-        .map_err(|e| WorktreeError::Io(e))?;
+    tokio::fs::write(&exclude_file, new_content)
+        .await
+        .map_err(WorktreeError::Io)?;
 
     debug!(pattern = %pattern, exclude_file = %exclude_file.display(), "Added pattern to git exclude");
 
@@ -310,7 +311,8 @@ pub async fn create_worktree(
                 branch = %target_branch,
                 "Branch is already checked out in another worktree; generating a new name"
             );
-            target_branch = generate_unique_branch_name(source_repo_path, branch_name, attempt).await?;
+            target_branch =
+                generate_unique_branch_name(source_repo_path, branch_name, attempt).await?;
             continue;
         }
 
@@ -361,7 +363,8 @@ pub async fn create_worktree(
         );
 
         if is_branch_in_use_error(&stderr) || is_branch_exists_error(&stderr) {
-            target_branch = generate_unique_branch_name(source_repo_path, branch_name, attempt).await?;
+            target_branch =
+                generate_unique_branch_name(source_repo_path, branch_name, attempt).await?;
             continue;
         }
 
@@ -387,7 +390,11 @@ pub async fn create_worktree(
 
 async fn branch_exists(repo_path: &str, branch_name: &str) -> Result<bool, WorktreeError> {
     let output = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("refs/heads/{}", branch_name)])
+        .args([
+            "rev-parse",
+            "--verify",
+            &format!("refs/heads/{}", branch_name),
+        ])
         .current_dir(repo_path)
         .output()
         .await
@@ -531,9 +538,205 @@ pub fn copy_env_files(source_path: &str, dest_path: &str) -> Result<(), Worktree
     Ok(())
 }
 
+/// Result of running setup commands
+#[derive(Debug)]
+pub struct SetupLocalResult {
+    /// Whether all commands succeeded
+    pub success: bool,
+    /// Number of commands executed
+    pub commands_run: usize,
+    /// Error message if any command failed
+    pub error: Option<String>,
+}
+
+/// Run setupLocal commands from orkestrator-ai.json in the worktree
+///
+/// Reads the orkestrator-ai.json file from the worktree directory and executes
+/// any commands specified in the `setupLocal` field. Commands are run sequentially
+/// in the worktree directory.
+///
+/// # Arguments
+/// * `worktree_path` - Path to the worktree directory
+///
+/// # Returns
+/// SetupLocalResult indicating success/failure and command count
+pub async fn run_setup_local(worktree_path: &str) -> SetupLocalResult {
+    let config_path = Path::new(worktree_path).join("orkestrator-ai.json");
+
+    // Read and parse the config file (returns early if not found)
+    let config_content = match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            debug!(worktree_path = %worktree_path, "No orkestrator-ai.json found, skipping setupLocal");
+            return SetupLocalResult {
+                success: true,
+                commands_run: 0,
+                error: None,
+            };
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to read orkestrator-ai.json");
+            return SetupLocalResult {
+                success: false,
+                commands_run: 0,
+                error: Some(format!("Failed to read orkestrator-ai.json: {}", e)),
+            };
+        }
+    };
+
+    let config: serde_json::Value = match serde_json::from_str(&config_content) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "Failed to parse orkestrator-ai.json");
+            return SetupLocalResult {
+                success: false,
+                commands_run: 0,
+                error: Some(format!("Failed to parse orkestrator-ai.json: {}", e)),
+            };
+        }
+    };
+
+    // Extract setupLocal field - can be string or array of strings
+    let commands: Vec<String> = match config.get("setupLocal") {
+        Some(serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                vec![]
+            } else {
+                vec![s.clone()]
+            }
+        }
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => {
+            debug!(worktree_path = %worktree_path, "No setupLocal field found in orkestrator-ai.json");
+            return SetupLocalResult {
+                success: true,
+                commands_run: 0,
+                error: None,
+            };
+        }
+    };
+
+    if commands.is_empty() {
+        debug!(worktree_path = %worktree_path, "setupLocal is empty, nothing to run");
+        return SetupLocalResult {
+            success: true,
+            commands_run: 0,
+            error: None,
+        };
+    }
+
+    info!(
+        worktree_path = %worktree_path,
+        command_count = commands.len(),
+        "Running setupLocal commands"
+    );
+
+    let mut commands_run = 0;
+
+    for (idx, cmd) in commands.iter().enumerate() {
+        info!(
+            worktree_path = %worktree_path,
+            command_index = idx + 1,
+            total_commands = commands.len(),
+            command = %cmd,
+            "Running setupLocal command"
+        );
+
+        // Use shell to execute the command (supports pipes, redirects, etc.)
+        let output = Command::new("sh")
+            .args(["-c", cmd])
+            .current_dir(worktree_path)
+            .output()
+            .await;
+
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if !stdout.is_empty() {
+                    debug!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        stdout = %stdout,
+                        "setupLocal command stdout"
+                    );
+                }
+
+                if !stderr.is_empty() {
+                    debug!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        stderr = %stderr,
+                        "setupLocal command stderr"
+                    );
+                }
+
+                if output.status.success() {
+                    commands_run += 1;
+                    info!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        "setupLocal command completed successfully"
+                    );
+                } else {
+                    let exit_code = output.status.code().unwrap_or(-1);
+                    error!(
+                        worktree_path = %worktree_path,
+                        command = %cmd,
+                        exit_code = exit_code,
+                        stderr = %stderr,
+                        "setupLocal command failed"
+                    );
+                    return SetupLocalResult {
+                        success: false,
+                        commands_run,
+                        error: Some(format!(
+                            "Command '{}' failed with exit code {}: {}",
+                            cmd,
+                            exit_code,
+                            stderr.trim()
+                        )),
+                    };
+                }
+            }
+            Err(e) => {
+                error!(
+                    worktree_path = %worktree_path,
+                    command = %cmd,
+                    error = %e,
+                    "Failed to execute setupLocal command"
+                );
+                return SetupLocalResult {
+                    success: false,
+                    commands_run,
+                    error: Some(format!("Failed to execute command '{}': {}", cmd, e)),
+                };
+            }
+        }
+    }
+
+    info!(
+        worktree_path = %worktree_path,
+        commands_run = commands_run,
+        "All setupLocal commands completed successfully"
+    );
+
+    SetupLocalResult {
+        success: true,
+        commands_run,
+        error: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_generate_unique_suffix() {
@@ -548,5 +751,186 @@ mod tests {
         assert!(path.is_ok());
         let path = path.unwrap();
         assert!(path.to_string_lossy().contains("orkestrator-ai/workspaces"));
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_no_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.success);
+        assert_eq!(result.commands_run, 0);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_empty_setup_local() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, r#"{"setupLocal": []}"#)
+            .await
+            .unwrap();
+
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.success);
+        assert_eq!(result.commands_run, 0);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_no_setup_local_field() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, r#"{"run": ["echo hello"]}"#)
+            .await
+            .unwrap();
+
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.success);
+        assert_eq!(result.commands_run, 0);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_single_command_string() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, r#"{"setupLocal": "echo hello"}"#)
+            .await
+            .unwrap();
+
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.success);
+        assert_eq!(result.commands_run, 1);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_multiple_commands() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{"setupLocal": ["echo one", "echo two", "echo three"]}"#,
+        )
+        .await
+        .unwrap();
+
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.success);
+        assert_eq!(result.commands_run, 3);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_failing_command() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{"setupLocal": ["echo success", "exit 1", "echo never_runs"]}"#,
+        )
+        .await
+        .unwrap();
+
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(!result.success);
+        assert_eq!(result.commands_run, 1); // Only first command ran successfully
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("exit 1"));
+    }
+
+    #[tokio::test]
+    async fn test_run_setup_local_invalid_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, "not valid json")
+            .await
+            .unwrap();
+
+        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(!result.success);
+        assert_eq!(result.commands_run, 0);
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("Failed to parse"));
+    }
+
+    #[tokio::test]
+    async fn test_add_to_git_exclude_regular_repo() {
+        let temp_dir = TempDir::new().unwrap();
+        let git_dir = temp_dir.path().join(".git");
+        tokio::fs::create_dir_all(&git_dir).await.unwrap();
+
+        let result = add_to_git_exclude(temp_dir.path().to_str().unwrap(), ".orkestrator").await;
+        assert!(result.is_ok());
+
+        // Verify the pattern was added
+        let exclude_content = tokio::fs::read_to_string(git_dir.join("info/exclude"))
+            .await
+            .unwrap();
+        assert!(exclude_content.contains(".orkestrator"));
+    }
+
+    #[tokio::test]
+    async fn test_add_to_git_exclude_pattern_already_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let git_dir = temp_dir.path().join(".git");
+        let info_dir = git_dir.join("info");
+        tokio::fs::create_dir_all(&info_dir).await.unwrap();
+
+        // Pre-populate with the pattern
+        tokio::fs::write(info_dir.join("exclude"), ".orkestrator\n")
+            .await
+            .unwrap();
+
+        let result = add_to_git_exclude(temp_dir.path().to_str().unwrap(), ".orkestrator").await;
+        assert!(result.is_ok());
+
+        // Verify pattern wasn't duplicated
+        let exclude_content = tokio::fs::read_to_string(info_dir.join("exclude"))
+            .await
+            .unwrap();
+        assert_eq!(exclude_content.matches(".orkestrator").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_add_to_git_exclude_worktree() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a fake worktree structure where .git is a file pointing to a gitdir
+        let actual_git_dir = temp_dir.path().join("actual_git_dir");
+        tokio::fs::create_dir_all(&actual_git_dir).await.unwrap();
+
+        let worktree_dir = temp_dir.path().join("worktree");
+        tokio::fs::create_dir_all(&worktree_dir).await.unwrap();
+
+        // Create .git file (not directory) with gitdir reference
+        let git_file_content = format!("gitdir: {}", actual_git_dir.display());
+        tokio::fs::write(worktree_dir.join(".git"), &git_file_content)
+            .await
+            .unwrap();
+
+        let result = add_to_git_exclude(worktree_dir.to_str().unwrap(), ".orkestrator").await;
+        assert!(result.is_ok());
+
+        // Verify the pattern was added to the actual git directory
+        let exclude_content = tokio::fs::read_to_string(actual_git_dir.join("info/exclude"))
+            .await
+            .unwrap();
+        assert!(exclude_content.contains(".orkestrator"));
+    }
+
+    #[tokio::test]
+    async fn test_add_to_git_exclude_no_git_dir() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let result = add_to_git_exclude(temp_dir.path().to_str().unwrap(), ".orkestrator").await;
+        assert!(result.is_err());
     }
 }
