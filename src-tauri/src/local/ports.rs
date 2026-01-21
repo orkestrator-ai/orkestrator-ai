@@ -93,11 +93,6 @@ pub fn allocate_ports(existing_environments: &[Environment]) -> Result<PortAlloc
     }
 }
 
-/// Check if specific ports are available
-pub fn verify_ports_available(opencode_port: u16, claude_port: u16) -> bool {
-    is_port_available(opencode_port) && is_port_available(claude_port)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

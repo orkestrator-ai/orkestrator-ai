@@ -30,6 +30,7 @@ impl std::fmt::Display for ProcessType {
 /// Handle to a running process
 pub struct ProcessHandle {
     pub pid: u32,
+    #[allow(dead_code)]
     pub process_type: ProcessType,
     child: Option<Child>,
 }

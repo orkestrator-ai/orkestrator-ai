@@ -32,6 +32,7 @@ enum PtyHandle {
 /// A local terminal session running a shell in a worktree directory
 pub struct LocalTerminalSession {
     pub session_id: String,
+    #[allow(dead_code)]
     pub environment_id: String,
     pub worktree_path: String,
     pub cols: u16,
@@ -327,6 +328,7 @@ impl LocalTerminalManager {
     }
 
     /// Get session info
+    #[allow(dead_code)]
     pub fn get_session(&self, session_id: &str) -> Option<(String, String, u16, u16)> {
         let sessions = self.sessions.lock().unwrap();
         sessions.get(session_id).map(|s| {
@@ -340,6 +342,7 @@ impl LocalTerminalManager {
     }
 
     /// List all active sessions
+    #[allow(dead_code)]
     pub fn list_sessions(&self) -> Vec<String> {
         let sessions = self.sessions.lock().unwrap();
         sessions.keys().cloned().collect()
