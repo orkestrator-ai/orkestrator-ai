@@ -561,6 +561,7 @@ export async function stopClaudeStatePolling(containerId: string): Promise<void>
 
 // --- Editor Commands ---
 
+/** Open an editor (VS Code or Cursor) attached to a running container */
 export async function openInEditor(
   containerId: string,
   editor: PreferredEditor
@@ -568,6 +569,7 @@ export async function openInEditor(
   return invoke("open_in_editor", { containerId, editor });
 }
 
+/** Open an editor (VS Code or Cursor) for a local directory path */
 export async function openLocalInEditor(
   path: string,
   editor: PreferredEditor

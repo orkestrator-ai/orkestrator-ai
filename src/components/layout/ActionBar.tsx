@@ -284,21 +284,22 @@ export function ActionBar() {
 
   // Handler for opening in editor
   const handleOpenInEditor = useCallback(async () => {
+    // Extract values for type safety
+    const worktreePath = selectedEnvironment?.worktreePath;
+    const containerId = selectedEnvironment?.containerId;
+
     // For local environments, use worktreePath; for containers, use containerId
-    if (isLocalEnvironment) {
-      if (!selectedEnvironment?.worktreePath) return;
-    } else {
-      if (!selectedEnvironment?.containerId) return;
-    }
+    if (isLocalEnvironment && !worktreePath) return;
+    if (!isLocalEnvironment && !containerId) return;
 
     setIsOpeningEditor(true);
     setEditorError(null);
     try {
       const editor = config.global.preferredEditor || "vscode";
-      if (isLocalEnvironment) {
-        await tauri.openLocalInEditor(selectedEnvironment!.worktreePath!, editor);
-      } else {
-        await tauri.openInEditor(selectedEnvironment!.containerId!, editor);
+      if (isLocalEnvironment && worktreePath) {
+        await tauri.openLocalInEditor(worktreePath, editor);
+      } else if (containerId) {
+        await tauri.openInEditor(containerId, editor);
       }
     } catch (err) {
       console.error("[ActionBar] Failed to open editor:", err);
