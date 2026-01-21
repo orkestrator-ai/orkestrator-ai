@@ -4,6 +4,33 @@
 use crate::docker::client::get_docker_client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// Cache for git fetch operations to avoid fetching on every status check.
+/// Key is (container_id or worktree_path, branch), value is last fetch time.
+static FETCH_CACHE: Mutex<Option<HashMap<(String, String), Instant>>> = Mutex::new(None);
+
+/// Time-to-live for fetch cache entries (30 seconds)
+const FETCH_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Check if we should fetch based on cache TTL
+fn should_fetch(key: &(String, String)) -> bool {
+    let mut cache_guard = FETCH_CACHE.lock().unwrap();
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+
+    match cache.get(key) {
+        Some(last_fetch) => last_fetch.elapsed() >= FETCH_CACHE_TTL,
+        None => true,
+    }
+}
+
+/// Mark that a fetch was performed
+fn mark_fetched(key: (String, String)) {
+    let mut cache_guard = FETCH_CACHE.lock().unwrap();
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+    cache.insert(key, Instant::now());
+}
 
 /// Represents a file changed in the git working tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,18 +353,36 @@ pub async fn get_git_status(
         return Err("Container is not running".to_string());
     }
 
-    // Fetch latest from origin to ensure remote refs are up to date
-    // This ensures we compare against the current remote state, not stale local refs
-    // Note: This adds latency but ensures accurate comparisons for PR reviews
-    let fetch_result = client
-        .exec_command(
+    // Fetch latest from origin to ensure remote refs are up to date (with caching)
+    // Only fetch if more than FETCH_CACHE_TTL has passed since last fetch
+    let fetch_key = (container_id.clone(), target_branch.clone());
+    if should_fetch(&fetch_key) {
+        debug!(target_branch = %target_branch, "Fetching from origin (cache expired or first fetch)");
+
+        // Use timeout to prevent hanging on network issues (10 seconds)
+        let fetch_future = client.exec_command(
             &container_id,
             vec!["git", "-C", "/workspace", "fetch", "origin", &target_branch],
-        )
-        .await;
+        );
 
-    if let Err(e) = &fetch_result {
-        warn!(target_branch = %target_branch, error = %e, "git fetch origin failed (continuing with local refs)");
+        match tokio::time::timeout(Duration::from_secs(10), fetch_future).await {
+            Ok(Ok(output)) => {
+                // Check for error indicators in output (exec_command doesn't check exit codes)
+                if output.contains("fatal:") || output.contains("error:") {
+                    warn!(target_branch = %target_branch, output = %output, "git fetch origin returned errors (continuing with local refs)");
+                } else {
+                    mark_fetched(fetch_key);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch origin failed (continuing with local refs)");
+            }
+            Err(_) => {
+                warn!(target_branch = %target_branch, "git fetch origin timed out after 10s (continuing with local refs)");
+            }
+        }
+    } else {
+        debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
     }
 
     // Use a HashMap to collect all changes, keyed by path
@@ -624,7 +669,13 @@ pub async fn read_container_file(
     })
 }
 
-/// Read a file from a specific git branch inside a container
+/// Read a file from the remote version of a branch inside a container.
+/// Uses `origin/<branch>` to ensure comparison against remote state.
+///
+/// Note: This function does NOT fetch from origin. It relies on a recent fetch
+/// having been performed by `get_git_status()` (which caches fetches for 30 seconds).
+/// This is intentional to avoid redundant network calls when viewing diffs.
+///
 /// Returns None if the file doesn't exist in the specified branch (e.g., new file)
 #[tauri::command]
 pub async fn read_file_at_branch(
@@ -795,20 +846,42 @@ pub async fn get_local_git_status(
     // Use a HashMap to collect all changes, keyed by path
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // Fetch latest from origin to ensure remote refs are up to date
-    // This ensures we compare against the current remote state, not stale local refs
-    // Note: This adds latency but ensures accurate comparisons for PR reviews
-    let fetch_output = Command::new("git")
-        .args(["-C", &worktree_path, "fetch", "origin", &target_branch])
-        .output();
+    // Fetch latest from origin to ensure remote refs are up to date (with caching)
+    // Only fetch if more than FETCH_CACHE_TTL has passed since last fetch
+    let fetch_key = (worktree_path.clone(), target_branch.clone());
+    if should_fetch(&fetch_key) {
+        debug!(target_branch = %target_branch, "Fetching from origin (cache expired or first fetch)");
 
-    if let Ok(result) = &fetch_output {
-        if !result.status.success() {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            warn!(target_branch = %target_branch, stderr = %stderr, "git fetch origin failed (continuing with local refs)");
+        // Spawn fetch with timeout to prevent hanging on network issues
+        let worktree_for_fetch = worktree_path.clone();
+        let branch_for_fetch = target_branch.clone();
+        let fetch_task = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["-C", &worktree_for_fetch, "fetch", "origin", &branch_for_fetch])
+                .output()
+        });
+
+        match tokio::time::timeout(Duration::from_secs(10), fetch_task).await {
+            Ok(Ok(Ok(result))) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    warn!(target_branch = %target_branch, stderr = %stderr, "git fetch origin failed (continuing with local refs)");
+                } else {
+                    mark_fetched(fetch_key);
+                }
+            }
+            Ok(Ok(Err(e))) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch command failed to execute (continuing with local refs)");
+            }
+            Ok(Err(e)) => {
+                warn!(target_branch = %target_branch, error = %e, "git fetch task panicked (continuing with local refs)");
+            }
+            Err(_) => {
+                warn!(target_branch = %target_branch, "git fetch origin timed out after 10s (continuing with local refs)");
+            }
         }
-    } else if let Err(e) = &fetch_output {
-        warn!(target_branch = %target_branch, error = %e, "git fetch command failed to execute (continuing with local refs)");
+    } else {
+        debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
     }
 
     // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
@@ -1050,7 +1123,13 @@ pub async fn read_local_file(
     })
 }
 
-/// Read a file from a specific git branch in a local environment
+/// Read a file from the remote version of a branch in a local environment.
+/// Uses `origin/<branch>` to ensure comparison against remote state.
+///
+/// Note: This function does NOT fetch from origin. It relies on a recent fetch
+/// having been performed by `get_local_git_status()` (which caches fetches for 30 seconds).
+/// This is intentional to avoid redundant network calls when viewing diffs.
+///
 /// Returns None if the file doesn't exist in the specified branch (e.g., new file)
 #[tauri::command]
 pub async fn read_local_file_at_branch(
