@@ -96,6 +96,7 @@ export function useScrollLock(
     if (scrollElement) {
       scrollElement.scrollTop = scrollElement.scrollHeight;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Using ref instead of state to avoid race condition
   }, [scrollTrigger, scrollRef]);
 
   // Handle scroll to bottom button click

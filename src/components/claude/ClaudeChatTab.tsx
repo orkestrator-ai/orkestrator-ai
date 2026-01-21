@@ -656,6 +656,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               ? "opacity-0 pointer-events-none translate-y-2"
               : "opacity-100 translate-y-0"
           }`}
+          tabIndex={isAtBottom ? -1 : 0}
           aria-hidden={isAtBottom}
         >
           <ArrowDown className="w-3.5 h-3.5" />
