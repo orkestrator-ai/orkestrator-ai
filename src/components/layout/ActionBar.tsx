@@ -276,17 +276,31 @@ export function ActionBar() {
   const isPRClosed = prState === "closed";
   const isPRFinished = isPRMerged || isPRClosed;
   const canCreateTab = !!createTab && tabCount < MAX_TABS;
-  const canOpenEditor = isRunning && !!selectedEnvironment?.containerId;
+  // For containers, we need containerId; for local environments, we need worktreePath
+  const canOpenEditor = isRunning && (
+    (isLocalEnvironment && !!selectedEnvironment?.worktreePath) ||
+    (!isLocalEnvironment && !!selectedEnvironment?.containerId)
+  );
 
   // Handler for opening in editor
   const handleOpenInEditor = useCallback(async () => {
-    if (!selectedEnvironment?.containerId) return;
+    // Extract values for type safety
+    const worktreePath = selectedEnvironment?.worktreePath;
+    const containerId = selectedEnvironment?.containerId;
+
+    // For local environments, use worktreePath; for containers, use containerId
+    if (isLocalEnvironment && !worktreePath) return;
+    if (!isLocalEnvironment && !containerId) return;
 
     setIsOpeningEditor(true);
     setEditorError(null);
     try {
       const editor = config.global.preferredEditor || "vscode";
-      await tauri.openInEditor(selectedEnvironment.containerId, editor);
+      if (isLocalEnvironment && worktreePath) {
+        await tauri.openLocalInEditor(worktreePath, editor);
+      } else if (containerId) {
+        await tauri.openInEditor(containerId, editor);
+      }
     } catch (err) {
       console.error("[ActionBar] Failed to open editor:", err);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -294,7 +308,7 @@ export function ActionBar() {
     } finally {
       setIsOpeningEditor(false);
     }
-  }, [selectedEnvironment?.containerId, config.global.preferredEditor]);
+  }, [selectedEnvironment?.containerId, selectedEnvironment?.worktreePath, isLocalEnvironment, config.global.preferredEditor]);
 
   // Get the default agent from global config
   const defaultAgent = config.global.defaultAgent || "claude";
@@ -312,7 +326,12 @@ export function ActionBar() {
 
   // Load run commands from orkestrator-ai.json when workspace is ready
   useEffect(() => {
-    if (!selectedEnvironment?.containerId || !isRunning || !workspaceReady) {
+    // For container environments, we need containerId
+    // For local environments, we need worktreePath
+    const hasContainer = !isLocalEnvironment && !!selectedEnvironment?.containerId;
+    const hasWorktree = isLocalEnvironment && !!selectedEnvironment?.worktreePath;
+
+    if ((!hasContainer && !hasWorktree) || !isRunning || !workspaceReady) {
       setRunCommands(null);
       return;
     }
@@ -320,7 +339,11 @@ export function ActionBar() {
     let cancelled = false;
     setIsLoadingRunCommands(true);
 
-    tauri.readContainerFile(selectedEnvironment.containerId, "orkestrator-ai.json")
+    const readConfigPromise = isLocalEnvironment
+      ? tauri.readLocalFile(selectedEnvironment!.worktreePath!, "orkestrator-ai.json")
+      : tauri.readContainerFile(selectedEnvironment!.containerId!, "orkestrator-ai.json");
+
+    readConfigPromise
       .then((result) => {
         if (cancelled) return;
         try {
@@ -349,7 +372,7 @@ export function ActionBar() {
     return () => {
       cancelled = true;
     };
-  }, [selectedEnvironment?.containerId, isRunning, workspaceReady]);
+  }, [selectedEnvironment?.containerId, selectedEnvironment?.worktreePath, isLocalEnvironment, isRunning, workspaceReady]);
 
   // Handler for run commands
   const handleRun = useCallback(() => {

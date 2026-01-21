@@ -225,6 +225,7 @@ pub fn run() {
             stop_claude_state_polling,
             // Editor commands
             open_in_editor,
+            open_local_in_editor,
             // File commands (container)
             get_git_status,
             get_file_tree,
