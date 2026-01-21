@@ -312,7 +312,7 @@ pub async fn get_git_status(
     container_id: String,
     target_branch: String,
 ) -> Result<Vec<GitFileChange>, String> {
-    use tracing::debug;
+    use tracing::{debug, warn};
 
     let client = get_docker_client().map_err(|e| e.to_string())?;
 
@@ -324,6 +324,20 @@ pub async fn get_git_status(
 
     if !is_running {
         return Err("Container is not running".to_string());
+    }
+
+    // Fetch latest from origin to ensure remote refs are up to date
+    // This ensures we compare against the current remote state, not stale local refs
+    // Note: This adds latency but ensures accurate comparisons for PR reviews
+    let fetch_result = client
+        .exec_command(
+            &container_id,
+            vec!["git", "-C", "/workspace", "fetch", "origin", &target_branch],
+        )
+        .await;
+
+    if let Err(e) = &fetch_result {
+        warn!(target_branch = %target_branch, error = %e, "git fetch origin failed (continuing with local refs)");
     }
 
     // Use a HashMap to collect all changes, keyed by path
@@ -767,7 +781,7 @@ pub async fn get_local_git_status(
     target_branch: String,
 ) -> Result<Vec<GitFileChange>, String> {
     use std::process::Command;
-    use tracing::debug;
+    use tracing::{debug, warn};
 
     // Validate the worktree path exists
     let path = std::path::Path::new(&worktree_path);
@@ -783,6 +797,7 @@ pub async fn get_local_git_status(
 
     // Fetch latest from origin to ensure remote refs are up to date
     // This ensures we compare against the current remote state, not stale local refs
+    // Note: This adds latency but ensures accurate comparisons for PR reviews
     let fetch_output = Command::new("git")
         .args(["-C", &worktree_path, "fetch", "origin", &target_branch])
         .output();
@@ -790,8 +805,10 @@ pub async fn get_local_git_status(
     if let Ok(result) = &fetch_output {
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            debug!(stderr = %stderr, "git fetch origin failed (continuing with local refs)");
+            warn!(target_branch = %target_branch, stderr = %stderr, "git fetch origin failed (continuing with local refs)");
         }
+    } else if let Err(e) = &fetch_output {
+        warn!(target_branch = %target_branch, error = %e, "git fetch command failed to execute (continuing with local refs)");
     }
 
     // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
