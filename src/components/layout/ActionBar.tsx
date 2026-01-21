@@ -47,8 +47,8 @@ Based on the current git status and diff, create a single git commit:
 
 ## Step 2: Code Review
 
-Compare the current branch against \`${targetBranch}\` and conduct a thorough code review:
-1. Run \`git diff ${targetBranch}...HEAD\` to see all changes since branching
+Compare the current branch against the remote \`${targetBranch}\` branch and conduct a thorough code review:
+1. Run \`git diff origin/${targetBranch}...HEAD\` to see all changes since branching
 2. Review the diff focusing on:
    - **Logic and correctness**: Check for bugs, edge cases, and potential issues
    - **Readability**: Is the code clear and maintainable? Does it follow repository patterns?
@@ -107,7 +107,7 @@ Push the current branch to the remote:
 ## Step 4: Create Pull Request
 
 Create a PR against the \`${targetBranch}\` branch:
-1. Run \`git diff ${targetBranch}...HEAD\` to see all changes that will be in the PR
+1. Run \`git diff origin/${targetBranch}...HEAD\` to see all changes that will be in the PR
 2. Run \`git log ${targetBranch}..HEAD --oneline\` to see all commits
 3. Create the PR using: \`gh pr create --base ${targetBranch} --fill\`
    - If --fill doesn't provide enough context, use --title and --body with a detailed description
