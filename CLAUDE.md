@@ -1,6 +1,50 @@
 # Orkestrator AI
 
-A Tauri desktop application for managing isolated Docker-based development environments for Claude Code.
+A Tauri desktop application for managing isolated development environments for AI coding agents (Claude and OpenCode).
+
+## Environment Types
+
+Orkestrator supports two types of development environments:
+
+### Containerized Environments (Docker)
+
+Containerized environments run in isolated Docker containers with network firewall restrictions. These provide:
+- Full isolation from the host system
+- Network access control (only allowed domains can be accessed)
+- Reproducible development environments
+- Custom base image with Claude Code CLI pre-installed
+
+### Local Environments (Git Worktrees)
+
+Local environments run directly on the host machine using Git worktrees. These provide:
+- Direct access to the local filesystem
+- Faster startup times (no container overhead)
+- Access to local tools and configurations
+- Git worktree-based isolation for multiple environment branches
+
+## Agent Modes
+
+Both Claude and OpenCode agents can run in different modes:
+
+### Terminal Mode (Standard)
+
+Terminal mode runs the agent's CLI interface inside an xterm.js terminal. This is the traditional command-line experience where you interact with the agent through text input/output in a terminal emulator.
+
+- **Claude**: Runs `claude` CLI in the terminal
+- **OpenCode**: Runs `opencode` CLI in the terminal
+
+### Native Mode
+
+Native mode provides a custom chat-style UI that communicates with a backend server instead of running the CLI directly:
+
+- **Claude Native Mode**: Uses a bridge server (`claude-bridge`) that wraps the Claude Agent SDK. The frontend communicates via HTTP/SSE to the bridge server which manages Claude sessions.
+- **OpenCode Native Mode**: Uses the OpenCode server (`opencode serve`) which exposes an HTTP API. The frontend uses `@opencode-ai/sdk` v2 to communicate with the server.
+
+Native mode benefits:
+- Rich UI with message rendering, tool visualization, and file attachments
+- Interactive question/answer cards for agent questions
+- Better control over session management
+- Real-time streaming via Server-Sent Events (SSE)
 
 ## Tech Stack
 
@@ -22,14 +66,16 @@ orkestrator-ai/
 ├── src-tauri/              # Rust backend
 │   └── src/
 │       ├── commands/       # Tauri IPC commands
-│       ├── docker/         # Bollard Docker client
+│       ├── docker/         # Bollard Docker client (containerized envs)
+│       ├── local/          # Local environment management (worktrees, servers)
 │       ├── pty/            # Terminal session management
 │       ├── storage/        # JSON file persistence
 │       └── models/         # Data models
 ├── docker/                 # Docker configuration
 │   ├── Dockerfile          # Base image definition
 │   ├── entrypoint.sh       # Container entrypoint
-│   └── init-firewall.sh    # Network firewall setup
+│   ├── init-firewall.sh    # Network firewall setup
+│   └── claude-bridge/      # Claude Native Mode bridge server (Node.js)
 └── docs/                   # Documentation and stories
 ```
 
@@ -105,26 +151,83 @@ Containers have restricted network access via iptables firewall:
 - Allowed: GitHub, npm registry, Anthropic API, VS Code marketplace
 - All other outbound traffic is blocked
 
-## Key Files
+## Key Files by Environment Type
+
+### Containerized Environments (Docker)
 
 | File | Purpose |
 |------|---------|
-| `src-tauri/src/docker/client.rs` | Core Docker API client |
-| `src-tauri/src/docker/container.rs` | Container provisioning |
-| `src-tauri/src/commands/environments.rs` | Environment CRUD commands |
-| `src/components/terminal/TerminalContainer.tsx` | xterm.js integration |
-| `src/components/opencode/OpenCodeChatTab.tsx` | OpenCode Native Mode chat interface |
-| `src/lib/opencode-client.ts` | OpenCode SDK v2 client wrapper |
+| `src-tauri/src/docker/client.rs` | Core Docker API client using Bollard |
+| `src-tauri/src/docker/container.rs` | Container provisioning and lifecycle |
 | `docker/Dockerfile` | Base image definition |
-| `docker/init-firewall.sh` | Network firewall rules |
+| `docker/entrypoint.sh` | Container startup script |
+| `docker/init-firewall.sh` | Network firewall setup |
+| `docker/workspace-setup.sh` | Workspace initialization in container |
+| `src-tauri/src/pty/mod.rs` | PTY session management for containers |
+| `src-tauri/src/commands/terminal.rs` | Container terminal Tauri commands |
 
-## OpenCode Native Mode
+### Local Environments (Git Worktrees)
 
-The application supports two modes for OpenCode interaction:
-- **Terminal mode**: Traditional CLI-based interaction via xterm.js
-- **Native mode**: Chat-style interface using the OpenCode SDK
+| File | Purpose |
+|------|---------|
+| `src-tauri/src/local/worktree.rs` | Git worktree creation and management |
+| `src-tauri/src/local/pty.rs` | PTY management for local environments |
+| `src-tauri/src/local/process.rs` | Process management for local servers |
+| `src-tauri/src/local/ports.rs` | Port allocation and management |
+| `src-tauri/src/local/servers.rs` | Local server lifecycle (OpenCode/Claude bridge) |
+| `src-tauri/src/commands/local_terminal.rs` | Local terminal Tauri commands |
+| `src-tauri/src/commands/local_servers.rs` | Local server management commands |
 
-### OpenCode SDK v2
+### Shared Environment Files
+
+| File | Purpose |
+|------|---------|
+| `src-tauri/src/models/mod.rs` | Environment types (`EnvironmentType` enum) |
+| `src-tauri/src/commands/environments.rs` | Environment CRUD commands |
+| `src/stores/environmentStore.ts` | Environment state management |
+| `src/components/environments/CreateEnvironmentDialog.tsx` | Environment creation UI |
+
+## Key Files by Agent Mode
+
+### Terminal Mode (Both Agents)
+
+| File | Purpose |
+|------|---------|
+| `src/components/terminal/TerminalContainer.tsx` | Main terminal container with tabs |
+| `src/components/terminal/TerminalTab.tsx` | xterm.js terminal integration |
+| `src/components/terminal/PersistentTerminal.tsx` | Terminal session persistence |
+| `src/components/terminal/ComposeBar.tsx` | Terminal compose bar |
+| `src/stores/terminalSessionStore.ts` | Terminal session state |
+
+### Claude Native Mode
+
+| File | Purpose |
+|------|---------|
+| `src/components/claude/ClaudeChatTab.tsx` | Main chat interface |
+| `src/components/claude/ClaudeComposeBar.tsx` | Message input with attachments |
+| `src/components/claude/ClaudeMessage.tsx` | Message rendering with tools |
+| `src/components/claude/ClaudeQuestionCard.tsx` | Interactive question/answer UI |
+| `src/lib/claude-client.ts` | Claude bridge server client wrapper |
+| `src/stores/claudeStore.ts` | Zustand store for Claude sessions |
+| `src-tauri/src/commands/claude.rs` | Claude bridge commands (container) |
+| `docker/claude-bridge/src/index.ts` | Bridge server entry point |
+| `docker/claude-bridge/src/services/session-manager.ts` | Claude Agent SDK integration |
+| `docker/claude-bridge/src/routes/session.ts` | Session API endpoints |
+| `docker/claude-bridge/src/routes/events.ts` | SSE event subscription |
+
+### OpenCode Native Mode
+
+| File | Purpose |
+|------|---------|
+| `src/components/opencode/OpenCodeChatTab.tsx` | Main chat interface |
+| `src/components/opencode/OpenCodeComposeBar.tsx` | Message input with attachments |
+| `src/components/opencode/OpenCodeMessage.tsx` | Message rendering with tools |
+| `src/components/opencode/OpenCodeQuestionCard.tsx` | Interactive question/answer UI |
+| `src/lib/opencode-client.ts` | OpenCode SDK v2 client wrapper |
+| `src/stores/openCodeStore.ts` | Zustand store for OpenCode sessions |
+| `src-tauri/src/commands/opencode.rs` | OpenCode server commands (container) |
+
+## OpenCode SDK v2
 
 We use the **v2 API** of the `@opencode-ai/sdk` package. This is important because v1 and v2 have different API structures.
 
@@ -138,16 +241,6 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/c
 - Session methods use `sessionID` parameter directly instead of `path: { id: sessionId }`
 - Create session uses flat parameters: `{ title }` instead of `{ body: { title } }`
 - v2 includes the `question` API for interactive prompts (v1 doesn't)
-
-**Key files**:
-| File | Purpose |
-|------|---------|
-| `src/lib/opencode-client.ts` | SDK wrapper with typed functions |
-| `src/stores/openCodeStore.ts` | Zustand store for sessions, questions, state |
-| `src/components/opencode/OpenCodeChatTab.tsx` | Main chat interface |
-| `src/components/opencode/OpenCodeQuestionCard.tsx` | Interactive question/answer UI |
-| `src/components/opencode/OpenCodeComposeBar.tsx` | Message input with attachments |
-| `src/components/opencode/OpenCodeMessage.tsx` | Message rendering with tools |
 
 **SDK features used**:
 - `client.session.*` - Session management (create, messages, promptAsync, abort, delete)

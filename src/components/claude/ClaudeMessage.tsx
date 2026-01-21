@@ -1,13 +1,54 @@
 import { memo, useCallback, useState, useMemo, useRef, useEffect, type AnchorHTMLAttributes } from "react";
-import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers } from "lucide-react";
+import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import { openInBrowser } from "@/lib/tauri";
+import { openInBrowser, readFileBase64 } from "@/lib/tauri";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type ClaudeMessagePart, type ToolDiffMetadata } from "@/lib/claude-client";
+
+/** Parsed attachment from XML tags */
+interface ParsedAttachment {
+  type: string;
+  path: string;
+  filename: string;
+}
+
+/** Parse attached-files XML block from message content */
+function parseAttachmentsFromContent(content: string): { cleanContent: string; attachments: ParsedAttachment[] } {
+  const attachments: ParsedAttachment[] = [];
+
+  // Match the entire <attached-files>...</attached-files> block
+  const attachedFilesRegex = /<attached-files>\s*([\s\S]*?)\s*<\/attached-files>/g;
+  let cleanContent = content;
+
+  let match;
+  while ((match = attachedFilesRegex.exec(content)) !== null) {
+    const block = match[0];
+    const innerContent = match[1] || "";
+
+    // Parse individual attachment tags
+    const attachmentRegex = /<attachment\s+type="([^"]*)"\s+path="([^"]*)"\s+filename="([^"]*)"\s*\/>/g;
+    let attachmentMatch;
+    while ((attachmentMatch = attachmentRegex.exec(innerContent)) !== null) {
+      const [, type, path, filename] = attachmentMatch;
+      if (type && path) {
+        attachments.push({
+          type,
+          path,
+          filename: filename || "",
+        });
+      }
+    }
+
+    // Remove the block from content
+    cleanContent = cleanContent.replace(block, "").trim();
+  }
+
+  return { cleanContent, attachments };
+}
 
 /** Custom link component that opens URLs in the system browser */
 function ExternalLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
@@ -792,6 +833,133 @@ function FilePart({ path }: { path: string }) {
   );
 }
 
+/** Image preview overlay */
+function ImagePreviewOverlay({
+  imageSrc,
+  filename,
+  onClose,
+}: {
+  imageSrc: string;
+  filename: string;
+  onClose: () => void;
+}) {
+  // Close on escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
+      onClick={onClose}
+    >
+      <div className="relative max-w-full max-h-full" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onClose}
+          className="absolute -top-10 right-0 p-2 text-white/70 hover:text-white transition-colors"
+        >
+          <X className="w-6 h-6" />
+        </button>
+        <div className="text-white/70 text-sm mb-2 text-center">{filename}</div>
+        <img
+          src={imageSrc}
+          alt={filename}
+          className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Clickable attachment thumbnail for user messages */
+function AttachmentPart({ attachment }: { attachment: ParsedAttachment }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  const isImage = attachment.type === "image";
+  const displayName = attachment.filename || attachment.path.split("/").pop() || "file";
+
+  const handleClick = useCallback(async () => {
+    if (!isImage) return;
+
+    // If already loaded, just open preview
+    if (imageSrc) {
+      setPreviewOpen(true);
+      return;
+    }
+
+    // Try to load the image
+    setLoading(true);
+    setLoadError(false);
+    try {
+      // Use our custom Tauri command that bypasses fs plugin permission issues
+      const base64 = await readFileBase64(attachment.path);
+      const dataUrl = `data:image/png;base64,${base64}`;
+      setImageSrc(dataUrl);
+      setPreviewOpen(true);
+    } catch (err) {
+      console.error("[AttachmentPart] Failed to load image:", err, { path: attachment.path });
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [isImage, imageSrc, attachment.path]);
+
+  return (
+    <>
+      <button
+        onClick={handleClick}
+        disabled={!isImage || loading}
+        className={cn(
+          "inline-flex items-center gap-1.5 text-xs py-1.5 px-2.5 rounded-md border transition-colors",
+          isImage
+            ? "bg-muted/50 border-border hover:bg-muted hover:border-border/80 cursor-pointer"
+            : "bg-muted/30 border-border/50 cursor-default",
+          loading && "opacity-50"
+        )}
+      >
+        {isImage ? (
+          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+        <span className="font-medium text-foreground/80 truncate max-w-[200px]">
+          {displayName}
+        </span>
+        {loading && <span className="text-muted-foreground">(loading...)</span>}
+        {loadError && <span className="text-destructive text-[10px]">(error)</span>}
+      </button>
+
+      {previewOpen && imageSrc && (
+        <ImagePreviewOverlay
+          imageSrc={imageSrc}
+          filename={displayName}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/** Render attachments row for user messages */
+function AttachmentsList({ attachments }: { attachments: ParsedAttachment[] }) {
+  if (attachments.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {attachments.map((att, i) => (
+        <AttachmentPart key={`attachment-${i}`} attachment={att} />
+      ))}
+    </div>
+  );
+}
+
 /** Render a text content part with markdown support */
 function TextPart({ content }: { content: string }) {
   return (
@@ -855,6 +1023,14 @@ export const ClaudeMessage = memo(function ClaudeMessage({
   const isUser = message.role === "user";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
 
+  // For user messages, parse out attachment XML tags
+  const { cleanContent, attachments } = useMemo(() => {
+    if (isUser && message.content) {
+      return parseAttachmentsFromContent(message.content);
+    }
+    return { cleanContent: message.content, attachments: [] };
+  }, [isUser, message.content]);
+
   // Process parts in order, grouping tools under Tasks
   const processedParts = useMemo(
     () => processPartsInOrder(message.parts),
@@ -908,66 +1084,80 @@ export const ClaudeMessage = memo(function ClaudeMessage({
 
         {/* Message content - render parts in their natural order */}
         <div className="space-y-2">
-          {processedParts.map((processed, i) => {
-            switch (processed.type) {
-              case "thinking":
-                return (
-                  <ThinkingPart
-                    key={`thinking-${i}`}
-                    content={processed.part?.content || ""}
-                    isComplete={hasTextParts}
-                  />
-                );
-              case "text":
-                return <TextPart key={`text-${i}`} content={processed.part?.content || ""} />;
-              case "file":
-                return <FilePart key={`file-${i}`} path={processed.part?.content || ""} />;
-              case "task-group":
-                return (
-                  <TaskToolPart
-                    key={`task-${i}`}
-                    toolName={processed.part?.toolName}
-                    toolState={processed.part?.toolState}
-                    toolArgs={processed.part?.toolArgs}
-                    toolOutput={processed.part?.toolOutput}
-                    toolError={processed.part?.toolError}
-                    childTools={processed.childTools || []}
-                  />
-                );
-              case "tool-group":
-                // Use specialized EditToolPart for edit/write tools
-                if (isEditTool(processed.part?.toolName)) {
-                  return (
-                    <EditToolPart
-                      key={`edit-${i}`}
-                      toolName={processed.part?.toolName}
-                      toolState={processed.part?.toolState}
-                      toolTitle={processed.part?.toolTitle}
-                      toolOutput={processed.part?.toolOutput}
-                      toolError={processed.part?.toolError}
-                      toolDiff={processed.part?.toolDiff}
-                    />
-                  );
+          {/* For user messages, render cleanContent (with XML stripped) instead of raw parts */}
+          {isUser ? (
+            <>
+              {cleanContent && <TextPart content={cleanContent} />}
+            </>
+          ) : (
+            <>
+              {processedParts.map((processed, i) => {
+                switch (processed.type) {
+                  case "thinking":
+                    return (
+                      <ThinkingPart
+                        key={`thinking-${i}`}
+                        content={processed.part?.content || ""}
+                        isComplete={hasTextParts}
+                      />
+                    );
+                  case "text":
+                    return <TextPart key={`text-${i}`} content={processed.part?.content || ""} />;
+                  case "file":
+                    return <FilePart key={`file-${i}`} path={processed.part?.content || ""} />;
+                  case "task-group":
+                    return (
+                      <TaskToolPart
+                        key={`task-${i}`}
+                        toolName={processed.part?.toolName}
+                        toolState={processed.part?.toolState}
+                        toolArgs={processed.part?.toolArgs}
+                        toolOutput={processed.part?.toolOutput}
+                        toolError={processed.part?.toolError}
+                        childTools={processed.childTools || []}
+                      />
+                    );
+                  case "tool-group":
+                    // Use specialized EditToolPart for edit/write tools
+                    if (isEditTool(processed.part?.toolName)) {
+                      return (
+                        <EditToolPart
+                          key={`edit-${i}`}
+                          toolName={processed.part?.toolName}
+                          toolState={processed.part?.toolState}
+                          toolTitle={processed.part?.toolTitle}
+                          toolOutput={processed.part?.toolOutput}
+                          toolError={processed.part?.toolError}
+                          toolDiff={processed.part?.toolDiff}
+                        />
+                      );
+                    }
+                    return (
+                      <ToolPart
+                        key={`tool-${i}`}
+                        toolName={processed.part?.toolName}
+                        toolState={processed.part?.toolState}
+                        toolTitle={processed.part?.toolTitle}
+                        toolArgs={processed.part?.toolArgs}
+                        toolOutput={processed.part?.toolOutput}
+                        toolError={processed.part?.toolError}
+                      />
+                    );
+                  default:
+                    return null;
                 }
-                return (
-                  <ToolPart
-                    key={`tool-${i}`}
-                    toolName={processed.part?.toolName}
-                    toolState={processed.part?.toolState}
-                    toolTitle={processed.part?.toolTitle}
-                    toolArgs={processed.part?.toolArgs}
-                    toolOutput={processed.part?.toolOutput}
-                    toolError={processed.part?.toolError}
-                  />
-                );
-              default:
-                return null;
-            }
-          })}
+              })}
 
-          {/* Fallback to raw content if no parts were processed */}
-          {processedParts.length === 0 && message.content && (
-            <TextPart content={message.content} />
+              {/* Fallback to raw content if no parts were processed */}
+              {processedParts.length === 0 && message.content && (
+                <TextPart content={message.content} />
+              )}
+            </>
+          )}
+
+          {/* Show attachments for user messages */}
+          {isUser && attachments.length > 0 && (
+            <AttachmentsList attachments={attachments} />
           )}
         </div>
       </div>

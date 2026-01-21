@@ -1123,6 +1123,48 @@ pub async fn read_local_file(
     })
 }
 
+/// Read a binary file from an absolute path as base64
+/// Used for reading attachment images that are stored in .orkestrator/clipboard/
+#[tauri::command]
+pub async fn read_file_base64(
+    file_path: String,
+) -> Result<String, String> {
+    use base64::Engine;
+
+    let path = std::path::Path::new(&file_path);
+
+    // Validate file exists
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+
+    if !path.is_file() {
+        return Err(format!("Path is not a file: {}", file_path));
+    }
+
+    // Size limit: 10MB for binary files
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
+
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(format!(
+            "File too large (max 10MB, got {}MB)",
+            metadata.len() / 1024 / 1024
+        ));
+    }
+
+    // Read file bytes
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    // Encode as base64
+    let base64_content = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    Ok(base64_content)
+}
+
 /// Read a file from the remote version of a branch in a local environment.
 /// Uses `origin/<branch>` to ensure comparison against remote state.
 ///

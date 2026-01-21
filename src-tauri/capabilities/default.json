@@ -10,6 +10,17 @@
     "clipboard-manager:default",
     "clipboard-manager:allow-read-image",
     "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "/Users/**" },
+        { "path": "$HOME/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPCONFIG/**" }
+      ]
+    },
+    "fs:default",
+    "fs:allow-read"
   ]
 }
