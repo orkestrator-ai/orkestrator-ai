@@ -189,8 +189,8 @@ export function useEnvironments(projectId: string | null) {
         console.log("[useEnvironments] Setting status to creating...");
         updateStatusInStore(environmentId, "creating");
         console.log("[useEnvironments] Calling tauri.startEnvironment...");
-        await tauri.startEnvironment(environmentId);
-        console.log("[useEnvironments] tauri.startEnvironment completed, refreshing environment...");
+        const result = await tauri.startEnvironment(environmentId);
+        console.log("[useEnvironments] tauri.startEnvironment completed, refreshing environment...", { setupCommands: result.setupCommands });
         // Refresh the full environment data (including containerId)
         const updatedEnv = await tauri.getEnvironment(environmentId);
         if (updatedEnv) {
@@ -205,6 +205,8 @@ export function useEnvironments(projectId: string | null) {
           updateEnvironmentInStore(environmentId, updatedEnv);
         }
         toast.success("Environment started");
+        // Return setup commands if present (for local environments with orkestrator-ai.json)
+        return result.setupCommands;
       } catch (err) {
         console.error("[useEnvironments] Error starting environment:", err);
         const message = getErrorMessage(err, "Failed to start environment");

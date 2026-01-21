@@ -733,6 +733,61 @@ pub async fn run_setup_local(worktree_path: &str) -> SetupLocalResult {
     }
 }
 
+/// Get setupLocal commands from orkestrator-ai.json without executing them
+///
+/// Reads the orkestrator-ai.json file from the worktree directory and returns
+/// the commands specified in the `setupLocal` field. Does not execute the commands.
+///
+/// # Arguments
+/// * `worktree_path` - Path to the worktree directory
+///
+/// # Returns
+/// A vector of commands to run, or an empty vector if no config file or no commands
+pub async fn get_setup_local_commands(worktree_path: &str) -> Vec<String> {
+    let config_path = Path::new(worktree_path).join("orkestrator-ai.json");
+
+    // Read and parse the config file
+    let config_content = match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            debug!(worktree_path = %worktree_path, "No orkestrator-ai.json found");
+            return vec![];
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to read orkestrator-ai.json");
+            return vec![];
+        }
+    };
+
+    let config: serde_json::Value = match serde_json::from_str(&config_content) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(error = %e, "Failed to parse orkestrator-ai.json");
+            return vec![];
+        }
+    };
+
+    // Extract setupLocal field - can be string or array of strings
+    match config.get("setupLocal") {
+        Some(serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                vec![]
+            } else {
+                vec![s.clone()]
+            }
+        }
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => {
+            debug!(worktree_path = %worktree_path, "No setupLocal field found in orkestrator-ai.json");
+            vec![]
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

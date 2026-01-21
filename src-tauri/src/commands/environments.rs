@@ -11,7 +11,7 @@ use crate::docker::{
 };
 use crate::local::{
     allocate_ports, copy_env_files, create_worktree, delete_worktree,
-    run_setup_local, stop_all_local_servers,
+    get_setup_local_commands, stop_all_local_servers,
 };
 use crate::models::{Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState};
 use crate::storage::{get_config, get_storage, StorageError};
@@ -25,6 +25,14 @@ pub struct EnvironmentRenamedPayload {
     pub environment_id: String,
     pub new_name: String,
     pub new_branch: String,
+}
+
+/// Result from starting an environment
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StartEnvironmentResult {
+    /// Setup commands to run in a terminal (for local environments with orkestrator-ai.json)
+    pub setup_commands: Option<Vec<String>>,
 }
 
 /// Convert storage errors to string for Tauri
@@ -821,7 +829,7 @@ pub async fn get_environment_status(environment_id: String) -> Result<Environmen
 
 /// Start an environment - creates and starts Docker container or git worktree
 #[tauri::command]
-pub async fn start_environment(environment_id: String) -> Result<(), String> {
+pub async fn start_environment(environment_id: String) -> Result<StartEnvironmentResult, String> {
     info!(environment_id = %environment_id, "Starting environment");
 
     let storage = get_storage().map_err(storage_error_to_string)?;
@@ -870,7 +878,7 @@ pub async fn start_environment(environment_id: String) -> Result<(), String> {
             .map_err(storage_error_to_string)?;
 
         info!(environment_id = %environment_id, "Container started successfully");
-        return Ok(());
+        return Ok(StartEnvironmentResult::default());
     }
 
     // Update status to creating
@@ -963,7 +971,7 @@ pub async fn start_environment(environment_id: String) -> Result<(), String> {
         .map_err(storage_error_to_string)?;
 
     info!(environment_id = %environment_id, "Environment started successfully");
-    Ok(())
+    Ok(StartEnvironmentResult::default())
 }
 
 /// Start a local (worktree-based) environment
@@ -972,7 +980,7 @@ async fn start_local_environment(
     environment: &Environment,
     project: &crate::models::Project,
     storage: &crate::storage::Storage,
-) -> Result<(), String> {
+) -> Result<StartEnvironmentResult, String> {
     info!(
         environment_id = %environment_id,
         environment_name = %environment.name,
@@ -997,7 +1005,7 @@ async fn start_local_environment(
                 .update_environment(environment_id, json!({ "status": "running" }))
                 .map_err(storage_error_to_string)?;
             info!(environment_id = %environment_id, "Local environment started (existing worktree)");
-            return Ok(());
+            return Ok(StartEnvironmentResult::default());
         }
     }
 
@@ -1035,23 +1043,18 @@ async fn start_local_environment(
         warn!(environment_id = %environment_id, error = %e, "Failed to copy env files (non-fatal)");
     }
 
-    // Run setupLocal commands from orkestrator-ai.json if present
-    let setup_result = run_setup_local(&worktree_path).await;
-    if !setup_result.success {
-        let err_msg = setup_result.error.unwrap_or_else(|| "Unknown error".to_string());
-        warn!(
-            environment_id = %environment_id,
-            error = %err_msg,
-            commands_run = setup_result.commands_run,
-            "setupLocal commands failed (non-fatal)"
-        );
-    } else if setup_result.commands_run > 0 {
+    // Get setupLocal commands from orkestrator-ai.json (to be run in terminal by frontend)
+    let setup_commands = get_setup_local_commands(&worktree_path).await;
+    let setup_commands_option = if setup_commands.is_empty() {
+        None
+    } else {
         info!(
             environment_id = %environment_id,
-            commands_run = setup_result.commands_run,
-            "setupLocal commands completed successfully"
+            command_count = setup_commands.len(),
+            "Found setupLocal commands to run in terminal"
         );
-    }
+        Some(setup_commands)
+    };
 
     // Update environment with worktree path, branch (if adjusted), and status
     storage
@@ -1066,7 +1069,9 @@ async fn start_local_environment(
         .map_err(storage_error_to_string)?;
 
     info!(environment_id = %environment_id, "Local environment started successfully");
-    Ok(())
+    Ok(StartEnvironmentResult {
+        setup_commands: setup_commands_option,
+    })
 }
 
 /// Sync environment status with actual Docker container state

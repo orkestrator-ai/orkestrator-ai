@@ -36,6 +36,7 @@ import { useProjects } from "@/hooks/useProjects";
 import { useEnvironments } from "@/hooks/useEnvironments";
 import { useUIStore, useClaudeOptionsStore, useConfigStore } from "@/stores";
 import { RepositorySettings } from "@/components/settings/RepositorySettings";
+import { useTerminalContext } from "@/contexts/TerminalContext";
 import type { Environment, Project } from "@/types";
 
 export function HierarchicalSidebar() {
@@ -72,6 +73,8 @@ export function HierarchicalSidebar() {
     setMultiSelection,
     clearMultiSelection,
   } = useUIStore();
+
+  const { createTab } = useTerminalContext();
 
   const isMultiSelectMode = selectedEnvironmentIds.length >= 1;
 
@@ -263,7 +266,15 @@ export function HierarchicalSidebar() {
       // Always auto-start the environment after creation
       // The tab type (plain terminal vs agent) is determined by agentOptions.launchAgent
       try {
-        await startEnvironment(environment.id);
+        const setupCommands = await startEnvironment(environment.id);
+        // If setup commands were returned (local env with orkestrator-ai.json), create a setup tab
+        if (setupCommands && setupCommands.length > 0 && createTab) {
+          console.info("[HierarchicalSidebar] Creating setup tab for local environment:", {
+            environmentId: environment.id,
+            commandCount: setupCommands.length,
+          });
+          createTab("plain", { initialCommands: setupCommands });
+        }
       } catch (startErr) {
         console.error("Failed to auto-start environment:", startErr);
         // Environment was created successfully, user can manually start it
@@ -354,9 +365,20 @@ export function HierarchicalSidebar() {
             status: environment.status,
             worktreePath: environment.worktreePath,
           });
-          startEnvironment(environment.id).catch((err) => {
-            console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);
-          });
+          startEnvironment(environment.id)
+            .then((setupCommands) => {
+              // If setup commands were returned, create a setup tab
+              if (setupCommands && setupCommands.length > 0 && createTab) {
+                console.info("[HierarchicalSidebar] Creating setup tab for local environment:", {
+                  environmentId: environment.id,
+                  commandCount: setupCommands.length,
+                });
+                createTab("plain", { initialCommands: setupCommands });
+              }
+            })
+            .catch((err) => {
+              console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);
+            });
         }
       }
     }

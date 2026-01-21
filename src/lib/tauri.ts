@@ -15,6 +15,7 @@ import type {
   SessionType,
   SessionStatus,
   PrState,
+  StartEnvironmentResult,
 } from "@/types";
 
 /** PR detection result containing URL, state, and merge conflict status */
@@ -81,8 +82,8 @@ export async function deleteEnvironment(environmentId: string): Promise<void> {
   return invoke("delete_environment", { environmentId });
 }
 
-export async function startEnvironment(environmentId: string): Promise<void> {
-  return invoke("start_environment", { environmentId });
+export async function startEnvironment(environmentId: string): Promise<StartEnvironmentResult> {
+  return invoke<StartEnvironmentResult>("start_environment", { environmentId });
 }
 
 export async function stopEnvironment(environmentId: string): Promise<void> {
