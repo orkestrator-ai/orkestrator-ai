@@ -17,6 +17,8 @@ interface ClaudeActivityStoreState {
   tabStates: Record<string, ClaudeActivityState>;
   // State: Map of containerId -> activity state (for sidebar display)
   containerStates: Record<string, ClaudeActivityState>;
+  // Reference counts: Map of containerId -> number of tabs using it
+  containerRefCounts: Record<string, number>;
   // Callbacks: Map of callbackId -> callback function
   stateChangeCallbacks: Map<CallbackId, ClaudeStateCallback>;
 
@@ -24,7 +26,15 @@ interface ClaudeActivityStoreState {
   setTabState: (tabId: string, state: ClaudeActivityState) => void;
   removeTabState: (tabId: string) => void;
   setContainerState: (containerId: string, state: ClaudeActivityState) => void;
+  /**
+   * @deprecated Use decrementContainerRef instead to properly handle multiple tabs.
+   * This is kept for backward compatibility but directly removes the state.
+   */
   removeContainerState: (containerId: string) => void;
+  /** Increment the reference count for a container (call when tab mounts) */
+  incrementContainerRef: (containerId: string) => void;
+  /** Decrement the reference count and remove state when it reaches 0 (call when tab unmounts) */
+  decrementContainerRef: (containerId: string) => void;
 
   // Callback registration
   registerStateCallback: (callback: ClaudeStateCallback) => CallbackId;
@@ -43,6 +53,7 @@ export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
     // Initial state
     tabStates: {},
     containerStates: {},
+    containerRefCounts: {},
     stateChangeCallbacks: new Map(),
 
     // Actions
@@ -84,7 +95,37 @@ export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
     removeContainerState: (containerId) =>
       set((prev) => {
         const { [containerId]: _, ...rest } = prev.containerStates;
-        return { containerStates: rest };
+        const { [containerId]: __, ...restCounts } = prev.containerRefCounts;
+        return { containerStates: rest, containerRefCounts: restCounts };
+      }),
+
+    incrementContainerRef: (containerId) =>
+      set((prev) => ({
+        containerRefCounts: {
+          ...prev.containerRefCounts,
+          [containerId]: (prev.containerRefCounts[containerId] || 0) + 1,
+        },
+      })),
+
+    decrementContainerRef: (containerId) =>
+      set((prev) => {
+        const currentCount = prev.containerRefCounts[containerId] || 0;
+        const newCount = Math.max(0, currentCount - 1);
+
+        if (newCount === 0) {
+          // No more tabs using this container, remove state
+          const { [containerId]: _, ...restStates } = prev.containerStates;
+          const { [containerId]: __, ...restCounts } = prev.containerRefCounts;
+          return { containerStates: restStates, containerRefCounts: restCounts };
+        }
+
+        // Still have tabs, just decrement count
+        return {
+          containerRefCounts: {
+            ...prev.containerRefCounts,
+            [containerId]: newCount,
+          },
+        };
       }),
 
     // Callback registration

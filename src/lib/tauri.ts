@@ -224,6 +224,11 @@ export async function detectPr(containerId: string): Promise<PrDetectionResult |
   return invoke<PrDetectionResult | null>("detect_pr", { containerId });
 }
 
+/** Detect PR URL and state for local (worktree-based) environments */
+export async function detectPrLocal(environmentId: string): Promise<PrDetectionResult | null> {
+  return invoke<PrDetectionResult | null>("detect_pr_local", { environmentId });
+}
+
 /** Merge method options for PR merging */
 export type MergeMethod = "squash" | "merge" | "rebase";
 
@@ -234,6 +239,15 @@ export async function mergePr(
   deleteBranch?: boolean
 ): Promise<void> {
   return invoke("merge_pr", { containerId, method, deleteBranch });
+}
+
+/** Merge the current branch's PR locally using gh pr merge */
+export async function mergePrLocal(
+  environmentId: string,
+  method?: MergeMethod,
+  deleteBranch?: boolean
+): Promise<void> {
+  return invoke("merge_pr_local", { environmentId, method, deleteBranch });
 }
 
 // --- Docker Commands ---

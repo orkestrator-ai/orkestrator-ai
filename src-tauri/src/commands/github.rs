@@ -114,6 +114,108 @@ pub async fn detect_pr(container_id: String) -> Result<Option<PrDetectionResult>
     }))
 }
 
+/// Detect PR URL and state for the current branch by running gh pr view locally
+/// Used for local (worktree-based) environments where there's no container
+#[tauri::command]
+pub async fn detect_pr_local(environment_id: String) -> Result<Option<PrDetectionResult>, String> {
+    use crate::storage::get_storage;
+    use tokio::process::Command;
+    use tracing::debug;
+
+    // Get the environment to find the worktree path
+    let storage = get_storage().map_err(|e| e.to_string())?;
+    let environment = storage
+        .get_environment(&environment_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    // Get the worktree path - this only works for local environments
+    let worktree_path = environment
+        .worktree_path
+        .ok_or_else(|| "Environment is not a local environment (no worktree path)".to_string())?;
+
+    debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Detecting PR for local environment");
+
+    // Run: gh pr view --json url,state,mergeable -q '{url: .url, state: .state, mergeable: .mergeable}'
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "url,state,mergeable",
+            "-q",
+            "{url: .url, state: .state, mergeable: .mergeable}",
+        ])
+        .current_dir(&worktree_path)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute gh command: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let trimmed = stdout.trim();
+
+    debug!(stdout = %trimmed, stderr = %stderr, "gh pr view output");
+
+    // If output is empty or command failed, no PR exists
+    if trimmed.is_empty() || !output.status.success() {
+        return Ok(None);
+    }
+
+    // Try to parse the JSON output
+    #[derive(serde::Deserialize)]
+    struct GhPrView {
+        url: String,
+        state: String,
+        mergeable: Option<String>,
+    }
+
+    let pr_view: GhPrView = match serde_json::from_str(trimmed) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            let trimmed_lower = trimmed.to_lowercase();
+            if trimmed_lower.contains("no pull request")
+                || trimmed_lower.contains("could not resolve")
+                || trimmed_lower.contains("not found")
+                || trimmed_lower.contains("error")
+                || trimmed_lower.contains("failed")
+            {
+                return Ok(None);
+            }
+            debug!(output = %trimmed, "Unexpected non-JSON output from gh pr view (local)");
+            return Ok(None);
+        }
+    };
+
+    // Validate URL format
+    if !pr_view.url.starts_with("https://")
+        || !pr_view.url.contains("github.com/")
+        || !pr_view.url.contains("/pull/")
+    {
+        return Ok(None);
+    }
+
+    // Convert state string to PrState enum
+    let state = match pr_view.state.to_uppercase().as_str() {
+        "OPEN" => PrState::Open,
+        "MERGED" => PrState::Merged,
+        "CLOSED" => PrState::Closed,
+        _ => return Ok(None),
+    };
+
+    // Check for merge conflicts
+    let has_merge_conflicts = pr_view
+        .mergeable
+        .map(|m| m.to_uppercase() == "CONFLICTING")
+        .unwrap_or(false);
+
+    Ok(Some(PrDetectionResult {
+        url: pr_view.url,
+        state,
+        has_merge_conflicts,
+    }))
+}
+
 /// Detect if there's an open PR for the current branch by running gh pr view in the container
 #[tauri::command]
 pub async fn detect_pr_url(container_id: String) -> Result<Option<String>, String> {
@@ -289,6 +391,80 @@ pub async fn merge_pr(
 
     tracing::debug!(container_id = %container_id, output = %trimmed, "gh pr merge output");
     info!(container_id = %container_id, "PR merged successfully");
+
+    Ok(())
+}
+
+/// Merge the current branch's PR locally using gh pr merge
+/// Used for local (worktree-based) environments where there's no container
+#[tauri::command]
+pub async fn merge_pr_local(
+    environment_id: String,
+    method: Option<MergeMethod>,
+    delete_branch: Option<bool>,
+) -> Result<(), String> {
+    use crate::storage::get_storage;
+    use tokio::process::Command;
+    use tracing::{debug, info};
+
+    // Get the environment to find the worktree path
+    let storage = get_storage().map_err(|e| e.to_string())?;
+    let environment = storage
+        .get_environment(&environment_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    // Get the worktree path - this only works for local environments
+    let worktree_path = environment
+        .worktree_path
+        .ok_or_else(|| "Environment is not a local environment (no worktree path)".to_string())?;
+
+    let merge_method = method.unwrap_or_default();
+    let should_delete_branch = delete_branch.unwrap_or(true);
+
+    info!(
+        environment_id = %environment_id,
+        worktree_path = %worktree_path,
+        method = ?merge_method.as_flag(),
+        delete_branch = should_delete_branch,
+        "Merging PR (local)"
+    );
+
+    // Build the command arguments
+    let mut args = vec!["pr", "merge", merge_method.as_flag()];
+    if should_delete_branch {
+        args.push("--delete-branch");
+    }
+
+    // Run: gh pr merge --squash --delete-branch (or other options)
+    let output = Command::new("gh")
+        .args(&args)
+        .current_dir(&worktree_path)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute gh command: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let trimmed = stdout.trim();
+    let stderr_trimmed = stderr.trim();
+
+    debug!(stdout = %trimmed, stderr = %stderr_trimmed, status = ?output.status, "gh pr merge output (local)");
+
+    // Primary check: rely on exit status
+    // gh pr merge returns non-zero on actual failures
+    if !output.status.success() {
+        let error_msg = if !stderr_trimmed.is_empty() {
+            stderr_trimmed
+        } else if !trimmed.is_empty() {
+            trimmed
+        } else {
+            "Unknown error"
+        };
+        return Err(format!("Failed to merge PR: {}", error_msg));
+    }
+
+    info!(environment_id = %environment_id, "PR merged successfully (local)");
 
     Ok(())
 }

@@ -192,7 +192,9 @@ pub fn run() {
             clear_environment_pr,
             detect_pr_url,
             detect_pr,
+            detect_pr_local,
             merge_pr,
+            merge_pr_local,
             // Config commands
             get_config,
             save_config,

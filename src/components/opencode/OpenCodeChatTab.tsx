@@ -3,6 +3,7 @@ import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useOpenCodeStore } from "@/stores/openCodeStore";
+import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
   createClient,
   getModels,
@@ -76,6 +77,10 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     pendingQuestions: pendingQuestionsMap,
   } = useOpenCodeStore();
 
+  // Activity state tracking - use environmentId as key for both local and container environments
+  // Use reference counting to handle multiple tabs for the same environment
+  const { setContainerState, incrementContainerRef, decrementContainerRef } = useClaudeActivityStore();
+
   // Get client from Map (shared per environment) - subscribing to the Map ensures re-render on changes
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
   // Get session from Map keyed by tabId (each tab has its own session)
@@ -92,6 +97,36 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     }
     return questions;
   }, [session?.sessionId, pendingQuestionsMap]);
+
+  // Track OpenCode activity state based on session loading - update the environment icon in sidebar
+  // For native mode, we use environmentId as the key (works for both local and containerized)
+  useEffect(() => {
+    if (connectionState !== "connected") {
+      // Not connected yet, show idle
+      setContainerState(environmentId, "idle");
+      return;
+    }
+
+    if (session?.isLoading) {
+      // OpenCode is working on a response
+      setContainerState(environmentId, "working");
+    } else if (pendingQuestions.length > 0) {
+      // OpenCode is waiting for user input (question)
+      setContainerState(environmentId, "waiting");
+    } else {
+      // OpenCode is idle
+      setContainerState(environmentId, "idle");
+    }
+  }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
+
+  // Track container reference count for activity state management
+  // Increment on mount, decrement on unmount - state is only removed when last tab closes
+  useEffect(() => {
+    incrementContainerRef(environmentId);
+    return () => {
+      decrementContainerRef(environmentId);
+    };
+  }, [environmentId, incrementContainerRef, decrementContainerRef]);
 
   // Track last initialization time to prevent rapid re-initialization
   const lastInitTimeRef = useRef<number>(0);
