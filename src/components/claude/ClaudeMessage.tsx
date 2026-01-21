@@ -1,6 +1,6 @@
 import { memo, useCallback, useState, useMemo, useRef, useEffect, type AnchorHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
-import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X, ListTodo, Square, CheckSquare } from "lucide-react";
+import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X, ListTodo, Square, CheckSquare, Plug } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
@@ -162,6 +162,8 @@ function ToolPart({
   toolArgs,
   toolOutput,
   toolError,
+  isMcpTool,
+  mcpServerName,
 }: {
   toolName?: string;
   toolState?: "success" | "failure" | "pending";
@@ -169,6 +171,8 @@ function ToolPart({
   toolArgs?: Record<string, unknown>;
   toolOutput?: string;
   toolError?: string;
+  isMcpTool?: boolean;
+  mcpServerName?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -250,7 +254,8 @@ function ToolPart({
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-1.5">
       <CollapsibleTrigger
         className={cn(
-          "flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors",
+          "flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 rounded-md transition-colors",
+          isMcpTool ? "bg-violet-500/10 hover:bg-violet-500/20" : "bg-muted/50 hover:bg-muted/70",
           hasExpandableContent && "cursor-pointer",
           !hasExpandableContent && "cursor-default"
         )}
@@ -263,8 +268,17 @@ function ToolPart({
             !hasExpandableContent && "opacity-0"
           )}
         />
-        <Wrench className="w-3.5 h-3.5 shrink-0" />
-        <span className="font-medium">{toolName || "Unknown tool"}</span>
+        {isMcpTool ? (
+          <Plug className="w-3.5 h-3.5 shrink-0 text-violet-500" />
+        ) : (
+          <Wrench className="w-3.5 h-3.5 shrink-0" />
+        )}
+        <span className={cn("font-medium", isMcpTool && "text-violet-400")}>{toolName || "Unknown tool"}</span>
+        {isMcpTool && mcpServerName && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400 shrink-0" title={`MCP server: ${mcpServerName}`}>
+            MCP
+          </span>
+        )}
         {displayInfo && (
           <span className="font-mono text-muted-foreground/80 truncate flex-1 text-left">
             {displayInfo}
@@ -833,6 +847,8 @@ function ChildToolPart({ part }: { part: ClaudeMessagePart }) {
   const toolState = part.toolState;
   const toolOutput = part.toolOutput;
   const toolError = part.toolError;
+  const isMcpTool = part.isMcpTool;
+  const mcpServerName = part.mcpServerName;
 
   // Get display info based on tool type
   const getDisplayInfo = (): string | null => {
@@ -880,13 +896,15 @@ function ChildToolPart({ part }: { part: ClaudeMessagePart }) {
 
   // For Edit tools, use different icon
   const isEdit = toolName?.toLowerCase() === "edit" || toolName?.toLowerCase() === "write";
-  const ToolIcon = isEdit ? Pencil : Wrench;
+  // Use Plug icon for MCP tools
+  const ToolIcon = isMcpTool ? Plug : (isEdit ? Pencil : Wrench);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-0.5">
       <CollapsibleTrigger
         className={cn(
-          "flex items-center gap-2 w-full text-xs text-muted-foreground py-1.5 px-2 bg-muted/30 rounded hover:bg-muted/50 transition-colors",
+          "flex items-center gap-2 w-full text-xs text-muted-foreground py-1.5 px-2 rounded transition-colors",
+          isMcpTool ? "bg-violet-500/10 hover:bg-violet-500/20" : "bg-muted/30 hover:bg-muted/50",
           hasExpandableContent && "cursor-pointer",
           !hasExpandableContent && "cursor-default"
         )}
@@ -899,8 +917,13 @@ function ChildToolPart({ part }: { part: ClaudeMessagePart }) {
             !hasExpandableContent && "opacity-0"
           )}
         />
-        <ToolIcon className="w-3 h-3 shrink-0" />
-        <span className="font-medium shrink-0">{toolName || "Unknown"}</span>
+        <ToolIcon className={cn("w-3 h-3 shrink-0", isMcpTool && "text-violet-500")} />
+        <span className={cn("font-medium shrink-0", isMcpTool && "text-violet-400")}>{toolName || "Unknown"}</span>
+        {isMcpTool && (
+          <span className="text-[9px] px-1 py-0.5 rounded bg-violet-500/20 text-violet-400 shrink-0" title={mcpServerName ? `MCP server: ${mcpServerName}` : "MCP tool"}>
+            MCP
+          </span>
+        )}
         {displayInfo && (
           <span className="font-mono text-muted-foreground/70 truncate flex-1 text-left text-[11px]">
             {displayInfo}
@@ -1297,6 +1320,8 @@ export const ClaudeMessage = memo(function ClaudeMessage({
                         toolArgs={processed.part?.toolArgs}
                         toolOutput={processed.part?.toolOutput}
                         toolError={processed.part?.toolError}
+                        isMcpTool={processed.part?.isMcpTool}
+                        mcpServerName={processed.part?.mcpServerName}
                       />
                     );
                   default:

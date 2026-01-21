@@ -24,6 +24,19 @@ export interface ClaudeMessagePart {
   toolDiff?: ToolDiffMetadata;
   /** Internal: Message UUID for tracking thinking parts (can be ignored by renderers) */
   _messageUuid?: string;
+  /** Whether this tool is from an MCP server */
+  isMcpTool?: boolean;
+  /** The MCP server name if this is an MCP tool */
+  mcpServerName?: string;
+}
+
+/** MCP server info from the bridge server */
+export interface McpServerInfo {
+  name: string;
+  type: "http" | "stdio";
+  url?: string;
+  command?: string;
+  source: "global" | "project";
 }
 
 export interface ClaudeMessage {
@@ -361,6 +374,22 @@ export async function answerQuestion(
   } catch (error) {
     console.error("[claude-client] Failed to answer question:", error);
     return false;
+  }
+}
+
+/**
+ * Get configured MCP servers
+ */
+export async function getMcpServers(
+  client: ClaudeClient
+): Promise<{ servers: McpServerInfo[]; cwd: string }> {
+  try {
+    const response = await fetchWithTimeout(`${client.baseUrl}/mcp/servers`);
+    if (!response.ok) return { servers: [], cwd: "" };
+    return await response.json();
+  } catch (error) {
+    console.error("[claude-client] Failed to get MCP servers:", error);
+    return { servers: [], cwd: "" };
   }
 }
 

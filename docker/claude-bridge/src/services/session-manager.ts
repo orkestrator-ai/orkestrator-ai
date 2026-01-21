@@ -11,6 +11,8 @@ import type {
   PromptOptions,
 } from "../types/index.js";
 import { eventEmitter } from "./event-emitter.js";
+import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
+import type { McpToolMetadata } from "../types/mcp.js";
 
 // Store for active sessions
 const sessions = new Map<string, SessionState>();
@@ -178,13 +180,68 @@ interface OrderedPartEntry {
 }
 
 /**
+ * Check if a tool name is from an MCP server and extract server name
+ * MCP tool names have format: mcp_servername_toolname
+ *
+ * @param toolName - The tool name to parse
+ * @param knownServerNames - Set of known MCP server names for accurate matching
+ *                           when server names contain underscores
+ */
+function parseMcpToolName(
+  toolName: string,
+  knownServerNames?: Set<string>
+): McpToolMetadata {
+  if (!toolName.startsWith("mcp_")) {
+    return { isMcpTool: false };
+  }
+
+  // Remove the "mcp_" prefix
+  const remainder = toolName.slice(4);
+
+  // If we have known server names, find the longest matching prefix
+  // This handles server names with underscores (e.g., "my_server")
+  if (knownServerNames && knownServerNames.size > 0) {
+    let matchedServer: string | undefined;
+    let maxLength = 0;
+
+    for (const serverName of knownServerNames) {
+      // Check if remainder starts with "servername_"
+      if (
+        remainder.startsWith(serverName + "_") &&
+        serverName.length > maxLength
+      ) {
+        matchedServer = serverName;
+        maxLength = serverName.length;
+      }
+    }
+
+    if (matchedServer) {
+      return { isMcpTool: true, mcpServerName: matchedServer };
+    }
+  }
+
+  // Fallback: assume server name is the first segment (no underscores in name)
+  const parts = remainder.split("_");
+  if (parts.length >= 2) {
+    return { isMcpTool: true, mcpServerName: parts[0] };
+  }
+
+  return { isMcpTool: true };
+}
+
+/**
  * Parse SDK message content, extracting text/thinking parts, registering tools,
  * and tracking the order of non-text parts for chronological display
+ *
+ * @param message - The SDK message to parse
+ * @param toolTracker - Tool tracker for managing tool invocations
+ * @param mcpServerNames - Set of known MCP server names for accurate tool parsing
  */
 function parseMessageContent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   message: any,
-  toolTracker?: ToolTracker
+  toolTracker?: ToolTracker,
+  mcpServerNames?: Set<string>
 ): {
   content: string;
   textParts: NormalizedPart[];
@@ -240,6 +297,9 @@ function parseMessageContent(
         };
       }
 
+      // Check if this is an MCP tool
+      const { isMcpTool, mcpServerName } = parseMcpToolName(toolName, mcpServerNames);
+
       // Register tool with tracker
       if (block.id) {
         toolTracker.addTool(block.id, {
@@ -250,6 +310,9 @@ function parseMessageContent(
           toolState: "pending",
           toolDiff,
           toolUseId: block.id,
+          // MCP tool metadata
+          isMcpTool,
+          mcpServerName,
         });
         // Track order: add tool reference
         orderedParts.push({
@@ -378,12 +441,20 @@ export async function sendPrompt(
     // Use CWD env var if set (for local environments where bridge runs from its own dir)
     // This allows the Claude SDK to operate on the actual project directory
     const cwd = process.env.CWD || process.cwd();
+
+    // Load MCP servers from config files
+    const mcpServers = await getMcpServersForSdk(cwd);
+    const mcpServerNames = await getMcpServerNames(cwd);
+
+    const mcpServerCount = Object.keys(mcpServers).length;
     console.log("[session-manager] Starting query", {
       sessionId,
       cwd,
       model: options?.model,
       resume: session.sdkSessionId ?? null,
       thinkingEnabled,
+      mcpServerCount,
+      mcpServerNames: Array.from(mcpServerNames),
     });
     const envPath = process.env.PATH;
     console.log("[session-manager] SDK env PATH", { path: envPath });
@@ -407,6 +478,8 @@ export async function sendPrompt(
           "AskUserQuestion",
           "Task",
           "TodoWrite",
+          // Allow all MCP tools
+          "mcp:*",
         ],
         abortController,
         // Resume session if we have a previous SDK session ID
@@ -418,6 +491,8 @@ export async function sendPrompt(
         },
         // Load project settings (CLAUDE.md files)
         settingSources: ["project"],
+        // Load MCP servers from user config
+        mcpServers: mcpServerCount > 0 ? mcpServers : undefined,
         // Handle AskUserQuestion tool to get user input
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         canUseTool: async (toolName: string, input: any) => {
@@ -542,7 +617,7 @@ export async function sendPrompt(
         }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
-        const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker);
+        const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker, mcpServerNames);
 
         // Get the message UUID to detect new messages vs streaming updates
         const messageUuid = message.uuid as string | undefined;
@@ -606,7 +681,7 @@ export async function sendPrompt(
         });
       } else if (message.type === "user") {
         // User message with tool results - parse to update tool tracker
-        parseMessageContent(message, toolTracker);
+        parseMessageContent(message, toolTracker, mcpServerNames);
 
         // Rebuild message parts with updated tool results
         if (currentAssistantMessage) {
