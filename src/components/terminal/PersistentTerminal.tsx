@@ -104,7 +104,8 @@ export function PersistentTerminal({
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
 
   // Create a container-scoped session key
-  const sessionKey = createSessionKey(containerId, tabId);
+  // For local environments (containerId is null), use environmentId to ensure uniqueness
+  const sessionKey = createSessionKey(containerId, tabId, environmentId);
 
   // Session persistence
   const existingSession = useTerminalSessionStore((state) => state.sessions.get(sessionKey));
