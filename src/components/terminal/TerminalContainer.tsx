@@ -116,8 +116,9 @@ export function TerminalContainer({
   const isWorkspaceReady = useEnvironmentStore((state) => state.isWorkspaceReady);
   const getEnvironmentById = useEnvironmentStore((state) => state.getEnvironmentById);
   const consumePendingSetupCommands = useEnvironmentStore((state) => state.consumePendingSetupCommands);
+  const isSetupCommandsResolved = useEnvironmentStore((state) => state.isSetupCommandsResolved);
   // Subscribe to setup commands resolved state - needed for local environments to know when we can create tabs
-  const setupCommandsResolved = useEnvironmentStore((state) => state.setupCommandsResolved.has(environmentId));
+  const setupCommandsResolved = isSetupCommandsResolved(environmentId);
   const workspaceReady = isWorkspaceReady(environmentId);
 
   // Check if this is a local environment (no container)

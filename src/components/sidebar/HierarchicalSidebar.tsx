@@ -266,10 +266,8 @@ export function HierarchicalSidebar() {
       // The tab type (plain terminal vs agent) is determined by agentOptions.launchAgent
       try {
         const setupCommands = await startEnvironment(environment.id);
-        // Mark setup commands as resolved (whether or not there are any)
-        // This tells TerminalContainer it can proceed with tab creation
-        setSetupCommandsResolved(environment.id, true);
         // If setup commands were returned (local env with orkestrator-ai.json), store them
+        // IMPORTANT: Store commands BEFORE marking as resolved to avoid race condition
         if (setupCommands && setupCommands.length > 0) {
           console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
             environmentId: environment.id,
@@ -277,6 +275,9 @@ export function HierarchicalSidebar() {
           });
           setPendingSetupCommands(environment.id, setupCommands);
         }
+        // Mark setup commands as resolved (whether or not there are any)
+        // This tells TerminalContainer it can proceed with tab creation
+        setSetupCommandsResolved(environment.id, true);
       } catch (startErr) {
         console.error("Failed to auto-start environment:", startErr);
         // Environment was created successfully, user can manually start it
@@ -371,9 +372,8 @@ export function HierarchicalSidebar() {
           });
           startEnvironment(environment.id)
             .then((setupCommands) => {
-              // Mark setup commands as resolved
-              setSetupCommandsResolved(environment.id, true);
               // If setup commands were returned, store them for TerminalContainer to pick up
+              // IMPORTANT: Store commands BEFORE marking as resolved to avoid race condition
               if (setupCommands && setupCommands.length > 0) {
                 console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
                   environmentId: environment.id,
@@ -381,6 +381,8 @@ export function HierarchicalSidebar() {
                 });
                 setPendingSetupCommands(environment.id, setupCommands);
               }
+              // Mark setup commands as resolved
+              setSetupCommandsResolved(environment.id, true);
             })
             .catch((err) => {
               console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);

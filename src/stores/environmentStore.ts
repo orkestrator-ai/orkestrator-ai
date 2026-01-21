@@ -86,9 +86,28 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
     })),
 
   removeEnvironment: (environmentId) =>
-    set((state) => ({
-      environments: state.environments.filter((e) => e.id !== environmentId),
-    })),
+    set((state) => {
+      // Clean up all related runtime state for this environment
+      const newWorkspaceReady = new Set(state.workspaceReadyEnvironments);
+      newWorkspaceReady.delete(environmentId);
+
+      const newDeleting = new Set(state.deletingEnvironments);
+      newDeleting.delete(environmentId);
+
+      const newPendingCommands = new Map(state.pendingSetupCommands);
+      newPendingCommands.delete(environmentId);
+
+      const newSetupResolved = new Set(state.setupCommandsResolved);
+      newSetupResolved.delete(environmentId);
+
+      return {
+        environments: state.environments.filter((e) => e.id !== environmentId),
+        workspaceReadyEnvironments: newWorkspaceReady,
+        deletingEnvironments: newDeleting,
+        pendingSetupCommands: newPendingCommands,
+        setupCommandsResolved: newSetupResolved,
+      };
+    }),
 
   updateEnvironment: (environmentId, updates) =>
     set((state) => ({
