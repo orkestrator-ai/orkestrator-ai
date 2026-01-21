@@ -127,7 +127,13 @@ function App() {
 
   // Handle closing the app when Docker is not available
   const handleCloseApp = async () => {
-    await exit(0);
+    try {
+      await exit(0);
+    } catch (error) {
+      console.error("[App] Failed to exit via plugin:", error);
+      // Fallback: try using window.close() for webview
+      window.close();
+    }
   };
 
   // Handle retrying Docker check
@@ -358,9 +364,9 @@ function App() {
                   "Retry"
                 )}
               </Button>
-              <AlertDialogAction onClick={handleCloseApp}>
+              <Button onClick={handleCloseApp}>
                 Close Application
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -396,9 +402,9 @@ function App() {
                   "Retry"
                 )}
               </Button>
-              <AlertDialogAction onClick={handleCloseApp}>
+              <Button onClick={handleCloseApp}>
                 Close Application
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -431,9 +437,9 @@ function App() {
                   "Retry"
                 )}
               </Button>
-              <AlertDialogAction onClick={handleCloseApp}>
+              <Button onClick={handleCloseApp}>
                 Close Application
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
