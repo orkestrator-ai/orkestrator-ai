@@ -696,6 +696,15 @@ export async function readLocalFileAtBranch(
   });
 }
 
+/** Write a file to a local environment (worktree path) from base64-encoded data */
+export async function writeLocalFile(
+  worktreePath: string,
+  filePath: string,
+  base64Data: string
+): Promise<string> {
+  return invoke<string>("write_local_file", { worktreePath, filePath, base64Data });
+}
+
 // --- Port Mapping Commands ---
 
 /** Update port mappings for an environment (requires restart to apply) */

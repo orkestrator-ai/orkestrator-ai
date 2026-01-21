@@ -1277,3 +1277,79 @@ pub async fn write_container_file(
 
     Ok(full_path)
 }
+
+/// Write a file to a local environment (worktree path) from base64-encoded data
+/// Creates parent directories if they don't exist
+#[tauri::command]
+pub async fn write_local_file(
+    worktree_path: String,
+    file_path: String,
+    base64_data: String,
+) -> Result<String, String> {
+    use base64::Engine;
+
+    // Validate the worktree path exists
+    let base_path = std::path::Path::new(&worktree_path);
+    if !base_path.exists() {
+        return Err(format!("Worktree path does not exist: {}", worktree_path));
+    }
+    if !base_path.is_dir() {
+        return Err(format!("Worktree path is not a directory: {}", worktree_path));
+    }
+
+    // Validate file path doesn't contain dangerous characters
+    if file_path.contains('\0') || file_path.contains('\n') || file_path.contains('\r') {
+        return Err("Invalid file path: contains invalid characters".to_string());
+    }
+
+    // Check for path traversal attempts
+    if file_path.contains("..") {
+        return Err("Invalid file path: parent directory traversal not allowed".to_string());
+    }
+
+    // Size limit: 8MB (base64 encoded is ~33% larger than raw)
+    const MAX_FILE_SIZE: usize = 8 * 1024 * 1024;
+    const MAX_BASE64_SIZE: usize = MAX_FILE_SIZE * 4 / 3 + 4;
+
+    if base64_data.len() > MAX_BASE64_SIZE {
+        return Err(format!(
+            "File too large (max 8MB, got ~{}MB)",
+            base64_data.len() * 3 / 4 / 1024 / 1024
+        ));
+    }
+
+    // Decode base64 to raw bytes
+    let file_data = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|_| "Invalid base64 data".to_string())?;
+
+    // Build full path - file_path should be relative to worktree
+    let relative_path = file_path.trim_start_matches('/');
+    let full_path = base_path.join(relative_path);
+
+    // Security check: ensure the resolved path is within the worktree
+    // We can't canonicalize yet since the file doesn't exist, so check parent
+    let parent_dir = full_path.parent()
+        .ok_or_else(|| "Invalid file path: no parent directory".to_string())?;
+
+    // Create parent directories if needed
+    std::fs::create_dir_all(parent_dir)
+        .map_err(|e| format!("Failed to create directories: {}", e))?;
+
+    // Now we can verify the parent is within worktree
+    let canonical_base = base_path.canonicalize()
+        .map_err(|e| format!("Failed to resolve worktree path: {}", e))?;
+    let canonical_parent = parent_dir.canonicalize()
+        .map_err(|e| format!("Failed to resolve parent directory: {}", e))?;
+
+    if !canonical_parent.starts_with(&canonical_base) {
+        return Err("Invalid file path: escapes worktree directory".to_string());
+    }
+
+    // Write the file
+    std::fs::write(&full_path, file_data)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    // Return the full path as string
+    Ok(full_path.to_string_lossy().to_string())
+}

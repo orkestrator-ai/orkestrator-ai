@@ -238,6 +238,7 @@ pub fn run() {
             get_local_file_tree,
             read_local_file,
             read_local_file_at_branch,
+            write_local_file,
             // OpenCode commands
             start_opencode_server,
             stop_opencode_server,
