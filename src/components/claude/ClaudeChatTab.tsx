@@ -533,6 +533,24 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               };
               addMessage(sessionTabId, errorMessage);
             }
+
+            if (eventType === "session.init") {
+              // Store session initialization data (MCP servers, plugins, slash commands)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const initData = event.data as any;
+              if (initData) {
+                useClaudeStore.getState().setSessionInitData(sessionTabId, {
+                  mcpServers: initData.mcpServers || [],
+                  plugins: initData.plugins || [],
+                  slashCommands: initData.slashCommands || [],
+                });
+                console.debug("[ClaudeChatTab] Session init data stored", {
+                  sessionTabId,
+                  mcpServerCount: initData.mcpServers?.length ?? 0,
+                  pluginCount: initData.plugins?.length ?? 0,
+                });
+              }
+            }
           }
 
           // Debug: Warn if no session matched the event

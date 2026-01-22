@@ -39,6 +39,38 @@ export interface McpServerInfo {
   source: "global" | "project";
 }
 
+/** Plugin info from the bridge server */
+export interface PluginInfo {
+  name: string;
+  path: string;
+  description?: string;
+  source: "global" | "project" | "cli";
+  enabled: boolean;
+}
+
+/** MCP server runtime status from session init */
+export interface McpServerRuntimeStatus {
+  name: string;
+  status: "connected" | "failed";
+  error?: string;
+  tools?: string[];
+}
+
+/** Plugin runtime status from session init */
+export interface PluginRuntimeStatus {
+  name: string;
+  path?: string;
+  status: "loaded" | "failed";
+  error?: string;
+}
+
+/** Session initialization data */
+export interface SessionInitData {
+  mcpServers: McpServerRuntimeStatus[];
+  plugins: PluginRuntimeStatus[];
+  slashCommands?: string[];
+}
+
 export interface ClaudeMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -83,6 +115,7 @@ export interface ClaudeEvent {
     | "session.updated"
     | "session.idle"
     | "session.error"
+    | "session.init"
     | "message.updated"
     | "question.asked"
     | "question.answered";
@@ -394,6 +427,40 @@ export async function getMcpServers(
 }
 
 /**
+ * Get configured plugins
+ */
+export async function getPlugins(
+  client: ClaudeClient
+): Promise<{ plugins: PluginInfo[]; cwd: string }> {
+  try {
+    const response = await fetchWithTimeout(`${client.baseUrl}/plugins`);
+    if (!response.ok) return { plugins: [], cwd: "" };
+    return await response.json();
+  } catch (error) {
+    console.error("[claude-client] Failed to get plugins:", error);
+    return { plugins: [], cwd: "" };
+  }
+}
+
+/**
+ * Get session initialization data (MCP servers, plugins, slash commands status)
+ */
+export async function getSessionInitData(
+  client: ClaudeClient,
+  sessionId: string
+): Promise<SessionInitData | null> {
+  try {
+    const response = await fetchWithTimeout(`${client.baseUrl}/session/${sessionId}/init`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.initData || null;
+  } catch (error) {
+    console.error("[claude-client] Failed to get session init data:", error);
+    return null;
+  }
+}
+
+/**
  * Subscribe to SSE events from the server
  * Returns an async iterator for events
  */
@@ -461,6 +528,7 @@ export function subscribeToEvents(
         "session.updated",
         "session.idle",
         "session.error",
+        "session.init",
         "message.updated",
         "question.asked",
         "question.answered",

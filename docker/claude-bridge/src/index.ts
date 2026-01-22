@@ -9,6 +9,7 @@ import config from "./routes/config.js";
 import session from "./routes/session.js";
 import events from "./routes/events.js";
 import mcp from "./routes/mcp.js";
+import plugins from "./routes/plugins.js";
 
 const app = new Hono();
 
@@ -34,6 +35,7 @@ app.route("/config", config);
 app.route("/session", session);
 app.route("/event", events);
 app.route("/mcp", mcp);
+app.route("/plugins", plugins);
 
 // Root endpoint
 app.get("/", (c) => {
@@ -46,6 +48,7 @@ app.get("/", (c) => {
       sessions: "/session/list",
       events: "/event/subscribe",
       mcp: "/mcp/servers",
+      plugins: "/plugins",
     },
   });
 });

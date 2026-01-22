@@ -43,9 +43,19 @@ import {
   Trash2,
   Laptop,
   FolderOpen,
+  Puzzle,
+  Server,
 } from "lucide-react";
 import * as tauri from "@/lib/tauri";
 import { useConfigStore } from "@/stores";
+import { useClaudeStore } from "@/stores/claudeStore";
+import {
+  createClient,
+  getMcpServers,
+  getPlugins,
+  type McpServerInfo,
+  type PluginInfo,
+} from "@/lib/claude-client";
 import type { Environment, DomainTestResult, PortMapping, PortProtocol } from "@/types";
 
 // Domain validation regex
@@ -99,6 +109,14 @@ export function EnvironmentSettingsDialog({
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
 
+  // MCP servers and plugins state
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
+  const [pluginsList, setPluginsList] = useState<PluginInfo[]>([]);
+  const [isLoadingExtensions, setIsLoadingExtensions] = useState(false);
+
+  // Get Claude session init data for runtime status
+  const sessionInitData = useClaudeStore((state) => state.getSessionInitData(environment.id));
+
   // Track if port mappings have changed
   const portMappingsChanged = JSON.stringify(portMappings) !== JSON.stringify(environment.portMappings || []);
 
@@ -137,6 +155,34 @@ export function EnvironmentSettingsDialog({
       setTestResults(null);
     }
   }, [useGlobalDefaults, globalDomains]);
+
+  // Fetch MCP servers and plugins when dialog opens
+  useEffect(() => {
+    if (!open) return;
+
+    // Only fetch for local environments with Claude native mode
+    const claudeServerStatus = useClaudeStore.getState().getServerStatus(environment.id);
+    if (!claudeServerStatus?.running || !claudeServerStatus.hostPort) return;
+
+    const fetchExtensions = async () => {
+      setIsLoadingExtensions(true);
+      try {
+        const client = createClient(`http://localhost:${claudeServerStatus.hostPort}`);
+        const [mcpResult, pluginsResult] = await Promise.all([
+          getMcpServers(client),
+          getPlugins(client),
+        ]);
+        setMcpServers(mcpResult.servers);
+        setPluginsList(pluginsResult.plugins);
+      } catch (err) {
+        console.error("[EnvironmentSettingsDialog] Failed to fetch extensions:", err);
+      } finally {
+        setIsLoadingExtensions(false);
+      }
+    };
+
+    fetchExtensions();
+  }, [open, environment.id]);
 
   // Validate name
   const validateName = (value: string): boolean => {
@@ -667,6 +713,119 @@ export function EnvironmentSettingsDialog({
               </div>
             )}
           </div>
+          )}
+
+          {/* MCP Servers and Plugins - full width section */}
+          {(mcpServers.length > 0 || pluginsList.length > 0 || isLoadingExtensions) && (
+            <div className={`${isLocalEnvironment ? "" : "col-span-2"} space-y-4 pt-4 border-t`}>
+              <div className="grid grid-cols-2 gap-4">
+                {/* MCP Servers */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Server className="h-4 w-4 text-muted-foreground" />
+                    <Label>MCP Servers</Label>
+                  </div>
+                  {isLoadingExtensions ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading...
+                    </div>
+                  ) : mcpServers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No MCP servers configured</p>
+                  ) : (
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {mcpServers.map((server) => {
+                        // Find runtime status if available
+                        const runtimeStatus = sessionInitData?.mcpServers.find(
+                          (s) => s.name === server.name
+                        );
+                        const isConnected = runtimeStatus?.status === "connected";
+                        const hasFailed = runtimeStatus?.status === "failed";
+
+                        return (
+                          <div
+                            key={server.name}
+                            className="flex items-center justify-between p-2 rounded-md bg-muted/50 border border-input text-sm"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              {runtimeStatus && (
+                                isConnected ? (
+                                  <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                                ) : hasFailed ? (
+                                  <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                                ) : null
+                              )}
+                              <span className="font-medium truncate">{server.name}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                              {server.source === "project" ? "project" : "global"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Configure in{" "}
+                    <code className="text-xs bg-muted px-1 rounded">.mcp.json</code> or{" "}
+                    <code className="text-xs bg-muted px-1 rounded">~/.claude.json</code>
+                  </p>
+                </div>
+
+                {/* Plugins */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Puzzle className="h-4 w-4 text-muted-foreground" />
+                    <Label>Plugins</Label>
+                  </div>
+                  {isLoadingExtensions ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading...
+                    </div>
+                  ) : pluginsList.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No plugins configured</p>
+                  ) : (
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {pluginsList.map((plugin) => {
+                        // Find runtime status if available
+                        const runtimeStatus = sessionInitData?.plugins.find(
+                          (p) => p.name === plugin.name
+                        );
+                        const isLoaded = runtimeStatus?.status === "loaded";
+                        const hasFailed = runtimeStatus?.status === "failed";
+
+                        return (
+                          <div
+                            key={plugin.path}
+                            className="flex items-center justify-between p-2 rounded-md bg-muted/50 border border-input text-sm"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              {runtimeStatus && (
+                                isLoaded ? (
+                                  <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                                ) : hasFailed ? (
+                                  <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                                ) : null
+                              )}
+                              <span className="font-medium truncate">{plugin.name}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                              {plugin.source}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Configure in{" "}
+                    <code className="text-xs bg-muted px-1 rounded">.claude/plugins.json</code> or{" "}
+                    <code className="text-xs bg-muted px-1 rounded">~/.claude.json</code>
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
         </div>
 

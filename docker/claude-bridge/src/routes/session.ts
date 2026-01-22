@@ -10,6 +10,7 @@ import {
   abortSession,
   answerQuestion,
   getPendingQuestions,
+  getSessionInitData,
 } from "../services/session-manager.js";
 import type {
   CreateSessionResponse,
@@ -187,6 +188,25 @@ session.get("/:id/questions", (c) => {
 
   const questions = getPendingQuestions(id);
   return c.json({ questions });
+});
+
+// Get session initialization data (MCP servers, plugins, slash commands)
+session.get("/:id/init", (c) => {
+  const id = c.req.param("id");
+  const sessionData = getSession(id);
+
+  if (!sessionData) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  const initData = getSessionInitData(id);
+  return c.json({
+    initData: initData || {
+      mcpServers: [],
+      plugins: [],
+      slashCommands: [],
+    },
+  });
 });
 
 // Answer a question
