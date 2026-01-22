@@ -156,7 +156,18 @@ export function EnvironmentSettingsDialog({
     }
   }, [useGlobalDefaults, globalDomains]);
 
+  // Clear extensions data when dialog closes to prevent stale data flash
+  useEffect(() => {
+    if (!open) {
+      setMcpServers([]);
+      setPluginsList([]);
+    }
+  }, [open]);
+
   // Fetch MCP servers and plugins when dialog opens
+  // Note: We use getState() to get a one-time snapshot when the dialog opens,
+  // rather than subscribing to changes. This is intentional - we only need
+  // the server status at fetch time, not reactive updates during the fetch.
   useEffect(() => {
     if (!open) return;
 
@@ -745,7 +756,8 @@ export function EnvironmentSettingsDialog({
                         return (
                           <div
                             key={server.name}
-                            className="flex items-center justify-between p-2 rounded-md bg-muted/50 border border-input text-sm"
+                            className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${hasFailed ? "border-red-300" : "border-input"}`}
+                            title={hasFailed && runtimeStatus?.error ? runtimeStatus.error : undefined}
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               {runtimeStatus && (
@@ -755,7 +767,7 @@ export function EnvironmentSettingsDialog({
                                   <XCircle className="h-3 w-3 text-red-500 shrink-0" />
                                 ) : null
                               )}
-                              <span className="font-medium truncate">{server.name}</span>
+                              <span className={`font-medium truncate ${hasFailed ? "text-red-600" : ""}`}>{server.name}</span>
                             </div>
                             <span className="text-xs text-muted-foreground shrink-0 ml-2">
                               {server.source === "project" ? "project" : "global"}
@@ -798,7 +810,8 @@ export function EnvironmentSettingsDialog({
                         return (
                           <div
                             key={plugin.path}
-                            className="flex items-center justify-between p-2 rounded-md bg-muted/50 border border-input text-sm"
+                            className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${hasFailed ? "border-red-300" : "border-input"}`}
+                            title={hasFailed && runtimeStatus?.error ? runtimeStatus.error : undefined}
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               {runtimeStatus && (
@@ -808,7 +821,7 @@ export function EnvironmentSettingsDialog({
                                   <XCircle className="h-3 w-3 text-red-500 shrink-0" />
                                 ) : null
                               )}
-                              <span className="font-medium truncate">{plugin.name}</span>
+                              <span className={`font-medium truncate ${hasFailed ? "text-red-600" : ""}`}>{plugin.name}</span>
                             </div>
                             <span className="text-xs text-muted-foreground shrink-0 ml-2">
                               {plugin.source}

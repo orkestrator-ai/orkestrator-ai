@@ -34,23 +34,3 @@ export interface PluginInfo {
   source: "global" | "project" | "cli";
   enabled: boolean;
 }
-
-/**
- * Plugin status from SDK init message
- */
-export interface PluginStatus {
-  name: string;
-  path: string;
-  status: "loaded" | "failed";
-  error?: string;
-}
-
-/**
- * MCP server status from SDK init message
- */
-export interface McpServerStatus {
-  name: string;
-  status: "connected" | "failed";
-  error?: string;
-  tools?: string[];
-}

@@ -645,7 +645,7 @@ export async function sendPrompt(
           (p: any) => ({
             name: p.name,
             path: p.path,
-            status: p.status === "loaded" || !p.error ? "loaded" : "failed",
+            status: p.status === "loaded" ? "loaded" : "failed",
             error: p.error,
           })
         );
