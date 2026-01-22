@@ -726,7 +726,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         {/* Floating scroll-to-bottom button */}
         <button
           onClick={scrollToBottom}
-          className={`absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-primary/90 hover:bg-primary text-primary-foreground shadow-lg transition-all duration-200 ${
+          className={`absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 shadow-lg transition-all duration-200 ${
             isAtBottom
               ? "opacity-0 pointer-events-none translate-y-2"
               : "opacity-100 translate-y-0"
