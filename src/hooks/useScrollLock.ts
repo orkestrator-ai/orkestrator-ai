@@ -32,6 +32,8 @@ export function useScrollLock(
 ): UseScrollLockReturn {
   const { scrollTrigger } = options;
 
+  console.log("[useScrollLock] Hook called, scrollRef.current:", scrollRef.current);
+
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
@@ -39,11 +41,24 @@ export function useScrollLock(
   // This prevents race conditions where state hasn't updated yet
   const isScrollLockedRef = useRef(true);
 
+  // Helper to find the scroll viewport element (try multiple selectors for compatibility)
+  const getScrollElement = useCallback(() => {
+    if (!scrollRef.current) return null;
+    // Try Radix's internal attribute first, then fall back to data-slot
+    return (
+      scrollRef.current.querySelector("[data-radix-scroll-area-viewport]") ||
+      scrollRef.current.querySelector('[data-slot="scroll-area-viewport"]')
+    ) as HTMLElement | null;
+  }, [scrollRef]);
+
   // Check initial scroll position on mount
   useEffect(() => {
-    const scrollElement = scrollRef.current?.querySelector(
-      "[data-radix-scroll-area-viewport]"
-    );
+    const scrollElement = getScrollElement();
+    console.log("[useScrollLock] Initial mount check:", {
+      hasRef: !!scrollRef.current,
+      scrollElement: scrollElement?.tagName,
+      scrollElementClass: scrollElement?.className,
+    });
     if (!scrollElement) return;
 
     const { scrollTop, scrollHeight, clientHeight } = scrollElement;
@@ -53,19 +68,28 @@ export function useScrollLock(
     setIsAtBottom(atBottom);
     setIsScrollLocked(atBottom);
     isScrollLockedRef.current = atBottom;
-  }, [scrollRef]);
+  }, [getScrollElement]);
 
   // Track scroll position to manage scroll lock
   useEffect(() => {
-    const scrollElement = scrollRef.current?.querySelector(
-      "[data-radix-scroll-area-viewport]"
-    );
+    const scrollElement = getScrollElement();
+    console.log("[useScrollLock] Setting up scroll listener:", {
+      hasRef: !!scrollRef.current,
+      scrollElement: scrollElement?.tagName,
+    });
     if (!scrollElement) return;
 
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = scrollElement;
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
       const atBottom = distanceFromBottom <= SCROLL_THRESHOLD;
+      console.log("[useScrollLock] Scroll event:", {
+        scrollTop,
+        scrollHeight,
+        clientHeight,
+        distanceFromBottom,
+        atBottom,
+      });
 
       setIsAtBottom(atBottom);
 
@@ -82,7 +106,7 @@ export function useScrollLock(
 
     scrollElement.addEventListener("scroll", handleScroll, { passive: true });
     return () => scrollElement.removeEventListener("scroll", handleScroll);
-  }, [scrollRef]);
+  }, [getScrollElement]);
 
   // Auto-scroll to bottom when trigger changes (only if scroll-locked)
   // Uses instant scrolling to keep up with rapid message streaming
@@ -90,20 +114,16 @@ export function useScrollLock(
   useEffect(() => {
     if (!isScrollLockedRef.current) return;
 
-    const scrollElement = scrollRef.current?.querySelector(
-      "[data-radix-scroll-area-viewport]"
-    );
+    const scrollElement = getScrollElement();
     if (scrollElement) {
       scrollElement.scrollTop = scrollElement.scrollHeight;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Using ref instead of state to avoid race condition
-  }, [scrollTrigger, scrollRef]);
+  }, [scrollTrigger, getScrollElement]);
 
   // Handle scroll to bottom button click
   const scrollToBottom = useCallback(() => {
-    const scrollElement = scrollRef.current?.querySelector(
-      "[data-radix-scroll-area-viewport]"
-    );
+    const scrollElement = getScrollElement();
     if (scrollElement) {
       scrollElement.scrollTo({
         top: scrollElement.scrollHeight,
@@ -113,7 +133,7 @@ export function useScrollLock(
       setIsScrollLocked(true);
       isScrollLockedRef.current = true;
     }
-  }, [scrollRef]);
+  }, [getScrollElement]);
 
   return {
     isAtBottom,
