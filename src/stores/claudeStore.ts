@@ -327,6 +327,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
+      const newThinkingEnabled = new Map(state.thinkingEnabled);
+      const newSessionInitData = new Map(state.sessionInitData);
 
       newServerStatus.delete(environmentId);
       newSessions.delete(environmentId);
@@ -336,8 +338,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       newDraftText.delete(environmentId);
       newIsComposing.delete(environmentId);
       newEventSubscriptions.delete(environmentId);
-      state.thinkingEnabled.delete(environmentId);
-      state.sessionInitData.delete(environmentId);
+      newThinkingEnabled.delete(environmentId);
+      newSessionInitData.delete(environmentId);
 
       // Remove pending questions for this environment's sessions
       for (const [requestId, question] of newPendingQuestions) {
@@ -357,6 +359,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         eventSubscriptions: newEventSubscriptions,
+        thinkingEnabled: newThinkingEnabled,
+        sessionInitData: newSessionInitData,
       };
     });
   },

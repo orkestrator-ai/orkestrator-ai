@@ -230,7 +230,10 @@ export async function getPluginsForSdk(cwd: string): Promise<SdkPluginConfig[]> 
         path: config.path,
       });
     } else {
-      console.warn(`Plugin path does not exist: "${config.path}"`);
+      const pluginName = config.path.split("/").pop() || "unknown";
+      console.warn(
+        `[plugin-config] Skipping plugin "${pluginName}" - path does not exist: "${config.path}"`
+      );
     }
   }
 
