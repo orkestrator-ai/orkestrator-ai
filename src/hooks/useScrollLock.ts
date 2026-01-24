@@ -3,6 +3,11 @@ import { useEffect, useState, useCallback, useRef, type RefObject } from "react"
 /** Pixels from bottom to consider "at bottom" */
 const SCROLL_THRESHOLD = 50;
 
+/** Maximum attempts to find viewport element (total wait: 20 * 50ms = 1 second) */
+const VIEWPORT_POLL_MAX_ATTEMPTS = 20;
+/** Interval between viewport polling attempts in milliseconds */
+const VIEWPORT_POLL_INTERVAL_MS = 50;
+
 interface UseScrollLockOptions {
   /** Dependency array that triggers auto-scroll when changed (e.g., messages array) */
   scrollTrigger?: unknown;
@@ -36,24 +41,16 @@ export function useScrollLock(
   const [isAtBottom, setIsAtBottom] = useState(true);
   // Track the viewport element in state to trigger re-renders when it becomes available
   const [viewportElement, setViewportElement] = useState<HTMLElement | null>(null);
-  // Counter to trigger re-checking for the ref after initial render
-  const [mountCount, setMountCount] = useState(0);
 
   // Use a ref to track scroll lock for sync access in effects
   // This prevents race conditions where state hasn't updated yet
   const isScrollLockedRef = useRef(true);
 
-  // Trigger a re-render after mount to re-check for the ref
+  // Find the viewport element when the ref changes
   useEffect(() => {
-    // Small delay to ensure the DOM has been committed
-    const timer = setTimeout(() => {
-      setMountCount((c) => c + 1);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []);
+    // Clear previous viewport when ref changes to handle remounts
+    setViewportElement(null);
 
-  // Find the viewport element when the ref changes or after mount
-  useEffect(() => {
     const findViewport = (): HTMLElement | null => {
       if (!scrollRef.current) return null;
       // Try Radix's internal attribute first, then fall back to data-slot
@@ -72,21 +69,24 @@ export function useScrollLock(
 
     // If not found, poll a few times (handles async rendering)
     let attempts = 0;
-    const maxAttempts = 20;
     const interval = setInterval(() => {
       attempts++;
       const vp = findViewport();
       if (vp) {
         setViewportElement(vp);
         clearInterval(interval);
-      } else if (attempts >= maxAttempts) {
-        console.warn("[useScrollLock] Failed to find viewport after", maxAttempts, "attempts");
+      } else if (attempts >= VIEWPORT_POLL_MAX_ATTEMPTS) {
+        console.warn(
+          "[useScrollLock] Failed to find viewport after",
+          VIEWPORT_POLL_MAX_ATTEMPTS,
+          "attempts"
+        );
         clearInterval(interval);
       }
-    }, 50);
+    }, VIEWPORT_POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [scrollRef, mountCount]);
+  }, [scrollRef]);
 
   // Check initial scroll position when viewport becomes available
   useEffect(() => {
