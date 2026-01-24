@@ -53,6 +53,7 @@ import {
   createClient,
   getMcpServers,
   getPlugins,
+  getSessionInitData as fetchSessionInitData,
   type McpServerInfo,
   type PluginInfo,
 } from "@/lib/claude-client";
@@ -116,6 +117,15 @@ export function EnvironmentSettingsDialog({
 
   // Get Claude session init data for runtime status
   const sessionInitData = useClaudeStore((state) => state.getSessionInitData(environment.id));
+
+  // Debug: Log sessionInitData when dialog opens
+  useEffect(() => {
+    if (open) {
+      console.log("[EnvironmentSettingsDialog] sessionInitData for", environment.id, sessionInitData);
+      console.log("[EnvironmentSettingsDialog] mcpServers:", sessionInitData?.mcpServers);
+      console.log("[EnvironmentSettingsDialog] plugins:", sessionInitData?.plugins);
+    }
+  }, [open, environment.id, sessionInitData]);
 
   // Track if port mappings have changed
   const portMappingsChanged = JSON.stringify(portMappings) !== JSON.stringify(environment.portMappings || []);
@@ -185,6 +195,36 @@ export function EnvironmentSettingsDialog({
         ]);
         setMcpServers(mcpResult.servers);
         setPluginsList(pluginsResult.plugins);
+
+        // If sessionInitData is not available in the store, try to fetch it via API
+        // This handles race conditions where the session.init SSE event was missed
+        const currentSessionInitData = useClaudeStore.getState().getSessionInitData(environment.id);
+        if (!currentSessionInitData) {
+          // Find the session ID for this environment by looking through stored sessions
+          const sessions = useClaudeStore.getState().sessions;
+          const envPrefix = `env-${environment.id}:`;
+          let sessionId: string | null = null;
+
+          for (const [sessionKey, sessionState] of sessions) {
+            if (sessionKey.startsWith(envPrefix) && sessionState.sessionId) {
+              sessionId = sessionState.sessionId;
+              break;
+            }
+          }
+
+          if (sessionId) {
+            console.log("[EnvironmentSettingsDialog] Fetching session init data via API for session:", sessionId);
+            const initData = await fetchSessionInitData(client, sessionId);
+            if (initData) {
+              // Store in the zustand store so it's available for subsequent renders
+              useClaudeStore.getState().setSessionInitData(environment.id, initData);
+              console.log("[EnvironmentSettingsDialog] Session init data fetched via API", {
+                mcpServerCount: initData.mcpServers.length,
+                pluginCount: initData.plugins.length,
+              });
+            }
+          }
+        }
       } catch (err) {
         console.error("[EnvironmentSettingsDialog] Failed to fetch extensions:", err);
       } finally {
@@ -394,6 +434,7 @@ export function EnvironmentSettingsDialog({
 
   const isFullAccess = (environment.networkAccessMode ?? "restricted") === "full";
   const isLocalEnvironment = environment.environmentType === "local";
+  const isClaudeNativeMode = isLocalEnvironment && config.global.claudeMode === "native";
   const hasErrors = nameError !== null || domainErrors.length > 0;
 
   return (
@@ -727,7 +768,7 @@ export function EnvironmentSettingsDialog({
           )}
 
           {/* MCP Servers and Plugins - full width section */}
-          {(mcpServers.length > 0 || pluginsList.length > 0 || isLoadingExtensions) && (
+          {(isClaudeNativeMode || mcpServers.length > 0 || pluginsList.length > 0 || sessionInitData?.mcpServers.length || sessionInitData?.plugins.length || isLoadingExtensions) && (
             <div className={`${isLocalEnvironment ? "" : "col-span-2"} space-y-4 pt-4 border-t`}>
               <div className="grid grid-cols-2 gap-4">
                 {/* MCP Servers */}
@@ -741,9 +782,9 @@ export function EnvironmentSettingsDialog({
                       <Loader2 className="h-3 w-3 animate-spin" />
                       Loading...
                     </div>
-                  ) : mcpServers.length === 0 ? (
+                  ) : mcpServers.length === 0 && !sessionInitData?.mcpServers.length ? (
                     <p className="text-sm text-muted-foreground">No MCP servers configured</p>
-                  ) : (
+                  ) : mcpServers.length > 0 ? (
                     <div className="space-y-1 max-h-32 overflow-y-auto">
                       {mcpServers.map((server) => {
                         // Find runtime status if available
@@ -776,6 +817,29 @@ export function EnvironmentSettingsDialog({
                         );
                       })}
                     </div>
+                  ) : (
+                    // Show runtime servers when no configured servers but sessionInitData has them
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {sessionInitData?.mcpServers.map((server) => (
+                        <div
+                          key={server.name}
+                          className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${server.status === "failed" ? "border-red-300" : "border-input"}`}
+                          title={server.status === "failed" && server.error ? server.error : undefined}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {server.status === "connected" ? (
+                              <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                            ) : (
+                              <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                            )}
+                            <span className={`font-medium truncate ${server.status === "failed" ? "text-red-600" : ""}`}>{server.name}</span>
+                          </div>
+                          <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                            runtime
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                   <p className="text-xs text-muted-foreground">
                     Configure in{" "}
@@ -795,9 +859,9 @@ export function EnvironmentSettingsDialog({
                       <Loader2 className="h-3 w-3 animate-spin" />
                       Loading...
                     </div>
-                  ) : pluginsList.length === 0 ? (
+                  ) : pluginsList.length === 0 && !sessionInitData?.plugins.length ? (
                     <p className="text-sm text-muted-foreground">No plugins configured</p>
-                  ) : (
+                  ) : pluginsList.length > 0 ? (
                     <div className="space-y-1 max-h-32 overflow-y-auto">
                       {pluginsList.map((plugin) => {
                         // Find runtime status if available
@@ -829,6 +893,29 @@ export function EnvironmentSettingsDialog({
                           </div>
                         );
                       })}
+                    </div>
+                  ) : (
+                    // Show runtime plugins when no configured plugins but sessionInitData has them
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {sessionInitData?.plugins.map((plugin) => (
+                        <div
+                          key={plugin.name}
+                          className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${plugin.status === "failed" ? "border-red-300" : "border-input"}`}
+                          title={plugin.status === "failed" && plugin.error ? plugin.error : undefined}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {plugin.status === "loaded" ? (
+                              <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                            ) : (
+                              <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+                            )}
+                            <span className={`font-medium truncate ${plugin.status === "failed" ? "text-red-600" : ""}`}>{plugin.name}</span>
+                          </div>
+                          <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                            runtime
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground">

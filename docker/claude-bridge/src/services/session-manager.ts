@@ -631,7 +631,16 @@ export async function sendPrompt(
         }
 
         // Capture MCP servers and plugins from init message
-        const mcpServerStatuses: McpServerRuntimeStatus[] = (initMsg.mcp_servers || []).map(
+        // Note: Claude SDK sends MCP-provided plugins as MCP servers with "plugin:" prefix
+        const allMcpServers = initMsg.mcp_servers || [];
+
+        // Separate regular MCP servers from plugin-type MCP servers
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const regularMcpServers = allMcpServers.filter((s: any) => !s.name?.startsWith("plugin:"));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pluginMcpServers = allMcpServers.filter((s: any) => s.name?.startsWith("plugin:"));
+
+        const mcpServerStatuses: McpServerRuntimeStatus[] = regularMcpServers.map(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (s: any) => ({
             name: s.name,
@@ -641,15 +650,27 @@ export async function sendPrompt(
           })
         );
 
-        const pluginStatuses: PluginRuntimeStatus[] = (initMsg.plugins || []).map(
+        // Convert plugin-type MCP servers to plugin statuses
+        // Also include any traditional plugins from initMsg.plugins
+        // Debug: Log plugin MCP servers to see their status
+        console.log("[session-manager] Plugin MCP servers:", pluginMcpServers.map((s: any) => ({ name: s.name, status: s.status })));
+
+        const pluginStatuses: PluginRuntimeStatus[] = [
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (p: any) => ({
+          ...pluginMcpServers.map((s: any) => ({
+            name: s.name,
+            path: undefined,
+            status: (s.status === "connected" ? "loaded" : "failed") as "loaded" | "failed",
+            error: s.error,
+          })),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ...(initMsg.plugins || []).map((p: any) => ({
             name: p.name,
             path: p.path,
-            status: p.status === "loaded" ? "loaded" : "failed",
+            status: (p.status === "loaded" ? "loaded" : "failed") as "loaded" | "failed",
             error: p.error,
-          })
-        );
+          })),
+        ];
 
         // Store init data in session
         session.initData = {
