@@ -66,36 +66,32 @@ fn generate_unique_suffix() -> String {
 /// Maximum attempts to generate a unique worktree path
 const MAX_WORKTREE_PATH_ATTEMPTS: u32 = 100;
 
-/// Generate a unique worktree path, adding suffix if the base name already exists
+/// Generate a unique worktree path with a random suffix
+///
+/// Always includes a unique suffix to ensure all worktree paths are distinct,
+/// even the first one created for a project.
 pub fn generate_worktree_path(project_name: &str) -> Result<PathBuf, WorktreeError> {
     let base_path = get_worktree_base_path()?;
 
-    // Try the project name first
-    let mut worktree_path = base_path.join(project_name);
+    // Always generate a unique suffix for the worktree path
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        if attempts > MAX_WORKTREE_PATH_ATTEMPTS {
+            return Err(WorktreeError::DirectoryCreationFailed(format!(
+                "Failed to generate unique worktree path after {} attempts for project: {}",
+                MAX_WORKTREE_PATH_ATTEMPTS, project_name
+            )));
+        }
 
-    // If it exists, add a unique suffix
-    if worktree_path.exists() {
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            if attempts > MAX_WORKTREE_PATH_ATTEMPTS {
-                return Err(WorktreeError::DirectoryCreationFailed(format!(
-                    "Failed to generate unique worktree path after {} attempts for project: {}",
-                    MAX_WORKTREE_PATH_ATTEMPTS, project_name
-                )));
-            }
+        let suffix = generate_unique_suffix();
+        let name_with_suffix = format!("{}-{}", project_name, suffix);
+        let worktree_path = base_path.join(name_with_suffix);
 
-            let suffix = generate_unique_suffix();
-            let name_with_suffix = format!("{}-{}", project_name, suffix);
-            worktree_path = base_path.join(name_with_suffix);
-
-            if !worktree_path.exists() {
-                break;
-            }
+        if !worktree_path.exists() {
+            return Ok(worktree_path);
         }
     }
-
-    Ok(worktree_path)
 }
 
 /// Detect the default branch (main or master) of a git repository
@@ -156,7 +152,7 @@ pub async fn get_default_branch(repo_path: &str) -> Result<String, WorktreeError
 ///
 /// For worktrees, this resolves the actual git directory from the .git file.
 /// The pattern is only added if it doesn't already exist in the exclude file.
-async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
+pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
     let worktree = Path::new(worktree_path);
     let git_path = worktree.join(".git");
 

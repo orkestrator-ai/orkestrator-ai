@@ -17,4 +17,6 @@ pub use servers::{
     start_local_opencode_server, stop_all_local_servers, stop_local_claude_bridge,
     stop_local_opencode_server, LocalServerStartResult, LocalServerStatus,
 };
-pub use worktree::{copy_env_files, create_worktree, delete_worktree, get_setup_local_commands};
+pub use worktree::{
+    add_to_git_exclude, copy_env_files, create_worktree, delete_worktree, get_setup_local_commands,
+};
