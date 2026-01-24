@@ -534,27 +534,27 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               addMessage(sessionTabId, errorMessage);
             }
 
-            if (eventType === "session.init") {
-              // Store session initialization data (MCP servers, plugins, slash commands)
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const initData = event.data as any;
-              if (initData) {
-                useClaudeStore.getState().setSessionInitData(sessionTabId, {
-                  mcpServers: initData.mcpServers || [],
-                  plugins: initData.plugins || [],
-                  slashCommands: initData.slashCommands || [],
-                });
-                console.debug("[ClaudeChatTab] Session init data stored", {
-                  sessionTabId,
-                  mcpServerCount: initData.mcpServers?.length ?? 0,
-                  pluginCount: initData.plugins?.length ?? 0,
-                });
-              }
+          }
+
+          // Handle session.init outside the session loop - uses environmentId as key
+          // regardless of whether a specific session matched (handles race conditions)
+          if (eventType === "session.init") {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const initData = event.data as any;
+            if (initData) {
+              useClaudeStore.getState().setSessionInitData(environmentId, {
+                mcpServers: initData.mcpServers || [],
+                plugins: initData.plugins || [],
+                slashCommands: initData.slashCommands || [],
+              });
             }
           }
 
           // Debug: Warn if no session matched the event
-          if (!foundMatch && eventSessionId && !["keepalive", "connected"].includes(eventType || "")) {
+          // Filter out events that are expected during initialization or are informational
+          // Also filter message/session updates since they can arrive for old sessions during reconnects
+          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle"];
+          if (!foundMatch && eventSessionId && !ignoredEventTypes.includes(eventType || "")) {
             console.warn("[ClaudeChatTab] No session matched event", {
               eventType,
               eventSessionId,
