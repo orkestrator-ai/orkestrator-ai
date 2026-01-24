@@ -70,6 +70,36 @@ interface EnvironmentSettingsDialogProps {
   onRestart?: (environmentId: string) => Promise<void>;
 }
 
+/** Reusable component for displaying runtime-only extension items */
+function RuntimeExtensionItem({
+  name,
+  isSuccess,
+  isFailed,
+  error,
+}: {
+  name: string;
+  isSuccess: boolean;
+  isFailed: boolean;
+  error?: string;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${isFailed ? "border-red-300" : "border-input"}`}
+      title={isFailed && error ? error : undefined}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        {isSuccess ? (
+          <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+        ) : (
+          <XCircle className="h-3 w-3 text-red-500 shrink-0" />
+        )}
+        <span className={`font-medium truncate ${isFailed ? "text-red-600" : ""}`}>{name}</span>
+      </div>
+      <span className="text-xs text-muted-foreground shrink-0 ml-2">runtime</span>
+    </div>
+  );
+}
+
 export function EnvironmentSettingsDialog({
   open,
   onOpenChange,
@@ -117,15 +147,6 @@ export function EnvironmentSettingsDialog({
 
   // Get Claude session init data for runtime status
   const sessionInitData = useClaudeStore((state) => state.getSessionInitData(environment.id));
-
-  // Debug: Log sessionInitData when dialog opens
-  useEffect(() => {
-    if (open) {
-      console.log("[EnvironmentSettingsDialog] sessionInitData for", environment.id, sessionInitData);
-      console.log("[EnvironmentSettingsDialog] mcpServers:", sessionInitData?.mcpServers);
-      console.log("[EnvironmentSettingsDialog] plugins:", sessionInitData?.plugins);
-    }
-  }, [open, environment.id, sessionInitData]);
 
   // Track if port mappings have changed
   const portMappingsChanged = JSON.stringify(portMappings) !== JSON.stringify(environment.portMappings || []);
@@ -213,15 +234,14 @@ export function EnvironmentSettingsDialog({
           }
 
           if (sessionId) {
-            console.log("[EnvironmentSettingsDialog] Fetching session init data via API for session:", sessionId);
-            const initData = await fetchSessionInitData(client, sessionId);
-            if (initData) {
-              // Store in the zustand store so it's available for subsequent renders
-              useClaudeStore.getState().setSessionInitData(environment.id, initData);
-              console.log("[EnvironmentSettingsDialog] Session init data fetched via API", {
-                mcpServerCount: initData.mcpServers.length,
-                pluginCount: initData.plugins.length,
-              });
+            try {
+              const initData = await fetchSessionInitData(client, sessionId);
+              if (initData) {
+                // Store in the zustand store so it's available for subsequent renders
+                useClaudeStore.getState().setSessionInitData(environment.id, initData);
+              }
+            } catch (fetchErr) {
+              console.debug("[EnvironmentSettingsDialog] Failed to fetch session init data:", fetchErr);
             }
           }
         }
@@ -436,6 +456,15 @@ export function EnvironmentSettingsDialog({
   const isLocalEnvironment = environment.environmentType === "local";
   const isClaudeNativeMode = isLocalEnvironment && config.global.claudeMode === "native";
   const hasErrors = nameError !== null || domainErrors.length > 0;
+
+  // Determine if we should show the extensions section
+  const hasExtensionsToShow =
+    isClaudeNativeMode ||
+    mcpServers.length > 0 ||
+    pluginsList.length > 0 ||
+    (sessionInitData?.mcpServers?.length ?? 0) > 0 ||
+    (sessionInitData?.plugins?.length ?? 0) > 0 ||
+    isLoadingExtensions;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -768,7 +797,7 @@ export function EnvironmentSettingsDialog({
           )}
 
           {/* MCP Servers and Plugins - full width section */}
-          {(isClaudeNativeMode || mcpServers.length > 0 || pluginsList.length > 0 || sessionInitData?.mcpServers.length || sessionInitData?.plugins.length || isLoadingExtensions) && (
+          {hasExtensionsToShow && (
             <div className={`${isLocalEnvironment ? "" : "col-span-2"} space-y-4 pt-4 border-t`}>
               <div className="grid grid-cols-2 gap-4">
                 {/* MCP Servers */}
@@ -821,23 +850,13 @@ export function EnvironmentSettingsDialog({
                     // Show runtime servers when no configured servers but sessionInitData has them
                     <div className="space-y-1 max-h-32 overflow-y-auto">
                       {sessionInitData?.mcpServers.map((server) => (
-                        <div
+                        <RuntimeExtensionItem
                           key={server.name}
-                          className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${server.status === "failed" ? "border-red-300" : "border-input"}`}
-                          title={server.status === "failed" && server.error ? server.error : undefined}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            {server.status === "connected" ? (
-                              <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
-                            ) : (
-                              <XCircle className="h-3 w-3 text-red-500 shrink-0" />
-                            )}
-                            <span className={`font-medium truncate ${server.status === "failed" ? "text-red-600" : ""}`}>{server.name}</span>
-                          </div>
-                          <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                            runtime
-                          </span>
-                        </div>
+                          name={server.name}
+                          isSuccess={server.status === "connected"}
+                          isFailed={server.status === "failed"}
+                          error={server.error}
+                        />
                       ))}
                     </div>
                   )}
@@ -898,23 +917,13 @@ export function EnvironmentSettingsDialog({
                     // Show runtime plugins when no configured plugins but sessionInitData has them
                     <div className="space-y-1 max-h-32 overflow-y-auto">
                       {sessionInitData?.plugins.map((plugin) => (
-                        <div
+                        <RuntimeExtensionItem
                           key={plugin.name}
-                          className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${plugin.status === "failed" ? "border-red-300" : "border-input"}`}
-                          title={plugin.status === "failed" && plugin.error ? plugin.error : undefined}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            {plugin.status === "loaded" ? (
-                              <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
-                            ) : (
-                              <XCircle className="h-3 w-3 text-red-500 shrink-0" />
-                            )}
-                            <span className={`font-medium truncate ${plugin.status === "failed" ? "text-red-600" : ""}`}>{plugin.name}</span>
-                          </div>
-                          <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                            runtime
-                          </span>
-                        </div>
+                          name={plugin.name}
+                          isSuccess={plugin.status === "loaded"}
+                          isFailed={plugin.status === "failed"}
+                          error={plugin.error}
+                        />
                       ))}
                     </div>
                   )}

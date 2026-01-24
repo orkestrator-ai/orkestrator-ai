@@ -652,9 +652,6 @@ export async function sendPrompt(
 
         // Convert plugin-type MCP servers to plugin statuses
         // Also include any traditional plugins from initMsg.plugins
-        // Debug: Log plugin MCP servers to see their status
-        console.log("[session-manager] Plugin MCP servers:", pluginMcpServers.map((s: any) => ({ name: s.name, status: s.status })));
-
         const pluginStatuses: PluginRuntimeStatus[] = [
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ...pluginMcpServers.map((s: any) => ({

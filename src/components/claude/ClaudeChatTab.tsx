@@ -534,29 +534,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               addMessage(sessionTabId, errorMessage);
             }
 
-            if (eventType === "session.init") {
-              // Store session initialization data (MCP servers, plugins, slash commands)
-              // Note: Use environmentId as the key since getSessionInitData looks up by environmentId
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const initData = event.data as any;
-              if (initData) {
-                useClaudeStore.getState().setSessionInitData(environmentId, {
-                  mcpServers: initData.mcpServers || [],
-                  plugins: initData.plugins || [],
-                  slashCommands: initData.slashCommands || [],
-                });
-                console.debug("[ClaudeChatTab] Session init data stored", {
-                  environmentId,
-                  mcpServerCount: initData.mcpServers?.length ?? 0,
-                  pluginCount: initData.plugins?.length ?? 0,
-                });
-              }
-            }
           }
 
-          // Handle session.init even when no session matches (race condition during startup)
-          // This ensures init data is captured even if events arrive before session is stored
-          if (!foundMatch && eventType === "session.init") {
+          // Handle session.init outside the session loop - uses environmentId as key
+          // regardless of whether a specific session matched (handles race conditions)
+          if (eventType === "session.init") {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const initData = event.data as any;
             if (initData) {
@@ -564,12 +546,6 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                 mcpServers: initData.mcpServers || [],
                 plugins: initData.plugins || [],
                 slashCommands: initData.slashCommands || [],
-              });
-              console.debug("[ClaudeChatTab] Session init data stored (no session match)", {
-                environmentId,
-                eventSessionId,
-                mcpServerCount: initData.mcpServers?.length ?? 0,
-                pluginCount: initData.plugins?.length ?? 0,
               });
             }
           }
