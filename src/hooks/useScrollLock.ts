@@ -3,6 +3,11 @@ import { useEffect, useState, useCallback, useRef, type RefObject } from "react"
 /** Pixels from bottom to consider "at bottom" */
 const SCROLL_THRESHOLD = 50;
 
+/** Maximum attempts to find viewport element (total wait: 20 * 50ms = 1 second) */
+const VIEWPORT_POLL_MAX_ATTEMPTS = 20;
+/** Interval between viewport polling attempts in milliseconds */
+const VIEWPORT_POLL_INTERVAL_MS = 50;
+
 interface UseScrollLockOptions {
   /** Dependency array that triggers auto-scroll when changed (e.g., messages array) */
   scrollTrigger?: unknown;
@@ -32,64 +37,78 @@ export function useScrollLock(
 ): UseScrollLockReturn {
   const { scrollTrigger } = options;
 
-  console.log("[useScrollLock] Hook called, scrollRef.current:", scrollRef.current);
-
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  // Track the viewport element in state to trigger re-renders when it becomes available
+  const [viewportElement, setViewportElement] = useState<HTMLElement | null>(null);
 
   // Use a ref to track scroll lock for sync access in effects
   // This prevents race conditions where state hasn't updated yet
   const isScrollLockedRef = useRef(true);
 
-  // Helper to find the scroll viewport element (try multiple selectors for compatibility)
-  const getScrollElement = useCallback(() => {
-    if (!scrollRef.current) return null;
-    // Try Radix's internal attribute first, then fall back to data-slot
-    return (
-      scrollRef.current.querySelector("[data-radix-scroll-area-viewport]") ||
-      scrollRef.current.querySelector('[data-slot="scroll-area-viewport"]')
-    ) as HTMLElement | null;
+  // Find the viewport element when the ref changes
+  useEffect(() => {
+    // Clear previous viewport when ref changes to handle remounts
+    setViewportElement(null);
+
+    const findViewport = (): HTMLElement | null => {
+      if (!scrollRef.current) return null;
+      // Try Radix's internal attribute first, then fall back to data-slot
+      return (
+        scrollRef.current.querySelector("[data-radix-scroll-area-viewport]") ||
+        scrollRef.current.querySelector('[data-slot="scroll-area-viewport"]')
+      ) as HTMLElement | null;
+    };
+
+    // Try immediately
+    const viewport = findViewport();
+    if (viewport) {
+      setViewportElement(viewport);
+      return;
+    }
+
+    // If not found, poll a few times (handles async rendering)
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts++;
+      const vp = findViewport();
+      if (vp) {
+        setViewportElement(vp);
+        clearInterval(interval);
+      } else if (attempts >= VIEWPORT_POLL_MAX_ATTEMPTS) {
+        console.warn(
+          "[useScrollLock] Failed to find viewport after",
+          VIEWPORT_POLL_MAX_ATTEMPTS,
+          "attempts"
+        );
+        clearInterval(interval);
+      }
+    }, VIEWPORT_POLL_INTERVAL_MS);
+
+    return () => clearInterval(interval);
   }, [scrollRef]);
 
-  // Check initial scroll position on mount
+  // Check initial scroll position when viewport becomes available
   useEffect(() => {
-    const scrollElement = getScrollElement();
-    console.log("[useScrollLock] Initial mount check:", {
-      hasRef: !!scrollRef.current,
-      scrollElement: scrollElement?.tagName,
-      scrollElementClass: scrollElement?.className,
-    });
-    if (!scrollElement) return;
+    if (!viewportElement) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+    const { scrollTop, scrollHeight, clientHeight } = viewportElement;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
     const atBottom = distanceFromBottom <= SCROLL_THRESHOLD;
 
     setIsAtBottom(atBottom);
     setIsScrollLocked(atBottom);
     isScrollLockedRef.current = atBottom;
-  }, [getScrollElement]);
+  }, [viewportElement]);
 
   // Track scroll position to manage scroll lock
   useEffect(() => {
-    const scrollElement = getScrollElement();
-    console.log("[useScrollLock] Setting up scroll listener:", {
-      hasRef: !!scrollRef.current,
-      scrollElement: scrollElement?.tagName,
-    });
-    if (!scrollElement) return;
+    if (!viewportElement) return;
 
     const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+      const { scrollTop, scrollHeight, clientHeight } = viewportElement;
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
       const atBottom = distanceFromBottom <= SCROLL_THRESHOLD;
-      console.log("[useScrollLock] Scroll event:", {
-        scrollTop,
-        scrollHeight,
-        clientHeight,
-        distanceFromBottom,
-        atBottom,
-      });
 
       setIsAtBottom(atBottom);
 
@@ -104,36 +123,33 @@ export function useScrollLock(
       }
     };
 
-    scrollElement.addEventListener("scroll", handleScroll, { passive: true });
-    return () => scrollElement.removeEventListener("scroll", handleScroll);
-  }, [getScrollElement]);
+    viewportElement.addEventListener("scroll", handleScroll, { passive: true });
+    return () => viewportElement.removeEventListener("scroll", handleScroll);
+  }, [viewportElement]);
 
   // Auto-scroll to bottom when trigger changes (only if scroll-locked)
   // Uses instant scrolling to keep up with rapid message streaming
   // Uses ref instead of state to avoid race conditions with scroll events
   useEffect(() => {
-    if (!isScrollLockedRef.current) return;
+    if (!isScrollLockedRef.current || !viewportElement) return;
 
-    const scrollElement = getScrollElement();
-    if (scrollElement) {
-      scrollElement.scrollTop = scrollElement.scrollHeight;
-    }
+    viewportElement.scrollTop = viewportElement.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Using ref instead of state to avoid race condition
-  }, [scrollTrigger, getScrollElement]);
+  }, [scrollTrigger, viewportElement]);
 
   // Handle scroll to bottom button click
   const scrollToBottom = useCallback(() => {
-    const scrollElement = getScrollElement();
-    if (scrollElement) {
-      scrollElement.scrollTo({
-        top: scrollElement.scrollHeight,
-        behavior: "smooth",
-      });
-      // Update both state and ref immediately for sync behavior
-      setIsScrollLocked(true);
-      isScrollLockedRef.current = true;
-    }
-  }, [getScrollElement]);
+    if (!viewportElement) return;
+
+    viewportElement.scrollTo({
+      top: viewportElement.scrollHeight,
+      behavior: "smooth",
+    });
+    // Update both state and ref immediately for sync behavior
+    setIsAtBottom(true);
+    setIsScrollLocked(true);
+    isScrollLockedRef.current = true;
+  }, [viewportElement]);
 
   return {
     isAtBottom,
