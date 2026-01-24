@@ -52,6 +52,8 @@ export interface SessionState {
   error?: string;
   /** SDK session ID returned from Claude Agent SDK - used for resume */
   sdkSessionId?: string;
+  /** Session initialization data (MCP servers, plugins, etc.) */
+  initData?: SessionInitData;
 }
 
 /** Model info */
@@ -88,9 +90,33 @@ export type SSEEventType =
   | "session.updated"
   | "session.idle"
   | "session.error"
+  | "session.init"
   | "message.updated"
   | "question.asked"
   | "question.answered";
+
+/** MCP server status from SDK init message */
+export interface McpServerRuntimeStatus {
+  name: string;
+  status: "connected" | "failed";
+  error?: string;
+  tools?: string[];
+}
+
+/** Plugin status from SDK init message */
+export interface PluginRuntimeStatus {
+  name: string;
+  path?: string;
+  status: "loaded" | "failed";
+  error?: string;
+}
+
+/** Session initialization data (from SDK init message) */
+export interface SessionInitData {
+  mcpServers: McpServerRuntimeStatus[];
+  plugins: PluginRuntimeStatus[];
+  slashCommands?: string[];
+}
 
 /** SSE event */
 export interface SSEEvent {

@@ -9,9 +9,13 @@ import type {
   ToolDiffMetadata,
   QuestionRequest,
   PromptOptions,
+  SessionInitData,
+  McpServerRuntimeStatus,
+  PluginRuntimeStatus,
 } from "../types/index.js";
 import { eventEmitter } from "./event-emitter.js";
 import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
+import { getPluginsForSdk } from "./plugin-config.js";
 import type { McpToolMetadata } from "../types/mcp.js";
 
 // Store for active sessions
@@ -446,7 +450,11 @@ export async function sendPrompt(
     const mcpServers = await getMcpServersForSdk(cwd);
     const mcpServerNames = await getMcpServerNames(cwd);
 
+    // Load plugins from config files
+    const plugins = await getPluginsForSdk(cwd);
+
     const mcpServerCount = Object.keys(mcpServers).length;
+    const pluginCount = plugins.length;
     console.log("[session-manager] Starting query", {
       sessionId,
       cwd,
@@ -455,6 +463,8 @@ export async function sendPrompt(
       thinkingEnabled,
       mcpServerCount,
       mcpServerNames: Array.from(mcpServerNames),
+      pluginCount,
+      pluginPaths: plugins.map((p) => p.path),
     });
     const envPath = process.env.PATH;
     console.log("[session-manager] SDK env PATH", { path: envPath });
@@ -489,10 +499,13 @@ export async function sendPrompt(
           type: "preset",
           preset: "claude_code",
         },
-        // Load project settings (CLAUDE.md files)
-        settingSources: ["project"],
-        // Load MCP servers from user config
+        // Load user settings (from ~/.claude.json including MCP servers) and project settings (CLAUDE.md files)
+        // Using "user" lets the SDK handle MCP server loading natively, which supports all transport types
+        settingSources: ["user", "project"],
+        // Also pass MCP servers explicitly for any project-local .mcp.json overrides
         mcpServers: mcpServerCount > 0 ? mcpServers : undefined,
+        // Load plugins from user config
+        plugins: pluginCount > 0 ? plugins : undefined,
         // Handle AskUserQuestion tool to get user input
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         canUseTool: async (toolName: string, input: any) => {
@@ -610,11 +623,54 @@ export async function sendPrompt(
       if (message.type === "system" && message.subtype === "init") {
         // Store the SDK session ID for resume functionality
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sdkSessionId = (message as any).session_id;
+        const initMsg = message as any;
+        const sdkSessionId = initMsg.session_id;
         if (sdkSessionId) {
           session.sdkSessionId = sdkSessionId;
           console.log("[session-manager] Session initialized, stored SDK session ID:", sdkSessionId);
         }
+
+        // Capture MCP servers and plugins from init message
+        const mcpServerStatuses: McpServerRuntimeStatus[] = (initMsg.mcp_servers || []).map(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (s: any) => ({
+            name: s.name,
+            status: s.status === "connected" ? "connected" : "failed",
+            error: s.error,
+            tools: s.tools,
+          })
+        );
+
+        const pluginStatuses: PluginRuntimeStatus[] = (initMsg.plugins || []).map(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (p: any) => ({
+            name: p.name,
+            path: p.path,
+            status: p.status === "loaded" ? "loaded" : "failed",
+            error: p.error,
+          })
+        );
+
+        // Store init data in session
+        session.initData = {
+          mcpServers: mcpServerStatuses,
+          plugins: pluginStatuses,
+          slashCommands: initMsg.slash_commands,
+        };
+
+        console.log("[session-manager] Session init data captured", {
+          sessionId,
+          mcpServerCount: mcpServerStatuses.length,
+          pluginCount: pluginStatuses.length,
+          slashCommandCount: initMsg.slash_commands?.length ?? 0,
+        });
+
+        // Emit session.init event so frontend can update UI
+        eventEmitter.emit({
+          type: "session.init",
+          sessionId,
+          data: session.initData,
+        });
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
         const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker, mcpServerNames);
@@ -798,6 +854,14 @@ export function getPendingQuestions(
     return questions.filter((q) => q.sessionId === sessionId);
   }
   return questions;
+}
+
+/**
+ * Get session initialization data (MCP servers, plugins, slash commands)
+ */
+export function getSessionInitData(sessionId: string): SessionInitData | undefined {
+  const session = sessions.get(sessionId);
+  return session?.initData;
 }
 
 /**

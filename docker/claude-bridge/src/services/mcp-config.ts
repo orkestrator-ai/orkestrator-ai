@@ -143,16 +143,10 @@ function configToSdkFormat(
   config: McpServerConfig
 ): SdkMcpServerConfig | null {
   if (isHttpConfig(config)) {
-    // The Claude SDK's MCP implementation supports two remote transport types:
-    // - "sse": Server-Sent Events over HTTP (unidirectional streaming from server)
-    // - "http": Standard HTTP request/response (bidirectional via separate requests)
-    //
-    // The ~/.claude.json config uses "http" as a general remote server type.
-    // We map to "sse" here as it's the more common transport for MCP servers
-    // that support streaming responses. If a server requires strict HTTP transport,
-    // this may need to be configurable per-server in the future.
+    // Remote MCP servers use HTTP transport. The SDK also supports "sse" transport,
+    // but our config schema uses "http" for all URL-based servers.
     return {
-      type: "sse" as const,
+      type: "http" as const,
       url: config.url,
       headers: config.headers,
     };

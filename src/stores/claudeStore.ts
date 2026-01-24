@@ -6,6 +6,7 @@ import {
   type ClaudeClient,
   type ClaudeQuestionRequest,
   type ClaudeEvent,
+  type SessionInitData,
 } from "@/lib/claude-client";
 import { createSessionKey } from "@/lib/utils";
 
@@ -58,6 +59,7 @@ interface ClaudeState {
   pendingQuestions: Map<string, ClaudeQuestionRequest>;
   eventSubscriptions: Map<string, ClaudeEventSubscriptionState>;
   thinkingEnabled: Map<string, boolean>;
+  sessionInitData: Map<string, SessionInitData>;
 
   // Actions
   setServerStatus: (environmentId: string, status: ClaudeServerStatus) => void;
@@ -76,6 +78,7 @@ interface ClaudeState {
   setDraftText: (environmentId: string, text: string) => void;
   setComposing: (environmentId: string, isComposing: boolean) => void;
   setThinkingEnabled: (environmentId: string, enabled: boolean) => void;
+  setSessionInitData: (environmentId: string, initData: SessionInitData | null) => void;
   clearEnvironment: (environmentId: string) => void;
   addPendingQuestion: (question: ClaudeQuestionRequest) => void;
   removePendingQuestion: (requestId: string) => void;
@@ -92,6 +95,7 @@ interface ClaudeState {
   getDraftText: (environmentId: string) => string;
   isComposingFor: (environmentId: string) => boolean;
   isThinkingEnabled: (environmentId: string) => boolean;
+  getSessionInitData: (environmentId: string) => SessionInitData | undefined;
   getPendingQuestionsForSession: (sessionId: string) => ClaudeQuestionRequest[];
   getPendingQuestion: (requestId: string) => ClaudeQuestionRequest | undefined;
 }
@@ -109,6 +113,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   pendingQuestions: new Map(),
   eventSubscriptions: new Map(),
   thinkingEnabled: new Map(),
+  sessionInitData: new Map(),
 
   // Actions
   setServerStatus: (environmentId, status) =>
@@ -286,6 +291,17 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { thinkingEnabled: newMap };
     }),
 
+  setSessionInitData: (environmentId, initData) =>
+    set((state) => {
+      const newMap = new Map(state.sessionInitData);
+      if (initData) {
+        newMap.set(environmentId, initData);
+      } else {
+        newMap.delete(environmentId);
+      }
+      return { sessionInitData: newMap };
+    }),
+
   clearEnvironment: (environmentId) => {
     // First close the event subscription if it exists
     const subscription = get().eventSubscriptions.get(environmentId);
@@ -311,6 +327,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
+      const newThinkingEnabled = new Map(state.thinkingEnabled);
+      const newSessionInitData = new Map(state.sessionInitData);
 
       newServerStatus.delete(environmentId);
       newSessions.delete(environmentId);
@@ -320,7 +338,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       newDraftText.delete(environmentId);
       newIsComposing.delete(environmentId);
       newEventSubscriptions.delete(environmentId);
-      state.thinkingEnabled.delete(environmentId);
+      newThinkingEnabled.delete(environmentId);
+      newSessionInitData.delete(environmentId);
 
       // Remove pending questions for this environment's sessions
       for (const [requestId, question] of newPendingQuestions) {
@@ -340,6 +359,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         eventSubscriptions: newEventSubscriptions,
+        thinkingEnabled: newThinkingEnabled,
+        sessionInitData: newSessionInitData,
       };
     });
   },
@@ -434,6 +455,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
   // Default to true (thinking enabled) if not explicitly set
   isThinkingEnabled: (environmentId) => get().thinkingEnabled.get(environmentId) ?? true,
+
+  getSessionInitData: (environmentId) => get().sessionInitData.get(environmentId),
 
   getPendingQuestionsForSession: (sessionId) => {
     const questions: ClaudeQuestionRequest[] = [];
