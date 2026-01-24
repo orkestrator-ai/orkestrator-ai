@@ -466,6 +466,8 @@ export async function sendPrompt(
       pluginCount,
       pluginPaths: plugins.map((p) => p.path),
     });
+    // Log detailed MCP server configs for debugging
+    console.log("[session-manager] MCP server configs being passed to SDK:", JSON.stringify(mcpServers, null, 2));
     const envPath = process.env.PATH;
     console.log("[session-manager] SDK env PATH", { path: envPath });
     const queryIterator = query({
@@ -499,9 +501,10 @@ export async function sendPrompt(
           type: "preset",
           preset: "claude_code",
         },
-        // Load project settings (CLAUDE.md files)
-        settingSources: ["project"],
-        // Load MCP servers from user config
+        // Load user settings (from ~/.claude.json including MCP servers) and project settings (CLAUDE.md files)
+        // Using "user" lets the SDK handle MCP server loading natively, which supports all transport types
+        settingSources: ["user", "project"],
+        // Also pass MCP servers explicitly for any project-local .mcp.json overrides
         mcpServers: mcpServerCount > 0 ? mcpServers : undefined,
         // Load plugins from user config
         plugins: pluginCount > 0 ? plugins : undefined,
@@ -663,6 +666,10 @@ export async function sendPrompt(
           pluginCount: pluginStatuses.length,
           slashCommandCount: initMsg.slash_commands?.length ?? 0,
         });
+        // Log detailed MCP server statuses for debugging
+        console.log("[session-manager] MCP server statuses from SDK:", JSON.stringify(mcpServerStatuses, null, 2));
+        // Log raw mcp_servers from init message for debugging
+        console.log("[session-manager] Raw mcp_servers from SDK init:", JSON.stringify(initMsg.mcp_servers, null, 2));
 
         // Emit session.init event so frontend can update UI
         eventEmitter.emit({

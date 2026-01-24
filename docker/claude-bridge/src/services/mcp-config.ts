@@ -147,12 +147,10 @@ function configToSdkFormat(
     // - "sse": Server-Sent Events over HTTP (unidirectional streaming from server)
     // - "http": Standard HTTP request/response (bidirectional via separate requests)
     //
-    // The ~/.claude.json config uses "http" as a general remote server type.
-    // We map to "sse" here as it's the more common transport for MCP servers
-    // that support streaming responses. If a server requires strict HTTP transport,
-    // this may need to be configurable per-server in the future.
+    // Pass through the type as-is from the configuration. The ~/.claude.json
+    // config specifies the correct transport type for each server.
     return {
-      type: "sse" as const,
+      type: "http" as const,
       url: config.url,
       headers: config.headers,
     };
