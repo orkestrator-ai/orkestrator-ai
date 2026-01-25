@@ -10,7 +10,7 @@ use crate::docker::{
     ContainerConfig, DockerError,
 };
 use crate::local::{
-    allocate_ports, copy_env_files, create_worktree, delete_worktree,
+    add_to_git_exclude, allocate_ports, copy_env_files, create_worktree, delete_worktree,
     get_setup_local_commands, stop_all_local_servers,
 };
 use crate::models::{Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState};
@@ -38,6 +38,23 @@ pub struct StartEnvironmentResult {
 /// Convert storage errors to string for Tauri
 fn storage_error_to_string(err: StorageError) -> String {
     err.to_string()
+}
+
+/// Fetch setup commands from orkestrator-ai.json and log if any are found
+///
+/// Returns `None` if no setup commands are configured, otherwise `Some(commands)`.
+async fn fetch_setup_commands(worktree_path: &str, environment_id: &str) -> Option<Vec<String>> {
+    let commands = get_setup_local_commands(worktree_path).await;
+    if commands.is_empty() {
+        None
+    } else {
+        info!(
+            environment_id = %environment_id,
+            command_count = commands.len(),
+            "Found setupLocal commands to run in terminal"
+        );
+        Some(commands)
+    }
 }
 
 /// Get all environments for a project with verified Docker status
@@ -1000,12 +1017,21 @@ async fn start_local_environment(
     if let Some(worktree_path) = &environment.worktree_path {
         if std::path::Path::new(worktree_path).exists() {
             debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Worktree already exists");
-            // Just update status to running
+
+            // Ensure .orkestrator is in git exclude (idempotent - won't duplicate)
+            if let Err(e) = add_to_git_exclude(worktree_path, ".orkestrator").await {
+                warn!(error = %e, "Failed to add .orkestrator to git exclude (non-fatal)");
+            }
+
+            // Get setupLocal commands from orkestrator-ai.json
+            let setup_commands = fetch_setup_commands(worktree_path, environment_id).await;
+
+            // Update status to running
             storage
                 .update_environment(environment_id, json!({ "status": "running" }))
                 .map_err(storage_error_to_string)?;
             info!(environment_id = %environment_id, "Local environment started (existing worktree)");
-            return Ok(StartEnvironmentResult::default());
+            return Ok(StartEnvironmentResult { setup_commands });
         }
     }
 
@@ -1044,17 +1070,7 @@ async fn start_local_environment(
     }
 
     // Get setupLocal commands from orkestrator-ai.json (to be run in terminal by frontend)
-    let setup_commands = get_setup_local_commands(&worktree_path).await;
-    let setup_commands_option = if setup_commands.is_empty() {
-        None
-    } else {
-        info!(
-            environment_id = %environment_id,
-            command_count = setup_commands.len(),
-            "Found setupLocal commands to run in terminal"
-        );
-        Some(setup_commands)
-    };
+    let setup_commands = fetch_setup_commands(&worktree_path, environment_id).await;
 
     // Update environment with worktree path, branch (if adjusted), and status
     storage
@@ -1070,7 +1086,7 @@ async fn start_local_environment(
 
     info!(environment_id = %environment_id, "Local environment started successfully");
     Ok(StartEnvironmentResult {
-        setup_commands: setup_commands_option,
+        setup_commands,
     })
 }
 

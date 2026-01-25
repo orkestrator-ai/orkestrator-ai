@@ -66,36 +66,43 @@ fn generate_unique_suffix() -> String {
 /// Maximum attempts to generate a unique worktree path
 const MAX_WORKTREE_PATH_ATTEMPTS: u32 = 100;
 
-/// Generate a unique worktree path, adding suffix if the base name already exists
+/// Generate a unique worktree path with a random suffix
+///
+/// Always includes a unique 6-character alphanumeric suffix to ensure all
+/// worktree paths are distinct, even the first one created for a project.
+///
+/// # Path Format
+///
+/// Generated paths follow the pattern: `<base_path>/<project_name>-<suffix>`
+///
+/// For example: `~/orkestrator-ai/workspaces/my-project-abc123`
+///
+/// # Note
+///
+/// This function always generates a suffix. Existing environments store their
+/// `worktree_path` in storage and are not affected by this behavior.
 pub fn generate_worktree_path(project_name: &str) -> Result<PathBuf, WorktreeError> {
     let base_path = get_worktree_base_path()?;
 
-    // Try the project name first
-    let mut worktree_path = base_path.join(project_name);
+    // Always generate a unique suffix for the worktree path
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        if attempts > MAX_WORKTREE_PATH_ATTEMPTS {
+            return Err(WorktreeError::DirectoryCreationFailed(format!(
+                "Failed to generate unique worktree path after {} attempts for project: {}",
+                MAX_WORKTREE_PATH_ATTEMPTS, project_name
+            )));
+        }
 
-    // If it exists, add a unique suffix
-    if worktree_path.exists() {
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            if attempts > MAX_WORKTREE_PATH_ATTEMPTS {
-                return Err(WorktreeError::DirectoryCreationFailed(format!(
-                    "Failed to generate unique worktree path after {} attempts for project: {}",
-                    MAX_WORKTREE_PATH_ATTEMPTS, project_name
-                )));
-            }
+        let suffix = generate_unique_suffix();
+        let name_with_suffix = format!("{}-{}", project_name, suffix);
+        let worktree_path = base_path.join(name_with_suffix);
 
-            let suffix = generate_unique_suffix();
-            let name_with_suffix = format!("{}-{}", project_name, suffix);
-            worktree_path = base_path.join(name_with_suffix);
-
-            if !worktree_path.exists() {
-                break;
-            }
+        if !worktree_path.exists() {
+            return Ok(worktree_path);
         }
     }
-
-    Ok(worktree_path)
 }
 
 /// Detect the default branch (main or master) of a git repository
@@ -156,7 +163,7 @@ pub async fn get_default_branch(repo_path: &str) -> Result<String, WorktreeError
 ///
 /// For worktrees, this resolves the actual git directory from the .git file.
 /// The pattern is only added if it doesn't already exist in the exclude file.
-async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
+pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
     let worktree = Path::new(worktree_path);
     let git_path = worktree.join(".git");
 
@@ -611,6 +618,78 @@ mod tests {
         assert!(path.is_ok());
         let path = path.unwrap();
         assert!(path.to_string_lossy().contains("orkestrator-ai/workspaces"));
+    }
+
+    #[test]
+    fn test_generate_worktree_path_contains_project_name() {
+        let project_name = "my-test-project";
+        let path = generate_worktree_path(project_name).unwrap();
+        let path_str = path.to_string_lossy();
+
+        // Path should contain the project name
+        assert!(
+            path_str.contains(project_name),
+            "Path '{}' should contain project name '{}'",
+            path_str,
+            project_name
+        );
+    }
+
+    #[test]
+    fn test_generate_worktree_path_has_unique_suffix() {
+        let project_name = "test-project";
+        let path = generate_worktree_path(project_name).unwrap();
+        let filename = path.file_name().unwrap().to_string_lossy();
+
+        // Filename should be in format "project-name-suffix" where suffix is 6 chars
+        let expected_prefix = format!("{}-", project_name);
+        assert!(
+            filename.starts_with(&expected_prefix),
+            "Filename '{}' should start with '{}'",
+            filename,
+            expected_prefix
+        );
+
+        // Extract and validate the suffix (6 alphanumeric characters)
+        let suffix = &filename[expected_prefix.len()..];
+        assert_eq!(
+            suffix.len(),
+            6,
+            "Suffix '{}' should be 6 characters",
+            suffix
+        );
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_alphanumeric()),
+            "Suffix '{}' should be alphanumeric",
+            suffix
+        );
+    }
+
+    #[test]
+    fn test_generate_worktree_path_under_base_directory() {
+        let project_name = "base-dir-test";
+        let path = generate_worktree_path(project_name).unwrap();
+        let base_path = get_worktree_base_path().unwrap();
+
+        assert!(
+            path.starts_with(&base_path),
+            "Path '{}' should be under base directory '{}'",
+            path.display(),
+            base_path.display()
+        );
+    }
+
+    #[test]
+    fn test_generate_worktree_path_unique_each_call() {
+        let project_name = "unique-test";
+        let path1 = generate_worktree_path(project_name).unwrap();
+        let path2 = generate_worktree_path(project_name).unwrap();
+
+        // Each call should generate a different path (different suffix)
+        assert_ne!(
+            path1, path2,
+            "Each call should generate a unique path"
+        );
     }
 
     #[tokio::test]
