@@ -266,7 +266,7 @@ export function ActionBar() {
   const isRunning = isLocalReady || selectedEnvironment?.status === "running";
   const workspaceReady = selectedEnvironmentId ? isWorkspaceReady(selectedEnvironmentId) : false;
 
-  const { prUrl, prState, hasMergeConflicts, viewPR, setModeCreatePending, setModeMergePending } = usePullRequest({
+  const { prUrl, prState, hasMergeConflicts, viewPR, setModeCreatePending } = usePullRequest({
     environmentId: selectedEnvironmentId,
   });
 
@@ -579,12 +579,15 @@ export function ActionBar() {
       // from main branch context). By saving the merged state immediately, we ensure the
       // cleanup button appears regardless of what the monitor detects afterward.
       console.log("[ActionBar] Saving merged state immediately...");
-      await tauri.setEnvironmentPr(selectedEnvironmentId, prUrl, "merged", false);
-      setEnvironmentPR(selectedEnvironmentId, prUrl, "merged", false);
-      console.log("[ActionBar] Merged state saved");
-
-      // Set monitoring mode to normal (no need for merge-pending since we already saved the state)
-      setModeMergePending();
+      try {
+        await tauri.setEnvironmentPr(selectedEnvironmentId, prUrl, "merged", false);
+        setEnvironmentPR(selectedEnvironmentId, prUrl, "merged", false);
+        console.log("[ActionBar] Merged state saved");
+      } catch (saveErr) {
+        // State save failed but merge succeeded - log warning and continue
+        // The monitor service may still detect the merged state eventually
+        console.warn("[ActionBar] Failed to save merged state:", saveErr);
+      }
 
       // Clear the merging spinner
       setIsMerging(false);
@@ -597,7 +600,7 @@ export function ActionBar() {
       setMergeDialogOpen(true); // Re-open dialog to show error
       setIsMerging(false);
     }
-  }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, isLocalEnvironment, setModeMergePending, setEnvironmentPR]);
+  }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, isLocalEnvironment, setEnvironmentPR]);
 
   return (
     <>
