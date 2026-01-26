@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from "react";
 import { readImage, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile } from "@/lib/tauri";
+import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 
 interface UseClipboardImagePasteOptions {
   containerId: string | null;
@@ -44,21 +45,18 @@ export async function processClipboardPaste(
       const rgba = await image.rgba();
       const { width, height } = await image.size();
 
-      // Check raw RGBA size before processing to avoid memory issues
-      const rgbaSize = width * height * 4;
-      if (rgbaSize > MAX_RGBA_SIZE) {
-        const sizeMB = (rgbaSize / 1024 / 1024).toFixed(1);
-        throw new Error(`Image dimensions too large (${width}x${height}, ${sizeMB}MB raw). Try a smaller image.`);
-      }
-
       // Create a canvas to convert RGBA to PNG
-      const canvas = document.createElement("canvas");
+      let canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (ctx) {
         const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
         ctx.putImageData(imageDataObj, 0, 0);
+
+        // Resize if needed to fit within RGBA size limit
+        canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
         const dataUrl = canvas.toDataURL("image/png");
         imageData = dataUrl.split(",")[1] || null;
       }
@@ -67,9 +65,7 @@ export async function processClipboardPaste(
       canvas.height = 0;
     } catch (imgError) {
       // No image in clipboard or processing failed - we'll try text
-      if (imgError instanceof Error && imgError.message.includes("too large")) {
-        throw imgError; // Re-throw size errors
-      }
+      // (Size errors no longer thrown since we resize instead)
     }
 
     if (imageData) {

@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
+import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, type ClaudeAttachment } from "@/stores/claudeStore";
@@ -114,13 +115,8 @@ export function ClaudeComposeBar({
         const rgba = await image.rgba();
         const { width, height } = await image.size();
 
-        const rgbaSize = width * height * 4;
-        if (rgbaSize > MAX_RGBA_SIZE) {
-          console.error("[ClaudeComposeBar] Image too large");
-          return;
-        }
-
-        const canvas = document.createElement("canvas");
+        // Create canvas with original image data
+        let canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d");
@@ -128,12 +124,19 @@ export function ClaudeComposeBar({
 
         const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
         ctx.putImageData(imageDataObj, 0, 0);
+
+        // Resize if needed to fit within RGBA size limit
+        canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
         const dataUrl = canvas.toDataURL("image/png");
         const base64Data = dataUrl.split(",")[1] || "";
 
         const estimatedSize = (base64Data.length * 3) / 4;
         if (estimatedSize > MAX_IMAGE_SIZE) {
           console.error("[ClaudeComposeBar] Image too large after encoding");
+          toast.error("Image too large", {
+            description: `Image is ${(estimatedSize / 1024 / 1024).toFixed(1)}MB. Maximum is 8MB.`,
+          });
           return;
         }
 

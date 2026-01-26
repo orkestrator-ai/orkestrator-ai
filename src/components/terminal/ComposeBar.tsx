@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile } from "@/lib/tauri";
+import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
+import { toast } from "sonner";
 
 interface ImageAttachment {
   id: string;
@@ -65,15 +67,8 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       const rgba = await image.rgba();
       const { width, height } = await image.size();
 
-      // Check raw RGBA size
-      const rgbaSize = width * height * 4;
-      if (rgbaSize > MAX_RGBA_SIZE) {
-        console.error("[ComposeBar] Image too large");
-        return;
-      }
-
       // Convert RGBA to PNG via canvas
-      const canvas = document.createElement("canvas");
+      let canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
@@ -81,6 +76,10 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
 
       const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
       ctx.putImageData(imageDataObj, 0, 0);
+
+      // Resize if needed to fit within RGBA size limit
+      canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
       const dataUrl = canvas.toDataURL("image/png");
       const base64Data = dataUrl.split(",")[1] || "";
 
@@ -88,8 +87,15 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       const estimatedSize = (base64Data.length * 3) / 4;
       if (estimatedSize > MAX_IMAGE_SIZE) {
         console.error("[ComposeBar] Image too large after encoding");
+        toast.error("Image too large", {
+          description: `Image is ${(estimatedSize / 1024 / 1024).toFixed(1)}MB. Maximum is 8MB.`,
+        });
         return;
       }
+
+      // Store final dimensions before cleanup
+      const finalWidth = canvas.width;
+      const finalHeight = canvas.height;
 
       // Release canvas memory
       canvas.width = 0;
@@ -99,13 +105,13 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       event.preventDefault();
       event.stopPropagation();
 
-      // Add to images
+      // Add to images - use final canvas dimensions after potential resize
       const newImage: ImageAttachment = {
         id: Math.random().toString(36).substring(2, 9),
         dataUrl,
         base64Data,
-        width,
-        height,
+        width: finalWidth,
+        height: finalHeight,
       };
       setImages((prev) => [...prev, newImage]);
     } catch {

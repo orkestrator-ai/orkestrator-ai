@@ -7,7 +7,8 @@ import "@xterm/xterm/css/xterm.css";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useClaudeState } from "@/hooks/useClaudeState";
-import { useClipboardImagePaste, processClipboardPaste } from "@/hooks/useClipboardImagePaste";
+import { useClipboardImagePaste } from "@/hooks/useClipboardImagePaste";
+import { handleTerminalPaste } from "@/lib/terminal-paste";
 import { useTerminalSessionStore, createSessionKey, useConfigStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
@@ -141,24 +142,16 @@ export function TerminalTab({
     term.focus();
   }, []);
 
-  const handlePaste = useCallback(() => {
-    if (!containerId) return;
+  const handlePaste = useCallback(async () => {
     const term = xtermRef.current;
     if (!term) return;
-    processClipboardPaste(
+
+    await handleTerminalPaste({
       containerId,
-      async (filePath) => {
-        await writeRef.current(filePath + " ");
-        term.focus();
-      },
-      async (text) => {
-        await writeRef.current(text);
-        term.focus();
-      },
-      (error) => {
-        console.error("[TerminalTab] Clipboard paste error:", error);
-      }
-    );
+      writeToTerminal: writeRef.current,
+      focusTerminal: () => term.focus(),
+      componentName: "TerminalTab",
+    });
   }, [containerId]);
 
   // Reset state when containerId changes (shouldn't happen normally, but handle gracefully)
@@ -634,7 +627,7 @@ export function TerminalTab({
         // Prevent default to stop browser from firing a paste event
         // (which would cause xterm to paste a second time)
         event.preventDefault();
-        handlePaste();
+        void handlePaste();
         return false;
       }
 
@@ -837,7 +830,7 @@ export function TerminalTab({
         <ContextMenuItem onClick={() => void handleCopySelection()} disabled={!hasSelection}>
           Copy
         </ContextMenuItem>
-        <ContextMenuItem onClick={() => handlePaste()} disabled={!containerId}>
+        <ContextMenuItem onClick={() => void handlePaste()}>
           Paste
         </ContextMenuItem>
         <ContextMenuSeparator />
