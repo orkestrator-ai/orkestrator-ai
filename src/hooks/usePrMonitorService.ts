@@ -73,6 +73,7 @@ async function savePRState(
   environmentId: string,
   detectionResult: DetectionResult,
   currentPrUrl: string | null,
+  currentPrState: PrState | null,
   setEnvironmentPR: (
     id: string,
     url: string | null,
@@ -97,8 +98,18 @@ async function savePRState(
       data.hasMergeConflicts
     );
   } else if (detectionResult.status === "not-found" && currentPrUrl) {
-    // No PR found but we had one stored - clear it
-    // Don't clear on error - keep existing state
+    // No PR found but we had one stored.
+    // IMPORTANT: Don't clear if the PR is in a "finished" state (merged/closed).
+    // After a PR is merged with --delete-branch, the container checks out the base branch
+    // (e.g., main), causing subsequent `gh pr view` calls to fail. We preserve the
+    // merged/closed state that was saved immediately after the merge command succeeded.
+    if (currentPrState === "merged" || currentPrState === "closed") {
+      console.log(
+        `[PrMonitorService] Detection returned not-found but PR state is ${currentPrState}, preserving state`
+      );
+      return;
+    }
+    // Only clear for open PRs - this handles cases where the PR was deleted/removed
     await tauri.clearEnvironmentPr(environmentId);
     setEnvironmentPR(environmentId, null, null, null);
   }
@@ -180,6 +191,7 @@ export function usePrMonitorService(): void {
           environmentId,
           detectionResult,
           environment.prUrl ?? null,
+          environment.prState ?? null,
           useEnvironmentStore.getState().setEnvironmentPR
         );
 

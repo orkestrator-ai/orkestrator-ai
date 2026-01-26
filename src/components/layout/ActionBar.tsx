@@ -218,11 +218,12 @@ Begin by fetching the latest changes.`;
 
 export function ActionBar() {
   const { selectedEnvironmentId, selectedProjectId } = useUIStore();
-  const { getEnvironmentById, updateEnvironment, isWorkspaceReady } = useEnvironmentStore(
+  const { getEnvironmentById, updateEnvironment, isWorkspaceReady, setEnvironmentPR } = useEnvironmentStore(
     useShallow((state) => ({
       getEnvironmentById: state.getEnvironmentById,
       updateEnvironment: state.updateEnvironment,
       isWorkspaceReady: state.isWorkspaceReady,
+      setEnvironmentPR: state.setEnvironmentPR,
     }))
   );
   const { getProjectById } = useProjectStore();
@@ -265,7 +266,7 @@ export function ActionBar() {
   const isRunning = isLocalReady || selectedEnvironment?.status === "running";
   const workspaceReady = selectedEnvironmentId ? isWorkspaceReady(selectedEnvironmentId) : false;
 
-  const { prUrl, prState, hasMergeConflicts, viewPR, setModeCreatePending, setModeMergePending } = usePullRequest({
+  const { prUrl, prState, hasMergeConflicts, viewPR, setModeCreatePending } = usePullRequest({
     environmentId: selectedEnvironmentId,
   });
 
@@ -569,13 +570,26 @@ export function ActionBar() {
       } else {
         await tauri.mergePr(selectedEnvironment!.containerId!, "squash", true);
       }
-      console.log("[ActionBar] Merge command completed, starting merge-pending monitoring...");
+      console.log("[ActionBar] Merge command completed successfully");
 
-      // Set monitoring mode to merge-pending for fast PR state detection (1s intervals for 20s)
-      // The prMonitorService will automatically detect when PR is merged and update the state
-      setModeMergePending();
+      // IMPORTANT: Immediately save the "merged" state after successful merge.
+      // For container environments, `gh pr merge --delete-branch` checks out the base branch
+      // (e.g., main) after deleting the feature branch. This means subsequent `gh pr view`
+      // calls from the monitor service will fail to find the PR (since they're now running
+      // from main branch context). By saving the merged state immediately, we ensure the
+      // cleanup button appears regardless of what the monitor detects afterward.
+      console.log("[ActionBar] Saving merged state immediately...");
+      try {
+        await tauri.setEnvironmentPr(selectedEnvironmentId, prUrl, "merged", false);
+        setEnvironmentPR(selectedEnvironmentId, prUrl, "merged", false);
+        console.log("[ActionBar] Merged state saved");
+      } catch (saveErr) {
+        // State save failed but merge succeeded - log warning and continue
+        // The monitor service may still detect the merged state eventually
+        console.warn("[ActionBar] Failed to save merged state:", saveErr);
+      }
 
-      // Clear the merging spinner - the PR state will update automatically via monitoring
+      // Clear the merging spinner
       setIsMerging(false);
 
     } catch (err) {
@@ -586,7 +600,7 @@ export function ActionBar() {
       setMergeDialogOpen(true); // Re-open dialog to show error
       setIsMerging(false);
     }
-  }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, isLocalEnvironment, setModeMergePending]);
+  }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, isLocalEnvironment, setEnvironmentPR]);
 
   return (
     <>
