@@ -118,7 +118,9 @@ export interface ClaudeEvent {
     | "session.init"
     | "message.updated"
     | "question.asked"
-    | "question.answered";
+    | "question.answered"
+    | "plan.enter-requested"
+    | "plan.exit-requested";
   sessionId?: string;
   data?: unknown;
 }
@@ -293,6 +295,9 @@ export async function getSessionMessages(
   return data.messages || [];
 }
 
+/** Permission mode for Claude Agent SDK */
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+
 /**
  * Send a prompt to a session (async - returns immediately, results via SSE)
  */
@@ -304,6 +309,7 @@ export async function sendPrompt(
     model?: string;
     attachments?: ClaudeAttachment[];
     thinking?: boolean;
+    permissionMode?: PermissionMode;
   }
 ): Promise<boolean> {
   try {
@@ -313,6 +319,7 @@ export async function sendPrompt(
       model: options?.model,
       attachmentsCount: options?.attachments?.length ?? 0,
       thinking: options?.thinking,
+      permissionMode: options?.permissionMode,
     });
     const response = await fetch(`${client.baseUrl}/session/${sessionId}/prompt`, {
       method: "POST",
@@ -322,6 +329,7 @@ export async function sendPrompt(
         model: options?.model,
         attachments: options?.attachments,
         thinking: options?.thinking,
+        permissionMode: options?.permissionMode,
       }),
     });
     console.debug("[claude-client] Prompt response", {
@@ -541,6 +549,8 @@ export function subscribeToEvents(
         "message.updated",
         "question.asked",
         "question.answered",
+        "plan.enter-requested",
+        "plan.exit-requested",
       ];
 
       for (const eventType of eventTypes) {

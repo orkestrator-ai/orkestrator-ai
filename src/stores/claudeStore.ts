@@ -59,6 +59,7 @@ interface ClaudeState {
   pendingQuestions: Map<string, ClaudeQuestionRequest>;
   eventSubscriptions: Map<string, ClaudeEventSubscriptionState>;
   thinkingEnabled: Map<string, boolean>;
+  planMode: Map<string, boolean>;
   sessionInitData: Map<string, SessionInitData>;
 
   // Actions
@@ -78,6 +79,7 @@ interface ClaudeState {
   setDraftText: (environmentId: string, text: string) => void;
   setComposing: (environmentId: string, isComposing: boolean) => void;
   setThinkingEnabled: (environmentId: string, enabled: boolean) => void;
+  setPlanMode: (environmentId: string, enabled: boolean) => void;
   setSessionInitData: (environmentId: string, initData: SessionInitData | null) => void;
   clearEnvironment: (environmentId: string) => void;
   addPendingQuestion: (question: ClaudeQuestionRequest) => void;
@@ -95,6 +97,7 @@ interface ClaudeState {
   getDraftText: (environmentId: string) => string;
   isComposingFor: (environmentId: string) => boolean;
   isThinkingEnabled: (environmentId: string) => boolean;
+  isPlanMode: (environmentId: string) => boolean;
   getSessionInitData: (environmentId: string) => SessionInitData | undefined;
   getPendingQuestionsForSession: (sessionId: string) => ClaudeQuestionRequest[];
   getPendingQuestion: (requestId: string) => ClaudeQuestionRequest | undefined;
@@ -113,6 +116,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   pendingQuestions: new Map(),
   eventSubscriptions: new Map(),
   thinkingEnabled: new Map(),
+  planMode: new Map(),
   sessionInitData: new Map(),
 
   // Actions
@@ -291,6 +295,13 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { thinkingEnabled: newMap };
     }),
 
+  setPlanMode: (environmentId, enabled) =>
+    set((state) => {
+      const newMap = new Map(state.planMode);
+      newMap.set(environmentId, enabled);
+      return { planMode: newMap };
+    }),
+
   setSessionInitData: (environmentId, initData) =>
     set((state) => {
       const newMap = new Map(state.sessionInitData);
@@ -328,6 +339,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
       const newThinkingEnabled = new Map(state.thinkingEnabled);
+      const newPlanMode = new Map(state.planMode);
       const newSessionInitData = new Map(state.sessionInitData);
 
       newServerStatus.delete(environmentId);
@@ -339,6 +351,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       newIsComposing.delete(environmentId);
       newEventSubscriptions.delete(environmentId);
       newThinkingEnabled.delete(environmentId);
+      newPlanMode.delete(environmentId);
       newSessionInitData.delete(environmentId);
 
       // Remove pending questions for this environment's sessions
@@ -360,6 +373,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         pendingQuestions: newPendingQuestions,
         eventSubscriptions: newEventSubscriptions,
         thinkingEnabled: newThinkingEnabled,
+        planMode: newPlanMode,
         sessionInitData: newSessionInitData,
       };
     });
@@ -455,6 +469,9 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
   // Default to true (thinking enabled) if not explicitly set
   isThinkingEnabled: (environmentId) => get().thinkingEnabled.get(environmentId) ?? true,
+
+  // Default to false (plan mode disabled) - uses bypassPermissions by default
+  isPlanMode: (environmentId) => get().planMode.get(environmentId) ?? false,
 
   getSessionInitData: (environmentId) => get().sessionInitData.get(environmentId),
 
