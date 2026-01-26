@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
+import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, type ClaudeAttachment } from "@/stores/claudeStore";
@@ -35,43 +36,6 @@ function generateImageFilename(): string {
     .slice(0, 19);
   const random = Math.random().toString(36).substring(2, 8);
   return `clipboard-${timestamp}-${random}.png`;
-}
-
-/**
- * Resize a canvas if its RGBA data exceeds the maximum size limit.
- * Maintains aspect ratio while scaling down to fit within the limit.
- */
-function resizeCanvasIfNeeded(
-  canvas: HTMLCanvasElement,
-  maxRgbaSize: number
-): HTMLCanvasElement {
-  const { width, height } = canvas;
-  const rgbaSize = width * height * 4;
-
-  if (rgbaSize <= maxRgbaSize) return canvas;
-
-  // Calculate scale factor to fit within limit
-  const scale = Math.sqrt(maxRgbaSize / rgbaSize);
-  const newWidth = Math.floor(width * scale);
-  const newHeight = Math.floor(height * scale);
-
-  // Create resized canvas
-  const resizedCanvas = document.createElement("canvas");
-  resizedCanvas.width = newWidth;
-  resizedCanvas.height = newHeight;
-  const ctx = resizedCanvas.getContext("2d");
-  if (ctx) {
-    // Use high-quality image smoothing for better downscaling
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
-  }
-
-  // Release original canvas memory
-  canvas.width = 0;
-  canvas.height = 0;
-
-  return resizedCanvas;
 }
 
 export function ClaudeComposeBar({
