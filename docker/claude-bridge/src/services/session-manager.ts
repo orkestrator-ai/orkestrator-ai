@@ -8,6 +8,7 @@ import type {
   NormalizedPart,
   ToolDiffMetadata,
   QuestionRequest,
+  PlanApprovalRequest,
   PromptOptions,
   SessionInitData,
   McpServerRuntimeStatus,
@@ -33,6 +34,28 @@ const questionResolvers = new Map<
     reject: (error: Error) => void;
   }
 >();
+
+// Pending plan approvals waiting for user decision (for ExitPlanMode flow)
+const pendingPlanApprovals = new Map<string, PlanApprovalRequest>();
+
+// Plan approval response type - includes both approval status and optional feedback
+interface PlanApprovalResponse {
+  approved: boolean;
+  feedback?: string;
+}
+
+// Plan approval resolvers (for ExitPlanMode flow)
+// Resolves with approval response including feedback
+const planApprovalResolvers = new Map<
+  string,
+  {
+    resolve: (response: PlanApprovalResponse) => void;
+    reject: (error: Error) => void;
+  }
+>();
+
+// Timeout for plan approval (5 minutes)
+const PLAN_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Generate a unique session ID using crypto.randomUUID for guaranteed uniqueness
@@ -90,6 +113,23 @@ export function listSessions(): SessionState[] {
 }
 
 /**
+ * Clean up pending plan approvals for a session
+ * Rejects any waiting promises so they don't hang
+ */
+function cleanupPendingPlanApprovals(sessionId: string): void {
+  for (const [approvalId, approval] of pendingPlanApprovals) {
+    if (approval.sessionId === sessionId) {
+      const resolver = planApprovalResolvers.get(approvalId);
+      if (resolver) {
+        resolver.reject(new Error("Session terminated"));
+        planApprovalResolvers.delete(approvalId);
+      }
+      pendingPlanApprovals.delete(approvalId);
+    }
+  }
+}
+
+/**
  * Delete a session
  */
 export function deleteSession(sessionId: string): boolean {
@@ -99,6 +139,8 @@ export function deleteSession(sessionId: string): boolean {
     if (session.abortController) {
       session.abortController.abort();
     }
+    // Clean up pending plan approvals
+    cleanupPendingPlanApprovals(sessionId);
     sessions.delete(sessionId);
     return true;
   }
@@ -122,6 +164,9 @@ export function abortSession(sessionId: string): boolean {
     session.abortController.abort();
     session.status = "idle";
     session.abortController = undefined;
+
+    // Clean up pending plan approvals
+    cleanupPendingPlanApprovals(sessionId);
 
     eventEmitter.emit({
       type: "session.idle",
@@ -605,23 +650,76 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
             };
           }
 
-          // Handle ExitPlanMode - emit event so frontend can update plan mode state
+          // Handle ExitPlanMode - wait for user approval before allowing
           if (toolName === "ExitPlanMode") {
-            console.log("[session-manager] ExitPlanMode requested", { sessionId });
+            console.log("[session-manager] ExitPlanMode requested, waiting for user approval", { sessionId });
 
-            // Emit event so frontend knows to exit plan mode
-            eventEmitter.emit({
-              type: "plan.exit-requested",
+            // Create a plan approval request and wait for user decision
+            const approvalId = generateMessageId();
+            const approvalRequest: PlanApprovalRequest = {
+              id: approvalId,
               sessionId,
-              data: { sessionId },
+              toolUseId: approvalId,
+            };
+
+            // Store the approval request
+            pendingPlanApprovals.set(approvalId, approvalRequest);
+
+            // Emit event so frontend knows to show the approval UI
+            eventEmitter.emit({
+              type: "plan.approval-requested",
+              sessionId,
+              data: approvalRequest,
             });
 
-            // Allow the tool to "succeed" - the frontend will update the plan mode state
-            // and subsequent messages will be sent without plan mode
-            return {
-              behavior: "allow" as const,
-              updatedInput: input,
-            };
+            // Wait for user decision with a Promise that can be resolved externally
+            // Include timeout to prevent hanging indefinitely if user disconnects
+            const approvalPromise = new Promise<PlanApprovalResponse>((resolve, reject) => {
+              planApprovalResolvers.set(approvalId, { resolve, reject });
+            });
+
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                reject(new Error("Plan approval timed out after 5 minutes"));
+              }, PLAN_APPROVAL_TIMEOUT_MS);
+            });
+
+            try {
+              const response = await Promise.race([approvalPromise, timeoutPromise]);
+              console.log("[session-manager] Plan approval result:", approvalId, response);
+
+              if (response.approved) {
+                // User approved - emit exit event and allow the tool
+                eventEmitter.emit({
+                  type: "plan.exit-requested",
+                  sessionId,
+                  data: { sessionId },
+                });
+
+                return {
+                  behavior: "allow" as const,
+                  updatedInput: input,
+                };
+              } else {
+                // User rejected - deny the tool and include feedback if provided
+                const feedbackMessage = response.feedback
+                  ? `User feedback: "${response.feedback}"`
+                  : "No specific feedback was provided.";
+                return {
+                  behavior: "deny" as const,
+                  message: `User rejected the plan. ${feedbackMessage} Please revise your approach based on this feedback.`,
+                };
+              }
+            } catch (error) {
+              console.error("[session-manager] Error waiting for plan approval:", error);
+              const errorMessage = error instanceof Error ? error.message : "Plan approval was cancelled";
+              // If error (e.g., timeout or dismissed), deny the tool use
+              return { behavior: "deny" as const, message: errorMessage };
+            } finally {
+              // Cleanup
+              pendingPlanApprovals.delete(approvalId);
+              planApprovalResolvers.delete(approvalId);
+            }
           }
 
           // Allow all other tools - pass input through unchanged
@@ -940,6 +1038,58 @@ export function getPendingQuestions(
     return questions.filter((q) => q.sessionId === sessionId);
   }
   return questions;
+}
+
+/**
+ * Respond to a pending plan approval request
+ * @param requestId - The plan approval request ID
+ * @param approved - Whether the user approved the plan
+ * @param feedback - Optional feedback message from the user (used when rejecting)
+ */
+export function respondToPlanApproval(
+  requestId: string,
+  approved: boolean,
+  feedback?: string
+): boolean {
+  const approval = pendingPlanApprovals.get(requestId);
+  if (!approval) {
+    console.log("[session-manager] Plan approval not found for requestId:", requestId);
+    return false;
+  }
+
+  console.log("[session-manager] Responding to plan approval:", requestId, "approved:", approved, "feedback:", feedback);
+
+  const resolver = planApprovalResolvers.get(requestId);
+  if (resolver) {
+    console.log("[session-manager] Resolving promise for plan approval:", requestId);
+    resolver.resolve({ approved, feedback });
+    planApprovalResolvers.delete(requestId);
+  } else {
+    console.log("[session-manager] No resolver found for plan approval:", requestId);
+  }
+
+  pendingPlanApprovals.delete(requestId);
+
+  eventEmitter.emit({
+    type: "plan.approval-responded",
+    sessionId: approval.sessionId,
+    data: { requestId, approved, feedback },
+  });
+
+  return true;
+}
+
+/**
+ * Get pending plan approvals for a session
+ */
+export function getPendingPlanApprovals(
+  sessionId?: string
+): PlanApprovalRequest[] {
+  const approvals = Array.from(pendingPlanApprovals.values());
+  if (sessionId) {
+    return approvals.filter((a) => a.sessionId === sessionId);
+  }
+  return approvals;
 }
 
 /**

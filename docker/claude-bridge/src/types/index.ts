@@ -85,6 +85,13 @@ export interface QuestionRequest {
   toolUseId?: string;
 }
 
+/** Plan approval request from Claude (when ExitPlanMode is called) */
+export interface PlanApprovalRequest {
+  id: string;
+  sessionId: string;
+  toolUseId?: string;
+}
+
 /** SSE event types */
 export type SSEEventType =
   | "session.updated"
@@ -95,7 +102,9 @@ export type SSEEventType =
   | "question.asked"
   | "question.answered"
   | "plan.enter-requested"
-  | "plan.exit-requested";
+  | "plan.exit-requested"
+  | "plan.approval-requested"
+  | "plan.approval-responded";
 
 /** MCP server status from SDK init message */
 export interface McpServerRuntimeStatus {

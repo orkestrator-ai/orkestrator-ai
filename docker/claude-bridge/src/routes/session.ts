@@ -11,6 +11,8 @@ import {
   answerQuestion,
   getPendingQuestions,
   getSessionInitData,
+  respondToPlanApproval,
+  getPendingPlanApprovals,
 } from "../services/session-manager.js";
 import type {
   CreateSessionResponse,
@@ -265,6 +267,61 @@ session.post("/:id/questions/:questionId/answer", async (c) => {
     console.error("[session] Error answering question:", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Failed to answer question" },
+      500
+    );
+  }
+});
+
+// Get pending plan approvals for a session
+session.get("/:id/plan-approvals", (c) => {
+  const id = c.req.param("id");
+  const sessionData = getSession(id);
+
+  if (!sessionData) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  const approvals = getPendingPlanApprovals(id);
+  return c.json({ approvals });
+});
+
+// Respond to a plan approval request (approve or reject)
+session.post("/:id/plan-approvals/:approvalId/respond", async (c) => {
+  const sessionId = c.req.param("id");
+  const approvalId = c.req.param("approvalId");
+
+  const sessionData = getSession(sessionId);
+  if (!sessionData) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  try {
+    const body = await c.req.json();
+    const approved = body.approved as boolean;
+    const feedback = body.feedback as string | undefined;
+
+    if (typeof approved !== "boolean") {
+      return c.json({ error: "'approved' boolean is required" }, 400);
+    }
+
+    console.log("[session] Plan approval response received", {
+      sessionId,
+      approvalId,
+      approved,
+      feedback,
+    });
+
+    const responded = respondToPlanApproval(approvalId, approved, feedback);
+
+    if (responded) {
+      return c.json({ status: approved ? "approved" : "rejected" });
+    } else {
+      return c.json({ error: "Plan approval not found or already responded" }, 404);
+    }
+  } catch (error) {
+    console.error("[session] Error responding to plan approval:", error);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Failed to respond to plan approval" },
       500
     );
   }

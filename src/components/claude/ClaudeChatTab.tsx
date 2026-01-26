@@ -16,6 +16,9 @@ import {
   ERROR_MESSAGE_PREFIX,
   SessionNotFoundError,
   type ClaudeQuestionRequest,
+  type ClaudePlanApprovalRequest,
+  type PlanApprovalRequestedEventData,
+  type PlanApprovalRespondedEventData,
 } from "@/lib/claude-client";
 import {
   startClaudeServer,
@@ -27,6 +30,7 @@ import {
 import { ClaudeMessage } from "./ClaudeMessage";
 import { ClaudeComposeBar } from "./ClaudeComposeBar";
 import { ClaudeQuestionCard } from "./ClaudeQuestionCard";
+import { ClaudePlanApprovalCard } from "./ClaudePlanApprovalCard";
 import { ResumeSessionDialog } from "./ResumeSessionDialog";
 import type { ClaudeNativeData } from "@/types/paneLayout";
 import type { ClaudeAttachment } from "@/stores/claudeStore";
@@ -67,6 +71,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setSelectedModel,
     addPendingQuestion,
     removePendingQuestion,
+    addPendingPlanApproval,
+    removePendingPlanApproval,
     getOrCreateEventSubscription,
     setEventStream,
     hasActiveEventSubscription,
@@ -76,6 +82,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
+    pendingPlanApprovals: pendingPlanApprovalsMap,
   } = useClaudeStore();
 
   // Activity state tracking - use environmentId as key for both local and container environments
@@ -106,6 +113,17 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     }
     return questions;
   }, [session?.sessionId, pendingQuestionsMap]);
+
+  const pendingPlanApprovals = useMemo(() => {
+    if (!session?.sessionId) return [];
+    const approvals: ClaudePlanApprovalRequest[] = [];
+    for (const approval of pendingPlanApprovalsMap.values()) {
+      if (approval.sessionId === session.sessionId) {
+        approvals.push(approval);
+      }
+    }
+    return approvals;
+  }, [session?.sessionId, pendingPlanApprovalsMap]);
 
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
@@ -493,7 +511,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           const eventSessionId = event?.sessionId;
           console.debug("[ClaudeChatTab] SSE event", { eventType, eventSessionId });
 
-          if (!eventSessionId && !["question.asked", "question.answered", "plan.enter-requested", "plan.exit-requested"].includes(eventType || "")) {
+          if (!eventSessionId && !["question.asked", "question.answered", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded"].includes(eventType || "")) {
             continue;
           }
 
@@ -563,7 +581,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           // Debug: Warn if no session matched the event
           // Filter out events that are expected during initialization or are informational
           // Also filter message/session updates since they can arrive for old sessions during reconnects
-          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested"];
+          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded"];
           if (!foundMatch && eventSessionId && !ignoredEventTypes.includes(eventType || "")) {
             console.warn("[ClaudeChatTab] No session matched event", {
               eventType,
@@ -598,6 +616,25 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             // Claude has requested to exit plan mode - disable plan mode for this environment
             console.log("[ClaudeChatTab] Plan exit requested, disabling plan mode");
             setPlanMode(environmentId, false);
+          } else if (eventType === "plan.approval-requested") {
+            // Claude is waiting for plan approval - show approval UI
+            const approvalData = event.data as PlanApprovalRequestedEventData | undefined;
+            if (approvalData?.id) {
+              const approvalRequest: ClaudePlanApprovalRequest = {
+                id: approvalData.id,
+                sessionId: approvalData.sessionId || eventSessionId || "",
+                toolUseId: approvalData.toolUseId,
+              };
+              console.log("[ClaudeChatTab] Plan approval requested:", approvalRequest);
+              addPendingPlanApproval(approvalRequest);
+            }
+          } else if (eventType === "plan.approval-responded") {
+            // Plan approval response received - remove the pending approval
+            const responseData = event.data as PlanApprovalRespondedEventData | undefined;
+            if (responseData?.requestId) {
+              console.log("[ClaudeChatTab] Plan approval responded:", responseData);
+              removePendingPlanApproval(responseData.requestId);
+            }
           }
         }
       } catch (error) {
@@ -608,7 +645,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion, setPlanMode]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode]
   );
 
   const handleSend = useCallback(
@@ -805,6 +842,19 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                 <ClaudeQuestionCard
                   key={question.id}
                   question={question}
+                  client={client}
+                  sessionId={session.sessionId}
+                />
+              ))}
+            </div>
+          )}
+
+          {session && client && pendingPlanApprovals.length > 0 && (
+            <div className="max-w-3xl mx-auto">
+              {pendingPlanApprovals.map((approval) => (
+                <ClaudePlanApprovalCard
+                  key={approval.id}
+                  approval={approval}
                   client={client}
                   sessionId={session.sessionId}
                 />
