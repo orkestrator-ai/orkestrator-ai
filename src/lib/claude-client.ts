@@ -275,12 +275,21 @@ export async function getSessionMessages(
   client: ClaudeClient,
   sessionId: string
 ): Promise<ClaudeMessage[]> {
+  console.debug("[claude-client] Fetching messages for session:", sessionId);
   const response = await fetch(`${client.baseUrl}/session/${sessionId}/messages`);
   if (response.status === 404) {
     throw new SessionNotFoundError(sessionId);
   }
-  if (!response.ok) return [];
+  if (!response.ok) {
+    console.debug("[claude-client] Failed to fetch messages, status:", response.status);
+    return [];
+  }
   const data = await response.json();
+  console.debug("[claude-client] Received messages response:", {
+    sessionId,
+    messageCount: data.messages?.length || 0,
+    rawData: data,
+  });
   return data.messages || [];
 }
 

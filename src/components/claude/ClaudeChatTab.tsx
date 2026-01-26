@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
-import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,6 +27,7 @@ import {
 import { ClaudeMessage } from "./ClaudeMessage";
 import { ClaudeComposeBar } from "./ClaudeComposeBar";
 import { ClaudeQuestionCard } from "./ClaudeQuestionCard";
+import { ResumeSessionDialog } from "./ResumeSessionDialog";
 import type { ClaudeNativeData } from "@/types/paneLayout";
 import type { ClaudeAttachment } from "@/stores/claudeStore";
 
@@ -46,6 +47,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [serverLog, setServerLog] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
 
   const tabSessionIdRef = useRef<string | null>(null);
   const isInitializedRef = useRef(false);
@@ -661,6 +663,44 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setServerStatus(environmentId, { running: false, hostPort: null });
   }, [sessionKey, environmentId, setClient, setSession, setServerStatus]);
 
+  const handleResumeSession = useCallback(
+    async (sessionId: string) => {
+      if (!client) return;
+
+      try {
+        // Fetch messages for the selected session
+        console.debug("[ClaudeChatTab] Resuming session:", sessionId);
+        const messages = await getSessionMessages(client, sessionId);
+        console.debug("[ClaudeChatTab] Fetched messages for resumed session:", {
+          sessionId,
+          messageCount: messages.length,
+          messages,
+        });
+
+        // Update the component's session reference
+        tabSessionIdRef.current = sessionId;
+
+        // Update the store with the resumed session
+        setSession(sessionKey, {
+          sessionId,
+          messages,
+          isLoading: false,
+        });
+
+        console.debug("[ClaudeChatTab] Session state updated:", {
+          sessionKey,
+          sessionId,
+          messageCount: messages.length,
+        });
+
+        setResumeDialogOpen(false);
+      } catch (error) {
+        console.error("[ClaudeChatTab] Failed to resume session:", error);
+      }
+    },
+    [client, sessionKey, setSession]
+  );
+
   if (connectionState === "connecting") {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
@@ -706,8 +746,18 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
         <div className="py-4">
           {session?.messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground">
+            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground gap-3">
               <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
+              {client && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setResumeDialogOpen(true)}
+                >
+                  <History className="w-4 h-4 mr-2" />
+                  Resume Session
+                </Button>
+              )}
             </div>
           ) : (
             session?.messages.map((message) => (
@@ -762,6 +812,16 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         onSend={handleSend}
         disabled={!client || !session || session.isLoading}
       />
+
+      {client && (
+        <ResumeSessionDialog
+          open={resumeDialogOpen}
+          onOpenChange={setResumeDialogOpen}
+          client={client}
+          onResume={handleResumeSession}
+          currentSessionId={session?.sessionId}
+        />
+      )}
     </div>
   );
 }
