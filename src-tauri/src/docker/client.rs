@@ -510,15 +510,51 @@ impl DockerClient {
     }
 
     /// Execute a command in a running container and return the output
+    /// Combines both stdout and stderr in the result
     pub async fn exec_command(
         &self,
         container_id: &str,
         cmd: Vec<&str>,
     ) -> Result<String, DockerError> {
+        self.exec_command_internal(container_id, cmd, true).await
+            .map(|(stdout, _)| stdout)
+    }
+
+    /// Execute a command in a running container and return only stdout
+    /// This is useful for commands that output JSON to stdout and may have
+    /// progress messages on stderr (like `gh` CLI commands)
+    /// Stderr is logged at debug level for troubleshooting
+    pub async fn exec_command_stdout(
+        &self,
+        container_id: &str,
+        cmd: Vec<&str>,
+    ) -> Result<String, DockerError> {
+        let (stdout, stderr) = self.exec_command_internal(container_id, cmd, false).await?;
+
+        // Log stderr at debug level if present, for troubleshooting failed commands
+        if !stderr.is_empty() {
+            tracing::debug!(
+                container_id = %container_id,
+                stderr = %stderr.trim(),
+                "Command stderr output (ignored)"
+            );
+        }
+
+        Ok(stdout)
+    }
+
+    /// Internal helper for executing commands in a container
+    /// Returns (stdout, stderr) tuple. If include_stderr is true, stderr is appended to stdout.
+    async fn exec_command_internal(
+        &self,
+        container_id: &str,
+        cmd: Vec<&str>,
+        include_stderr: bool,
+    ) -> Result<(String, String), DockerError> {
         let config = CreateExecOptions {
             cmd: Some(cmd),
             attach_stdout: Some(true),
-            attach_stderr: Some(true),
+            attach_stderr: Some(true), // Always attach stderr to avoid blocking
             ..Default::default()
         };
 
@@ -526,14 +562,20 @@ impl DockerClient {
 
         match self.docker.start_exec(&exec.id, None).await? {
             StartExecResults::Attached { mut output, .. } => {
-                let mut result = String::new();
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+
                 while let Some(msg) = output.next().await {
                     match msg {
                         Ok(bollard::container::LogOutput::StdOut { message }) => {
-                            result.push_str(&String::from_utf8_lossy(&message));
+                            stdout.push_str(&String::from_utf8_lossy(&message));
                         }
                         Ok(bollard::container::LogOutput::StdErr { message }) => {
-                            result.push_str(&String::from_utf8_lossy(&message));
+                            let text = String::from_utf8_lossy(&message);
+                            stderr.push_str(&text);
+                            if include_stderr {
+                                stdout.push_str(&text);
+                            }
                         }
                         Ok(_) => {}
                         Err(e) => {
@@ -544,7 +586,7 @@ impl DockerClient {
                         }
                     }
                 }
-                Ok(result)
+                Ok((stdout, stderr))
             }
             StartExecResults::Detached => {
                 Err(DockerError::OperationFailed("Exec started in detached mode".to_string()))
