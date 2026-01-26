@@ -192,19 +192,21 @@ async fn resolve_common_git_dir(git_path: &Path) -> Result<PathBuf, WorktreeErro
     // For worktrees, git_dir points to .git/worktrees/<name>
     // The commondir file contains the path to the main .git directory (usually "../..")
     let commondir_path = git_dir.join("commondir");
-    if commondir_path.exists() {
+    if tokio::fs::try_exists(&commondir_path).await.unwrap_or(false) {
         let commondir_content = tokio::fs::read_to_string(&commondir_path)
             .await
             .map_err(WorktreeError::Io)?;
         let commondir = commondir_content.trim();
 
         // commondir is relative to git_dir
-        let common_git_dir = git_dir.join(commondir).canonicalize().map_err(|e| {
-            WorktreeError::Io(std::io::Error::new(
-                e.kind(),
-                format!("Failed to resolve commondir path: {}", e),
-            ))
-        })?;
+        let common_git_dir = tokio::fs::canonicalize(git_dir.join(commondir))
+            .await
+            .map_err(|e| {
+                WorktreeError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to resolve commondir path: {}", e),
+                ))
+            })?;
 
         debug!(
             worktree_git_dir = %git_dir.display(),
@@ -730,9 +732,103 @@ mod tests {
         );
     }
 
-    // NOTE: The following tests reference a `run_setup_local` function that doesn't exist.
-    // They have been removed as they were broken tests that prevented compilation.
-    // The `get_setup_local_commands` function exists but `run_setup_local` was never implemented.
+    #[tokio::test]
+    async fn test_get_setup_local_commands_no_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_setup_local_commands_empty_array() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, r#"{"setupLocal": []}"#)
+            .await
+            .unwrap();
+
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_setup_local_commands_no_setup_local_field() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, r#"{"run": ["echo hello"]}"#)
+            .await
+            .unwrap();
+
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_setup_local_commands_single_command_string() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, r#"{"setupLocal": "echo hello"}"#)
+            .await
+            .unwrap();
+
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "echo hello");
+    }
+
+    #[tokio::test]
+    async fn test_get_setup_local_commands_multiple_commands() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{"setupLocal": ["echo one", "echo two", "echo three"]}"#,
+        )
+        .await
+        .unwrap();
+
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "echo one");
+        assert_eq!(result[1], "echo two");
+        assert_eq!(result[2], "echo three");
+    }
+
+    #[tokio::test]
+    async fn test_get_setup_local_commands_filters_empty_strings() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{"setupLocal": ["echo one", "", "echo two"]}"#,
+        )
+        .await
+        .unwrap();
+
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo one");
+        assert_eq!(result[1], "echo two");
+    }
+
+    #[tokio::test]
+    async fn test_get_setup_local_commands_invalid_json() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("orkestrator-ai.json");
+        tokio::fs::write(&config_path, "not valid json")
+            .await
+            .unwrap();
+
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
+
+        assert!(result.is_empty());
+    }
 
     #[tokio::test]
     async fn test_add_to_git_exclude_regular_repo() {
