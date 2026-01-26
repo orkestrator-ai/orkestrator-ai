@@ -693,6 +693,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   handleSendRef.current = handleSend;
 
+  // Compute thinking and plan mode values outside useEffect to avoid function reference dependencies
+  const thinkingEnabledValue = isThinkingEnabled(environmentId);
+  const planModeEnabledValue = isPlanMode(environmentId);
+
   // Send initial prompt on RECONNECTION to existing session only.
   // New sessions handle initial prompt directly in initialize() to avoid race conditions.
   // This effect catches the case where we reconnect to an existing session that had an initial prompt.
@@ -706,12 +710,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     ) {
       initialPromptSentRef.current = true;
       console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
-      // Use the user's thinking and plan mode preferences
-      const thinkingEnabled = isThinkingEnabled(environmentId);
-      const planModeEnabled = isPlanMode(environmentId);
-      handleSendRef.current?.(initialPrompt, [], thinkingEnabled, planModeEnabled);
+      handleSendRef.current?.(initialPrompt, [], thinkingEnabledValue, planModeEnabledValue);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, environmentId, isThinkingEnabled, isPlanMode]);
+  }, [connectionState, client, session, initialPrompt, tabId, thinkingEnabledValue, planModeEnabledValue]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");
