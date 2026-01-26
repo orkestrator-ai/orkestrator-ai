@@ -669,7 +669,13 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
       try {
         // Fetch messages for the selected session
+        console.debug("[ClaudeChatTab] Resuming session:", sessionId);
         const messages = await getSessionMessages(client, sessionId);
+        console.debug("[ClaudeChatTab] Fetched messages for resumed session:", {
+          sessionId,
+          messageCount: messages.length,
+          messages,
+        });
 
         // Update the component's session reference
         tabSessionIdRef.current = sessionId;
@@ -679,6 +685,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           sessionId,
           messages,
           isLoading: false,
+        });
+
+        console.debug("[ClaudeChatTab] Session state updated:", {
+          sessionKey,
+          sessionId,
+          messageCount: messages.length,
         });
 
         setResumeDialogOpen(false);

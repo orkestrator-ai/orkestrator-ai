@@ -60,6 +60,11 @@ export function ResumeSessionDialog({
     setError(null);
     try {
       const allSessions = await listSessions(client);
+      console.debug("[ResumeSessionDialog] Fetched sessions:", {
+        totalCount: allSessions.length,
+        currentSessionId,
+        sessions: allSessions,
+      });
       // Filter out current session and sort by last activity (most recent first)
       const filtered = allSessions
         .filter((s) => s.id !== currentSessionId)
@@ -68,6 +73,10 @@ export function ResumeSessionDialog({
             new Date(b.lastActivity).getTime() -
             new Date(a.lastActivity).getTime()
         );
+      console.debug("[ResumeSessionDialog] Filtered sessions:", {
+        filteredCount: filtered.length,
+        sessions: filtered,
+      });
       setSessions(filtered);
     } catch (err) {
       console.error("[ResumeSessionDialog] Failed to fetch sessions:", err);
@@ -111,8 +120,8 @@ export function ResumeSessionDialog({
               No previous sessions found.
             </div>
           ) : (
-            <ScrollArea className="max-h-[300px]">
-              <div className="space-y-1">
+            <ScrollArea className="h-[300px] overflow-hidden">
+              <div className="space-y-1 pr-4">
                 {sessions.map((session) => (
                   <button
                     key={session.id}
