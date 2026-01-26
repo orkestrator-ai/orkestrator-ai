@@ -11,6 +11,8 @@ const VIEWPORT_POLL_INTERVAL_MS = 50;
 interface UseScrollLockOptions {
   /** Dependency array that triggers auto-scroll when changed (e.g., messages array) */
   scrollTrigger?: unknown;
+  /** Optional trigger to re-search for viewport when changed (e.g., when component conditionally renders the scroll area) */
+  mountTrigger?: unknown;
 }
 
 interface UseScrollLockReturn {
@@ -35,7 +37,7 @@ export function useScrollLock(
   scrollRef: RefObject<HTMLDivElement | null>,
   options: UseScrollLockOptions = {}
 ): UseScrollLockReturn {
-  const { scrollTrigger } = options;
+  const { scrollTrigger, mountTrigger } = options;
 
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -46,9 +48,9 @@ export function useScrollLock(
   // This prevents race conditions where state hasn't updated yet
   const isScrollLockedRef = useRef(true);
 
-  // Find the viewport element when the ref changes
+  // Find the viewport element when the ref changes or mountTrigger changes
   useEffect(() => {
-    // Clear previous viewport when ref changes to handle remounts
+    // Clear previous viewport when ref/mountTrigger changes to handle remounts
     setViewportElement(null);
 
     const findViewport = (): HTMLElement | null => {
@@ -76,17 +78,22 @@ export function useScrollLock(
         setViewportElement(vp);
         clearInterval(interval);
       } else if (attempts >= VIEWPORT_POLL_MAX_ATTEMPTS) {
-        console.warn(
-          "[useScrollLock] Failed to find viewport after",
-          VIEWPORT_POLL_MAX_ATTEMPTS,
-          "attempts"
-        );
+        // Only warn if we're searching after a mountTrigger change (i.e., when we expect to find it)
+        // mountTrigger is used to indicate the scroll area should be available
+        if (mountTrigger !== undefined) {
+          console.warn(
+            "[useScrollLock] Failed to find viewport after",
+            VIEWPORT_POLL_MAX_ATTEMPTS,
+            "attempts"
+          );
+        }
         clearInterval(interval);
       }
     }, VIEWPORT_POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [scrollRef]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mountTrigger intentionally re-runs search when it changes
+  }, [scrollRef, mountTrigger]);
 
   // Check initial scroll position when viewport becomes available
   useEffect(() => {
