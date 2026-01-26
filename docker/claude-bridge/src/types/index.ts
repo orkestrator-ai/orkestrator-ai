@@ -93,7 +93,9 @@ export type SSEEventType =
   | "session.init"
   | "message.updated"
   | "question.asked"
-  | "question.answered";
+  | "question.answered"
+  | "plan.enter-requested"
+  | "plan.exit-requested";
 
 /** MCP server status from SDK init message */
 export interface McpServerRuntimeStatus {
@@ -125,10 +127,14 @@ export interface SSEEvent {
   data?: unknown;
 }
 
+/** Permission mode for Claude Agent SDK */
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
+
 /** Prompt options */
 export interface PromptOptions {
   model?: string;
   thinking?: boolean;
+  permissionMode?: PermissionMode;
   attachments?: Array<{
     type: "file" | "image";
     path: string;

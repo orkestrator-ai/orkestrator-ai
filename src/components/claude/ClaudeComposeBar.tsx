@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain } from "lucide-react";
+import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,7 +19,7 @@ interface ClaudeComposeBarProps {
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: ClaudeModel[];
-  onSend: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean) => void;
+  onSend: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => void;
   disabled?: boolean;
 }
 
@@ -60,12 +60,15 @@ export function ClaudeComposeBar({
     setSelectedModel,
     isThinkingEnabled,
     setThinkingEnabled,
+    isPlanMode,
+    setPlanMode,
   } = useClaudeStore();
 
   const attachments = getAttachments(environmentId);
   const text = getDraftText(environmentId);
   const selectedModel = getSelectedModel(environmentId);
   const thinkingEnabled = isThinkingEnabled(environmentId);
+  const planModeEnabled = isPlanMode(environmentId);
 
   const setText = useCallback(
     (newText: string) => setDraftText(environmentId, newText),
@@ -214,6 +217,11 @@ export function ClaudeComposeBar({
       event.preventDefault();
       handleSend();
     }
+    // Shift+Tab toggles between plan mode and edit mode (bypassPermissions)
+    if (event.key === "Tab" && event.shiftKey) {
+      event.preventDefault();
+      setPlanMode(environmentId, !planModeEnabled);
+    }
   };
 
   const handleSend = async () => {
@@ -222,7 +230,10 @@ export function ClaudeComposeBar({
 
     setIsSending(true);
     try {
-      onSend(text.trim(), attachments, thinkingEnabled);
+      // Read current values directly from store to avoid stale closures
+      const currentThinkingEnabled = isThinkingEnabled(environmentId);
+      const currentPlanModeEnabled = isPlanMode(environmentId);
+      onSend(text.trim(), attachments, currentThinkingEnabled, currentPlanModeEnabled);
       setText("");
       clearAttachments(environmentId);
     } finally {
@@ -355,6 +366,21 @@ export function ClaudeComposeBar({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Plan mode toggle */}
+        <button
+          onClick={() => setPlanMode(environmentId, !planModeEnabled)}
+          disabled={disabled}
+          className={cn(
+            "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
+            planModeEnabled
+              ? "text-primary hover:text-primary/80 hover:bg-primary/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+          )}
+          title={planModeEnabled ? "Plan mode (Shift+Tab to toggle)" : "Edit mode (Shift+Tab to toggle)"}
+        >
+          <MapPlus className="w-3.5 h-3.5" />
+        </button>
 
         {/* Thinking toggle */}
         <button

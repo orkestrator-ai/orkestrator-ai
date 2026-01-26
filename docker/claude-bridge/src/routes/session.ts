@@ -109,6 +109,12 @@ session.post("/:id/prompt", async (c) => {
     const prompt = body.prompt as string;
     const model = body.model as string | undefined;
     const thinking = body.thinking as boolean | undefined;
+    const permissionMode = body.permissionMode as
+      | "default"
+      | "acceptEdits"
+      | "bypassPermissions"
+      | "plan"
+      | undefined;
     const attachments = body.attachments as
       | Array<{
           type: "file" | "image";
@@ -127,11 +133,12 @@ session.post("/:id/prompt", async (c) => {
       promptLength: prompt.length,
       model,
       thinking,
+      permissionMode,
       attachmentsCount: attachments?.length ?? 0,
     });
 
     // Start processing in background (don't await)
-    sendPrompt(id, prompt, { model, attachments, thinking }).catch((error) => {
+    sendPrompt(id, prompt, { model, attachments, thinking, permissionMode }).catch((error) => {
       console.error("[session] Error processing prompt:", error);
     });
 

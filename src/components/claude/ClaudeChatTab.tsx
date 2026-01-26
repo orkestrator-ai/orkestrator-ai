@@ -52,7 +52,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const tabSessionIdRef = useRef<string | null>(null);
   const isInitializedRef = useRef(false);
   const initialPromptSentRef = useRef(false);
-  const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean) => Promise<void>) | null>(null);
+  const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => Promise<void>) | null>(null);
 
   const {
     setClient,
@@ -71,6 +71,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setEventStream,
     hasActiveEventSubscription,
     isThinkingEnabled,
+    isPlanMode,
+    setPlanMode,
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
@@ -347,6 +349,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             // Send the prompt to the server
             const selectedModel = getSelectedModel(environmentId);
             const thinkingEnabled = isThinkingEnabled(environmentId);
+            const planModeEnabled = isPlanMode(environmentId);
+            const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
 
             // Start SSE subscription first so we can receive the response
             startSharedEventSubscription(bridgeClient);
@@ -355,6 +359,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             const success = await sendPrompt(bridgeClient, newSession.sessionId, initialPrompt, {
               model: selectedModel,
               thinking: thinkingEnabled,
+              permissionMode,
             });
 
             if (!success) {
@@ -485,7 +490,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           const eventSessionId = event?.sessionId;
           console.debug("[ClaudeChatTab] SSE event", { eventType, eventSessionId });
 
-          if (!eventSessionId && !["question.asked", "question.answered"].includes(eventType || "")) {
+          if (!eventSessionId && !["question.asked", "question.answered", "plan.enter-requested", "plan.exit-requested"].includes(eventType || "")) {
             continue;
           }
 
@@ -555,7 +560,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           // Debug: Warn if no session matched the event
           // Filter out events that are expected during initialization or are informational
           // Also filter message/session updates since they can arrive for old sessions during reconnects
-          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle"];
+          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested"];
           if (!foundMatch && eventSessionId && !ignoredEventTypes.includes(eventType || "")) {
             console.warn("[ClaudeChatTab] No session matched event", {
               eventType,
@@ -582,6 +587,14 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             if (answerData?.requestId) {
               removePendingQuestion(answerData.requestId);
             }
+          } else if (eventType === "plan.enter-requested") {
+            // Claude has entered plan mode - enable plan mode in the UI to sync state
+            console.log("[ClaudeChatTab] Plan enter requested, enabling plan mode");
+            setPlanMode(environmentId, true);
+          } else if (eventType === "plan.exit-requested") {
+            // Claude has requested to exit plan mode - disable plan mode for this environment
+            console.log("[ClaudeChatTab] Plan exit requested, disabling plan mode");
+            setPlanMode(environmentId, false);
           }
         }
       } catch (error) {
@@ -592,11 +605,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion, setPlanMode]
   );
 
   const handleSend = useCallback(
-    async (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean) => {
+    async (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => {
       if (!client || !session) return;
 
       const selectedModel = getSelectedModel(environmentId);
@@ -618,10 +631,16 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         filename: att.name,
       }));
 
+      // Map planMode to SDK permission mode:
+      // - plan mode true -> "plan" (no tool execution)
+      // - plan mode false -> "bypassPermissions" (all tools auto-approved)
+      const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
+
       const success = await sendPrompt(client, session.sessionId, text, {
         model: selectedModel,
         attachments: sdkAttachments.length > 0 ? sdkAttachments : undefined,
         thinking: thinkingEnabled,
+        permissionMode,
       });
 
       if (!success) {
@@ -647,11 +666,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     ) {
       initialPromptSentRef.current = true;
       console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
-      // Use the user's thinking preference instead of hardcoding true
+      // Use the user's thinking and plan mode preferences
       const thinkingEnabled = isThinkingEnabled(environmentId);
-      handleSendRef.current?.(initialPrompt, [], thinkingEnabled);
+      const planModeEnabled = isPlanMode(environmentId);
+      handleSendRef.current?.(initialPrompt, [], thinkingEnabled, planModeEnabled);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, environmentId, isThinkingEnabled]);
+  }, [connectionState, client, session, initialPrompt, tabId, environmentId, isThinkingEnabled, isPlanMode]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");

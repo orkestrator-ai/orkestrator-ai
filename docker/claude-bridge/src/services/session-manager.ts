@@ -398,24 +398,46 @@ export async function sendPrompt(
   session.status = "running";
   session.lastActivity = new Date();
 
-  // Build the final prompt - append attachment references as XML tags
-  // The model can use its Read tool to access these files
-  // This must happen BEFORE creating the user message so the XML tags are included
-  let finalPrompt = prompt;
-
+  // Build the display prompt (what the user sees) - includes attachment references
+  let displayPrompt = prompt;
   if (options?.attachments && options.attachments.length > 0) {
     const attachmentTags = options.attachments
       .map((att) => `<attachment type="${att.type}" path="${att.path}" filename="${att.filename || ""}" />`)
       .join("\n");
-    finalPrompt = `${prompt}\n\n<attached-files>\n${attachmentTags}\n</attached-files>`;
+    displayPrompt = `${prompt}\n\n<attached-files>\n${attachmentTags}\n</attached-files>`;
   }
 
-  // Add user message with finalPrompt (includes attachment XML tags)
+  // Build the final prompt for the SDK - includes planning mode instruction if enabled
+  let finalPrompt = displayPrompt;
+
+  // If plan mode is enabled, instruct Claude to use the EnterPlanMode tool
+  // This uses Claude's native planning mode which allows read-only exploration
+  if (options?.permissionMode === "plan") {
+    const planModeInstruction = `<system-reminder>
+IMPORTANT: The user has enabled PLANNING MODE via the UI. You are now in planning mode.
+
+Your FIRST action MUST be to call the EnterPlanMode tool to formally enter planning mode. Do this immediately before any other action.
+
+In planning mode:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Design a concrete implementation strategy
+5. When ready, use ExitPlanMode to present your plan for approval
+
+Remember: In planning mode, you can READ files but should NOT write or edit any files yet. This is a read-only exploration and planning phase.
+</system-reminder>
+
+`;
+    finalPrompt = planModeInstruction + displayPrompt;
+  }
+
+  // Add user message with displayPrompt (what the user sees, without planning mode instruction)
   const userMessage: NormalizedMessage = {
     id: generateMessageId(),
     role: "user",
-    content: finalPrompt,
-    parts: [{ type: "text", content: finalPrompt }],
+    content: displayPrompt,
+    parts: [{ type: "text", content: displayPrompt }],
     timestamp: new Date().toISOString(),
   };
   session.messages.push(userMessage);
@@ -455,12 +477,20 @@ export async function sendPrompt(
 
     const mcpServerCount = Object.keys(mcpServers).length;
     const pluginCount = plugins.length;
+    // Determine permission mode: use provided option or default to "bypassPermissions"
+    // Note: When user requests "plan" mode, we use "bypassPermissions" for the SDK
+    // because Claude's native EnterPlanMode tool handles the planning workflow
+    // (the "plan" mode in SDK blocks ALL tools which prevents EnterPlanMode from working)
+    const requestedPlanMode = options?.permissionMode === "plan";
+    const permissionMode = requestedPlanMode ? "bypassPermissions" : (options?.permissionMode ?? "bypassPermissions");
+
     console.log("[session-manager] Starting query", {
       sessionId,
       cwd,
       model: options?.model,
       resume: session.sdkSessionId ?? null,
       thinkingEnabled,
+      permissionMode,
       mcpServerCount,
       mcpServerNames: Array.from(mcpServerNames),
       pluginCount,
@@ -473,7 +503,7 @@ export async function sendPrompt(
       options: {
         cwd,
         model: options?.model,
-        permissionMode: "acceptEdits",
+        permissionMode,
         // Enable extended thinking with up to 16K tokens (if enabled)
         ...(thinkingEnabled && { maxThinkingTokens: 16000 }),
         allowedTools: [
@@ -556,6 +586,44 @@ export async function sendPrompt(
               questionResolvers.delete(questionId);
             }
           }
+
+          // Handle EnterPlanMode - emit event so frontend can update plan mode state
+          if (toolName === "EnterPlanMode") {
+            console.log("[session-manager] EnterPlanMode requested", { sessionId });
+
+            // Emit event so frontend knows to enter plan mode
+            eventEmitter.emit({
+              type: "plan.enter-requested",
+              sessionId,
+              data: { sessionId },
+            });
+
+            // Allow the tool to proceed
+            return {
+              behavior: "allow" as const,
+              updatedInput: input,
+            };
+          }
+
+          // Handle ExitPlanMode - emit event so frontend can update plan mode state
+          if (toolName === "ExitPlanMode") {
+            console.log("[session-manager] ExitPlanMode requested", { sessionId });
+
+            // Emit event so frontend knows to exit plan mode
+            eventEmitter.emit({
+              type: "plan.exit-requested",
+              sessionId,
+              data: { sessionId },
+            });
+
+            // Allow the tool to "succeed" - the frontend will update the plan mode state
+            // and subsequent messages will be sent without plan mode
+            return {
+              behavior: "allow" as const,
+              updatedInput: input,
+            };
+          }
+
           // Allow all other tools - pass input through unchanged
           return { behavior: "allow" as const, updatedInput: input };
         },
