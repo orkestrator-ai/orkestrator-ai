@@ -8,6 +8,7 @@ import type {
   NormalizedPart,
   ToolDiffMetadata,
   QuestionRequest,
+  PlanApprovalRequest,
   PromptOptions,
   SessionInitData,
   McpServerRuntimeStatus,
@@ -30,6 +31,19 @@ const questionResolvers = new Map<
   string,
   {
     resolve: (answers: Record<string, string>) => void;
+    reject: (error: Error) => void;
+  }
+>();
+
+// Pending plan approvals waiting for user decision (for ExitPlanMode flow)
+const pendingPlanApprovals = new Map<string, PlanApprovalRequest>();
+
+// Plan approval resolvers (for ExitPlanMode flow)
+// Resolves with true for approved, rejects for rejected
+const planApprovalResolvers = new Map<
+  string,
+  {
+    resolve: (approved: boolean) => void;
     reject: (error: Error) => void;
   }
 >();
@@ -605,23 +619,65 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
             };
           }
 
-          // Handle ExitPlanMode - emit event so frontend can update plan mode state
+          // Handle ExitPlanMode - wait for user approval before allowing
           if (toolName === "ExitPlanMode") {
-            console.log("[session-manager] ExitPlanMode requested", { sessionId });
+            console.log("[session-manager] ExitPlanMode requested, waiting for user approval", { sessionId });
 
-            // Emit event so frontend knows to exit plan mode
-            eventEmitter.emit({
-              type: "plan.exit-requested",
+            // Create a plan approval request and wait for user decision
+            const approvalId = generateMessageId();
+            const approvalRequest: PlanApprovalRequest = {
+              id: approvalId,
               sessionId,
-              data: { sessionId },
+              toolUseId: approvalId,
+            };
+
+            // Store the approval request
+            pendingPlanApprovals.set(approvalId, approvalRequest);
+
+            // Emit event so frontend knows to show the approval UI
+            eventEmitter.emit({
+              type: "plan.approval-requested",
+              sessionId,
+              data: approvalRequest,
             });
 
-            // Allow the tool to "succeed" - the frontend will update the plan mode state
-            // and subsequent messages will be sent without plan mode
-            return {
-              behavior: "allow" as const,
-              updatedInput: input,
-            };
+            // Wait for user decision with a Promise that can be resolved externally
+            const approvalPromise = new Promise<boolean>((resolve, reject) => {
+              planApprovalResolvers.set(approvalId, { resolve, reject });
+            });
+
+            try {
+              const approved = await approvalPromise;
+              console.log("[session-manager] Plan approval result:", approvalId, approved);
+
+              if (approved) {
+                // User approved - emit exit event and allow the tool
+                eventEmitter.emit({
+                  type: "plan.exit-requested",
+                  sessionId,
+                  data: { sessionId },
+                });
+
+                return {
+                  behavior: "allow" as const,
+                  updatedInput: input,
+                };
+              } else {
+                // User rejected - deny the tool and keep plan mode
+                return {
+                  behavior: "deny" as const,
+                  message: "User rejected the plan. Please revise your approach based on user feedback.",
+                };
+              }
+            } catch (error) {
+              console.error("[session-manager] Error waiting for plan approval:", error);
+              // If error (e.g., dismissed), deny the tool use
+              return { behavior: "deny" as const, message: "Plan approval was cancelled" };
+            } finally {
+              // Cleanup
+              pendingPlanApprovals.delete(approvalId);
+              planApprovalResolvers.delete(approvalId);
+            }
           }
 
           // Allow all other tools - pass input through unchanged
@@ -940,6 +996,58 @@ export function getPendingQuestions(
     return questions.filter((q) => q.sessionId === sessionId);
   }
   return questions;
+}
+
+/**
+ * Respond to a pending plan approval request
+ * @param requestId - The plan approval request ID
+ * @param approved - Whether the user approved the plan
+ * @param feedback - Optional feedback message from the user (used when rejecting)
+ */
+export function respondToPlanApproval(
+  requestId: string,
+  approved: boolean,
+  feedback?: string
+): boolean {
+  const approval = pendingPlanApprovals.get(requestId);
+  if (!approval) {
+    console.log("[session-manager] Plan approval not found for requestId:", requestId);
+    return false;
+  }
+
+  console.log("[session-manager] Responding to plan approval:", requestId, "approved:", approved, "feedback:", feedback);
+
+  const resolver = planApprovalResolvers.get(requestId);
+  if (resolver) {
+    console.log("[session-manager] Resolving promise for plan approval:", requestId);
+    resolver.resolve(approved);
+    planApprovalResolvers.delete(requestId);
+  } else {
+    console.log("[session-manager] No resolver found for plan approval:", requestId);
+  }
+
+  pendingPlanApprovals.delete(requestId);
+
+  eventEmitter.emit({
+    type: "plan.approval-responded",
+    sessionId: approval.sessionId,
+    data: { requestId, approved, feedback },
+  });
+
+  return true;
+}
+
+/**
+ * Get pending plan approvals for a session
+ */
+export function getPendingPlanApprovals(
+  sessionId?: string
+): PlanApprovalRequest[] {
+  const approvals = Array.from(pendingPlanApprovals.values());
+  if (sessionId) {
+    return approvals.filter((a) => a.sessionId === sessionId);
+  }
+  return approvals;
 }
 
 /**

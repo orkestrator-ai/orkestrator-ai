@@ -5,6 +5,7 @@ import {
   type ClaudeModel,
   type ClaudeClient,
   type ClaudeQuestionRequest,
+  type ClaudePlanApprovalRequest,
   type ClaudeEvent,
   type SessionInitData,
 } from "@/lib/claude-client";
@@ -57,6 +58,7 @@ interface ClaudeState {
   draftText: Map<string, string>;
   isComposing: Map<string, boolean>;
   pendingQuestions: Map<string, ClaudeQuestionRequest>;
+  pendingPlanApprovals: Map<string, ClaudePlanApprovalRequest>;
   eventSubscriptions: Map<string, ClaudeEventSubscriptionState>;
   thinkingEnabled: Map<string, boolean>;
   planMode: Map<string, boolean>;
@@ -84,6 +86,8 @@ interface ClaudeState {
   clearEnvironment: (environmentId: string) => void;
   addPendingQuestion: (question: ClaudeQuestionRequest) => void;
   removePendingQuestion: (requestId: string) => void;
+  addPendingPlanApproval: (approval: ClaudePlanApprovalRequest) => void;
+  removePendingPlanApproval: (requestId: string) => void;
   getOrCreateEventSubscription: (environmentId: string) => ClaudeEventSubscriptionState | null;
   setEventStream: (environmentId: string, stream: AsyncIterable<ClaudeEvent> | null) => void;
   closeEventSubscription: (environmentId: string) => void;
@@ -101,6 +105,8 @@ interface ClaudeState {
   getSessionInitData: (environmentId: string) => SessionInitData | undefined;
   getPendingQuestionsForSession: (sessionId: string) => ClaudeQuestionRequest[];
   getPendingQuestion: (requestId: string) => ClaudeQuestionRequest | undefined;
+  getPendingPlanApprovalsForSession: (sessionId: string) => ClaudePlanApprovalRequest[];
+  getPendingPlanApproval: (requestId: string) => ClaudePlanApprovalRequest | undefined;
 }
 
 export const useClaudeStore = create<ClaudeState>()((set, get) => ({
@@ -114,6 +120,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   draftText: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
+  pendingPlanApprovals: new Map(),
   eventSubscriptions: new Map(),
   thinkingEnabled: new Map(),
   planMode: new Map(),
@@ -393,6 +400,20 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { pendingQuestions: newMap };
     }),
 
+  addPendingPlanApproval: (approval) =>
+    set((state) => {
+      const newMap = new Map(state.pendingPlanApprovals);
+      newMap.set(approval.id, approval);
+      return { pendingPlanApprovals: newMap };
+    }),
+
+  removePendingPlanApproval: (requestId) =>
+    set((state) => {
+      const newMap = new Map(state.pendingPlanApprovals);
+      newMap.delete(requestId);
+      return { pendingPlanApprovals: newMap };
+    }),
+
   getOrCreateEventSubscription: (environmentId) => {
     const state = get();
     const existing = state.eventSubscriptions.get(environmentId);
@@ -486,4 +507,16 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   },
 
   getPendingQuestion: (requestId) => get().pendingQuestions.get(requestId),
+
+  getPendingPlanApprovalsForSession: (sessionId) => {
+    const approvals: ClaudePlanApprovalRequest[] = [];
+    for (const approval of get().pendingPlanApprovals.values()) {
+      if (approval.sessionId === sessionId) {
+        approvals.push(approval);
+      }
+    }
+    return approvals;
+  },
+
+  getPendingPlanApproval: (requestId) => get().pendingPlanApprovals.get(requestId),
 }));

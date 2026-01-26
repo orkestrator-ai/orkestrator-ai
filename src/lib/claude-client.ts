@@ -107,6 +107,13 @@ export interface ClaudeQuestionRequest {
   toolUseId?: string;
 }
 
+/** Plan approval request from Claude (when ExitPlanMode is called) */
+export interface ClaudePlanApprovalRequest {
+  id: string;
+  sessionId: string;
+  toolUseId?: string;
+}
+
 /** SSE event from Claude bridge server */
 export interface ClaudeEvent {
   type:
@@ -120,7 +127,9 @@ export interface ClaudeEvent {
     | "question.asked"
     | "question.answered"
     | "plan.enter-requested"
-    | "plan.exit-requested";
+    | "plan.exit-requested"
+    | "plan.approval-requested"
+    | "plan.approval-responded";
   sessionId?: string;
   data?: unknown;
 }
@@ -428,6 +437,32 @@ export async function answerQuestion(
 }
 
 /**
+ * Respond to a plan approval request (approve or reject)
+ */
+export async function respondToPlanApproval(
+  client: ClaudeClient,
+  sessionId: string,
+  approvalId: string,
+  approved: boolean,
+  feedback?: string
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `${client.baseUrl}/session/${sessionId}/plan-approvals/${approvalId}/respond`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved, feedback }),
+      }
+    );
+    return response.ok;
+  } catch (error) {
+    console.error("[claude-client] Failed to respond to plan approval:", error);
+    return false;
+  }
+}
+
+/**
  * Get configured MCP servers
  */
 export async function getMcpServers(
@@ -551,6 +586,8 @@ export function subscribeToEvents(
         "question.answered",
         "plan.enter-requested",
         "plan.exit-requested",
+        "plan.approval-requested",
+        "plan.approval-responded",
       ];
 
       for (const eventType of eventTypes) {
