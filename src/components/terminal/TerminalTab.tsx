@@ -141,24 +141,40 @@ export function TerminalTab({
     term.focus();
   }, []);
 
-  const handlePaste = useCallback(() => {
-    if (!containerId) return;
+  const handlePaste = useCallback(async () => {
     const term = xtermRef.current;
     if (!term) return;
-    processClipboardPaste(
-      containerId,
-      async (filePath) => {
-        await writeRef.current(filePath + " ");
-        term.focus();
-      },
-      async (text) => {
-        await writeRef.current(text);
-        term.focus();
-      },
-      (error) => {
-        console.error("[TerminalTab] Clipboard paste error:", error);
+
+    // For local environments (no containerId), we can still paste text
+    // Image paste requires a container to write the file to
+    if (containerId) {
+      processClipboardPaste(
+        containerId,
+        async (filePath) => {
+          await writeRef.current(filePath + " ");
+          term.focus();
+        },
+        async (text) => {
+          await writeRef.current(text);
+          term.focus();
+        },
+        (error) => {
+          console.error("[TerminalTab] Clipboard paste error:", error);
+        }
+      );
+    } else {
+      // Local environment - text-only paste using Tauri clipboard API
+      try {
+        const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+        const text = await readText();
+        if (text) {
+          await writeRef.current(text);
+          term.focus();
+        }
+      } catch (err) {
+        console.error("[TerminalTab] Clipboard text paste error:", err);
       }
-    );
+    }
   }, [containerId]);
 
   // Reset state when containerId changes (shouldn't happen normally, but handle gracefully)
@@ -634,7 +650,7 @@ export function TerminalTab({
         // Prevent default to stop browser from firing a paste event
         // (which would cause xterm to paste a second time)
         event.preventDefault();
-        handlePaste();
+        void handlePaste();
         return false;
       }
 
@@ -837,7 +853,7 @@ export function TerminalTab({
         <ContextMenuItem onClick={() => void handleCopySelection()} disabled={!hasSelection}>
           Copy
         </ContextMenuItem>
-        <ContextMenuItem onClick={() => handlePaste()} disabled={!containerId}>
+        <ContextMenuItem onClick={() => void handlePaste()}>
           Paste
         </ContextMenuItem>
         <ContextMenuSeparator />

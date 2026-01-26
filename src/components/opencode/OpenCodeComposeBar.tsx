@@ -41,6 +41,43 @@ function generateImageFilename(): string {
   return `clipboard-${timestamp}-${random}.png`;
 }
 
+/**
+ * Resize a canvas if its RGBA data exceeds the maximum size limit.
+ * Maintains aspect ratio while scaling down to fit within the limit.
+ */
+function resizeCanvasIfNeeded(
+  canvas: HTMLCanvasElement,
+  maxRgbaSize: number
+): HTMLCanvasElement {
+  const { width, height } = canvas;
+  const rgbaSize = width * height * 4;
+
+  if (rgbaSize <= maxRgbaSize) return canvas;
+
+  // Calculate scale factor to fit within limit
+  const scale = Math.sqrt(maxRgbaSize / rgbaSize);
+  const newWidth = Math.floor(width * scale);
+  const newHeight = Math.floor(height * scale);
+
+  // Create resized canvas
+  const resizedCanvas = document.createElement("canvas");
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  const ctx = resizedCanvas.getContext("2d");
+  if (ctx) {
+    // Use high-quality image smoothing for better downscaling
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
+  }
+
+  // Release original canvas memory
+  canvas.width = 0;
+  canvas.height = 0;
+
+  return resizedCanvas;
+}
+
 export function OpenCodeComposeBar({
   environmentId,
   containerId,
@@ -108,13 +145,8 @@ export function OpenCodeComposeBar({
         const rgba = await image.rgba();
         const { width, height } = await image.size();
 
-        const rgbaSize = width * height * 4;
-        if (rgbaSize > MAX_RGBA_SIZE) {
-          console.error("[OpenCodeComposeBar] Image too large");
-          return;
-        }
-
-        const canvas = document.createElement("canvas");
+        // Create canvas with original image data
+        let canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d");
@@ -122,12 +154,19 @@ export function OpenCodeComposeBar({
 
         const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
         ctx.putImageData(imageDataObj, 0, 0);
+
+        // Resize if needed to fit within RGBA size limit
+        canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
         const dataUrl = canvas.toDataURL("image/png");
         const base64Data = dataUrl.split(",")[1] || "";
 
         const estimatedSize = (base64Data.length * 3) / 4;
         if (estimatedSize > MAX_IMAGE_SIZE) {
           console.error("[OpenCodeComposeBar] Image too large after encoding");
+          toast.error("Image too large", {
+            description: `Image is ${(estimatedSize / 1024 / 1024).toFixed(1)}MB. Maximum is 8MB.`,
+          });
           return;
         }
 

@@ -38,6 +38,43 @@ function generateImageFilename(): string {
   return `clipboard-${timestamp}-${random}.png`;
 }
 
+/**
+ * Resize a canvas if its RGBA data exceeds the maximum size limit.
+ * Maintains aspect ratio while scaling down to fit within the limit.
+ */
+function resizeCanvasIfNeeded(
+  canvas: HTMLCanvasElement,
+  maxRgbaSize: number
+): HTMLCanvasElement {
+  const { width, height } = canvas;
+  const rgbaSize = width * height * 4;
+
+  if (rgbaSize <= maxRgbaSize) return canvas;
+
+  // Calculate scale factor to fit within limit
+  const scale = Math.sqrt(maxRgbaSize / rgbaSize);
+  const newWidth = Math.floor(width * scale);
+  const newHeight = Math.floor(height * scale);
+
+  // Create resized canvas
+  const resizedCanvas = document.createElement("canvas");
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  const ctx = resizedCanvas.getContext("2d");
+  if (ctx) {
+    // Use high-quality image smoothing for better downscaling
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
+  }
+
+  // Release original canvas memory
+  canvas.width = 0;
+  canvas.height = 0;
+
+  return resizedCanvas;
+}
+
 export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -65,15 +102,8 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       const rgba = await image.rgba();
       const { width, height } = await image.size();
 
-      // Check raw RGBA size
-      const rgbaSize = width * height * 4;
-      if (rgbaSize > MAX_RGBA_SIZE) {
-        console.error("[ComposeBar] Image too large");
-        return;
-      }
-
       // Convert RGBA to PNG via canvas
-      const canvas = document.createElement("canvas");
+      let canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
@@ -81,6 +111,10 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
 
       const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
       ctx.putImageData(imageDataObj, 0, 0);
+
+      // Resize if needed to fit within RGBA size limit
+      canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
       const dataUrl = canvas.toDataURL("image/png");
       const base64Data = dataUrl.split(",")[1] || "";
 
@@ -91,6 +125,10 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
         return;
       }
 
+      // Store final dimensions before cleanup
+      const finalWidth = canvas.width;
+      const finalHeight = canvas.height;
+
       // Release canvas memory
       canvas.width = 0;
       canvas.height = 0;
@@ -99,13 +137,13 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       event.preventDefault();
       event.stopPropagation();
 
-      // Add to images
+      // Add to images - use final canvas dimensions after potential resize
       const newImage: ImageAttachment = {
         id: Math.random().toString(36).substring(2, 9),
         dataUrl,
         base64Data,
-        width,
-        height,
+        width: finalWidth,
+        height: finalHeight,
       };
       setImages((prev) => [...prev, newImage]);
     } catch {

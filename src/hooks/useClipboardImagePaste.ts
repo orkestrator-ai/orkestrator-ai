@@ -27,6 +27,43 @@ function generateImageFilename(): string {
 }
 
 /**
+ * Resize a canvas if its RGBA data exceeds the maximum size limit.
+ * Maintains aspect ratio while scaling down to fit within the limit.
+ */
+function resizeCanvasIfNeeded(
+  canvas: HTMLCanvasElement,
+  maxRgbaSize: number
+): HTMLCanvasElement {
+  const { width, height } = canvas;
+  const rgbaSize = width * height * 4;
+
+  if (rgbaSize <= maxRgbaSize) return canvas;
+
+  // Calculate scale factor to fit within limit
+  const scale = Math.sqrt(maxRgbaSize / rgbaSize);
+  const newWidth = Math.floor(width * scale);
+  const newHeight = Math.floor(height * scale);
+
+  // Create resized canvas
+  const resizedCanvas = document.createElement("canvas");
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  const ctx = resizedCanvas.getContext("2d");
+  if (ctx) {
+    // Use high-quality image smoothing for better downscaling
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
+  }
+
+  // Release original canvas memory
+  canvas.width = 0;
+  canvas.height = 0;
+
+  return resizedCanvas;
+}
+
+/**
  * Process clipboard content - tries image first, then falls back to text.
  * Returns true if something was processed, false otherwise.
  */
@@ -44,21 +81,18 @@ export async function processClipboardPaste(
       const rgba = await image.rgba();
       const { width, height } = await image.size();
 
-      // Check raw RGBA size before processing to avoid memory issues
-      const rgbaSize = width * height * 4;
-      if (rgbaSize > MAX_RGBA_SIZE) {
-        const sizeMB = (rgbaSize / 1024 / 1024).toFixed(1);
-        throw new Error(`Image dimensions too large (${width}x${height}, ${sizeMB}MB raw). Try a smaller image.`);
-      }
-
       // Create a canvas to convert RGBA to PNG
-      const canvas = document.createElement("canvas");
+      let canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (ctx) {
         const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
         ctx.putImageData(imageDataObj, 0, 0);
+
+        // Resize if needed to fit within RGBA size limit
+        canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
         const dataUrl = canvas.toDataURL("image/png");
         imageData = dataUrl.split(",")[1] || null;
       }
@@ -67,9 +101,7 @@ export async function processClipboardPaste(
       canvas.height = 0;
     } catch (imgError) {
       // No image in clipboard or processing failed - we'll try text
-      if (imgError instanceof Error && imgError.message.includes("too large")) {
-        throw imgError; // Re-throw size errors
-      }
+      // (Size errors no longer thrown since we resize instead)
     }
 
     if (imageData) {
