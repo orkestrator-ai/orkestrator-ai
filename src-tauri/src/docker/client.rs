@@ -552,6 +552,51 @@ impl DockerClient {
         }
     }
 
+    /// Execute a command in a running container and return only stdout
+    /// This is useful for commands that output JSON to stdout and may have
+    /// progress messages on stderr (like `gh` CLI commands)
+    pub async fn exec_command_stdout(
+        &self,
+        container_id: &str,
+        cmd: Vec<&str>,
+    ) -> Result<String, DockerError> {
+        let config = CreateExecOptions {
+            cmd: Some(cmd),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true), // Still attach stderr to avoid blocking
+            ..Default::default()
+        };
+
+        let exec = self.docker.create_exec(container_id, config).await?;
+
+        match self.docker.start_exec(&exec.id, None).await? {
+            StartExecResults::Attached { mut output, .. } => {
+                let mut stdout = String::new();
+                while let Some(msg) = output.next().await {
+                    match msg {
+                        Ok(bollard::container::LogOutput::StdOut { message }) => {
+                            stdout.push_str(&String::from_utf8_lossy(&message));
+                        }
+                        Ok(bollard::container::LogOutput::StdErr { .. }) => {
+                            // Ignore stderr
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(DockerError::OperationFailed(format!(
+                                "Error reading exec output: {}",
+                                e
+                            )));
+                        }
+                    }
+                }
+                Ok(stdout)
+            }
+            StartExecResults::Detached => {
+                Err(DockerError::OperationFailed("Exec started in detached mode".to_string()))
+            }
+        }
+    }
+
     /// Stream container logs to a channel
     /// Returns a receiver that yields log lines as they arrive
     /// The stream continues until the container stops or the receiver is dropped

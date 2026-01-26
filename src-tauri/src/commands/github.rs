@@ -30,8 +30,10 @@ pub async fn detect_pr(container_id: String) -> Result<Option<PrDetectionResult>
     // Run: gh pr view --json url,state,mergeable -q '{url: .url, state: .state, mergeable: .mergeable}'
     // This returns JSON with URL, state, and mergeable status
     // mergeable can be: "MERGEABLE", "CONFLICTING", "UNKNOWN"
+    // Use exec_command_stdout to only capture stdout, as gh CLI may output
+    // progress messages to stderr which would corrupt JSON parsing
     let output = client
-        .exec_command(
+        .exec_command_stdout(
             &container_id,
             vec![
                 "gh",
@@ -233,8 +235,9 @@ pub async fn detect_pr_url(container_id: String) -> Result<Option<String>, Strin
 
     // Run: gh pr view --json url -q '.url'
     // This returns just the URL string if a PR exists, or an error if no PR
+    // Use exec_command_stdout to only capture stdout
     let output = client
-        .exec_command(
+        .exec_command_stdout(
             &container_id,
             vec!["gh", "pr", "view", "--json", "url", "-q", ".url"],
         )
