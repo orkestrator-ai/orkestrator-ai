@@ -371,6 +371,8 @@ pub async fn merge_pr(
     );
 
     // Run: gh pr merge --squash --delete-branch (or other options)
+    // Use exec_command (not exec_command_stdout) to capture both stdout and stderr,
+    // since we need to check for error messages that may appear on either stream
     let output = client
         .exec_command(&container_id, cmd)
         .await
