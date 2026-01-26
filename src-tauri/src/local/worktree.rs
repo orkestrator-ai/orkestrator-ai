@@ -159,18 +159,14 @@ pub async fn get_default_branch(repo_path: &str) -> Result<String, WorktreeError
     Ok("main".to_string())
 }
 
-/// Add a pattern to the .git/info/exclude file
+/// Resolve the common git directory for a repository or worktree
 ///
-/// For worktrees, this resolves the actual git directory from the .git file.
-/// The pattern is only added if it doesn't already exist in the exclude file.
-pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
-    let worktree = Path::new(worktree_path);
-    let git_path = worktree.join(".git");
-
+/// For regular repositories, this returns the `.git` directory.
+/// For worktrees, this reads the `commondir` file to find the main repository's `.git` directory.
+async fn resolve_common_git_dir(git_path: &Path) -> Result<PathBuf, WorktreeError> {
     // For worktrees, .git is a file containing "gitdir: <path>"
-    // We need to resolve the actual git directory
     let git_dir = if git_path.is_file() {
-        let content = tokio::fs::read_to_string(&git_path)
+        let content = tokio::fs::read_to_string(git_path)
             .await
             .map_err(WorktreeError::Io)?;
         let gitdir_line = content
@@ -185,13 +181,57 @@ pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<()
         let gitdir = gitdir_line.strip_prefix("gitdir:").unwrap().trim();
         PathBuf::from(gitdir)
     } else if git_path.is_dir() {
-        git_path
+        return Ok(git_path.to_path_buf());
     } else {
         return Err(WorktreeError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!(".git not found at {}", git_path.display()),
         )));
     };
+
+    // For worktrees, git_dir points to .git/worktrees/<name>
+    // The commondir file contains the path to the main .git directory (usually "../..")
+    let commondir_path = git_dir.join("commondir");
+    if tokio::fs::try_exists(&commondir_path).await.unwrap_or(false) {
+        let commondir_content = tokio::fs::read_to_string(&commondir_path)
+            .await
+            .map_err(WorktreeError::Io)?;
+        let commondir = commondir_content.trim();
+
+        // commondir is relative to git_dir
+        let common_git_dir = tokio::fs::canonicalize(git_dir.join(commondir))
+            .await
+            .map_err(|e| {
+                WorktreeError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to resolve commondir path: {}", e),
+                ))
+            })?;
+
+        debug!(
+            worktree_git_dir = %git_dir.display(),
+            common_git_dir = %common_git_dir.display(),
+            "Resolved common git directory for worktree"
+        );
+
+        Ok(common_git_dir)
+    } else {
+        // Not a worktree, just return the git_dir
+        Ok(git_dir)
+    }
+}
+
+/// Add a pattern to the .git/info/exclude file
+///
+/// For worktrees, this resolves the main repository's git directory via the
+/// `commondir` file, since git uses the main repo's `info/exclude` for all worktrees.
+/// The pattern is only added if it doesn't already exist in the exclude file.
+pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<(), WorktreeError> {
+    let worktree = Path::new(worktree_path);
+    let git_path = worktree.join(".git");
+
+    // Resolve to the common git directory (main repo's .git for worktrees)
+    let git_dir = resolve_common_git_dir(&git_path).await?;
 
     // Create info directory if it doesn't exist
     let info_dir = git_dir.join("info");
@@ -693,62 +733,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_no_config_file() {
+    async fn test_get_setup_local_commands_no_config_file() {
         let temp_dir = TempDir::new().unwrap();
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(result.success);
-        assert_eq!(result.commands_run, 0);
-        assert!(result.error.is_none());
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_empty_setup_local() {
+    async fn test_get_setup_local_commands_empty_array() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("orkestrator-ai.json");
         tokio::fs::write(&config_path, r#"{"setupLocal": []}"#)
             .await
             .unwrap();
 
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(result.success);
-        assert_eq!(result.commands_run, 0);
-        assert!(result.error.is_none());
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_no_setup_local_field() {
+    async fn test_get_setup_local_commands_no_setup_local_field() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("orkestrator-ai.json");
         tokio::fs::write(&config_path, r#"{"run": ["echo hello"]}"#)
             .await
             .unwrap();
 
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(result.success);
-        assert_eq!(result.commands_run, 0);
-        assert!(result.error.is_none());
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_single_command_string() {
+    async fn test_get_setup_local_commands_single_command_string() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("orkestrator-ai.json");
         tokio::fs::write(&config_path, r#"{"setupLocal": "echo hello"}"#)
             .await
             .unwrap();
 
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(result.success);
-        assert_eq!(result.commands_run, 1);
-        assert!(result.error.is_none());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "echo hello");
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_multiple_commands() {
+    async fn test_get_setup_local_commands_multiple_commands() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("orkestrator-ai.json");
         tokio::fs::write(
@@ -758,46 +791,43 @@ mod tests {
         .await
         .unwrap();
 
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(result.success);
-        assert_eq!(result.commands_run, 3);
-        assert!(result.error.is_none());
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "echo one");
+        assert_eq!(result[1], "echo two");
+        assert_eq!(result[2], "echo three");
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_failing_command() {
+    async fn test_get_setup_local_commands_filters_empty_strings() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("orkestrator-ai.json");
         tokio::fs::write(
             &config_path,
-            r#"{"setupLocal": ["echo success", "exit 1", "echo never_runs"]}"#,
+            r#"{"setupLocal": ["echo one", "", "echo two"]}"#,
         )
         .await
         .unwrap();
 
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(!result.success);
-        assert_eq!(result.commands_run, 1); // Only first command ran successfully
-        assert!(result.error.is_some());
-        assert!(result.error.unwrap().contains("exit 1"));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo one");
+        assert_eq!(result[1], "echo two");
     }
 
     #[tokio::test]
-    async fn test_run_setup_local_invalid_json() {
+    async fn test_get_setup_local_commands_invalid_json() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("orkestrator-ai.json");
         tokio::fs::write(&config_path, "not valid json")
             .await
             .unwrap();
 
-        let result = run_setup_local(temp_dir.path().to_str().unwrap()).await;
+        let result = get_setup_local_commands(temp_dir.path().to_str().unwrap()).await;
 
-        assert!(!result.success);
-        assert_eq!(result.commands_run, 0);
-        assert!(result.error.is_some());
-        assert!(result.error.unwrap().contains("Failed to parse"));
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
@@ -842,27 +872,43 @@ mod tests {
     async fn test_add_to_git_exclude_worktree() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create a fake worktree structure where .git is a file pointing to a gitdir
-        let actual_git_dir = temp_dir.path().join("actual_git_dir");
-        tokio::fs::create_dir_all(&actual_git_dir).await.unwrap();
+        // Create a fake worktree structure that mimics real git worktrees:
+        // - main_repo/.git/ - the main repository's git directory
+        // - main_repo/.git/worktrees/my-worktree/ - worktree-specific git data
+        // - worktree/ - the actual worktree directory with .git file
+
+        let main_git_dir = temp_dir.path().join("main_repo/.git");
+        let worktree_git_dir = main_git_dir.join("worktrees/my-worktree");
+        tokio::fs::create_dir_all(&worktree_git_dir).await.unwrap();
 
         let worktree_dir = temp_dir.path().join("worktree");
         tokio::fs::create_dir_all(&worktree_dir).await.unwrap();
 
-        // Create .git file (not directory) with gitdir reference
-        let git_file_content = format!("gitdir: {}", actual_git_dir.display());
+        // Create .git file (not directory) with gitdir reference pointing to worktree git dir
+        let git_file_content = format!("gitdir: {}", worktree_git_dir.display());
         tokio::fs::write(worktree_dir.join(".git"), &git_file_content)
+            .await
+            .unwrap();
+
+        // Create commondir file in worktree git dir pointing to main .git (relative path)
+        tokio::fs::write(worktree_git_dir.join("commondir"), "../..")
             .await
             .unwrap();
 
         let result = add_to_git_exclude(worktree_dir.to_str().unwrap(), ".orkestrator").await;
         assert!(result.is_ok());
 
-        // Verify the pattern was added to the actual git directory
-        let exclude_content = tokio::fs::read_to_string(actual_git_dir.join("info/exclude"))
+        // Verify the pattern was added to the MAIN repository's git directory, not the worktree's
+        let exclude_content = tokio::fs::read_to_string(main_git_dir.join("info/exclude"))
             .await
             .unwrap();
         assert!(exclude_content.contains(".orkestrator"));
+
+        // Verify the worktree-specific git dir does NOT have the exclude file
+        assert!(
+            !worktree_git_dir.join("info/exclude").exists(),
+            "Exclude should be in main repo, not worktree git dir"
+        );
     }
 
     #[tokio::test]
