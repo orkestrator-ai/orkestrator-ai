@@ -38,15 +38,24 @@ const questionResolvers = new Map<
 // Pending plan approvals waiting for user decision (for ExitPlanMode flow)
 const pendingPlanApprovals = new Map<string, PlanApprovalRequest>();
 
+// Plan approval response type - includes both approval status and optional feedback
+interface PlanApprovalResponse {
+  approved: boolean;
+  feedback?: string;
+}
+
 // Plan approval resolvers (for ExitPlanMode flow)
-// Resolves with true for approved, rejects for rejected
+// Resolves with approval response including feedback
 const planApprovalResolvers = new Map<
   string,
   {
-    resolve: (approved: boolean) => void;
+    resolve: (response: PlanApprovalResponse) => void;
     reject: (error: Error) => void;
   }
 >();
+
+// Timeout for plan approval (5 minutes)
+const PLAN_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Generate a unique session ID using crypto.randomUUID for guaranteed uniqueness
@@ -104,6 +113,23 @@ export function listSessions(): SessionState[] {
 }
 
 /**
+ * Clean up pending plan approvals for a session
+ * Rejects any waiting promises so they don't hang
+ */
+function cleanupPendingPlanApprovals(sessionId: string): void {
+  for (const [approvalId, approval] of pendingPlanApprovals) {
+    if (approval.sessionId === sessionId) {
+      const resolver = planApprovalResolvers.get(approvalId);
+      if (resolver) {
+        resolver.reject(new Error("Session terminated"));
+        planApprovalResolvers.delete(approvalId);
+      }
+      pendingPlanApprovals.delete(approvalId);
+    }
+  }
+}
+
+/**
  * Delete a session
  */
 export function deleteSession(sessionId: string): boolean {
@@ -113,6 +139,8 @@ export function deleteSession(sessionId: string): boolean {
     if (session.abortController) {
       session.abortController.abort();
     }
+    // Clean up pending plan approvals
+    cleanupPendingPlanApprovals(sessionId);
     sessions.delete(sessionId);
     return true;
   }
@@ -136,6 +164,9 @@ export function abortSession(sessionId: string): boolean {
     session.abortController.abort();
     session.status = "idle";
     session.abortController = undefined;
+
+    // Clean up pending plan approvals
+    cleanupPendingPlanApprovals(sessionId);
 
     eventEmitter.emit({
       type: "session.idle",
@@ -642,15 +673,22 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
             });
 
             // Wait for user decision with a Promise that can be resolved externally
-            const approvalPromise = new Promise<boolean>((resolve, reject) => {
+            // Include timeout to prevent hanging indefinitely if user disconnects
+            const approvalPromise = new Promise<PlanApprovalResponse>((resolve, reject) => {
               planApprovalResolvers.set(approvalId, { resolve, reject });
             });
 
-            try {
-              const approved = await approvalPromise;
-              console.log("[session-manager] Plan approval result:", approvalId, approved);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                reject(new Error("Plan approval timed out after 5 minutes"));
+              }, PLAN_APPROVAL_TIMEOUT_MS);
+            });
 
-              if (approved) {
+            try {
+              const response = await Promise.race([approvalPromise, timeoutPromise]);
+              console.log("[session-manager] Plan approval result:", approvalId, response);
+
+              if (response.approved) {
                 // User approved - emit exit event and allow the tool
                 eventEmitter.emit({
                   type: "plan.exit-requested",
@@ -663,16 +701,20 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
                   updatedInput: input,
                 };
               } else {
-                // User rejected - deny the tool and keep plan mode
+                // User rejected - deny the tool and include feedback if provided
+                const feedbackMessage = response.feedback
+                  ? `User feedback: "${response.feedback}"`
+                  : "No specific feedback was provided.";
                 return {
                   behavior: "deny" as const,
-                  message: "User rejected the plan. Please revise your approach based on user feedback.",
+                  message: `User rejected the plan. ${feedbackMessage} Please revise your approach based on this feedback.`,
                 };
               }
             } catch (error) {
               console.error("[session-manager] Error waiting for plan approval:", error);
-              // If error (e.g., dismissed), deny the tool use
-              return { behavior: "deny" as const, message: "Plan approval was cancelled" };
+              const errorMessage = error instanceof Error ? error.message : "Plan approval was cancelled";
+              // If error (e.g., timeout or dismissed), deny the tool use
+              return { behavior: "deny" as const, message: errorMessage };
             } finally {
               // Cleanup
               pendingPlanApprovals.delete(approvalId);
@@ -1020,7 +1062,7 @@ export function respondToPlanApproval(
   const resolver = planApprovalResolvers.get(requestId);
   if (resolver) {
     console.log("[session-manager] Resolving promise for plan approval:", requestId);
-    resolver.resolve(approved);
+    resolver.resolve({ approved, feedback });
     planApprovalResolvers.delete(requestId);
   } else {
     console.log("[session-manager] No resolver found for plan approval:", requestId);

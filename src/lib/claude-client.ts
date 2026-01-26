@@ -114,6 +114,20 @@ export interface ClaudePlanApprovalRequest {
   toolUseId?: string;
 }
 
+/** Event data for plan.approval-requested events */
+export interface PlanApprovalRequestedEventData {
+  id: string;
+  sessionId?: string;
+  toolUseId?: string;
+}
+
+/** Event data for plan.approval-responded events */
+export interface PlanApprovalRespondedEventData {
+  requestId: string;
+  approved: boolean;
+  feedback?: string;
+}
+
 /** SSE event from Claude bridge server */
 export interface ClaudeEvent {
   type:

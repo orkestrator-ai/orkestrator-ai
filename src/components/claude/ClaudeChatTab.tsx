@@ -17,6 +17,8 @@ import {
   SessionNotFoundError,
   type ClaudeQuestionRequest,
   type ClaudePlanApprovalRequest,
+  type PlanApprovalRequestedEventData,
+  type PlanApprovalRespondedEventData,
 } from "@/lib/claude-client";
 import {
   startClaudeServer,
@@ -613,8 +615,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             setPlanMode(environmentId, false);
           } else if (eventType === "plan.approval-requested") {
             // Claude is waiting for plan approval - show approval UI
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const approvalData = event.data as any;
+            const approvalData = event.data as PlanApprovalRequestedEventData | undefined;
             if (approvalData?.id) {
               const approvalRequest: ClaudePlanApprovalRequest = {
                 id: approvalData.id,
@@ -626,8 +627,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             }
           } else if (eventType === "plan.approval-responded") {
             // Plan approval response received - remove the pending approval
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const responseData = event.data as any;
+            const responseData = event.data as PlanApprovalRespondedEventData | undefined;
             if (responseData?.requestId) {
               console.log("[ClaudeChatTab] Plan approval responded:", responseData);
               removePendingPlanApproval(responseData.requestId);
