@@ -89,8 +89,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
 
   // Scroll lock - auto-scroll only when user is at bottom
+  // mountTrigger ensures we re-search for the viewport when connectionState changes
+  // (since ScrollArea only renders after connection succeeds)
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
     scrollTrigger: session?.messages,
+    mountTrigger: connectionState,
   });
 
   const pendingQuestions = useMemo(() => {
