@@ -3,7 +3,8 @@ import "@xterm/xterm/css/xterm.css";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useClaudeState } from "@/hooks/useClaudeState";
-import { useClipboardImagePaste, processClipboardPaste } from "@/hooks/useClipboardImagePaste";
+import { useClipboardImagePaste } from "@/hooks/useClipboardImagePaste";
+import { handleTerminalPaste } from "@/lib/terminal-paste";
 import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore, useEnvironmentStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData } from "@/stores/terminalPortalStore";
@@ -189,36 +190,12 @@ export function PersistentTerminal({
   }, [terminal]);
 
   const handlePaste = useCallback(async () => {
-    // For local environments (no containerId), we can still paste text
-    // Image paste requires a container to write the file to
-    if (containerId) {
-      processClipboardPaste(
-        containerId,
-        async (filePath) => {
-          await writeRef.current(filePath + " ");
-          terminal.focus();
-        },
-        async (text) => {
-          await writeRef.current(text);
-          terminal.focus();
-        },
-        (error) => {
-          console.error("[PersistentTerminal] Clipboard paste error:", error);
-        }
-      );
-    } else {
-      // Local environment - text-only paste using Tauri clipboard API
-      try {
-        const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
-        const text = await readText();
-        if (text) {
-          await writeRef.current(text);
-          terminal.focus();
-        }
-      } catch (err) {
-        console.error("[PersistentTerminal] Clipboard text paste error:", err);
-      }
-    }
+    await handleTerminalPaste({
+      containerId,
+      writeToTerminal: writeRef.current,
+      focusTerminal: () => terminal.focus(),
+      componentName: "PersistentTerminal",
+    });
   }, [containerId, terminal]);
 
   // Keep compose bar ref in sync with state for synchronous access in key handler

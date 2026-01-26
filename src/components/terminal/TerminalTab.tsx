@@ -7,7 +7,8 @@ import "@xterm/xterm/css/xterm.css";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useClaudeState } from "@/hooks/useClaudeState";
-import { useClipboardImagePaste, processClipboardPaste } from "@/hooks/useClipboardImagePaste";
+import { useClipboardImagePaste } from "@/hooks/useClipboardImagePaste";
+import { handleTerminalPaste } from "@/lib/terminal-paste";
 import { useTerminalSessionStore, createSessionKey, useConfigStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
@@ -145,36 +146,12 @@ export function TerminalTab({
     const term = xtermRef.current;
     if (!term) return;
 
-    // For local environments (no containerId), we can still paste text
-    // Image paste requires a container to write the file to
-    if (containerId) {
-      processClipboardPaste(
-        containerId,
-        async (filePath) => {
-          await writeRef.current(filePath + " ");
-          term.focus();
-        },
-        async (text) => {
-          await writeRef.current(text);
-          term.focus();
-        },
-        (error) => {
-          console.error("[TerminalTab] Clipboard paste error:", error);
-        }
-      );
-    } else {
-      // Local environment - text-only paste using Tauri clipboard API
-      try {
-        const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
-        const text = await readText();
-        if (text) {
-          await writeRef.current(text);
-          term.focus();
-        }
-      } catch (err) {
-        console.error("[TerminalTab] Clipboard text paste error:", err);
-      }
-    }
+    await handleTerminalPaste({
+      containerId,
+      writeToTerminal: writeRef.current,
+      focusTerminal: () => term.focus(),
+      componentName: "TerminalTab",
+    });
   }, [containerId]);
 
   // Reset state when containerId changes (shouldn't happen normally, but handle gracefully)
