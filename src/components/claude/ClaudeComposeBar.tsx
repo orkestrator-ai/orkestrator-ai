@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus } from "lucide-react";
+import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus, Check } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -439,9 +439,10 @@ export function ClaudeComposeBar({
     setSelectedModel(sessionKey, modelId);
   };
 
-  // Get display name for selected model
-  const selectedModelObj = models.find((m) => m.id === selectedModel);
-  const selectedModelName = selectedModelObj?.name ?? "Select model";
+  // Get display name for selected model - default to first model if none selected
+  const effectiveSelectedModel = selectedModel ?? models[0]?.id;
+  const selectedModelObj = models.find((m) => m.id === effectiveSelectedModel);
+  const selectedModelName = selectedModelObj?.name ?? (models.length > 0 ? models[0]?.name : "No models");
 
   return (
     <div className="border-t border-border bg-background p-3">
@@ -554,19 +555,30 @@ export function ClaudeComposeBar({
               <span className="max-w-[200px] truncate">{selectedModelName}</span>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto">
+          <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto min-w-[240px]">
             {models.length === 0 ? (
               <DropdownMenuItem disabled>No models available</DropdownMenuItem>
             ) : (
-              models.map((model) => (
-                <DropdownMenuItem
-                  key={model.id}
-                  onClick={() => handleModelChange(model.id)}
-                  className="text-sm"
-                >
-                  <span className="truncate">{model.name}</span>
-                </DropdownMenuItem>
-              ))
+              models.map((model) => {
+                const isSelected = model.id === effectiveSelectedModel;
+                return (
+                  <DropdownMenuItem
+                    key={model.id}
+                    onClick={() => handleModelChange(model.id)}
+                    className="flex items-start gap-2 py-2"
+                  >
+                    <div className="w-4 h-4 flex-shrink-0 mt-0.5">
+                      {isSelected && <Check className="w-4 h-4 text-primary" />}
+                    </div>
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-sm font-medium truncate">{model.name}</span>
+                      {model.description && (
+                        <span className="text-xs text-muted-foreground line-clamp-2">{model.description}</span>
+                      )}
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })
             )}
           </DropdownMenuContent>
         </DropdownMenu>
