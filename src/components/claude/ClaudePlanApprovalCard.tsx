@@ -18,24 +18,53 @@ interface ClaudePlanApprovalCardProps {
 }
 
 /**
+ * Check if a file path looks like a plan file.
+ * Matches common plan file patterns used by Claude in plan mode.
+ */
+function isPlanFilePath(filePath: string): boolean {
+  const lowerPath = filePath.toLowerCase();
+  const fileName = lowerPath.split("/").pop() ?? "";
+
+  // Check for common plan file patterns
+  const planPatterns = [
+    /plan\.md$/,
+    /implementation[-_]?plan\.md$/,
+    /[-_]plan\.md$/,
+    /plan[-_].*\.md$/,
+  ];
+
+  if (planPatterns.some((pattern) => pattern.test(fileName))) {
+    return true;
+  }
+
+  // Check for plan files in common directories
+  const planDirectories = [".claude/", "docs/plans/", "plans/"];
+  if (planDirectories.some((dir) => lowerPath.includes(dir)) && lowerPath.endsWith(".md")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Extract plan content from messages by finding the most recent Write tool
- * that wrote a .md file (the plan file).
+ * that wrote a plan file (matching specific plan file patterns).
  */
 function extractPlanContent(messages: ClaudeMessage[]): string | null {
   // Search messages in reverse order (most recent first)
   for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]!;
-    if (message.role !== "assistant") continue;
+    const message = messages[i];
+    if (!message || message.role !== "assistant") continue;
 
     // Search parts in reverse order within each message
     for (let j = message.parts.length - 1; j >= 0; j--) {
-      const part = message.parts[j]!;
-      if (part.type !== "tool-invocation") continue;
+      const part = message.parts[j];
+      if (!part || part.type !== "tool-invocation") continue;
       if (part.toolName?.toLowerCase() !== "write") continue;
 
-      // Check if this is a markdown file (plan file)
+      // Check if this is a plan file (not just any .md file)
       const filePath = part.toolArgs?.file_path as string | undefined;
-      if (!filePath?.endsWith(".md")) continue;
+      if (!filePath || !isPlanFilePath(filePath)) continue;
 
       // Extract the content that was written
       const content = part.toolArgs?.content as string | undefined;
@@ -59,7 +88,7 @@ export function ClaudePlanApprovalCard({
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isPlanCollapsed, setIsPlanCollapsed] = useState(false);
+  const [isPlanExpanded, setIsPlanExpanded] = useState(true);
 
   // Extract plan content from messages
   const planContent = useMemo(() => extractPlanContent(messages), [messages]);
@@ -149,17 +178,17 @@ export function ClaudePlanApprovalCard({
 
       {/* Plan Content */}
       {planContent && (
-        <Collapsible open={!isPlanCollapsed} onOpenChange={(open) => setIsPlanCollapsed(!open)}>
+        <Collapsible open={isPlanExpanded} onOpenChange={setIsPlanExpanded}>
           <CollapsibleTrigger className="flex items-center gap-2 w-full px-4 py-2 text-xs text-muted-foreground hover:bg-muted/30 transition-colors cursor-pointer border-b border-border">
             <ChevronRight
               className={cn(
                 "w-3 h-3 transition-transform shrink-0",
-                !isPlanCollapsed && "rotate-90"
+                isPlanExpanded && "rotate-90"
               )}
             />
             <span className="font-medium">Implementation Plan</span>
             <span className="text-muted-foreground/60 ml-auto">
-              {isPlanCollapsed ? "Click to expand" : "Click to collapse"}
+              {isPlanExpanded ? "Click to collapse" : "Click to expand"}
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent>
