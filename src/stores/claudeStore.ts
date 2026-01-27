@@ -54,6 +54,15 @@ export interface ClaudeAttachment {
   name: string;
 }
 
+/** Queued message for sending when session becomes idle */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: ClaudeAttachment[];
+  thinkingEnabled: boolean;
+  planModeEnabled: boolean;
+}
+
 interface ClaudeState {
   // State keyed by environmentId (raw environment UUID)
   serverStatus: Map<string, ClaudeServerStatus>;
@@ -70,6 +79,7 @@ interface ClaudeState {
   thinkingEnabled: Map<ClaudeSessionKey, boolean>;
   planMode: Map<ClaudeSessionKey, boolean>;
   selectedModel: Map<ClaudeSessionKey, string>;
+  messageQueue: Map<ClaudeSessionKey, QueuedMessage[]>;
   sessionInitData: Map<string, SessionInitData>;
 
   // State keyed by request/question ID
@@ -102,6 +112,13 @@ interface ClaudeState {
   setPlanMode: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
   setSessionInitData: (environmentId: string, initData: SessionInitData | null) => void;
   clearEnvironment: (environmentId: string) => void;
+
+  // Queue actions - keyed by sessionKey
+  addToQueue: (sessionKey: ClaudeSessionKey, message: QueuedMessage) => void;
+  removeFromQueue: (sessionKey: ClaudeSessionKey) => QueuedMessage | undefined;
+  clearQueue: (sessionKey: ClaudeSessionKey) => void;
+  getQueueLength: (sessionKey: ClaudeSessionKey) => number;
+
   addPendingQuestion: (question: ClaudeQuestionRequest) => void;
   removePendingQuestion: (requestId: string) => void;
   addPendingPlanApproval: (approval: ClaudePlanApprovalRequest) => void;
@@ -158,6 +175,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   eventSubscriptions: new Map(),
   thinkingEnabled: new Map(),
   planMode: new Map(),
+  messageQueue: new Map(),
   sessionInitData: new Map(),
 
   // Actions
@@ -407,6 +425,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newIsComposing = new Map(state.isComposing);
       const newThinkingEnabled = new Map(state.thinkingEnabled);
       const newPlanMode = new Map(state.planMode);
+      const newMessageQueue = new Map(state.messageQueue);
 
       // Collect session IDs for pending question cleanup before deleting sessions
       const sessionIdsToCleanup: string[] = [];
@@ -441,6 +460,9 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       for (const key of newPlanMode.keys()) {
         if (key.startsWith(sessionKeyPrefix)) newPlanMode.delete(key);
       }
+      for (const key of newMessageQueue.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newMessageQueue.delete(key);
+      }
 
       // Remove pending questions and plan approvals for this environment's sessions
       const newPendingQuestions = new Map(state.pendingQuestions);
@@ -471,9 +493,43 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         eventSubscriptions: newEventSubscriptions,
         thinkingEnabled: newThinkingEnabled,
         planMode: newPlanMode,
+        messageQueue: newMessageQueue,
         sessionInitData: newSessionInitData,
       };
     });
+  },
+
+  // Queue actions
+  addToQueue: (sessionKey, message) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) || [];
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, [...current, message]);
+      return { messageQueue: newMap };
+    }),
+
+  removeFromQueue: (sessionKey) => {
+    const state = get();
+    const current = state.messageQueue.get(sessionKey) || [];
+    if (current.length === 0) return undefined;
+
+    const [first, ...rest] = current;
+    const newMap = new Map(state.messageQueue);
+    newMap.set(sessionKey, rest);
+    set({ messageQueue: newMap });
+    return first;
+  },
+
+  clearQueue: (sessionKey) =>
+    set((state) => {
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, []);
+      return { messageQueue: newMap };
+    }),
+
+  getQueueLength: (sessionKey) => {
+    const queue = get().messageQueue.get(sessionKey);
+    return queue?.length || 0;
   },
 
   addPendingQuestion: (question) =>
