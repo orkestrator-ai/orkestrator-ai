@@ -126,7 +126,6 @@ pub async fn terminal_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    debug!("Resizing terminal session");
     let manager = get_terminal_manager()
         .ok_or_else(|| "Terminal manager not initialized".to_string())?;
 

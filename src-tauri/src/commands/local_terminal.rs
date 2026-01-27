@@ -101,8 +101,6 @@ pub async fn local_terminal_write(session_id: String, data: String) -> Result<()
 #[tauri::command]
 #[instrument(fields(session_id = %session_id, cols, rows))]
 pub fn local_terminal_resize(session_id: String, cols: u16, rows: u16) -> Result<(), String> {
-    debug!("Resizing local terminal session");
-
     let manager = get_local_terminal_manager()
         .ok_or_else(|| "Local terminal manager not initialized".to_string())?;
 
