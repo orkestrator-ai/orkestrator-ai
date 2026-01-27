@@ -83,12 +83,16 @@ chmod 700 "$HOME/.claude"
 # Hooks write state to /tmp/.claude-state for the host to poll
 # - UserPromptSubmit: fires when user sends a prompt (better than PreToolUse which fires on startup)
 # - Stop: fires when Claude finishes responding
+# env section sets BASH_MAX_OUTPUT_LENGTH to increase output limit for code reviews
 cat > "$HOME/.claude/settings.json" << 'EOF'
 {
   "permissions": {
     "allow": [],
     "deny": [],
     "defaultMode": "bypassPermissions"
+  },
+  "env": {
+    "BASH_MAX_OUTPUT_LENGTH": "200000"
   },
   "hooks": {
     "UserPromptSubmit": [

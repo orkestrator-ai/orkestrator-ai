@@ -262,6 +262,8 @@ pub async fn start_local_claude_bridge(
     // Bind to localhost to avoid PNA/CORS restrictions in WebView
     env_vars.insert("HOSTNAME".to_string(), "127.0.0.1".to_string());
     env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+    // Increase bash output limit for code reviews and large diffs (default is 30000)
+    env_vars.insert("BASH_MAX_OUTPUT_LENGTH".to_string(), "200000".to_string());
 
     // Build a comprehensive PATH for packaged apps
     // Start with the current PATH or common locations
