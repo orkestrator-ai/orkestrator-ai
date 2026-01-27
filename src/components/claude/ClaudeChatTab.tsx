@@ -622,6 +622,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             if (planSessionKey) {
               console.log("[ClaudeChatTab] Plan enter requested, enabling plan mode for session:", planSessionKey);
               setPlanMode(planSessionKey, true);
+            } else {
+              console.warn("[ClaudeChatTab] Could not find session key for plan.enter-requested event, sessionId:", eventSessionId);
             }
           } else if (eventType === "plan.exit-requested") {
             // Claude has requested to exit plan mode - disable plan mode for this session
@@ -629,6 +631,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             if (planSessionKey) {
               console.log("[ClaudeChatTab] Plan exit requested, disabling plan mode for session:", planSessionKey);
               setPlanMode(planSessionKey, false);
+            } else {
+              console.warn("[ClaudeChatTab] Could not find session key for plan.exit-requested event, sessionId:", eventSessionId);
             }
           } else if (eventType === "plan.approval-requested") {
             // Claude is waiting for plan approval - show approval UI
