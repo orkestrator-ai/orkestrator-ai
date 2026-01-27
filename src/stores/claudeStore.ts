@@ -368,36 +368,72 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
     // Then clear all state
     set((state) => {
+      // Maps keyed by environmentId (raw UUID)
       const newServerStatus = new Map(state.serverStatus);
-      const newSessions = new Map(state.sessions);
       const newClients = new Map(state.clients);
+      const newEventSubscriptions = new Map(state.eventSubscriptions);
+      const newSessionInitData = new Map(state.sessionInitData);
+
+      newServerStatus.delete(environmentId);
+      newClients.delete(environmentId);
+      newEventSubscriptions.delete(environmentId);
+      newSessionInitData.delete(environmentId);
+
+      // Maps keyed by sessionKey (format: "env-{environmentId}:{tabId}")
+      // Must iterate and delete all keys matching this environment
+      const sessionKeyPrefix = `env-${environmentId}:`;
+
+      const newSessions = new Map(state.sessions);
       const newSelectedModel = new Map(state.selectedModel);
       const newAttachments = new Map(state.attachments);
       const newDraftText = new Map(state.draftText);
       const newIsComposing = new Map(state.isComposing);
-      const newPendingQuestions = new Map(state.pendingQuestions);
-      const newEventSubscriptions = new Map(state.eventSubscriptions);
       const newThinkingEnabled = new Map(state.thinkingEnabled);
       const newPlanMode = new Map(state.planMode);
-      const newSessionInitData = new Map(state.sessionInitData);
 
-      newServerStatus.delete(environmentId);
-      newSessions.delete(environmentId);
-      newClients.delete(environmentId);
-      newSelectedModel.delete(environmentId);
-      newAttachments.delete(environmentId);
-      newDraftText.delete(environmentId);
-      newIsComposing.delete(environmentId);
-      newEventSubscriptions.delete(environmentId);
-      newThinkingEnabled.delete(environmentId);
-      newPlanMode.delete(environmentId);
-      newSessionInitData.delete(environmentId);
+      // Collect session IDs for pending question cleanup before deleting sessions
+      const sessionIdsToCleanup: string[] = [];
+      for (const [key, session] of newSessions) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          sessionIdsToCleanup.push(session.sessionId);
+        }
+      }
 
-      // Remove pending questions for this environment's sessions
+      // Delete sessionKey-keyed entries for this environment
+      for (const key of newSessions.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newSessions.delete(key);
+      }
+      for (const key of newSelectedModel.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newSelectedModel.delete(key);
+      }
+      for (const key of newAttachments.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newAttachments.delete(key);
+      }
+      for (const key of newDraftText.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newDraftText.delete(key);
+      }
+      for (const key of newIsComposing.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newIsComposing.delete(key);
+      }
+      for (const key of newThinkingEnabled.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newThinkingEnabled.delete(key);
+      }
+      for (const key of newPlanMode.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newPlanMode.delete(key);
+      }
+
+      // Remove pending questions and plan approvals for this environment's sessions
+      const newPendingQuestions = new Map(state.pendingQuestions);
+      const newPendingPlanApprovals = new Map(state.pendingPlanApprovals);
+
       for (const [requestId, question] of newPendingQuestions) {
-        const session = state.sessions.get(environmentId);
-        if (session && question.sessionId === session.sessionId) {
+        if (sessionIdsToCleanup.includes(question.sessionId)) {
           newPendingQuestions.delete(requestId);
+        }
+      }
+      for (const [requestId, approval] of newPendingPlanApprovals) {
+        if (sessionIdsToCleanup.includes(approval.sessionId)) {
+          newPendingPlanApprovals.delete(requestId);
         }
       }
 
@@ -410,6 +446,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         draftText: newDraftText,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
+        pendingPlanApprovals: newPendingPlanApprovals,
         eventSubscriptions: newEventSubscriptions,
         thinkingEnabled: newThinkingEnabled,
         planMode: newPlanMode,

@@ -573,11 +573,6 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           if (eventType === "session.init") {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const initData = event.data as any;
-            console.log("[ClaudeChatTab] session.init event received:", {
-              environmentId,
-              slashCommandsCount: initData?.slashCommands?.length ?? 0,
-              slashCommands: initData?.slashCommands,
-            });
             if (initData) {
               useClaudeStore.getState().setSessionInitData(environmentId, {
                 mcpServers: initData.mcpServers || [],

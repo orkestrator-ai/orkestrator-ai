@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { Command } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +13,6 @@ interface SlashCommandMenuProps {
   selectedIndex: number;
   onSelect: (command: SlashCommand) => void;
   onClose: () => void;
-  position?: { top: number; left: number };
 }
 
 /**
@@ -28,7 +27,6 @@ export function SlashCommandMenu({
   selectedIndex,
   onSelect,
   onClose,
-  position,
 }: SlashCommandMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
@@ -57,13 +55,6 @@ export function SlashCommandMenu({
 
   // Note: Escape key handling is done by the parent component's handleKeyDown
 
-  const handleSelect = useCallback(
-    (command: SlashCommand) => {
-      onSelect(command);
-    },
-    [onSelect]
-  );
-
   if (commands.length === 0) {
     return null;
   }
@@ -76,11 +67,7 @@ export function SlashCommandMenu({
         "rounded-md border border-border bg-popover shadow-lg",
         "animate-in fade-in-0 zoom-in-95"
       )}
-      style={
-        position
-          ? { bottom: position.top, left: position.left }
-          : { bottom: "100%", left: 0, marginBottom: "4px" }
-      }
+      style={{ bottom: "100%", left: 0, marginBottom: "4px" }}
     >
       <div className="p-1">
         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
@@ -92,7 +79,7 @@ export function SlashCommandMenu({
             <button
               key={command.name}
               ref={isSelected ? selectedRef : undefined}
-              onClick={() => handleSelect(command)}
+              onClick={() => onSelect(command)}
               className={cn(
                 "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
                 "transition-colors",
