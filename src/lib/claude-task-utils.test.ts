@@ -62,8 +62,8 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("tool-group");
-    expect(result[0].part?.toolName).toBe("Read");
+    expect(result[0]!.type).toBe("tool-group");
+    expect(result[0]!.part?.toolName).toBe("Read");
   });
 
   test("Task tool creates task-group with empty children", () => {
@@ -71,8 +71,8 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].childTools).toEqual([]);
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.childTools).toEqual([]);
   });
 
   test("tools following Task are grouped via positional fallback", () => {
@@ -84,10 +84,10 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].childTools).toHaveLength(2);
-    expect(result[0].childTools![0].toolName).toBe("Read");
-    expect(result[0].childTools![1].toolName).toBe("Write");
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.childTools).toHaveLength(2);
+    expect(result[0]!.childTools![0]!.toolName).toBe("Read");
+    expect(result[0]!.childTools![1]!.toolName).toBe("Write");
   });
 
   test("thinking part breaks positional fallback", () => {
@@ -100,11 +100,11 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(3);
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].childTools).toHaveLength(1);
-    expect(result[1].type).toBe("thinking");
-    expect(result[2].type).toBe("tool-group");
-    expect(result[2].part?.toolName).toBe("Write");
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.childTools).toHaveLength(1);
+    expect(result[1]!.type).toBe("thinking");
+    expect(result[2]!.type).toBe("tool-group");
+    expect(result[2]!.part?.toolName).toBe("Write");
   });
 
   test("explicit parentTaskUseId groups tool with correct Task", () => {
@@ -116,10 +116,10 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(2);
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].childTools).toHaveLength(1);
-    expect(result[0].childTools![0].toolName).toBe("Read");
-    expect(result[1].type).toBe("text");
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.childTools).toHaveLength(1);
+    expect(result[0]!.childTools![0]!.toolName).toBe("Read");
+    expect(result[1]!.type).toBe("text");
   });
 
   test("multiple Tasks with explicit parentTaskUseId grouping", () => {
@@ -134,16 +134,16 @@ describe("processPartsInOrder", () => {
     expect(result).toHaveLength(2);
 
     // First Task group
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].part?.toolUseId).toBe("task-1");
-    expect(result[0].childTools).toHaveLength(1);
-    expect(result[0].childTools![0].toolName).toBe("Read");
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.part?.toolUseId).toBe("task-1");
+    expect(result[0]!.childTools).toHaveLength(1);
+    expect(result[0]!.childTools![0]!.toolName).toBe("Read");
 
     // Second Task group
-    expect(result[1].type).toBe("task-group");
-    expect(result[1].part?.toolUseId).toBe("task-2");
-    expect(result[1].childTools).toHaveLength(1);
-    expect(result[1].childTools![0].toolName).toBe("Write");
+    expect(result[1]!.type).toBe("task-group");
+    expect(result[1]!.part?.toolUseId).toBe("task-2");
+    expect(result[1]!.childTools).toHaveLength(1);
+    expect(result[1]!.childTools![0]!.toolName).toBe("Write");
   });
 
   test("tool with invalid parentTaskUseId falls back to positional", () => {
@@ -154,10 +154,10 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("task-group");
+    expect(result[0]!.type).toBe("task-group");
     // Falls back to positional - tool is still grouped under task-1
-    expect(result[0].childTools).toHaveLength(1);
-    expect(result[0].childTools![0].toolName).toBe("Read");
+    expect(result[0]!.childTools).toHaveLength(1);
+    expect(result[0]!.childTools![0]!.toolName).toBe("Read");
   });
 
   test("tool with invalid parentTaskUseId and no positional fallback is standalone", () => {
@@ -169,10 +169,10 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(3);
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].childTools).toHaveLength(0);
-    expect(result[1].type).toBe("text");
-    expect(result[2].type).toBe("tool-group"); // Standalone
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.childTools).toHaveLength(0);
+    expect(result[1]!.type).toBe("text");
+    expect(result[2]!.type).toBe("tool-group"); // Standalone
   });
 
   test("nested Tasks - inner Task is child of outer Task", () => {
@@ -185,8 +185,8 @@ describe("processPartsInOrder", () => {
     // Both are rendered as task-groups at top level since Task tools don't
     // get nested (they ARE parents, not children)
     expect(result).toHaveLength(2);
-    expect(result[0].type).toBe("task-group");
-    expect(result[1].type).toBe("task-group");
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[1]!.type).toBe("task-group");
   });
 
   test("file parts break positional fallback", () => {
@@ -199,9 +199,9 @@ describe("processPartsInOrder", () => {
     const result = processPartsInOrder(parts);
 
     expect(result).toHaveLength(3);
-    expect(result[0].type).toBe("task-group");
-    expect(result[0].childTools).toHaveLength(1);
-    expect(result[1].type).toBe("file");
-    expect(result[2].type).toBe("tool-group");
+    expect(result[0]!.type).toBe("task-group");
+    expect(result[0]!.childTools).toHaveLength(1);
+    expect(result[1]!.type).toBe("file");
+    expect(result[2]!.type).toBe("tool-group");
   });
 });
