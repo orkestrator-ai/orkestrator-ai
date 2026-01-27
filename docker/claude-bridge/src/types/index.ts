@@ -79,6 +79,8 @@ export interface NormalizedPart {
   toolDiff?: ToolDiffMetadata;
   /** Tool use ID for tracking tool invocations across messages */
   toolUseId?: string;
+  /** Parent Task tool use ID - used to group child tools under their parent Task */
+  parentTaskUseId?: string;
   /** Internal: Message UUID for tracking thinking parts across streaming updates */
   _messageUuid?: string;
   /** Whether this tool is from an MCP server */
