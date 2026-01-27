@@ -13,6 +13,7 @@ import {
   type ClaudeSdkSessionId,
 } from "@/lib/claude-client";
 import { createSessionKey } from "@/lib/utils";
+import type { FileMention } from "@/types";
 
 /**
  * Creates a unique session key for Claude sessions.
@@ -64,6 +65,7 @@ interface ClaudeState {
   sessions: Map<ClaudeSessionKey, ClaudeSessionState>;
   attachments: Map<ClaudeSessionKey, ClaudeAttachment[]>;
   draftText: Map<ClaudeSessionKey, string>;
+  draftMentions: Map<ClaudeSessionKey, FileMention[]>;
   isComposing: Map<ClaudeSessionKey, boolean>;
   thinkingEnabled: Map<ClaudeSessionKey, boolean>;
   planMode: Map<ClaudeSessionKey, boolean>;
@@ -94,6 +96,7 @@ interface ClaudeState {
   removeAttachment: (sessionKey: ClaudeSessionKey, attachmentId: string) => void;
   clearAttachments: (sessionKey: ClaudeSessionKey) => void;
   setDraftText: (sessionKey: ClaudeSessionKey, text: string) => void;
+  setDraftMentions: (sessionKey: ClaudeSessionKey, mentions: FileMention[]) => void;
   setComposing: (sessionKey: ClaudeSessionKey, isComposing: boolean) => void;
   setThinkingEnabled: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
   setPlanMode: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
@@ -116,6 +119,7 @@ interface ClaudeState {
   getSelectedModel: (sessionKey: ClaudeSessionKey) => string | undefined;
   getAttachments: (sessionKey: ClaudeSessionKey) => ClaudeAttachment[];
   getDraftText: (sessionKey: ClaudeSessionKey) => string;
+  getDraftMentions: (sessionKey: ClaudeSessionKey) => FileMention[];
   isComposingFor: (sessionKey: ClaudeSessionKey) => boolean;
   isThinkingEnabled: (sessionKey: ClaudeSessionKey) => boolean;
   isPlanMode: (sessionKey: ClaudeSessionKey) => boolean;
@@ -147,6 +151,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   selectedModel: new Map(),
   attachments: new Map(),
   draftText: new Map(),
+  draftMentions: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
   pendingPlanApprovals: new Map(),
@@ -320,6 +325,17 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { draftText: newMap };
     }),
 
+  setDraftMentions: (sessionKey, mentions) =>
+    set((state) => {
+      const newMap = new Map(state.draftMentions);
+      if (mentions.length > 0) {
+        newMap.set(sessionKey, mentions);
+      } else {
+        newMap.delete(sessionKey);
+      }
+      return { draftMentions: newMap };
+    }),
+
   setComposing: (sessionKey, isComposing) =>
     set((state) => {
       const newMap = new Map(state.isComposing);
@@ -387,6 +403,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newSelectedModel = new Map(state.selectedModel);
       const newAttachments = new Map(state.attachments);
       const newDraftText = new Map(state.draftText);
+      const newDraftMentions = new Map(state.draftMentions);
       const newIsComposing = new Map(state.isComposing);
       const newThinkingEnabled = new Map(state.thinkingEnabled);
       const newPlanMode = new Map(state.planMode);
@@ -411,6 +428,9 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       }
       for (const key of newDraftText.keys()) {
         if (key.startsWith(sessionKeyPrefix)) newDraftText.delete(key);
+      }
+      for (const key of newDraftMentions.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newDraftMentions.delete(key);
       }
       for (const key of newIsComposing.keys()) {
         if (key.startsWith(sessionKeyPrefix)) newIsComposing.delete(key);
@@ -444,6 +464,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         selectedModel: newSelectedModel,
         attachments: newAttachments,
         draftText: newDraftText,
+        draftMentions: newDraftMentions,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         pendingPlanApprovals: newPendingPlanApprovals,
@@ -555,6 +576,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   getAttachments: (sessionKey) => get().attachments.get(sessionKey) || [],
 
   getDraftText: (sessionKey) => get().draftText.get(sessionKey) || "",
+
+  getDraftMentions: (sessionKey) => get().draftMentions.get(sessionKey) || [],
 
   isComposingFor: (sessionKey) => get().isComposing.get(sessionKey) || false,
 

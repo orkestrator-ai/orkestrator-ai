@@ -1,6 +1,6 @@
 import { memo, useCallback, useState, useMemo, useRef, useEffect, type AnchorHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
-import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X, ListTodo, Square, CheckSquare, Plug } from "lucide-react";
+import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X, ListTodo, Square, CheckSquare, Plug, FileCode } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
@@ -8,7 +8,9 @@ import { openInBrowser, readFileBase64 } from "@/lib/tauri";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
+import { useFilesPanelStore } from "@/stores";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type ClaudeMessagePart, type ToolDiffMetadata } from "@/lib/claude-client";
+import { toast } from "sonner";
 import { processPartsInOrder } from "@/lib/claude-task-utils";
 
 /** Parsed attachment from XML tags */
@@ -66,17 +68,98 @@ function parseAttachmentsFromContent(content: string): { cleanContent: string; a
   return { cleanContent, attachments };
 }
 
-/** Custom link component that opens URLs in the system browser */
-function ExternalLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const handleClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+/** Check if a href is a URL (vs a file path) */
+function isUrl(href: string): boolean {
+  return href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:");
+}
+
+/** Check if a link is a file mention (starts with @ in display text) */
+function isFileMention(children: React.ReactNode): boolean {
+  if (typeof children === "string") {
+    return children.startsWith("@");
+  }
+  if (Array.isArray(children) && children.length > 0) {
+    const first = children[0];
+    return typeof first === "string" && first.startsWith("@");
+  }
+  return false;
+}
+
+/** Extract display text without @ prefix */
+function getDisplayText(children: React.ReactNode): React.ReactNode {
+  if (typeof children === "string" && children.startsWith("@")) {
+    return children.slice(1); // Remove @ prefix
+  }
+  if (Array.isArray(children) && children.length > 0) {
+    const first = children[0];
+    if (typeof first === "string" && first.startsWith("@")) {
+      return [first.slice(1), ...children.slice(1)];
+    }
+  }
+  return children;
+}
+
+/** Custom link component that handles both URLs and file paths */
+function SmartLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const { createFileTab } = useTerminalContext();
+  const changes = useFilesPanelStore((state) => state.changes);
+
+  const handleClick = useCallback((e: React.MouseEvent<HTMLAnchorElement | HTMLSpanElement>) => {
     e.preventDefault();
-    if (href) {
+    if (!href) return;
+
+    if (isUrl(href)) {
+      // External URL - open in browser
       openInBrowser(href).catch((err) => {
         console.error("[ClaudeMessage] Failed to open link:", err);
       });
+    } else {
+      // File path - open in file viewer
+      if (createFileTab) {
+        // Check if this file has changes (should open in diff mode)
+        const fileChange = changes.find((c) => c.path === href);
+        if (fileChange) {
+          // Open in diff mode
+          createFileTab(href, { isDiff: true, gitStatus: fileChange.status });
+        } else {
+          // Open in normal mode
+          createFileTab(href);
+        }
+      } else {
+        // Fallback: copy to clipboard if createFileTab not available
+        navigator.clipboard.writeText(href).then(() => {
+          toast.success("Copied file path", {
+            description: href,
+            duration: 2000,
+          });
+        }).catch((err) => {
+          console.error("[ClaudeMessage] Failed to copy path:", err);
+          toast.error("Failed to copy path");
+        });
+      }
     }
-  }, [href]);
+  }, [href, createFileTab, changes]);
 
+  // Determine if this is a file mention based on the display text
+  const isFile = href && !isUrl(href) && isFileMention(children);
+
+  if (isFile) {
+    // File mention - render with file styling (without @ prefix)
+    const displayText = getDisplayText(children);
+    return (
+      <span
+        onClick={handleClick}
+        className="text-blue-500 hover:text-blue-400 cursor-pointer font-medium whitespace-nowrap"
+        title={`Open file: ${href}`}
+        {...props}
+      >
+        <FileCode className="w-3.5 h-3.5 inline align-text-bottom mr-0.5" />
+        {displayText}
+      </span>
+    );
+  }
+
+  // Regular link (URL or other)
   return (
     <a
       href={href}
@@ -89,9 +172,9 @@ function ExternalLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnc
   );
 }
 
-/** Markdown components config with external link handling */
+/** Markdown components config with smart link handling */
 const markdownComponents: Components = {
-  a: ExternalLink,
+  a: SmartLink,
 };
 
 interface ClaudeMessageProps {

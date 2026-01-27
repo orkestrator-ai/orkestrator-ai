@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback, KeyboardEvent } from "react";
+import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
 import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus } from "lucide-react";
 import {
   DropdownMenu,
@@ -15,6 +15,11 @@ import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment } from "@/stores/claudeStore";
 import type { ClaudeModel } from "@/lib/claude-client";
 import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
+import { FileMentionMenu } from "./FileMentionMenu";
+import { MentionableInput, type MentionableInputRef } from "./MentionableInput";
+import { useFileSearch } from "@/hooks/useFileSearch";
+import { useFileMentions } from "@/hooks/useFileMentions";
+import type { FileMention, FileCandidate } from "@/types";
 
 interface ClaudeComposeBarProps {
   environmentId: string;
@@ -51,7 +56,7 @@ export function ClaudeComposeBar({
 }: ClaudeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<MentionableInputRef>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
 
   // Create sessionKey for store lookups (format: "env-{environmentId}:{tabId}")
@@ -64,6 +69,8 @@ export function ClaudeComposeBar({
     clearAttachments,
     getDraftText,
     setDraftText,
+    getDraftMentions,
+    setDraftMentions,
     getSelectedModel,
     setSelectedModel,
     isThinkingEnabled,
@@ -79,9 +86,40 @@ export function ClaudeComposeBar({
 
   const attachments = getAttachments(sessionKey);
   const text = getDraftText(sessionKey);
+  const mentions = getDraftMentions(sessionKey);
   const selectedModel = getSelectedModel(sessionKey);
   const thinkingEnabled = isThinkingEnabled(sessionKey);
   const planModeEnabled = isPlanMode(sessionKey);
+
+  // Get worktree path for local environments
+  const worktreePath = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.worktreePath
+  );
+
+  // File search hook for @ mentions
+  const { searchFiles, error: fileSearchError } = useFileSearch(containerId, worktreePath);
+
+  // Show toast if file search fails to load
+  useEffect(() => {
+    if (fileSearchError) {
+      toast.error("Failed to load files for @mentions", {
+        description: fileSearchError,
+        duration: 4000,
+      });
+    }
+  }, [fileSearchError]);
+
+  // File mentions hook for @ detection and menu management
+  const {
+    isMenuOpen: fileMentionMenuOpen,
+    selectedIndex: fileMentionSelectedIndex,
+    filteredFiles,
+    handleCursorChange: detectFileMention,
+    handleKeyDown: handleFileMentionKeyDown,
+    closeMenu: closeFileMentionMenu,
+    serializeForLLM,
+    createMention,
+  } = useFileMentions({ searchFiles });
 
   // Slash command menu state
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
@@ -116,16 +154,41 @@ export function ClaudeComposeBar({
     [sessionKey, setDraftText]
   );
 
-  // Get worktree path for local environments
-  const worktreePath = useEnvironmentStore(
-    (state) => state.getEnvironmentById(environmentId)?.worktreePath
+  const setMentions = useCallback(
+    (newMentions: FileMention[]) => setDraftMentions(sessionKey, newMentions),
+    [sessionKey, setDraftMentions]
   );
 
-  // Focus textarea on mount
+  // Handle text and mentions change from MentionableInput
+  const handleTextAndMentionsChange = useCallback(
+    (newText: string, newMentions: FileMention[]) => {
+      setText(newText);
+      setMentions(newMentions);
+    },
+    [setText, setMentions]
+  );
+
+  // Handle cursor change for @ detection
+  const handleCursorPositionChange = useCallback(
+    (position: number) => {
+      detectFileMention(position, text);
+    },
+    [detectFileMention, text]
+  );
+
+  // Handle file mention selection
+  const handleFileMentionSelect = useCallback(
+    (file: FileCandidate) => {
+      const mention = createMention(file);
+      inputRef.current?.insertMention(mention);
+      closeFileMentionMenu();
+    },
+    [createMention, closeFileMentionMenu]
+  );
+
+  // Focus input on mount
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.focus();
-    }
+    inputRef.current?.focus();
   }, []);
 
   // Detect "/" being typed to show slash command menu
@@ -160,9 +223,9 @@ export function ClaudeComposeBar({
       // Replace the current "/" + filter with the selected command + space
       setText(command.name + " ");
       setSlashMenuOpen(false);
-      textareaRef.current?.focus();
+      inputRef.current?.focus();
     },
-    [setText, textareaRef]
+    [setText]
   );
 
   // Close attachment menu when clicking outside
@@ -183,9 +246,12 @@ export function ClaudeComposeBar({
   }, [showAttachmentMenu]);
 
   // Handle paste for clipboard images
+  // Note: For MentionableInput (contenteditable), the activeElement is the div inside the component
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
-      if (document.activeElement !== textareaRef.current) return;
+      // Check if focus is within our input area (contenteditable div)
+      const activeEl = document.activeElement;
+      if (!activeEl || !activeEl.closest("[data-mentionable-input]")) return;
 
       try {
         const image = await readImage();
@@ -292,7 +358,16 @@ export function ClaudeComposeBar({
     };
   }, [handlePaste]);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Handle file mention menu navigation first (it takes priority over slash commands)
+    if (fileMentionMenuOpen && filteredFiles.length > 0) {
+      const handled = handleFileMentionKeyDown(event, (file) => {
+        const mention = createMention(file);
+        inputRef.current?.insertMention(mention);
+      });
+      if (handled) return;
+    }
+
     // Handle slash command menu navigation
     if (slashMenuOpen && filteredSlashCommands.length > 0) {
       switch (event.key) {
@@ -321,14 +396,16 @@ export function ClaudeComposeBar({
       }
     }
 
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      handleSend();
-    }
     // Shift+Tab toggles between plan mode and edit mode (bypassPermissions)
     if (event.key === "Tab" && event.shiftKey) {
       event.preventDefault();
       setPlanMode(sessionKey, !planModeEnabled);
+    }
+
+    // Enter to send (handled by MentionableInput for regular Enter)
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
     }
   };
 
@@ -341,8 +418,13 @@ export function ClaudeComposeBar({
       // Read current values directly from store to avoid stale closures
       const currentThinkingEnabled = isThinkingEnabled(sessionKey);
       const currentPlanModeEnabled = isPlanMode(sessionKey);
-      onSend(text.trim(), attachments, currentThinkingEnabled, currentPlanModeEnabled);
+
+      // Serialize mentions: replace @filename with full relative path
+      const serializedText = serializeForLLM(text.trim(), mentions);
+
+      onSend(serializedText, attachments, currentThinkingEnabled, currentPlanModeEnabled);
       setText("");
+      setMentions([]);
       clearAttachments(sessionKey);
     } finally {
       setIsSending(false);
@@ -356,8 +438,6 @@ export function ClaudeComposeBar({
   const handleModelChange = (modelId: string) => {
     setSelectedModel(sessionKey, modelId);
   };
-
-  const textareaRows = Math.min(MAX_LINES, Math.max(1, text.split("\n").length));
 
   // Get display name for selected model
   const selectedModelObj = models.find((m) => m.id === selectedModel);
@@ -394,9 +474,9 @@ export function ClaudeComposeBar({
         </div>
       )}
 
-      {/* Text input area container with slash command menu */}
-      <div className="relative">
-        {/* Slash command menu - appears above textarea */}
+      {/* Text input area container with menus */}
+      <div className="relative" data-mentionable-input>
+        {/* Slash command menu - appears above input */}
         {slashMenuOpen && filteredSlashCommands.length > 0 && (
           <SlashCommandMenu
             commands={filteredSlashCommands}
@@ -406,25 +486,28 @@ export function ClaudeComposeBar({
           />
         )}
 
-        {/* Text input area */}
-        <textarea
-          ref={textareaRef}
+        {/* File mention menu - appears above input */}
+        {fileMentionMenuOpen && (
+          <FileMentionMenu
+            files={filteredFiles}
+            selectedIndex={fileMentionSelectedIndex}
+            onSelect={handleFileMentionSelect}
+            onClose={closeFileMentionMenu}
+          />
+        )}
+
+        {/* Mentionable input with @ file references */}
+        <MentionableInput
+          ref={inputRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          mentions={mentions}
+          onChange={handleTextAndMentionsChange}
+          onCursorChange={handleCursorPositionChange}
           onKeyDown={handleKeyDown}
           placeholder="Ask Claude anything..."
-          rows={textareaRows}
-          className={cn(
-            "w-full bg-transparent border-none px-1 py-1",
-            "text-sm text-foreground placeholder:text-muted-foreground",
-            "resize-none outline-none",
-            "transition-colors"
-          )}
-          style={{
-            minHeight: LINE_HEIGHT + 8,
-            maxHeight: MAX_LINES * LINE_HEIGHT + 16,
-          }}
           disabled={disabled || isSending}
+          minHeight={LINE_HEIGHT + 8}
+          maxHeight={MAX_LINES * LINE_HEIGHT + 16}
         />
       </div>
 

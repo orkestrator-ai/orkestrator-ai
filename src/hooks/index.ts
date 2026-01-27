@@ -9,3 +9,5 @@ export { useClipboardImagePaste } from "./useClipboardImagePaste";
 export { useTerminalClipboard } from "./useTerminalClipboard";
 export type { UseTerminalClipboardOptions, UseTerminalClipboardReturn } from "./useTerminalClipboard";
 export { useScrollLock } from "./useScrollLock";
+export { useFileSearch } from "./useFileSearch";
+export { useFileMentions } from "./useFileMentions";
