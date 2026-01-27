@@ -60,6 +60,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const tabSessionIdRef = useRef<string | null>(null);
   const isInitializedRef = useRef(false);
   const initialPromptSentRef = useRef(false);
+  const isProcessingQueueRef = useRef(false);
   const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => Promise<void>) | null>(null);
 
   const {
@@ -87,12 +88,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     addToQueue,
     removeFromQueue,
     clearQueue,
-    getQueueLength,
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
     pendingPlanApprovals: pendingPlanApprovalsMap,
-    messageQueue: messageQueueMap,
   } = useClaudeStore();
 
   // Activity state tracking - use environmentId as key for both local and container environments
@@ -139,11 +138,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   // This prevents unnecessary recalculations when other session properties change
   const sessionMessages = useMemo(() => session?.messages ?? [], [session?.messages]);
 
-  // Queue length for this session
-  const queueLength = useMemo(() => {
-    const queue = messageQueueMap.get(sessionKey);
-    return queue?.length ?? 0;
-  }, [messageQueueMap, sessionKey]);
+  // Queue length for this session - use selector to only re-render when this specific queue changes
+  const queueLength = useClaudeStore(
+    useCallback((state) => state.messageQueue.get(sessionKey)?.length ?? 0, [sessionKey])
+  );
 
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
@@ -774,16 +772,13 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         thinkingEnabled,
         planModeEnabled,
       });
-      console.debug("[ClaudeChatTab] Message added to queue", { sessionKey, queueLength: getQueueLength(sessionKey) });
     },
-    [sessionKey, addToQueue, getQueueLength]
+    [sessionKey, addToQueue]
   );
 
   // Handle stopping the current query
   const handleStop = useCallback(async () => {
     if (!client || !session) return;
-
-    console.debug("[ClaudeChatTab] Stopping current query and clearing queue", { sessionKey });
 
     // Clear the queue first
     clearQueue(sessionKey);
@@ -833,29 +828,56 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     // 1. Connected and have client/session
     // 2. Session is not loading (just became idle)
     // 3. There are messages in the queue
+    // 4. Not already processing a queued message (prevents race conditions)
     if (
       connectionState === "connected" &&
       client &&
       session &&
       !session.isLoading &&
-      queueLength > 0
+      queueLength > 0 &&
+      !isProcessingQueueRef.current
     ) {
       const nextMessage = removeFromQueue(sessionKey);
       if (nextMessage) {
-        console.debug("[ClaudeChatTab] Processing queued message", {
-          sessionKey,
-          remainingInQueue: queueLength - 1,
-        });
+        // Set flag to prevent double-processing during state transitions
+        isProcessingQueueRef.current = true;
+
         // Send the queued message using handleSend
-        handleSendRef.current?.(
+        const sendPromise = handleSendRef.current?.(
           nextMessage.text,
           nextMessage.attachments,
           nextMessage.thinkingEnabled,
           nextMessage.planModeEnabled
         );
+
+        // Handle completion/errors and reset the processing flag
+        if (sendPromise) {
+          sendPromise
+            .catch((error) => {
+              console.error("[ClaudeChatTab] Failed to send queued message:", error);
+              // Add error message to inform user which queued message failed
+              const errorMessage: ClaudeMessageType = {
+                id: `${ERROR_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+                role: "assistant",
+                content: `Failed to send queued message: ${error instanceof Error ? error.message : "Unknown error"}`,
+                parts: [{ type: "text", content: `Failed to send queued message: ${error instanceof Error ? error.message : "Unknown error"}` }],
+                timestamp: new Date().toISOString(),
+              };
+              addMessage(sessionKey, errorMessage);
+              setSessionLoading(sessionKey, false);
+            })
+            .finally(() => {
+              // Reset processing flag after a short delay to allow state to settle
+              setTimeout(() => {
+                isProcessingQueueRef.current = false;
+              }, 100);
+            });
+        } else {
+          isProcessingQueueRef.current = false;
+        }
       }
     }
-  }, [connectionState, client, session, session?.isLoading, queueLength, sessionKey, removeFromQueue]);
+  }, [connectionState, client, session, session?.isLoading, queueLength, sessionKey, removeFromQueue, addMessage, setSessionLoading]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");
