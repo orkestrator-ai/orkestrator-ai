@@ -1189,6 +1189,7 @@ export const ClaudeMessage = memo(function ClaudeMessage({
   message,
 }: ClaudeMessageProps) {
   const isUser = message.role === "user";
+  const isSystem = message.role === "system";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
 
   // For user messages, parse out attachment XML tags
@@ -1221,6 +1222,19 @@ export const ClaudeMessage = memo(function ClaudeMessage({
                 {formatTime(message.timestamp)}
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render system messages with distinct info styling
+  if (isSystem) {
+    return (
+      <div className="px-4 py-2">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-xs text-muted-foreground italic text-center py-1">
+            {message.content}
           </div>
         </div>
       </div>

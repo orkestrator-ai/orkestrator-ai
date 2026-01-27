@@ -855,6 +855,48 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           sessionId,
           data: session.initData,
         });
+      } else if (message.type === "system" && message.subtype === "compact_boundary") {
+        // Handle /compact command result
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const compactMsg = message as any;
+        const compactMetadata = compactMsg.compact_metadata || {};
+
+        console.log("[session-manager] Compact boundary received", {
+          sessionId,
+          preTokens: compactMetadata.pre_tokens,
+          trigger: compactMetadata.trigger,
+        });
+
+        // Emit event so frontend can show feedback
+        eventEmitter.emit({
+          type: "system.compact",
+          sessionId,
+          data: {
+            preTokens: compactMetadata.pre_tokens,
+            postTokens: compactMetadata.post_tokens,
+            trigger: compactMetadata.trigger,
+          },
+        });
+      } else if (message.type === "system") {
+        // Handle other system messages (log for debugging)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sysMsg = message as any;
+        console.log("[session-manager] System message received", {
+          sessionId,
+          subtype: sysMsg.subtype,
+        });
+
+        // Emit generic system event for other subtypes
+        if (sysMsg.subtype && sysMsg.subtype !== "init") {
+          eventEmitter.emit({
+            type: "system.message",
+            sessionId,
+            data: {
+              subtype: sysMsg.subtype,
+              message: sysMsg,
+            },
+          });
+        }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
         const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker, mcpServerNames);
@@ -936,7 +978,16 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         }
         // Skip adding user message replay as we already added it
       } else if (message.type === "result") {
-        // Query completed
+        // Query completed - log full result for debugging
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const resultMsg = message as any;
+        console.log("[session-manager] Query result", {
+          sessionId,
+          subtype: message.subtype,
+          result: resultMsg.result,
+          costUSD: resultMsg.cost_usd,
+          durationMs: resultMsg.duration_ms,
+        });
         if (message.subtype === "success") {
           console.log("[session-manager] Query completed successfully", { sessionId });
         } else {

@@ -215,6 +215,57 @@ Containers have restricted network access via iptables firewall:
 | `docker/claude-bridge/src/routes/session.ts` | Session API endpoints |
 | `docker/claude-bridge/src/routes/events.ts` | SSE event subscription |
 
+## Claude Store Session Identifiers
+
+The Claude store uses two different types of session identifiers. Understanding the distinction is critical to avoid bugs.
+
+### Identifier Types
+
+| Type | Format | Example | Usage |
+|------|--------|---------|-------|
+| `ClaudeSessionKey` | `env-{environmentId}:{tabId}` | `env-a33f9026-8cfe-4077-aefd-4db2c2637dcc:default` | Store Map keys |
+| `ClaudeSdkSessionId` | `session-{uuid}` | `session-e4abc3ee-b0a9-4328-9bf3-28376ddb7b3d` | Claude SDK/API |
+
+### When to Use Each
+
+**ClaudeSessionKey** (store key):
+- Accessing/modifying data in the Zustand store Maps
+- Parameters to store actions: `addMessage()`, `setSession()`, `setSessionLoading()`, etc.
+- Created via `createClaudeSessionKey(environmentId, tabId)`
+
+**ClaudeSdkSessionId** (SDK session ID):
+- Received from SSE events (`event.sessionId`)
+- Sent to the Claude bridge server API
+- Stored in `ClaudeSessionState.sessionId`
+
+### Converting Between Types
+
+When handling SSE events, you receive a `ClaudeSdkSessionId` but need to update the store which is keyed by `ClaudeSessionKey`. Use the store helper:
+
+```typescript
+// In SSE event handler
+const matchedSessionKey = getSessionKeyBySdkSessionId(eventSessionId);
+if (matchedSessionKey) {
+  addMessage(matchedSessionKey, systemMessage);
+}
+```
+
+### Store Map Key Reference
+
+| Map | Key Type | Notes |
+|-----|----------|-------|
+| `sessions` | `ClaudeSessionKey` | Session state including messages |
+| `attachments` | `ClaudeSessionKey` | File attachments for compose bar |
+| `draftText` | `ClaudeSessionKey` | Unsent message text |
+| `thinkingEnabled` | `ClaudeSessionKey` | Extended thinking toggle |
+| `planMode` | `ClaudeSessionKey` | Plan mode toggle |
+| `selectedModel` | `ClaudeSessionKey` | Selected model per session |
+| `serverStatus` | `environmentId` | Server running state (raw UUID) |
+| `clients` | `environmentId` | HTTP client instances (raw UUID) |
+| `eventSubscriptions` | `environmentId` | SSE subscription state (raw UUID) |
+| `pendingQuestions` | `requestId` | Question ID from SDK |
+| `pendingPlanApprovals` | `requestId` | Approval ID from SDK |
+
 ### OpenCode Native Mode
 
 | File | Purpose |

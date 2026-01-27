@@ -15,6 +15,7 @@ import {
   checkHealth,
   ERROR_MESSAGE_PREFIX,
   SessionNotFoundError,
+  type ClaudeMessage as ClaudeMessageType,
   type ClaudeQuestionRequest,
   type ClaudePlanApprovalRequest,
   type PlanApprovalRequestedEventData,
@@ -79,6 +80,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     isThinkingEnabled,
     isPlanMode,
     setPlanMode,
+    getSessionKeyBySdkSessionId,
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
@@ -581,7 +583,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           // Debug: Warn if no session matched the event
           // Filter out events that are expected during initialization or are informational
           // Also filter message/session updates since they can arrive for old sessions during reconnects
-          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded"];
+          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded", "system.compact", "system.message"];
           if (!foundMatch && eventSessionId && !ignoredEventTypes.includes(eventType || "")) {
             console.warn("[ClaudeChatTab] No session matched event", {
               eventType,
@@ -635,6 +637,58 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               console.log("[ClaudeChatTab] Plan approval responded:", responseData);
               removePendingPlanApproval(responseData.requestId);
             }
+          } else if (eventType === "system.compact") {
+            // Show feedback for /compact command
+            console.log("[ClaudeChatTab] system.compact event received", {
+              eventSessionId,
+              environmentId,
+              data: event.data,
+            });
+            // Use the store helper to find the sessionKey for this SDK session ID
+            const matchedSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
+            if (matchedSessionKey) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const compactData = event.data as any;
+              const content = `Conversation compacted. Tokens: ${compactData?.preTokens ?? "?"} → ${compactData?.postTokens ?? "?"}`;
+              const systemMessage: ClaudeMessageType = {
+                id: `system-${crypto.randomUUID()}`,
+                role: "system",
+                content,
+                parts: [{ type: "text", content }],
+                timestamp: new Date().toISOString(),
+              };
+              console.log("[ClaudeChatTab] Adding system message", { sessionKey: matchedSessionKey, systemMessage });
+              addMessage(matchedSessionKey, systemMessage);
+            } else {
+              console.warn("[ClaudeChatTab] system.compact: No matching session found for SDK session ID", eventSessionId);
+            }
+          } else if (eventType === "system.message") {
+            // Show feedback for other system messages
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const sysData = event.data as any;
+            if (sysData?.subtype) {
+              // Use the store helper to find the sessionKey for this SDK session ID
+              const matchedSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
+              if (matchedSessionKey) {
+                let content = `System: ${sysData.subtype}`;
+
+                // Format specific subtypes
+                if (sysData.subtype === "clear") {
+                  content = "Conversation cleared.";
+                }
+
+                const systemMessage: ClaudeMessageType = {
+                  id: `system-${crypto.randomUUID()}`,
+                  role: "system",
+                  content,
+                  parts: [{ type: "text", content }],
+                  timestamp: new Date().toISOString(),
+                };
+                addMessage(matchedSessionKey, systemMessage);
+              } else {
+                console.warn("[ClaudeChatTab] system.message: No matching session found for SDK session ID", eventSessionId);
+              }
+            }
           }
         }
       } catch (error) {
@@ -645,7 +699,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
   );
 
   const handleSend = useCallback(

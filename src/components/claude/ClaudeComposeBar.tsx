@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, type ClaudeAttachment } from "@/stores/claudeStore";
 import type { ClaudeModel } from "@/lib/claude-client";
+import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
 
 interface ClaudeComposeBarProps {
   environmentId: string;
@@ -63,6 +64,7 @@ export function ClaudeComposeBar({
     setThinkingEnabled,
     isPlanMode,
     setPlanMode,
+    getSessionInitData,
   } = useClaudeStore();
 
   const attachments = getAttachments(environmentId);
@@ -70,6 +72,15 @@ export function ClaudeComposeBar({
   const selectedModel = getSelectedModel(environmentId);
   const thinkingEnabled = isThinkingEnabled(environmentId);
   const planModeEnabled = isPlanMode(environmentId);
+  const sessionInitData = getSessionInitData(environmentId);
+
+  // Slash command menu state
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashFilter, setSlashFilter] = useState("");
+
+  // Parse slash commands from session init data
+  const slashCommands = parseSlashCommands(sessionInitData?.slashCommands);
 
   const setText = useCallback(
     (newText: string) => setDraftText(environmentId, newText),
@@ -87,6 +98,43 @@ export function ClaudeComposeBar({
       textareaRef.current.focus();
     }
   }, []);
+
+  // Detect "/" being typed to show slash command menu
+  useEffect(() => {
+    if (text.startsWith("/") && slashCommands.length > 0) {
+      // Extract the command being typed (everything after /)
+      const spaceIndex = text.indexOf(" ");
+      const currentCommand = spaceIndex === -1 ? text.slice(1) : "";
+
+      // Only show menu if we haven't completed typing a command yet (no space)
+      if (spaceIndex === -1) {
+        setSlashFilter(currentCommand);
+        setSlashMenuOpen(true);
+        setSlashSelectedIndex(0);
+      } else {
+        setSlashMenuOpen(false);
+      }
+    } else {
+      setSlashMenuOpen(false);
+      setSlashFilter("");
+    }
+  }, [text, slashCommands.length]);
+
+  // Filter slash commands based on current input
+  const filteredSlashCommands = slashCommands.filter((cmd) =>
+    cmd.name.toLowerCase().includes(slashFilter.toLowerCase())
+  );
+
+  // Handle slash command selection
+  const handleSlashCommandSelect = useCallback(
+    (command: { name: string }) => {
+      // Replace the current "/" + filter with the selected command + space
+      setText(command.name + " ");
+      setSlashMenuOpen(false);
+      textareaRef.current?.focus();
+    },
+    [setText]
+  );
 
   // Close attachment menu when clicking outside
   useEffect(() => {
@@ -216,6 +264,34 @@ export function ClaudeComposeBar({
   }, [handlePaste]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle slash command menu navigation
+    if (slashMenuOpen && filteredSlashCommands.length > 0) {
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          setSlashSelectedIndex((prev) =>
+            prev < filteredSlashCommands.length - 1 ? prev + 1 : prev
+          );
+          return;
+        case "ArrowUp":
+          event.preventDefault();
+          setSlashSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+          return;
+        case "Tab":
+        case "Enter":
+          if (filteredSlashCommands[slashSelectedIndex]) {
+            event.preventDefault();
+            handleSlashCommandSelect(filteredSlashCommands[slashSelectedIndex]);
+            return;
+          }
+          break;
+        case "Escape":
+          event.preventDefault();
+          setSlashMenuOpen(false);
+          return;
+      }
+    }
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleSend();
@@ -289,8 +365,21 @@ export function ClaudeComposeBar({
         </div>
       )}
 
-      {/* Text input area - on top */}
-      <textarea
+      {/* Text input area container with slash command menu */}
+      <div className="relative">
+        {/* Slash command menu - appears above textarea */}
+        {slashMenuOpen && filteredSlashCommands.length > 0 && (
+          <SlashCommandMenu
+            commands={filteredSlashCommands}
+            filter={slashFilter}
+            selectedIndex={slashSelectedIndex}
+            onSelect={handleSlashCommandSelect}
+            onClose={() => setSlashMenuOpen(false)}
+          />
+        )}
+
+        {/* Text input area */}
+        <textarea
         ref={textareaRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -309,6 +398,7 @@ export function ClaudeComposeBar({
         }}
         disabled={disabled || isSending}
       />
+      </div>
 
       {/* Bottom toolbar row */}
       <div className="flex items-center gap-1 pt-1">

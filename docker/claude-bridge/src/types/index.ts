@@ -104,7 +104,9 @@ export type SSEEventType =
   | "plan.enter-requested"
   | "plan.exit-requested"
   | "plan.approval-requested"
-  | "plan.approval-responded";
+  | "plan.approval-responded"
+  | "system.compact"
+  | "system.message";
 
 /** MCP server status from SDK init message */
 export interface McpServerRuntimeStatus {
