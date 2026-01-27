@@ -87,7 +87,7 @@ export function useFileSearch(
   /**
    * Search files by query (case-insensitive).
    * Matches against both filename and path.
-   * Prioritizes: filename prefix > path contains > filename contains.
+   * Prioritizes: filename prefix > filename contains > path segment prefix > path contains.
    * Within same priority, shorter paths come first.
    * Returns up to `limit` results (default 30).
    */
@@ -104,21 +104,24 @@ export function useFileSearch(
 
       // Score files:
       // - Filename prefix match = 4 (highest priority)
-      // - Path contains query = 3 (useful for typing partial paths)
-      // - Filename contains = 2
-      // - Path segment match = 1
+      // - Filename contains = 3
+      // - Path segment prefix = 2 (e.g., "hook" matches src/hooks/)
+      // - Path contains = 1 (substring match anywhere in path)
       const scored = flatFiles
         .map((file) => {
           const lowerFilename = file.filename.toLowerCase();
           const lowerPath = file.relativePath.toLowerCase();
+          const pathSegments = lowerPath.split("/").slice(0, -1); // Exclude filename
           let score = 0;
 
           if (lowerFilename.startsWith(lowerQuery)) {
             score = 4; // Filename prefix match is highest priority
-          } else if (lowerPath.includes(lowerQuery)) {
-            score = 3; // Path contains query (e.g., typing "src/comp" matches src/components/)
           } else if (lowerFilename.includes(lowerQuery)) {
-            score = 2; // Filename contains match
+            score = 3; // Filename contains match
+          } else if (pathSegments.some((segment) => segment.startsWith(lowerQuery))) {
+            score = 2; // Path segment starts with query (e.g., "hook" matches src/hooks/)
+          } else if (lowerPath.includes(lowerQuery)) {
+            score = 1; // Path contains query as substring
           }
 
           return { file, score };

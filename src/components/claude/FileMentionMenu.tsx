@@ -58,7 +58,7 @@ export function FileMentionMenu({
       <div
         ref={menuRef}
         role="listbox"
-        aria-label="File suggestions"
+        aria-label="File and folder suggestions"
         className={cn(
           "absolute z-50 w-96 max-h-96 overflow-y-auto",
           "rounded-md border border-border bg-popover shadow-lg",
@@ -113,7 +113,7 @@ export function FileMentionMenu({
               )}
             >
               {file.isDirectory ? (
-                <Folder className="h-4 w-4 shrink-0 text-yellow-500" aria-hidden="true" />
+                <Folder className="h-4 w-4 shrink-0 text-amber-500 dark:text-amber-400" aria-hidden="true" />
               ) : (
                 <FileIcon filename={file.filename} className="h-4 w-4 shrink-0" aria-hidden="true" />
               )}
