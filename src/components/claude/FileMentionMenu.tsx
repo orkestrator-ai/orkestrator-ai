@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
+import { Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FileIcon } from "@/components/files-panel/FileIcon";
 import type { FileCandidate } from "@/types";
 
 interface FileMentionMenuProps {
-  /** Already-filtered file candidates to display (max 8) */
+  /** Already-filtered file/folder candidates to display (max 30) */
   files: FileCandidate[];
   /** Currently highlighted index for keyboard navigation */
   selectedIndex: number;
-  /** Called when a file is selected */
+  /** Called when a file or folder is selected */
   onSelect: (file: FileCandidate) => void;
   /** Called when menu should close */
   onClose: () => void;
@@ -59,14 +60,14 @@ export function FileMentionMenu({
         role="listbox"
         aria-label="File suggestions"
         className={cn(
-          "absolute z-50 w-80 max-h-48 overflow-y-auto",
+          "absolute z-50 w-96 max-h-96 overflow-y-auto",
           "rounded-md border border-border bg-popover shadow-lg",
           "animate-in fade-in-0 zoom-in-95"
         )}
         style={{ bottom: "100%", left: 0, marginBottom: "4px" }}
       >
         <div className="p-3 text-sm text-muted-foreground text-center" role="status">
-          No files found
+          No files or folders found
         </div>
       </div>
     );
@@ -76,9 +77,9 @@ export function FileMentionMenu({
     <div
       ref={menuRef}
       role="listbox"
-      aria-label="File suggestions"
+      aria-label="File and folder suggestions"
       className={cn(
-        "absolute z-50 w-80 max-h-48 overflow-y-auto",
+        "absolute z-50 w-96 max-h-96 overflow-y-auto",
         "rounded-md border border-border bg-popover shadow-lg",
         "animate-in fade-in-0 zoom-in-95"
       )}
@@ -86,7 +87,7 @@ export function FileMentionMenu({
     >
       <div className="p-1">
         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground" aria-hidden="true">
-          Files
+          Files & Folders
         </div>
         {files.map((file, index) => {
           const isSelected = index === selectedIndex;
@@ -111,10 +112,14 @@ export function FileMentionMenu({
                   : "hover:bg-accent/50 hover:text-accent-foreground"
               )}
             >
-              <FileIcon filename={file.filename} className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {file.isDirectory ? (
+                <Folder className="h-4 w-4 shrink-0 text-yellow-500" aria-hidden="true" />
+              ) : (
+                <FileIcon filename={file.filename} className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )}
               <span className="font-medium truncate">{file.filename}</span>
               {directory && (
-                <span className="ml-auto text-xs text-muted-foreground truncate max-w-[140px]">
+                <span className="ml-auto text-xs text-muted-foreground truncate max-w-[160px]">
                   {directory}
                 </span>
               )}

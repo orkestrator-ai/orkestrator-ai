@@ -220,4 +220,6 @@ export interface FileCandidate {
   relativePath: string;
   /** File extension (e.g., ".tsx") */
   extension?: string;
+  /** Whether this is a directory */
+  isDirectory?: boolean;
 }
