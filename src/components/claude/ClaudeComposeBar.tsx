@@ -133,9 +133,16 @@ export function ClaudeComposeBar({
     createMention,
   } = useFileMentions({ searchFiles });
 
-  // Refresh file tree when @ mention menu opens to catch newly created files
+  // Track previous menu state to detect opening transition
+  const prevFileMentionMenuOpen = useRef(false);
+
+  // Refresh file tree only when @ mention menu opens (not on close)
   useEffect(() => {
-    if (fileMentionMenuOpen) {
+    const wasOpen = prevFileMentionMenuOpen.current;
+    prevFileMentionMenuOpen.current = fileMentionMenuOpen;
+
+    // Only refresh on rising edge: menu was closed and is now opening
+    if (!wasOpen && fileMentionMenuOpen) {
       refreshFileTree();
     }
   }, [fileMentionMenuOpen, refreshFileTree]);
