@@ -109,7 +109,7 @@ export function ClaudeComposeBar({
   );
 
   // File search hook for @ mentions
-  const { searchFiles, error: fileSearchError } = useFileSearch(containerId, worktreePath);
+  const { searchFiles, error: fileSearchError, refresh: refreshFileTree } = useFileSearch(containerId, worktreePath);
 
   // Show toast if file search fails to load
   useEffect(() => {
@@ -132,6 +132,13 @@ export function ClaudeComposeBar({
     serializeForLLM,
     createMention,
   } = useFileMentions({ searchFiles });
+
+  // Refresh file tree when @ mention menu opens to catch newly created files
+  useEffect(() => {
+    if (fileMentionMenuOpen) {
+      refreshFileTree();
+    }
+  }, [fileMentionMenuOpen, refreshFileTree]);
 
   // Slash command menu state
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
