@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
+import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import {
   createClient,
   getModels,
@@ -91,6 +92,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   // Activity state tracking - use environmentId as key for both local and container environments
   const { setContainerState, removeContainerState } = useClaudeActivityStore();
+
+  // Pane layout store - for clearing initialPrompt after it's been sent
+  const { clearTabInitialPrompt } = usePaneLayoutStore();
 
   // Create a unique session key that combines environmentId and tabId
   // This prevents session collisions when multiple environments use the same tab IDs (e.g., "default")
@@ -350,6 +354,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           if (shouldSendInitialPrompt) {
             // Mark as sent immediately to prevent double-sending
             initialPromptSentRef.current = true;
+            // Also clear the initialPrompt from the pane store to prevent re-submission on remount
+            clearTabInitialPrompt(tabId, environmentId);
 
             // Create user message
             const userMessage = {
@@ -768,10 +774,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       !initialPromptSentRef.current
     ) {
       initialPromptSentRef.current = true;
+      // Also clear the initialPrompt from the pane store to prevent re-submission on remount
+      clearTabInitialPrompt(tabId, environmentId);
       console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
       handleSendRef.current?.(initialPrompt, [], thinkingEnabledValue, planModeEnabledValue);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, thinkingEnabledValue, planModeEnabledValue]);
+  }, [connectionState, client, session, initialPrompt, tabId, thinkingEnabledValue, planModeEnabledValue, clearTabInitialPrompt, environmentId]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");
