@@ -14,13 +14,13 @@ import {
   subscribeToEvents,
   checkHealth,
   ERROR_MESSAGE_PREFIX,
+  SYSTEM_MESSAGE_PREFIX,
   SessionNotFoundError,
   type ClaudeMessage as ClaudeMessageType,
   type ClaudeQuestionRequest,
   type ClaudePlanApprovalRequest,
   type PlanApprovalRequestedEventData,
   type PlanApprovalRespondedEventData,
-  type SystemCompactEventData,
   type SystemMessageEventData,
 } from "@/lib/claude-client";
 import {
@@ -573,6 +573,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           if (eventType === "session.init") {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const initData = event.data as any;
+            console.log("[ClaudeChatTab] session.init event received:", {
+              environmentId,
+              slashCommandsCount: initData?.slashCommands?.length ?? 0,
+              slashCommands: initData?.slashCommands,
+            });
             if (initData) {
               useClaudeStore.getState().setSessionInitData(environmentId, {
                 mcpServers: initData.mcpServers || [],
@@ -640,33 +645,24 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               removePendingPlanApproval(responseData.requestId);
             }
           } else if (eventType === "system.compact") {
-            // Show feedback for /compact command
-            console.log("[ClaudeChatTab] system.compact event received", {
-              eventSessionId,
-              environmentId,
-              data: event.data,
-            });
-            // Use the store helper to find the sessionKey for this SDK session ID
+            // Show simple feedback for /compact command
             const matchedSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
             if (matchedSessionKey) {
-              const compactData = event.data as SystemCompactEventData | undefined;
-              const content = `Conversation compacted. Tokens: ${compactData?.preTokens ?? "?"} → ${compactData?.postTokens ?? "?"}`;
               const systemMessage: ClaudeMessageType = {
-                id: `system-${crypto.randomUUID()}`,
+                id: `${SYSTEM_MESSAGE_PREFIX}${crypto.randomUUID()}`,
                 role: "system",
-                content,
-                parts: [{ type: "text", content }],
+                content: "Conversation compacted.",
+                parts: [{ type: "text", content: "Conversation compacted." }],
                 timestamp: new Date().toISOString(),
               };
-              console.log("[ClaudeChatTab] Adding system message", { sessionKey: matchedSessionKey, systemMessage });
               addMessage(matchedSessionKey, systemMessage);
-            } else {
-              console.warn("[ClaudeChatTab] system.compact: No matching session found for SDK session ID", eventSessionId);
             }
           } else if (eventType === "system.message") {
-            // Show feedback for other system messages
+            // Show feedback for specific system messages (not all subtypes)
             const sysData = event.data as SystemMessageEventData | undefined;
-            if (sysData?.subtype) {
+            // Only show user-facing messages, filter out informational subtypes like "status"
+            const userFacingSubtypes = ["clear"];
+            if (sysData?.subtype && userFacingSubtypes.includes(sysData.subtype)) {
               // Use the store helper to find the sessionKey for this SDK session ID
               const matchedSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
               if (matchedSessionKey) {
@@ -678,7 +674,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                 }
 
                 const systemMessage: ClaudeMessageType = {
-                  id: `system-${crypto.randomUUID()}`,
+                  id: `${SYSTEM_MESSAGE_PREFIX}${crypto.randomUUID()}`,
                   role: "system",
                   content,
                   parts: [{ type: "text", content }],

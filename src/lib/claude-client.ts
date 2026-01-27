@@ -188,6 +188,9 @@ export interface ClaudeAttachment {
 /** Prefix for client-side error message IDs */
 export const ERROR_MESSAGE_PREFIX = "error-";
 
+/** Prefix for client-side system message IDs (e.g., compact notifications) */
+export const SYSTEM_MESSAGE_PREFIX = "system-";
+
 /** Claude Bridge Client */
 export interface ClaudeClient {
   baseUrl: string;

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   ERROR_MESSAGE_PREFIX,
+  SYSTEM_MESSAGE_PREFIX,
   type ClaudeMessage,
   type ClaudeModel,
   type ClaudeClient,
@@ -213,10 +214,13 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const session = state.sessions.get(sessionKey);
       if (!session) return state;
 
-      // Preserve client-side error messages
-      const existingErrors = session.messages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
+      // Preserve client-side messages (errors and system messages like compact notifications)
+      // These exist only on the client and would be lost when fetching from server
+      const existingClientMessages = session.messages.filter(
+        (m) => m.id.startsWith(ERROR_MESSAGE_PREFIX) || m.id.startsWith(SYSTEM_MESSAGE_PREFIX)
+      );
 
-      if (existingErrors.length === 0) {
+      if (existingClientMessages.length === 0) {
         const newMap = new Map(state.sessions);
         newMap.set(sessionKey, {
           ...session,
@@ -225,24 +229,24 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         return { sessions: newMap };
       }
 
-      // Merge error messages into server messages based on timestamp
+      // Merge client-side messages into server messages based on timestamp
       const mergedMessages = [...messages];
-      for (const errorMsg of existingErrors) {
-        const errorTime = new Date(errorMsg.timestamp || 0).getTime();
+      for (const clientMsg of existingClientMessages) {
+        const clientTime = new Date(clientMsg.timestamp || 0).getTime();
         let insertIndex = mergedMessages.length;
         for (let i = mergedMessages.length - 1; i >= 0; i--) {
           const msg = mergedMessages[i];
           if (!msg) continue;
           const msgTime = new Date(msg.timestamp || 0).getTime();
-          if (msgTime <= errorTime) {
+          if (msgTime <= clientTime) {
             insertIndex = i + 1;
             break;
           }
-          if (i === 0 && msgTime > errorTime) {
+          if (i === 0 && msgTime > clientTime) {
             insertIndex = 0;
           }
         }
-        mergedMessages.splice(insertIndex, 0, errorMsg);
+        mergedMessages.splice(insertIndex, 0, clientMsg);
       }
 
       const newMap = new Map(state.sessions);

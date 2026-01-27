@@ -70,23 +70,46 @@ export function ClaudeComposeBar({
     setThinkingEnabled,
     isPlanMode,
     setPlanMode,
-    getSessionInitData,
   } = useClaudeStore();
+
+  // Use a selector for sessionInitData to ensure reactivity when SSE session.init event arrives
+  const sessionInitData = useClaudeStore(
+    (state) => state.sessionInitData.get(environmentId)
+  );
 
   const attachments = getAttachments(sessionKey);
   const text = getDraftText(sessionKey);
   const selectedModel = getSelectedModel(sessionKey);
   const thinkingEnabled = isThinkingEnabled(sessionKey);
   const planModeEnabled = isPlanMode(sessionKey);
-  const sessionInitData = getSessionInitData(environmentId);
 
   // Slash command menu state
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashFilter, setSlashFilter] = useState("");
 
-  // Parse slash commands from session init data
-  const slashCommands = parseSlashCommands(sessionInitData?.slashCommands);
+  // Default built-in slash commands (always available)
+  const defaultSlashCommands = [
+    "/clear - Clear conversation history",
+    "/compact - Compact conversation to reduce tokens",
+    "/context - Show current context",
+    "/cost - Show token usage and cost",
+    "/doctor - Check system health",
+    "/help - Show available commands",
+    "/init - Re-initialize the session",
+    "/logout - Log out of Claude",
+    "/memory - Show memory usage",
+    "/model - Show or change model",
+    "/permissions - Manage permissions",
+    "/review - Review recent changes",
+    "/status - Show session status",
+    "/vim - Toggle vim mode",
+  ];
+
+  // Parse slash commands - use session init data if available, otherwise use defaults
+  const slashCommands = parseSlashCommands(
+    sessionInitData?.slashCommands?.length ? sessionInitData.slashCommands : defaultSlashCommands
+  );
 
   const setText = useCallback(
     (newText: string) => setDraftText(sessionKey, newText),
