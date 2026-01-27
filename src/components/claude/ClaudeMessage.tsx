@@ -9,6 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type ClaudeMessagePart, type ToolDiffMetadata } from "@/lib/claude-client";
+import { processPartsInOrder } from "@/lib/claude-task-utils";
 
 /** Parsed attachment from XML tags */
 interface ParsedAttachment {
@@ -1138,11 +1139,6 @@ function isEditTool(toolName?: string): boolean {
   return name === "edit" || name === "write";
 }
 
-/** Check if a tool name is a Task tool */
-function isTaskTool(toolName?: string): boolean {
-  if (!toolName) return false;
-  return toolName.toLowerCase() === "task";
-}
 
 /** Check if a tool name is a TodoWrite tool */
 function isTodoTool(toolName?: string): boolean {
@@ -1150,68 +1146,6 @@ function isTodoTool(toolName?: string): boolean {
   return toolName.toLowerCase() === "todowrite";
 }
 
-/** Process parts to group tools under Tasks while preserving order */
-interface ProcessedPart {
-  type: "thinking" | "text" | "file" | "tool-group" | "task-group";
-  part?: ClaudeMessagePart;
-  childTools?: ClaudeMessagePart[];
-}
-
-function processPartsInOrder(parts: ClaudeMessagePart[]): ProcessedPart[] {
-  const result: ProcessedPart[] = [];
-
-  // Map of Task toolUseId -> ProcessedPart for parent lookup
-  const taskGroups = new Map<string, ProcessedPart>();
-
-  // Track current Task for positional fallback (when parentTaskUseId is not available)
-  let currentTask: ProcessedPart | null = null;
-
-  for (const part of parts) {
-    if (part.type === "thinking" || part.type === "text" || part.type === "file") {
-      // Non-tool parts break any active Task context for positional fallback
-      currentTask = null;
-      result.push({ type: part.type, part });
-    } else if (part.type === "tool-invocation") {
-      if (isTaskTool(part.toolName)) {
-        // Start a new Task group
-        const taskGroup: ProcessedPart = { type: "task-group", part, childTools: [] };
-        result.push(taskGroup);
-
-        // Register in map for parent lookup (using toolUseId)
-        if (part.toolUseId) {
-          taskGroups.set(part.toolUseId, taskGroup);
-        }
-
-        // Update current Task for positional fallback
-        currentTask = taskGroup;
-      } else {
-        // Non-Task tool - determine which Task it belongs to
-        let parentTaskGroup: ProcessedPart | undefined;
-
-        // First, try to find parent using explicit parentTaskUseId
-        if (part.parentTaskUseId) {
-          parentTaskGroup = taskGroups.get(part.parentTaskUseId);
-        }
-
-        // Fallback to positional logic (most recent Task)
-        if (!parentTaskGroup && currentTask) {
-          parentTaskGroup = currentTask;
-        }
-
-        if (parentTaskGroup) {
-          // Add to parent Task's children
-          parentTaskGroup.childTools!.push(part);
-        } else {
-          // Standalone tool (no parent Task found)
-          result.push({ type: "tool-group", part });
-        }
-      }
-    }
-    // Skip tool-result type - they're shown inline with invocations
-  }
-
-  return result;
-}
 
 export const ClaudeMessage = memo(function ClaudeMessage({
   message,

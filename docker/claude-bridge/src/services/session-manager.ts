@@ -389,8 +389,9 @@ function parseMessageContent(
           // Only one active Task globally - use it
           parentTaskUseId = Array.from(activeTaskIds)[0];
         }
-        // If multiple active Tasks and none in this message, we can't determine parent
-        // The frontend will fall back to positional grouping
+        // If multiple active Tasks and none in this message, we can't determine parent.
+        // In this case, parentTaskUseId remains undefined and the tool will render as
+        // standalone in the frontend (positional fallback only works within a single message)
       }
 
       // Register tool with tracker
