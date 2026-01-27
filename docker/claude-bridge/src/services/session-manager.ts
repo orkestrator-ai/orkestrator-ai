@@ -187,16 +187,17 @@ export function abortSession(sessionId: string): boolean {
 /**
  * Tool tracker for managing tool invocations across a conversation turn.
  * Tools are tracked by their ID and their results are merged in when received.
+ * Also tracks parent Task relationships for proper tool grouping.
  */
 class ToolTracker {
   private tools = new Map<string, NormalizedPart>();
 
   /** Add or update a tool invocation */
-  addTool(toolUseId: string, part: NormalizedPart): void {
+  addTool(toolUseId: string, part: NormalizedPart, parentTaskUseId?: string): void {
     // Only add if we don't have this tool yet, or update state if we do
     const existing = this.tools.get(toolUseId);
     if (!existing) {
-      this.tools.set(toolUseId, { ...part, toolUseId });
+      this.tools.set(toolUseId, { ...part, toolUseId, parentTaskUseId });
     }
   }
 
@@ -231,6 +232,8 @@ interface OrderedPartEntry {
   value: string;
   /** Message UUID this part belongs to (for streaming updates) */
   messageUuid?: string;
+  /** Parent Task tool use ID - used to group child tools under their parent Task */
+  parentTaskUseId?: string;
 }
 
 /**
@@ -283,35 +286,53 @@ function parseMcpToolName(
   return { isMcpTool: true };
 }
 
+/** Check if a tool name is a Task tool (subagent) */
+function isTaskToolName(toolName: string): boolean {
+  return toolName.toLowerCase() === "task";
+}
+
 /**
  * Parse SDK message content, extracting text/thinking parts, registering tools,
- * and tracking the order of non-text parts for chronological display
+ * and tracking the order of non-text parts for chronological display.
+ * Also tracks parent Task relationships for proper tool grouping.
  *
  * @param message - The SDK message to parse
  * @param toolTracker - Tool tracker for managing tool invocations
  * @param mcpServerNames - Set of known MCP server names for accurate tool parsing
+ * @param activeTaskIds - Set of currently active (pending) Task IDs for parent tracking
  */
 function parseMessageContent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   message: any,
   toolTracker?: ToolTracker,
-  mcpServerNames?: Set<string>
+  mcpServerNames?: Set<string>,
+  activeTaskIds?: Set<string>
 ): {
   content: string;
   textParts: NormalizedPart[];
   thinkingParts: NormalizedPart[];
   /** Ordered sequence of thinking blocks and tool references as they appeared */
   orderedParts: OrderedPartEntry[];
+  /** IDs of Task tools seen in this message (to add to active tasks) */
+  newTaskIds: string[];
+  /** IDs of Task tools that completed in this message (to remove from active tasks) */
+  completedTaskIds: string[];
 } {
   const textParts: NormalizedPart[] = [];
   const thinkingParts: NormalizedPart[] = [];
   const orderedParts: OrderedPartEntry[] = [];
+  const newTaskIds: string[] = [];
+  const completedTaskIds: string[] = [];
   let textContent = "";
 
   const messageUuid = message.uuid as string | undefined;
 
   // Handle message.message.content array (from Anthropic SDK format)
   const contentBlocks = message.message?.content || [];
+
+  // Track the most recent Task tool use ID within this message
+  // This is used for the positional heuristic: tools following a Task belong to it
+  let currentTaskUseId: string | undefined;
 
   for (const block of contentBlocks) {
     if (block.type === "text") {
@@ -339,6 +360,7 @@ function parseMessageContent(
         toolName === "Write" ||
         toolName === "edit" ||
         toolName === "write";
+      const isTask = isTaskToolName(toolName);
 
       let toolDiff: ToolDiffMetadata | undefined;
       if (isEditTool && block.input) {
@@ -354,6 +376,23 @@ function parseMessageContent(
       // Check if this is an MCP tool
       const { isMcpTool, mcpServerName } = parseMcpToolName(toolName, mcpServerNames);
 
+      // Determine parent Task ID:
+      // - Task tools have no parent (they ARE the parent)
+      // - Other tools belong to the most recent Task in this message
+      // - If no Task in this message, check activeTaskIds for a single active Task
+      let parentTaskUseId: string | undefined;
+      if (!isTask) {
+        if (currentTaskUseId) {
+          // Use the most recent Task from this message
+          parentTaskUseId = currentTaskUseId;
+        } else if (activeTaskIds && activeTaskIds.size === 1) {
+          // Only one active Task globally - use it
+          parentTaskUseId = Array.from(activeTaskIds)[0];
+        }
+        // If multiple active Tasks and none in this message, we can't determine parent
+        // The frontend will fall back to positional grouping
+      }
+
       // Register tool with tracker
       if (block.id) {
         toolTracker.addTool(block.id, {
@@ -367,13 +406,21 @@ function parseMessageContent(
           // MCP tool metadata
           isMcpTool,
           mcpServerName,
-        });
-        // Track order: add tool reference
+        }, parentTaskUseId);
+
+        // Track order: add tool reference with parent info
         orderedParts.push({
           type: "tool-ref",
           value: block.id,
           messageUuid,
+          parentTaskUseId,
         });
+
+        // If this is a Task tool, update tracking
+        if (isTask) {
+          currentTaskUseId = block.id;
+          newTaskIds.push(block.id);
+        }
       }
     } else if (block.type === "tool_result" && toolTracker) {
       // Update tool tracker with result
@@ -384,11 +431,17 @@ function parseMessageContent(
           error: block.is_error ? resultContent : undefined,
           state: block.is_error ? "failure" : "success",
         });
+
+        // Check if this is a Task tool completing
+        const tool = toolTracker.getTool(block.tool_use_id);
+        if (tool && isTaskToolName(tool.toolName || "")) {
+          completedTaskIds.push(block.tool_use_id);
+        }
       }
     }
   }
 
-  return { content: textContent, textParts, thinkingParts, orderedParts };
+  return { content: textContent, textParts, thinkingParts, orderedParts, newTaskIds, completedTaskIds };
 }
 
 /**
@@ -767,6 +820,10 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     let accumulatedTextParts: NormalizedPart[] = [];
     let accumulatedOrderedParts: OrderedPartEntry[] = [];
 
+    // Track active (pending) Task tool IDs for parent tracking
+    // This allows us to associate child tools with their parent Task
+    const activeTaskIds = new Set<string>();
+
     // Track the last message UUID to detect when we're receiving a new assistant message
     // vs streaming updates to the same message. This allows us to:
     // - Replace parts during streaming (same UUID)
@@ -902,7 +959,17 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
-        const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker, mcpServerNames);
+        const { content, textParts, orderedParts, newTaskIds } = parseMessageContent(
+          message,
+          toolTracker,
+          mcpServerNames,
+          activeTaskIds
+        );
+
+        // Update active Task tracking - add new Tasks
+        for (const taskId of newTaskIds) {
+          activeTaskIds.add(taskId);
+        }
 
         // Get the message UUID to detect new messages vs streaming updates
         const messageUuid = message.uuid as string | undefined;
@@ -966,7 +1033,17 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         });
       } else if (message.type === "user") {
         // User message with tool results - parse to update tool tracker
-        parseMessageContent(message, toolTracker, mcpServerNames);
+        const { completedTaskIds } = parseMessageContent(
+          message,
+          toolTracker,
+          mcpServerNames,
+          activeTaskIds
+        );
+
+        // Update active Task tracking - remove completed Tasks
+        for (const taskId of completedTaskIds) {
+          activeTaskIds.delete(taskId);
+        }
 
         // Rebuild message parts with updated tool results
         if (currentAssistantMessage) {

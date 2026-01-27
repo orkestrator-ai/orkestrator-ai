@@ -1159,24 +1159,52 @@ interface ProcessedPart {
 
 function processPartsInOrder(parts: ClaudeMessagePart[]): ProcessedPart[] {
   const result: ProcessedPart[] = [];
+
+  // Map of Task toolUseId -> ProcessedPart for parent lookup
+  const taskGroups = new Map<string, ProcessedPart>();
+
+  // Track current Task for positional fallback (when parentTaskUseId is not available)
   let currentTask: ProcessedPart | null = null;
 
   for (const part of parts) {
     if (part.type === "thinking" || part.type === "text" || part.type === "file") {
-      // Non-tool parts break any active Task context
+      // Non-tool parts break any active Task context for positional fallback
       currentTask = null;
       result.push({ type: part.type, part });
     } else if (part.type === "tool-invocation") {
       if (isTaskTool(part.toolName)) {
         // Start a new Task group
-        currentTask = { type: "task-group", part, childTools: [] };
-        result.push(currentTask);
-      } else if (currentTask) {
-        // Add to current Task's children
-        currentTask.childTools!.push(part);
+        const taskGroup: ProcessedPart = { type: "task-group", part, childTools: [] };
+        result.push(taskGroup);
+
+        // Register in map for parent lookup (using toolUseId)
+        if (part.toolUseId) {
+          taskGroups.set(part.toolUseId, taskGroup);
+        }
+
+        // Update current Task for positional fallback
+        currentTask = taskGroup;
       } else {
-        // Standalone tool (no active Task)
-        result.push({ type: "tool-group", part });
+        // Non-Task tool - determine which Task it belongs to
+        let parentTaskGroup: ProcessedPart | undefined;
+
+        // First, try to find parent using explicit parentTaskUseId
+        if (part.parentTaskUseId) {
+          parentTaskGroup = taskGroups.get(part.parentTaskUseId);
+        }
+
+        // Fallback to positional logic (most recent Task)
+        if (!parentTaskGroup && currentTask) {
+          parentTaskGroup = currentTask;
+        }
+
+        if (parentTaskGroup) {
+          // Add to parent Task's children
+          parentTaskGroup.childTools!.push(part);
+        } else {
+          // Standalone tool (no parent Task found)
+          result.push({ type: "tool-group", part });
+        }
       }
     }
     // Skip tool-result type - they're shown inline with invocations
