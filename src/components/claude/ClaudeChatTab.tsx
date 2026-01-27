@@ -20,6 +20,8 @@ import {
   type ClaudePlanApprovalRequest,
   type PlanApprovalRequestedEventData,
   type PlanApprovalRespondedEventData,
+  type SystemCompactEventData,
+  type SystemMessageEventData,
 } from "@/lib/claude-client";
 import {
   startClaudeServer,
@@ -647,8 +649,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             // Use the store helper to find the sessionKey for this SDK session ID
             const matchedSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
             if (matchedSessionKey) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const compactData = event.data as any;
+              const compactData = event.data as SystemCompactEventData | undefined;
               const content = `Conversation compacted. Tokens: ${compactData?.preTokens ?? "?"} → ${compactData?.postTokens ?? "?"}`;
               const systemMessage: ClaudeMessageType = {
                 id: `system-${crypto.randomUUID()}`,
@@ -664,8 +665,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             }
           } else if (eventType === "system.message") {
             // Show feedback for other system messages
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const sysData = event.data as any;
+            const sysData = event.data as SystemMessageEventData | undefined;
             if (sysData?.subtype) {
               // Use the store helper to find the sessionKey for this SDK session ID
               const matchedSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
@@ -935,6 +935,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
       <ClaudeComposeBar
         environmentId={environmentId}
+        tabId={tabId}
         containerId={containerId}
         models={models}
         onSend={handleSend}

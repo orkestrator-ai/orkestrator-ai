@@ -13,7 +13,12 @@ import type {
   SessionInitData,
   McpServerRuntimeStatus,
   PluginRuntimeStatus,
+  SdkMessageBase,
+  SdkCompactBoundaryMessage,
+  SdkResultMessage,
+  SdkSystemMessage,
 } from "../types/index.js";
+import { isSdkCompactBoundaryMessage, isSdkResultMessage } from "../types/index.js";
 import { eventEmitter } from "./event-emitter.js";
 import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
 import { getPluginsForSdk } from "./plugin-config.js";
@@ -855,10 +860,9 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           sessionId,
           data: session.initData,
         });
-      } else if (message.type === "system" && message.subtype === "compact_boundary") {
+      } else if (isSdkCompactBoundaryMessage(message as SdkMessageBase)) {
         // Handle /compact command result
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const compactMsg = message as any;
+        const compactMsg = message as SdkCompactBoundaryMessage;
         const compactMetadata = compactMsg.compact_metadata || {};
 
         console.log("[session-manager] Compact boundary received", {
@@ -879,8 +883,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         });
       } else if (message.type === "system") {
         // Handle other system messages (log for debugging)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sysMsg = message as any;
+        const sysMsg = message as SdkSystemMessage;
         console.log("[session-manager] System message received", {
           sessionId,
           subtype: sysMsg.subtype,
@@ -977,23 +980,22 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           });
         }
         // Skip adding user message replay as we already added it
-      } else if (message.type === "result") {
+      } else if (isSdkResultMessage(message as SdkMessageBase)) {
         // Query completed - log full result for debugging
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const resultMsg = message as any;
+        const resultMsg = message as SdkResultMessage;
         console.log("[session-manager] Query result", {
           sessionId,
-          subtype: message.subtype,
+          subtype: resultMsg.subtype,
           result: resultMsg.result,
           costUSD: resultMsg.cost_usd,
           durationMs: resultMsg.duration_ms,
         });
-        if (message.subtype === "success") {
+        if (resultMsg.subtype === "success") {
           console.log("[session-manager] Query completed successfully", { sessionId });
         } else {
-          console.error("[session-manager] Query error:", message.subtype, { sessionId });
-          if ("errors" in message && message.errors) {
-            session.error = message.errors.join("\n");
+          console.error("[session-manager] Query error:", resultMsg.subtype, { sessionId });
+          if (resultMsg.errors) {
+            session.error = resultMsg.errors.join("\n");
           }
         }
       } else if (message.type === "stream_event") {

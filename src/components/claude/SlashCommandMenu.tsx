@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { Command } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -8,8 +8,8 @@ export interface SlashCommand {
 }
 
 interface SlashCommandMenuProps {
+  /** Already-filtered commands to display */
   commands: SlashCommand[];
-  filter: string;
   selectedIndex: number;
   onSelect: (command: SlashCommand) => void;
   onClose: () => void;
@@ -17,12 +17,14 @@ interface SlashCommandMenuProps {
 }
 
 /**
- * SlashCommandMenu displays a filterable list of slash commands
+ * SlashCommandMenu displays a list of slash commands
  * that appears when the user types "/" in the compose bar.
+ *
+ * Note: Commands should be pre-filtered by the parent component.
+ * Keyboard navigation (arrows, enter, escape) is handled by the parent.
  */
 export function SlashCommandMenu({
   commands,
-  filter,
   selectedIndex,
   onSelect,
   onClose,
@@ -30,11 +32,6 @@ export function SlashCommandMenu({
 }: SlashCommandMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
-
-  // Filter commands based on input
-  const filteredCommands = commands.filter((cmd) =>
-    cmd.name.toLowerCase().includes(filter.toLowerCase())
-  );
 
   // Scroll selected item into view
   useEffect(() => {
@@ -58,17 +55,7 @@ export function SlashCommandMenu({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [onClose]);
 
-  // Close on escape
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  // Note: Escape key handling is done by the parent component's handleKeyDown
 
   const handleSelect = useCallback(
     (command: SlashCommand) => {
@@ -77,7 +64,7 @@ export function SlashCommandMenu({
     [onSelect]
   );
 
-  if (filteredCommands.length === 0) {
+  if (commands.length === 0) {
     return null;
   }
 
@@ -99,7 +86,7 @@ export function SlashCommandMenu({
         <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
           Slash Commands
         </div>
-        {filteredCommands.map((command, index) => {
+        {commands.map((command, index) => {
           const isSelected = index === selectedIndex;
           return (
             <button
@@ -169,101 +156,4 @@ export function parseSlashCommands(
 
   // Sort alphabetically by name
   return result.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/**
- * Hook to manage slash command menu state
- */
-export function useSlashCommandMenu(
-  text: string,
-  commands: SlashCommand[],
-  onCommandSelect: (command: string) => void
-) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [filter, setFilter] = useState("");
-
-  // Check if we should show the menu (text starts with "/" and we're typing a command)
-  useEffect(() => {
-    if (text.startsWith("/")) {
-      // Extract the command being typed (everything after /)
-      const spaceIndex = text.indexOf(" ");
-      const currentCommand = spaceIndex === -1 ? text.slice(1) : "";
-
-      // Only show menu if we haven't completed typing a command yet
-      if (spaceIndex === -1) {
-        setFilter(currentCommand);
-        setIsOpen(true);
-        setSelectedIndex(0);
-      } else {
-        setIsOpen(false);
-      }
-    } else {
-      setIsOpen(false);
-      setFilter("");
-    }
-  }, [text]);
-
-  // Filter commands
-  const filteredCommands = commands.filter((cmd) =>
-    cmd.name.toLowerCase().includes(filter.toLowerCase())
-  );
-
-  // Handle keyboard navigation
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      if (!isOpen || filteredCommands.length === 0) return false;
-
-      switch (event.key) {
-        case "ArrowDown":
-          event.preventDefault();
-          setSelectedIndex((prev) =>
-            prev < filteredCommands.length - 1 ? prev + 1 : prev
-          );
-          return true;
-        case "ArrowUp":
-          event.preventDefault();
-          setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-          return true;
-        case "Tab":
-        case "Enter":
-          if (filteredCommands[selectedIndex]) {
-            event.preventDefault();
-            onCommandSelect(filteredCommands[selectedIndex].name);
-            setIsOpen(false);
-            return true;
-          }
-          return false;
-        case "Escape":
-          event.preventDefault();
-          setIsOpen(false);
-          return true;
-        default:
-          return false;
-      }
-    },
-    [isOpen, filteredCommands, selectedIndex, onCommandSelect]
-  );
-
-  const handleSelect = useCallback(
-    (command: SlashCommand) => {
-      onCommandSelect(command.name);
-      setIsOpen(false);
-    },
-    [onCommandSelect]
-  );
-
-  const closeMenu = useCallback(() => {
-    setIsOpen(false);
-  }, []);
-
-  return {
-    isOpen,
-    filter,
-    selectedIndex,
-    filteredCommands,
-    handleKeyDown,
-    handleSelect,
-    closeMenu,
-  };
 }

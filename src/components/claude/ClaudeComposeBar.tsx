@@ -12,12 +12,14 @@ import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { useClaudeStore, type ClaudeAttachment } from "@/stores/claudeStore";
+import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment } from "@/stores/claudeStore";
 import type { ClaudeModel } from "@/lib/claude-client";
 import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
 
 interface ClaudeComposeBarProps {
   environmentId: string;
+  /** Tab ID for multi-tab support */
+  tabId: string;
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: ClaudeModel[];
@@ -41,6 +43,7 @@ function generateImageFilename(): string {
 
 export function ClaudeComposeBar({
   environmentId,
+  tabId,
   containerId,
   models,
   onSend,
@@ -50,6 +53,9 @@ export function ClaudeComposeBar({
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
+
+  // Create sessionKey for store lookups (format: "env-{environmentId}:{tabId}")
+  const sessionKey = createClaudeSessionKey(environmentId, tabId);
 
   const {
     getAttachments,
@@ -67,11 +73,11 @@ export function ClaudeComposeBar({
     getSessionInitData,
   } = useClaudeStore();
 
-  const attachments = getAttachments(environmentId);
-  const text = getDraftText(environmentId);
-  const selectedModel = getSelectedModel(environmentId);
-  const thinkingEnabled = isThinkingEnabled(environmentId);
-  const planModeEnabled = isPlanMode(environmentId);
+  const attachments = getAttachments(sessionKey);
+  const text = getDraftText(sessionKey);
+  const selectedModel = getSelectedModel(sessionKey);
+  const thinkingEnabled = isThinkingEnabled(sessionKey);
+  const planModeEnabled = isPlanMode(sessionKey);
   const sessionInitData = getSessionInitData(environmentId);
 
   // Slash command menu state
@@ -83,8 +89,8 @@ export function ClaudeComposeBar({
   const slashCommands = parseSlashCommands(sessionInitData?.slashCommands);
 
   const setText = useCallback(
-    (newText: string) => setDraftText(environmentId, newText),
-    [environmentId, setDraftText]
+    (newText: string) => setDraftText(sessionKey, newText),
+    [sessionKey, setDraftText]
   );
 
   // Get worktree path for local environments
@@ -133,7 +139,7 @@ export function ClaudeComposeBar({
       setSlashMenuOpen(false);
       textareaRef.current?.focus();
     },
-    [setText]
+    [setText, textareaRef]
   );
 
   // Close attachment menu when clicking outside
@@ -209,7 +215,7 @@ export function ClaudeComposeBar({
             previewUrl: dataUrl,
             name: filename,
           };
-          addAttachment(environmentId, attachment);
+          addAttachment(sessionKey, attachment);
         } else if (worktreePath) {
           // Local environment - write to worktree path
           const fullPath = await writeLocalFile(worktreePath, filePath, base64Data);
@@ -221,7 +227,7 @@ export function ClaudeComposeBar({
             previewUrl: dataUrl,
             name: filename,
           };
-          addAttachment(environmentId, attachment);
+          addAttachment(sessionKey, attachment);
         } else {
           toast.error("Cannot save image", {
             description: "Environment not properly configured for attachments",
@@ -253,7 +259,7 @@ export function ClaudeComposeBar({
         // Let text paste through by not preventing default
       }
     },
-    [containerId, environmentId, worktreePath, addAttachment]
+    [containerId, sessionKey, worktreePath, addAttachment]
   );
 
   useEffect(() => {
@@ -299,7 +305,7 @@ export function ClaudeComposeBar({
     // Shift+Tab toggles between plan mode and edit mode (bypassPermissions)
     if (event.key === "Tab" && event.shiftKey) {
       event.preventDefault();
-      setPlanMode(environmentId, !planModeEnabled);
+      setPlanMode(sessionKey, !planModeEnabled);
     }
   };
 
@@ -310,22 +316,22 @@ export function ClaudeComposeBar({
     setIsSending(true);
     try {
       // Read current values directly from store to avoid stale closures
-      const currentThinkingEnabled = isThinkingEnabled(environmentId);
-      const currentPlanModeEnabled = isPlanMode(environmentId);
+      const currentThinkingEnabled = isThinkingEnabled(sessionKey);
+      const currentPlanModeEnabled = isPlanMode(sessionKey);
       onSend(text.trim(), attachments, currentThinkingEnabled, currentPlanModeEnabled);
       setText("");
-      clearAttachments(environmentId);
+      clearAttachments(sessionKey);
     } finally {
       setIsSending(false);
     }
   };
 
   const handleRemoveAttachment = (id: string) => {
-    removeAttachment(environmentId, id);
+    removeAttachment(sessionKey, id);
   };
 
   const handleModelChange = (modelId: string) => {
-    setSelectedModel(environmentId, modelId);
+    setSelectedModel(sessionKey, modelId);
   };
 
   const textareaRows = Math.min(MAX_LINES, Math.max(1, text.split("\n").length));
@@ -371,7 +377,6 @@ export function ClaudeComposeBar({
         {slashMenuOpen && filteredSlashCommands.length > 0 && (
           <SlashCommandMenu
             commands={filteredSlashCommands}
-            filter={slashFilter}
             selectedIndex={slashSelectedIndex}
             onSelect={handleSlashCommandSelect}
             onClose={() => setSlashMenuOpen(false)}
@@ -380,24 +385,24 @@ export function ClaudeComposeBar({
 
         {/* Text input area */}
         <textarea
-        ref={textareaRef}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Ask Claude anything..."
-        rows={textareaRows}
-        className={cn(
-          "w-full bg-transparent border-none px-1 py-1",
-          "text-sm text-foreground placeholder:text-muted-foreground",
-          "resize-none outline-none",
-          "transition-colors"
-        )}
-        style={{
-          minHeight: LINE_HEIGHT + 8,
-          maxHeight: MAX_LINES * LINE_HEIGHT + 16,
-        }}
-        disabled={disabled || isSending}
-      />
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask Claude anything..."
+          rows={textareaRows}
+          className={cn(
+            "w-full bg-transparent border-none px-1 py-1",
+            "text-sm text-foreground placeholder:text-muted-foreground",
+            "resize-none outline-none",
+            "transition-colors"
+          )}
+          style={{
+            minHeight: LINE_HEIGHT + 8,
+            maxHeight: MAX_LINES * LINE_HEIGHT + 16,
+          }}
+          disabled={disabled || isSending}
+        />
       </div>
 
       {/* Bottom toolbar row */}
@@ -462,7 +467,7 @@ export function ClaudeComposeBar({
 
         {/* Plan mode toggle */}
         <button
-          onClick={() => setPlanMode(environmentId, !planModeEnabled)}
+          onClick={() => setPlanMode(sessionKey, !planModeEnabled)}
           disabled={disabled}
           className={cn(
             "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
@@ -477,7 +482,7 @@ export function ClaudeComposeBar({
 
         {/* Thinking toggle */}
         <button
-          onClick={() => setThinkingEnabled(environmentId, !thinkingEnabled)}
+          onClick={() => setThinkingEnabled(sessionKey, !thinkingEnabled)}
           disabled={disabled}
           className={cn(
             "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",

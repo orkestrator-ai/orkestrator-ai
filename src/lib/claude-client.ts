@@ -142,6 +142,19 @@ export interface PlanApprovalRespondedEventData {
   feedback?: string;
 }
 
+/** Data payload for system.compact event */
+export interface SystemCompactEventData {
+  preTokens?: number;
+  postTokens?: number;
+  trigger?: string;
+}
+
+/** Data payload for system.message event */
+export interface SystemMessageEventData {
+  subtype: string;
+  message?: unknown;
+}
+
 /** SSE event from Claude bridge server */
 export interface ClaudeEvent {
   type:
