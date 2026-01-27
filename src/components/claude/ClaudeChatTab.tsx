@@ -766,12 +766,17 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   // New sessions handle initial prompt directly in initialize() to avoid race conditions.
   // This effect catches the case where we reconnect to an existing session that had an initial prompt.
   useEffect(() => {
+    // Additional check: if session already has messages, the initial prompt was already sent
+    // This is more robust than relying solely on the ref, which resets on component remount
+    const sessionHasMessages = session?.messages && session.messages.length > 0;
+
     if (
       connectionState === "connected" &&
       client &&
       session &&
       initialPrompt &&
-      !initialPromptSentRef.current
+      !initialPromptSentRef.current &&
+      !sessionHasMessages
     ) {
       initialPromptSentRef.current = true;
       // Also clear the initialPrompt from the pane store to prevent re-submission on remount
