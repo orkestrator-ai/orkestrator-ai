@@ -13,7 +13,12 @@ import type {
   SessionInitData,
   McpServerRuntimeStatus,
   PluginRuntimeStatus,
+  SdkMessageBase,
+  SdkCompactBoundaryMessage,
+  SdkResultMessage,
+  SdkSystemMessage,
 } from "../types/index.js";
+import { isSdkCompactBoundaryMessage, isSdkResultMessage } from "../types/index.js";
 import { eventEmitter } from "./event-emitter.js";
 import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
 import { getPluginsForSdk } from "./plugin-config.js";
@@ -855,6 +860,46 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           sessionId,
           data: session.initData,
         });
+      } else if (isSdkCompactBoundaryMessage(message as SdkMessageBase)) {
+        // Handle /compact command result
+        const compactMsg = message as SdkCompactBoundaryMessage;
+        const compactMetadata = compactMsg.compact_metadata || {};
+
+        console.log("[session-manager] Compact boundary received", {
+          sessionId,
+          preTokens: compactMetadata.pre_tokens,
+          trigger: compactMetadata.trigger,
+        });
+
+        // Emit event so frontend can show feedback
+        eventEmitter.emit({
+          type: "system.compact",
+          sessionId,
+          data: {
+            preTokens: compactMetadata.pre_tokens,
+            postTokens: compactMetadata.post_tokens,
+            trigger: compactMetadata.trigger,
+          },
+        });
+      } else if (message.type === "system") {
+        // Handle other system messages (log for debugging)
+        const sysMsg = message as SdkSystemMessage;
+        console.log("[session-manager] System message received", {
+          sessionId,
+          subtype: sysMsg.subtype,
+        });
+
+        // Emit generic system event for other subtypes
+        if (sysMsg.subtype && sysMsg.subtype !== "init") {
+          eventEmitter.emit({
+            type: "system.message",
+            sessionId,
+            data: {
+              subtype: sysMsg.subtype,
+              message: sysMsg,
+            },
+          });
+        }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
         const { content, textParts, orderedParts } = parseMessageContent(message, toolTracker, mcpServerNames);
@@ -935,14 +980,22 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           });
         }
         // Skip adding user message replay as we already added it
-      } else if (message.type === "result") {
-        // Query completed
-        if (message.subtype === "success") {
+      } else if (isSdkResultMessage(message as SdkMessageBase)) {
+        // Query completed - log full result for debugging
+        const resultMsg = message as SdkResultMessage;
+        console.log("[session-manager] Query result", {
+          sessionId,
+          subtype: resultMsg.subtype,
+          result: resultMsg.result,
+          costUSD: resultMsg.cost_usd,
+          durationMs: resultMsg.duration_ms,
+        });
+        if (resultMsg.subtype === "success") {
           console.log("[session-manager] Query completed successfully", { sessionId });
         } else {
-          console.error("[session-manager] Query error:", message.subtype, { sessionId });
-          if ("errors" in message && message.errors) {
-            session.error = message.errors.join("\n");
+          console.error("[session-manager] Query error:", resultMsg.subtype, { sessionId });
+          if (resultMsg.errors) {
+            session.error = resultMsg.errors.join("\n");
           }
         }
       } else if (message.type === "stream_event") {

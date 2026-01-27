@@ -1,5 +1,61 @@
 // Type definitions for Claude Bridge Server
 
+// ============================================================================
+// Claude Agent SDK Message Types
+// These types represent messages from the Claude Agent SDK streaming interface
+// ============================================================================
+
+/** Base SDK message with common fields */
+export interface SdkMessageBase {
+  type: string;
+  subtype?: string;
+  uuid?: string;
+}
+
+/** SDK system message with optional subtype */
+export interface SdkSystemMessage extends SdkMessageBase {
+  type: "system";
+  subtype?: "init" | "compact_boundary" | "clear" | string;
+}
+
+/** Compact boundary system message from /compact command */
+export interface SdkCompactBoundaryMessage extends SdkSystemMessage {
+  subtype: "compact_boundary";
+  compact_metadata?: {
+    pre_tokens?: number;
+    post_tokens?: number;
+    trigger?: string;
+  };
+}
+
+/** SDK result message when query completes */
+export interface SdkResultMessage extends SdkMessageBase {
+  type: "result";
+  subtype?: "success" | "error" | string;
+  result?: unknown;
+  cost_usd?: number;
+  duration_ms?: number;
+  errors?: string[];
+}
+
+/** Type guard for compact boundary message */
+export function isSdkCompactBoundaryMessage(
+  message: SdkMessageBase
+): message is SdkCompactBoundaryMessage {
+  return message.type === "system" && message.subtype === "compact_boundary";
+}
+
+/** Type guard for result message */
+export function isSdkResultMessage(
+  message: SdkMessageBase
+): message is SdkResultMessage {
+  return message.type === "result";
+}
+
+// ============================================================================
+// Application Types
+// ============================================================================
+
 /** Diff metadata for edit tool operations */
 export interface ToolDiffMetadata {
   filePath?: string;
@@ -104,7 +160,9 @@ export type SSEEventType =
   | "plan.enter-requested"
   | "plan.exit-requested"
   | "plan.approval-requested"
-  | "plan.approval-responded";
+  | "plan.approval-responded"
+  | "system.compact"
+  | "system.message";
 
 /** MCP server status from SDK init message */
 export interface McpServerRuntimeStatus {

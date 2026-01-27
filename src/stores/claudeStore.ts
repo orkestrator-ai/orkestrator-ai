@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   ERROR_MESSAGE_PREFIX,
+  SYSTEM_MESSAGE_PREFIX,
   type ClaudeMessage,
   type ClaudeModel,
   type ClaudeClient,
@@ -8,6 +9,8 @@ import {
   type ClaudePlanApprovalRequest,
   type ClaudeEvent,
   type SessionInitData,
+  type ClaudeSessionKey,
+  type ClaudeSdkSessionId,
 } from "@/lib/claude-client";
 import { createSessionKey } from "@/lib/utils";
 
@@ -16,6 +19,9 @@ import { createSessionKey } from "@/lib/utils";
  * Re-exported from utils for backwards compatibility.
  */
 export const createClaudeSessionKey = createSessionKey;
+
+// Re-export types for convenience
+export type { ClaudeSessionKey, ClaudeSdkSessionId };
 
 /** Shared event subscription state per environment */
 export interface ClaudeEventSubscriptionState {
@@ -48,40 +54,49 @@ export interface ClaudeAttachment {
 }
 
 interface ClaudeState {
-  // State per environment (keyed by environmentId)
+  // State keyed by environmentId (raw environment UUID)
   serverStatus: Map<string, ClaudeServerStatus>;
-  sessions: Map<string, ClaudeSessionState>;
   clients: Map<string, ClaudeClient>;
-  models: ClaudeModel[];
-  selectedModel: Map<string, string>;
-  attachments: Map<string, ClaudeAttachment[]>;
-  draftText: Map<string, string>;
-  isComposing: Map<string, boolean>;
-  pendingQuestions: Map<string, ClaudeQuestionRequest>;
-  pendingPlanApprovals: Map<string, ClaudePlanApprovalRequest>;
   eventSubscriptions: Map<string, ClaudeEventSubscriptionState>;
-  thinkingEnabled: Map<string, boolean>;
-  planMode: Map<string, boolean>;
+
+  // State keyed by sessionKey (format: "env-{environmentId}:{tabId}")
+  // Use createClaudeSessionKey() to generate these keys
+  sessions: Map<ClaudeSessionKey, ClaudeSessionState>;
+  attachments: Map<ClaudeSessionKey, ClaudeAttachment[]>;
+  draftText: Map<ClaudeSessionKey, string>;
+  isComposing: Map<ClaudeSessionKey, boolean>;
+  thinkingEnabled: Map<ClaudeSessionKey, boolean>;
+  planMode: Map<ClaudeSessionKey, boolean>;
+  selectedModel: Map<ClaudeSessionKey, string>;
   sessionInitData: Map<string, SessionInitData>;
 
-  // Actions
+  // State keyed by request/question ID
+  pendingQuestions: Map<string, ClaudeQuestionRequest>;
+  pendingPlanApprovals: Map<string, ClaudePlanApprovalRequest>;
+
+  // Global state
+  models: ClaudeModel[];
+
+  // Actions - keyed by environmentId
   setServerStatus: (environmentId: string, status: ClaudeServerStatus) => void;
   setClient: (environmentId: string, client: ClaudeClient | null) => void;
   getClient: (environmentId: string) => ClaudeClient | undefined;
   setModels: (models: ClaudeModel[]) => void;
-  setSelectedModel: (environmentId: string, modelId: string) => void;
-  setSession: (environmentId: string, session: ClaudeSessionState | null) => void;
-  addMessage: (environmentId: string, message: ClaudeMessage) => void;
-  setMessages: (environmentId: string, messages: ClaudeMessage[]) => void;
-  setSessionLoading: (environmentId: string, isLoading: boolean) => void;
-  setSessionError: (environmentId: string, error: string | undefined) => void;
-  addAttachment: (environmentId: string, attachment: ClaudeAttachment) => void;
-  removeAttachment: (environmentId: string, attachmentId: string) => void;
-  clearAttachments: (environmentId: string) => void;
-  setDraftText: (environmentId: string, text: string) => void;
-  setComposing: (environmentId: string, isComposing: boolean) => void;
-  setThinkingEnabled: (environmentId: string, enabled: boolean) => void;
-  setPlanMode: (environmentId: string, enabled: boolean) => void;
+
+  // Actions - keyed by sessionKey (use createClaudeSessionKey to generate)
+  setSelectedModel: (sessionKey: ClaudeSessionKey, modelId: string) => void;
+  setSession: (sessionKey: ClaudeSessionKey, session: ClaudeSessionState | null) => void;
+  addMessage: (sessionKey: ClaudeSessionKey, message: ClaudeMessage) => void;
+  setMessages: (sessionKey: ClaudeSessionKey, messages: ClaudeMessage[]) => void;
+  setSessionLoading: (sessionKey: ClaudeSessionKey, isLoading: boolean) => void;
+  setSessionError: (sessionKey: ClaudeSessionKey, error: string | undefined) => void;
+  addAttachment: (sessionKey: ClaudeSessionKey, attachment: ClaudeAttachment) => void;
+  removeAttachment: (sessionKey: ClaudeSessionKey, attachmentId: string) => void;
+  clearAttachments: (sessionKey: ClaudeSessionKey) => void;
+  setDraftText: (sessionKey: ClaudeSessionKey, text: string) => void;
+  setComposing: (sessionKey: ClaudeSessionKey, isComposing: boolean) => void;
+  setThinkingEnabled: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
+  setPlanMode: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
   setSessionInitData: (environmentId: string, initData: SessionInitData | null) => void;
   clearEnvironment: (environmentId: string) => void;
   addPendingQuestion: (question: ClaudeQuestionRequest) => void;
@@ -93,20 +108,34 @@ interface ClaudeState {
   closeEventSubscription: (environmentId: string) => void;
   hasActiveEventSubscription: (environmentId: string) => boolean;
 
-  // Selectors
+  // Selectors - keyed by environmentId
   getServerStatus: (environmentId: string) => ClaudeServerStatus | undefined;
-  getSession: (environmentId: string) => ClaudeSessionState | undefined;
-  getSelectedModel: (environmentId: string) => string | undefined;
-  getAttachments: (environmentId: string) => ClaudeAttachment[];
-  getDraftText: (environmentId: string) => string;
-  isComposingFor: (environmentId: string) => boolean;
-  isThinkingEnabled: (environmentId: string) => boolean;
-  isPlanMode: (environmentId: string) => boolean;
+
+  // Selectors - keyed by sessionKey
+  getSession: (sessionKey: ClaudeSessionKey) => ClaudeSessionState | undefined;
+  getSelectedModel: (sessionKey: ClaudeSessionKey) => string | undefined;
+  getAttachments: (sessionKey: ClaudeSessionKey) => ClaudeAttachment[];
+  getDraftText: (sessionKey: ClaudeSessionKey) => string;
+  isComposingFor: (sessionKey: ClaudeSessionKey) => boolean;
+  isThinkingEnabled: (sessionKey: ClaudeSessionKey) => boolean;
+  isPlanMode: (sessionKey: ClaudeSessionKey) => boolean;
   getSessionInitData: (environmentId: string) => SessionInitData | undefined;
-  getPendingQuestionsForSession: (sessionId: string) => ClaudeQuestionRequest[];
+
+  // Selectors - keyed by SDK session ID
+  getPendingQuestionsForSession: (sdkSessionId: ClaudeSdkSessionId) => ClaudeQuestionRequest[];
   getPendingQuestion: (requestId: string) => ClaudeQuestionRequest | undefined;
-  getPendingPlanApprovalsForSession: (sessionId: string) => ClaudePlanApprovalRequest[];
+  getPendingPlanApprovalsForSession: (sdkSessionId: ClaudeSdkSessionId) => ClaudePlanApprovalRequest[];
   getPendingPlanApproval: (requestId: string) => ClaudePlanApprovalRequest | undefined;
+
+  /**
+   * Find the sessionKey (store Map key) for a given SDK session ID.
+   * This is useful when handling SSE events that include the SDK session ID
+   * but need to update state in the store which is keyed by sessionKey.
+   *
+   * @param sdkSessionId - The Claude SDK session ID (e.g., "session-{uuid}")
+   * @returns The sessionKey if found, null otherwise
+   */
+  getSessionKeyBySdkSessionId: (sdkSessionId: ClaudeSdkSessionId) => ClaudeSessionKey | null;
 }
 
 export const useClaudeStore = create<ClaudeState>()((set, get) => ({
@@ -149,163 +178,166 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
   setModels: (models) => set({ models }),
 
-  setSelectedModel: (environmentId, modelId) =>
+  setSelectedModel: (sessionKey, modelId) =>
     set((state) => {
       const newMap = new Map(state.selectedModel);
-      newMap.set(environmentId, modelId);
+      newMap.set(sessionKey, modelId);
       return { selectedModel: newMap };
     }),
 
-  setSession: (environmentId, session) =>
+  setSession: (sessionKey, session) =>
     set((state) => {
       const newMap = new Map(state.sessions);
       if (session) {
-        newMap.set(environmentId, session);
+        newMap.set(sessionKey, session);
       } else {
-        newMap.delete(environmentId);
+        newMap.delete(sessionKey);
       }
       return { sessions: newMap };
     }),
 
-  addMessage: (environmentId, message) =>
+  addMessage: (sessionKey, message) =>
     set((state) => {
-      const session = state.sessions.get(environmentId);
+      const session = state.sessions.get(sessionKey);
       if (!session) return state;
 
       const newMap = new Map(state.sessions);
-      newMap.set(environmentId, {
+      newMap.set(sessionKey, {
         ...session,
         messages: [...session.messages, message],
       });
       return { sessions: newMap };
     }),
 
-  setMessages: (environmentId, messages) =>
+  setMessages: (sessionKey, messages) =>
     set((state) => {
-      const session = state.sessions.get(environmentId);
+      const session = state.sessions.get(sessionKey);
       if (!session) return state;
 
-      // Preserve client-side error messages
-      const existingErrors = session.messages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
+      // Preserve client-side messages (errors and system messages like compact notifications)
+      // These exist only on the client and would be lost when fetching from server
+      const existingClientMessages = session.messages.filter(
+        (m) => m.id.startsWith(ERROR_MESSAGE_PREFIX) || m.id.startsWith(SYSTEM_MESSAGE_PREFIX)
+      );
 
-      if (existingErrors.length === 0) {
+      if (existingClientMessages.length === 0) {
         const newMap = new Map(state.sessions);
-        newMap.set(environmentId, {
+        newMap.set(sessionKey, {
           ...session,
           messages,
         });
         return { sessions: newMap };
       }
 
-      // Merge error messages into server messages based on timestamp
+      // Merge client-side messages into server messages based on timestamp
       const mergedMessages = [...messages];
-      for (const errorMsg of existingErrors) {
-        const errorTime = new Date(errorMsg.timestamp || 0).getTime();
+      for (const clientMsg of existingClientMessages) {
+        const clientTime = new Date(clientMsg.timestamp || 0).getTime();
         let insertIndex = mergedMessages.length;
         for (let i = mergedMessages.length - 1; i >= 0; i--) {
           const msg = mergedMessages[i];
           if (!msg) continue;
           const msgTime = new Date(msg.timestamp || 0).getTime();
-          if (msgTime <= errorTime) {
+          if (msgTime <= clientTime) {
             insertIndex = i + 1;
             break;
           }
-          if (i === 0 && msgTime > errorTime) {
+          if (i === 0 && msgTime > clientTime) {
             insertIndex = 0;
           }
         }
-        mergedMessages.splice(insertIndex, 0, errorMsg);
+        mergedMessages.splice(insertIndex, 0, clientMsg);
       }
 
       const newMap = new Map(state.sessions);
-      newMap.set(environmentId, {
+      newMap.set(sessionKey, {
         ...session,
         messages: mergedMessages,
       });
       return { sessions: newMap };
     }),
 
-  setSessionLoading: (environmentId, isLoading) =>
+  setSessionLoading: (sessionKey, isLoading) =>
     set((state) => {
-      const session = state.sessions.get(environmentId);
+      const session = state.sessions.get(sessionKey);
       if (!session) return state;
 
       const newMap = new Map(state.sessions);
-      newMap.set(environmentId, {
+      newMap.set(sessionKey, {
         ...session,
         isLoading,
       });
       return { sessions: newMap };
     }),
 
-  setSessionError: (environmentId, error) =>
+  setSessionError: (sessionKey, error) =>
     set((state) => {
-      const session = state.sessions.get(environmentId);
+      const session = state.sessions.get(sessionKey);
       if (!session) return state;
 
       const newMap = new Map(state.sessions);
-      newMap.set(environmentId, {
+      newMap.set(sessionKey, {
         ...session,
         error,
       });
       return { sessions: newMap };
     }),
 
-  addAttachment: (environmentId, attachment) =>
+  addAttachment: (sessionKey, attachment) =>
     set((state) => {
-      const current = state.attachments.get(environmentId) || [];
+      const current = state.attachments.get(sessionKey) || [];
       const newMap = new Map(state.attachments);
-      newMap.set(environmentId, [...current, attachment]);
+      newMap.set(sessionKey, [...current, attachment]);
       return { attachments: newMap };
     }),
 
-  removeAttachment: (environmentId, attachmentId) =>
+  removeAttachment: (sessionKey, attachmentId) =>
     set((state) => {
-      const current = state.attachments.get(environmentId) || [];
+      const current = state.attachments.get(sessionKey) || [];
       const newMap = new Map(state.attachments);
       newMap.set(
-        environmentId,
+        sessionKey,
         current.filter((a) => a.id !== attachmentId)
       );
       return { attachments: newMap };
     }),
 
-  clearAttachments: (environmentId) =>
+  clearAttachments: (sessionKey) =>
     set((state) => {
       const newMap = new Map(state.attachments);
-      newMap.set(environmentId, []);
+      newMap.set(sessionKey, []);
       return { attachments: newMap };
     }),
 
-  setDraftText: (environmentId, text) =>
+  setDraftText: (sessionKey, text) =>
     set((state) => {
       const newMap = new Map(state.draftText);
       if (text) {
-        newMap.set(environmentId, text);
+        newMap.set(sessionKey, text);
       } else {
-        newMap.delete(environmentId);
+        newMap.delete(sessionKey);
       }
       return { draftText: newMap };
     }),
 
-  setComposing: (environmentId, isComposing) =>
+  setComposing: (sessionKey, isComposing) =>
     set((state) => {
       const newMap = new Map(state.isComposing);
-      newMap.set(environmentId, isComposing);
+      newMap.set(sessionKey, isComposing);
       return { isComposing: newMap };
     }),
 
-  setThinkingEnabled: (environmentId, enabled) =>
+  setThinkingEnabled: (sessionKey, enabled) =>
     set((state) => {
       const newMap = new Map(state.thinkingEnabled);
-      newMap.set(environmentId, enabled);
+      newMap.set(sessionKey, enabled);
       return { thinkingEnabled: newMap };
     }),
 
-  setPlanMode: (environmentId, enabled) =>
+  setPlanMode: (sessionKey, enabled) =>
     set((state) => {
       const newMap = new Map(state.planMode);
-      newMap.set(environmentId, enabled);
+      newMap.set(sessionKey, enabled);
       return { planMode: newMap };
     }),
 
@@ -336,36 +368,72 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
     // Then clear all state
     set((state) => {
+      // Maps keyed by environmentId (raw UUID)
       const newServerStatus = new Map(state.serverStatus);
-      const newSessions = new Map(state.sessions);
       const newClients = new Map(state.clients);
+      const newEventSubscriptions = new Map(state.eventSubscriptions);
+      const newSessionInitData = new Map(state.sessionInitData);
+
+      newServerStatus.delete(environmentId);
+      newClients.delete(environmentId);
+      newEventSubscriptions.delete(environmentId);
+      newSessionInitData.delete(environmentId);
+
+      // Maps keyed by sessionKey (format: "env-{environmentId}:{tabId}")
+      // Must iterate and delete all keys matching this environment
+      const sessionKeyPrefix = `env-${environmentId}:`;
+
+      const newSessions = new Map(state.sessions);
       const newSelectedModel = new Map(state.selectedModel);
       const newAttachments = new Map(state.attachments);
       const newDraftText = new Map(state.draftText);
       const newIsComposing = new Map(state.isComposing);
-      const newPendingQuestions = new Map(state.pendingQuestions);
-      const newEventSubscriptions = new Map(state.eventSubscriptions);
       const newThinkingEnabled = new Map(state.thinkingEnabled);
       const newPlanMode = new Map(state.planMode);
-      const newSessionInitData = new Map(state.sessionInitData);
 
-      newServerStatus.delete(environmentId);
-      newSessions.delete(environmentId);
-      newClients.delete(environmentId);
-      newSelectedModel.delete(environmentId);
-      newAttachments.delete(environmentId);
-      newDraftText.delete(environmentId);
-      newIsComposing.delete(environmentId);
-      newEventSubscriptions.delete(environmentId);
-      newThinkingEnabled.delete(environmentId);
-      newPlanMode.delete(environmentId);
-      newSessionInitData.delete(environmentId);
+      // Collect session IDs for pending question cleanup before deleting sessions
+      const sessionIdsToCleanup: string[] = [];
+      for (const [key, session] of newSessions) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          sessionIdsToCleanup.push(session.sessionId);
+        }
+      }
 
-      // Remove pending questions for this environment's sessions
+      // Delete sessionKey-keyed entries for this environment
+      for (const key of newSessions.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newSessions.delete(key);
+      }
+      for (const key of newSelectedModel.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newSelectedModel.delete(key);
+      }
+      for (const key of newAttachments.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newAttachments.delete(key);
+      }
+      for (const key of newDraftText.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newDraftText.delete(key);
+      }
+      for (const key of newIsComposing.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newIsComposing.delete(key);
+      }
+      for (const key of newThinkingEnabled.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newThinkingEnabled.delete(key);
+      }
+      for (const key of newPlanMode.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newPlanMode.delete(key);
+      }
+
+      // Remove pending questions and plan approvals for this environment's sessions
+      const newPendingQuestions = new Map(state.pendingQuestions);
+      const newPendingPlanApprovals = new Map(state.pendingPlanApprovals);
+
       for (const [requestId, question] of newPendingQuestions) {
-        const session = state.sessions.get(environmentId);
-        if (session && question.sessionId === session.sessionId) {
+        if (sessionIdsToCleanup.includes(question.sessionId)) {
           newPendingQuestions.delete(requestId);
+        }
+      }
+      for (const [requestId, approval] of newPendingPlanApprovals) {
+        if (sessionIdsToCleanup.includes(approval.sessionId)) {
+          newPendingPlanApprovals.delete(requestId);
         }
       }
 
@@ -378,6 +446,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         draftText: newDraftText,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
+        pendingPlanApprovals: newPendingPlanApprovals,
         eventSubscriptions: newEventSubscriptions,
         thinkingEnabled: newThinkingEnabled,
         planMode: newPlanMode,
@@ -475,31 +544,33 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
     return subscription?.isActive ?? false;
   },
 
-  // Selectors
+  // Selectors - keyed by environmentId
   getServerStatus: (environmentId) => get().serverStatus.get(environmentId),
 
-  getSession: (environmentId) => get().sessions.get(environmentId),
+  // Selectors - keyed by sessionKey
+  getSession: (sessionKey) => get().sessions.get(sessionKey),
 
-  getSelectedModel: (environmentId) => get().selectedModel.get(environmentId),
+  getSelectedModel: (sessionKey) => get().selectedModel.get(sessionKey),
 
-  getAttachments: (environmentId) => get().attachments.get(environmentId) || [],
+  getAttachments: (sessionKey) => get().attachments.get(sessionKey) || [],
 
-  getDraftText: (environmentId) => get().draftText.get(environmentId) || "",
+  getDraftText: (sessionKey) => get().draftText.get(sessionKey) || "",
 
-  isComposingFor: (environmentId) => get().isComposing.get(environmentId) || false,
+  isComposingFor: (sessionKey) => get().isComposing.get(sessionKey) || false,
 
   // Default to true (thinking enabled) if not explicitly set
-  isThinkingEnabled: (environmentId) => get().thinkingEnabled.get(environmentId) ?? true,
+  isThinkingEnabled: (sessionKey) => get().thinkingEnabled.get(sessionKey) ?? true,
 
   // Default to false (plan mode disabled) - uses bypassPermissions by default
-  isPlanMode: (environmentId) => get().planMode.get(environmentId) ?? false,
+  isPlanMode: (sessionKey) => get().planMode.get(sessionKey) ?? false,
 
   getSessionInitData: (environmentId) => get().sessionInitData.get(environmentId),
 
-  getPendingQuestionsForSession: (sessionId) => {
+  // Selectors - keyed by SDK session ID
+  getPendingQuestionsForSession: (sdkSessionId) => {
     const questions: ClaudeQuestionRequest[] = [];
     for (const question of get().pendingQuestions.values()) {
-      if (question.sessionId === sessionId) {
+      if (question.sessionId === sdkSessionId) {
         questions.push(question);
       }
     }
@@ -508,10 +579,10 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
   getPendingQuestion: (requestId) => get().pendingQuestions.get(requestId),
 
-  getPendingPlanApprovalsForSession: (sessionId) => {
+  getPendingPlanApprovalsForSession: (sdkSessionId) => {
     const approvals: ClaudePlanApprovalRequest[] = [];
     for (const approval of get().pendingPlanApprovals.values()) {
-      if (approval.sessionId === sessionId) {
+      if (approval.sessionId === sdkSessionId) {
         approvals.push(approval);
       }
     }
@@ -519,4 +590,19 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   },
 
   getPendingPlanApproval: (requestId) => get().pendingPlanApprovals.get(requestId),
+
+  /**
+   * Find the sessionKey (store Map key) for a given SDK session ID.
+   * This is useful when handling SSE events that include the SDK session ID
+   * but need to update state in the store which is keyed by sessionKey.
+   */
+  getSessionKeyBySdkSessionId: (sdkSessionId) => {
+    const sessions = get().sessions;
+    for (const [sessionKey, sessionState] of sessions) {
+      if (sessionState.sessionId === sdkSessionId) {
+        return sessionKey;
+      }
+    }
+    return null;
+  },
 }));

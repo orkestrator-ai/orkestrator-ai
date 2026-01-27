@@ -1,6 +1,20 @@
 // Claude Bridge Server client wrapper
 // Provides typed functions for interacting with the Claude bridge server
 
+/**
+ * Session key used as the Map key in the Zustand store.
+ * Format: "env-{environmentId}:{tabId}" (e.g., "env-a33f9026...:default")
+ * This is NOT the Claude SDK session ID - it's our internal key for organizing sessions.
+ */
+export type ClaudeSessionKey = string;
+
+/**
+ * Claude SDK session ID returned by the bridge server.
+ * Format: "session-{uuid}" (e.g., "session-e4abc3ee-b0a9-4328-9bf3-28376ddb7b3d")
+ * This is the actual session identifier used by the Claude Agent SDK.
+ */
+export type ClaudeSdkSessionId = string;
+
 /** Diff metadata for edit tool operations */
 export interface ToolDiffMetadata {
   filePath?: string;
@@ -128,6 +142,19 @@ export interface PlanApprovalRespondedEventData {
   feedback?: string;
 }
 
+/** Data payload for system.compact event */
+export interface SystemCompactEventData {
+  preTokens?: number;
+  postTokens?: number;
+  trigger?: string;
+}
+
+/** Data payload for system.message event */
+export interface SystemMessageEventData {
+  subtype: string;
+  message?: unknown;
+}
+
 /** SSE event from Claude bridge server */
 export interface ClaudeEvent {
   type:
@@ -143,7 +170,9 @@ export interface ClaudeEvent {
     | "plan.enter-requested"
     | "plan.exit-requested"
     | "plan.approval-requested"
-    | "plan.approval-responded";
+    | "plan.approval-responded"
+    | "system.compact"
+    | "system.message";
   sessionId?: string;
   data?: unknown;
 }
@@ -158,6 +187,9 @@ export interface ClaudeAttachment {
 
 /** Prefix for client-side error message IDs */
 export const ERROR_MESSAGE_PREFIX = "error-";
+
+/** Prefix for client-side system message IDs (e.g., compact notifications) */
+export const SYSTEM_MESSAGE_PREFIX = "system-";
 
 /** Claude Bridge Client */
 export interface ClaudeClient {
@@ -602,6 +634,8 @@ export function subscribeToEvents(
         "plan.exit-requested",
         "plan.approval-requested",
         "plan.approval-responded",
+        "system.compact",
+        "system.message",
       ];
 
       for (const eventType of eventTypes) {
