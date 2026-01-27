@@ -102,11 +102,14 @@ export function ClaudePlanApprovalCard({
         removePendingPlanApproval(approval.id);
         // Plan mode will be disabled via the plan.exit-requested event from the server
       } else {
-        setError("Failed to approve plan. The request may have expired.");
+        // Request expired - remove the card since it's no longer actionable
+        console.warn("[ClaudePlanApprovalCard] Plan approval request expired, removing card");
+        removePendingPlanApproval(approval.id);
       }
     } catch (err) {
       console.error("[ClaudePlanApprovalCard] Failed to approve plan:", err);
-      setError("Failed to approve plan. Please try again.");
+      // On error, also remove the card - it's likely no longer valid
+      removePendingPlanApproval(approval.id);
     } finally {
       setIsSubmitting(false);
     }
@@ -134,11 +137,14 @@ export function ClaudePlanApprovalCard({
         // Keep plan mode enabled so Claude can revise the plan
         // The plan.exit-requested event will NOT be sent on rejection
       } else {
-        setError("Failed to submit feedback. The request may have expired.");
+        // Request expired - remove the card since it's no longer actionable
+        console.warn("[ClaudePlanApprovalCard] Plan rejection request expired, removing card");
+        removePendingPlanApproval(approval.id);
       }
     } catch (err) {
       console.error("[ClaudePlanApprovalCard] Failed to reject plan:", err);
-      setError("Failed to submit feedback. Please try again.");
+      // On error, also remove the card - it's likely no longer valid
+      removePendingPlanApproval(approval.id);
     } finally {
       setIsSubmitting(false);
     }
@@ -150,15 +156,16 @@ export function ClaudePlanApprovalCard({
     setError(null);
     respondToPlanApproval(client, sessionId, approval.id, false)
       .then((success) => {
-        if (success) {
-          removePendingPlanApproval(approval.id);
-        } else {
-          setError("Failed to dismiss. The request may have expired.");
+        // Always remove the card on dismiss - either it succeeded or it expired
+        removePendingPlanApproval(approval.id);
+        if (!success) {
+          console.warn("[ClaudePlanApprovalCard] Plan dismiss request expired, card removed anyway");
         }
       })
       .catch((err) => {
         console.error("[ClaudePlanApprovalCard] Failed to dismiss plan:", err);
-        setError("Failed to dismiss. Please try again.");
+        // On error, also remove the card - user explicitly wanted to dismiss
+        removePendingPlanApproval(approval.id);
       })
       .finally(() => {
         setIsSubmitting(false);
