@@ -903,6 +903,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                   approval={approval}
                   client={client}
                   sessionId={session.sessionId}
+                  messages={session.messages}
                 />
               ))}
             </div>
