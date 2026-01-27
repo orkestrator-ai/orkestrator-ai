@@ -4,7 +4,7 @@ import type { FileMention, FileCandidate } from "@/types";
 interface UseFileMentionsOptions {
   /** Callback to search files */
   searchFiles: (query: string, limit?: number) => FileCandidate[];
-  /** Max files to show in menu */
+  /** Max files to show in menu (default: 30) */
   maxResults?: number;
 }
 
@@ -40,7 +40,7 @@ interface UseFileMentionsReturn {
  */
 export function useFileMentions({
   searchFiles,
-  maxResults = 8,
+  maxResults = 30,
 }: UseFileMentionsOptions): UseFileMentionsReturn {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
