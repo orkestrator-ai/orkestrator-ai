@@ -11,6 +11,7 @@ import {
   createSession,
   getSessionMessages,
   sendPrompt,
+  abortSession,
   subscribeToEvents,
   checkHealth,
   ERROR_MESSAGE_PREFIX,
@@ -59,6 +60,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const tabSessionIdRef = useRef<string | null>(null);
   const isInitializedRef = useRef(false);
   const initialPromptSentRef = useRef(false);
+  const isProcessingQueueRef = useRef(false);
   const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => Promise<void>) | null>(null);
 
   const {
@@ -83,6 +85,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     isPlanMode,
     setPlanMode,
     getSessionKeyBySdkSessionId,
+    addToQueue,
+    removeFromQueue,
+    clearQueue,
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
@@ -132,6 +137,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   // Memoize messages separately to provide stable reference for child components
   // This prevents unnecessary recalculations when other session properties change
   const sessionMessages = useMemo(() => session?.messages ?? [], [session?.messages]);
+
+  // Queue length for this session - use selector to only re-render when this specific queue changes
+  const queueLength = useClaudeStore(
+    useCallback((state) => state.messageQueue.get(sessionKey)?.length ?? 0, [sessionKey])
+  );
 
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
@@ -752,6 +762,45 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   handleSendRef.current = handleSend;
 
+  // Handle adding a message to the queue when Claude is busy
+  const handleQueue = useCallback(
+    (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => {
+      addToQueue(sessionKey, {
+        id: crypto.randomUUID(),
+        text,
+        attachments,
+        thinkingEnabled,
+        planModeEnabled,
+      });
+    },
+    [sessionKey, addToQueue]
+  );
+
+  // Handle stopping the current query
+  const handleStop = useCallback(async () => {
+    if (!client || !session) return;
+
+    // Clear the queue first
+    clearQueue(sessionKey);
+
+    // Abort the current session processing
+    const success = await abortSession(client, session.sessionId);
+    if (success) {
+      setSessionLoading(sessionKey, false);
+      // Add a system message to indicate the query was stopped
+      const systemMessage: ClaudeMessageType = {
+        id: `${SYSTEM_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+        role: "system",
+        content: "Query stopped by user.",
+        parts: [{ type: "text", content: "Query stopped by user." }],
+        timestamp: new Date().toISOString(),
+      };
+      addMessage(sessionKey, systemMessage);
+    } else {
+      console.error("[ClaudeChatTab] Failed to abort session");
+    }
+  }, [client, session, sessionKey, clearQueue, setSessionLoading, addMessage]);
+
   // Compute thinking and plan mode values outside useEffect to avoid function reference dependencies
   const thinkingEnabledValue = isThinkingEnabled(sessionKey);
   const planModeEnabledValue = isPlanMode(sessionKey);
@@ -772,6 +821,63 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       handleSendRef.current?.(initialPrompt, [], thinkingEnabledValue, planModeEnabledValue);
     }
   }, [connectionState, client, session, initialPrompt, tabId, thinkingEnabledValue, planModeEnabledValue]);
+
+  // Process queued messages when session becomes idle
+  useEffect(() => {
+    // Only process queue when:
+    // 1. Connected and have client/session
+    // 2. Session is not loading (just became idle)
+    // 3. There are messages in the queue
+    // 4. Not already processing a queued message (prevents race conditions)
+    if (
+      connectionState === "connected" &&
+      client &&
+      session &&
+      !session.isLoading &&
+      queueLength > 0 &&
+      !isProcessingQueueRef.current
+    ) {
+      const nextMessage = removeFromQueue(sessionKey);
+      if (nextMessage) {
+        // Set flag to prevent double-processing during state transitions
+        isProcessingQueueRef.current = true;
+
+        // Send the queued message using handleSend
+        const sendPromise = handleSendRef.current?.(
+          nextMessage.text,
+          nextMessage.attachments,
+          nextMessage.thinkingEnabled,
+          nextMessage.planModeEnabled
+        );
+
+        // Handle completion/errors and reset the processing flag
+        if (sendPromise) {
+          sendPromise
+            .catch((error) => {
+              console.error("[ClaudeChatTab] Failed to send queued message:", error);
+              // Add error message to inform user which queued message failed
+              const errorMessage: ClaudeMessageType = {
+                id: `${ERROR_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+                role: "assistant",
+                content: `Failed to send queued message: ${error instanceof Error ? error.message : "Unknown error"}`,
+                parts: [{ type: "text", content: `Failed to send queued message: ${error instanceof Error ? error.message : "Unknown error"}` }],
+                timestamp: new Date().toISOString(),
+              };
+              addMessage(sessionKey, errorMessage);
+              setSessionLoading(sessionKey, false);
+            })
+            .finally(() => {
+              // Reset processing flag after a short delay to allow state to settle
+              setTimeout(() => {
+                isProcessingQueueRef.current = false;
+              }, 100);
+            });
+        } else {
+          isProcessingQueueRef.current = false;
+        }
+      }
+    }
+  }, [connectionState, client, session, session?.isLoading, queueLength, sessionKey, removeFromQueue, addMessage, setSessionLoading]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");
@@ -945,7 +1051,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         containerId={containerId}
         models={models}
         onSend={handleSend}
-        disabled={!client || !session || session.isLoading}
+        disabled={!client || !session}
+        isLoading={session?.isLoading ?? false}
+        queueLength={queueLength}
+        onStop={handleStop}
+        onQueue={handleQueue}
       />
 
       {client && (

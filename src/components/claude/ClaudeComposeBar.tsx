@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus, Check } from "lucide-react";
+import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus, Check, Square } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +30,14 @@ interface ClaudeComposeBarProps {
   models: ClaudeModel[];
   onSend: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => void;
   disabled?: boolean;
+  /** Whether Claude is currently processing a query */
+  isLoading?: boolean;
+  /** Number of messages in the queue */
+  queueLength?: number;
+  /** Callback when stop button is clicked */
+  onStop?: () => void;
+  /** Callback when a message should be added to the queue */
+  onQueue?: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => void;
 }
 
 const MAX_LINES = 10;
@@ -53,6 +61,10 @@ export function ClaudeComposeBar({
   models,
   onSend,
   disabled = false,
+  isLoading = false,
+  queueLength = 0,
+  onStop,
+  onQueue,
 }: ClaudeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
@@ -422,12 +434,23 @@ export function ClaudeComposeBar({
       // Serialize mentions: replace @filename with full relative path
       const serializedText = serializeForLLM(text.trim(), mentions);
 
-      onSend(serializedText, attachments, currentThinkingEnabled, currentPlanModeEnabled);
+      // If loading and onQueue is provided, add to queue instead of sending immediately
+      if (isLoading && onQueue) {
+        onQueue(serializedText, attachments, currentThinkingEnabled, currentPlanModeEnabled);
+      } else {
+        onSend(serializedText, attachments, currentThinkingEnabled, currentPlanModeEnabled);
+      }
       setText("");
       setMentions([]);
       clearAttachments(sessionKey);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleStop = () => {
+    if (onStop) {
+      onStop();
     }
   };
 
@@ -616,18 +639,45 @@ export function ClaudeComposeBar({
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Send button - round grey style */}
-        <button
-          onClick={handleSend}
-          disabled={disabled || isSending || (attachments.length === 0 && !text.trim())}
-          className={cn(
-            "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-            "bg-muted hover:bg-muted/80",
-            "disabled:opacity-50 disabled:cursor-not-allowed"
-          )}
-        >
-          <ArrowUp className="w-4 h-4" />
-        </button>
+        {/* Queue indicator */}
+        {queueLength > 0 && (
+          <div className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50">
+            <span>+{queueLength} queued</span>
+          </div>
+        )}
+
+        {/* Send/Stop button - round grey style */}
+        {isLoading && !text.trim() && attachments.length === 0 ? (
+          // Stop button when loading and no content
+          <button
+            onClick={handleStop}
+            disabled={disabled}
+            className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+              "bg-destructive/10 hover:bg-destructive/20 text-destructive",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+            title="Stop current query"
+          >
+            <Square className="w-4 h-4 fill-current" />
+          </button>
+        ) : (
+          // Send button (immediate send or queue)
+          <button
+            onClick={handleSend}
+            disabled={disabled || isSending || (attachments.length === 0 && !text.trim())}
+            className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+              isLoading
+                ? "bg-primary/20 hover:bg-primary/30 text-primary"
+                : "bg-muted hover:bg-muted/80",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+            title={isLoading ? "Add to queue" : "Send message"}
+          >
+            <ArrowUp className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </div>
   );
