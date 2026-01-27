@@ -1,9 +1,12 @@
-import { useState, useCallback } from "react";
-import { FileText, Check, X, AlertCircle } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { FileText, Check, X, AlertCircle, ChevronRight } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import type { ClaudePlanApprovalRequest, ClaudeClient } from "@/lib/claude-client";
+import type { ClaudePlanApprovalRequest, ClaudeClient, ClaudeMessage } from "@/lib/claude-client";
 import { respondToPlanApproval } from "@/lib/claude-client";
 import { useClaudeStore } from "@/stores/claudeStore";
 
@@ -11,18 +14,84 @@ interface ClaudePlanApprovalCardProps {
   approval: ClaudePlanApprovalRequest;
   client: ClaudeClient;
   sessionId: string;
+  messages: ClaudeMessage[];
+}
+
+/**
+ * Check if a file path looks like a plan file.
+ * Matches common plan file patterns used by Claude in plan mode.
+ */
+function isPlanFilePath(filePath: string): boolean {
+  const lowerPath = filePath.toLowerCase();
+  const fileName = lowerPath.split("/").pop() ?? "";
+
+  // Check for common plan file patterns
+  const planPatterns = [
+    /plan\.md$/,
+    /implementation[-_]?plan\.md$/,
+    /[-_]plan\.md$/,
+    /plan[-_].*\.md$/,
+  ];
+
+  if (planPatterns.some((pattern) => pattern.test(fileName))) {
+    return true;
+  }
+
+  // Check for plan files in common directories
+  const planDirectories = [".claude/", "docs/plans/", "plans/"];
+  if (planDirectories.some((dir) => lowerPath.includes(dir)) && lowerPath.endsWith(".md")) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Extract plan content from messages by finding the most recent Write tool
+ * that wrote a plan file (matching specific plan file patterns).
+ */
+function extractPlanContent(messages: ClaudeMessage[]): string | null {
+  // Search messages in reverse order (most recent first)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || message.role !== "assistant") continue;
+
+    // Search parts in reverse order within each message
+    for (let j = message.parts.length - 1; j >= 0; j--) {
+      const part = message.parts[j];
+      if (!part || part.type !== "tool-invocation") continue;
+      if (part.toolName?.toLowerCase() !== "write") continue;
+
+      // Check if this is a plan file (not just any .md file)
+      const filePath = part.toolArgs?.file_path as string | undefined;
+      if (!filePath || !isPlanFilePath(filePath)) continue;
+
+      // Extract the content that was written
+      const content = part.toolArgs?.content as string | undefined;
+      if (content) {
+        return content;
+      }
+    }
+  }
+
+  return null;
 }
 
 export function ClaudePlanApprovalCard({
   approval,
   client,
   sessionId,
+  messages,
 }: ClaudePlanApprovalCardProps) {
   const { removePendingPlanApproval } = useClaudeStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isPlanExpanded, setIsPlanExpanded] = useState(true);
+
+  // Extract plan content from messages
+  const planContent = useMemo(() => extractPlanContent(messages), [messages]);
 
   const handleApprove = useCallback(async () => {
     setIsSubmitting(true);
@@ -107,12 +176,39 @@ export function ClaudePlanApprovalCard({
         </span>
       </div>
 
+      {/* Plan Content */}
+      {planContent && (
+        <Collapsible open={isPlanExpanded} onOpenChange={setIsPlanExpanded}>
+          <CollapsibleTrigger className="flex items-center gap-2 w-full px-4 py-2 text-xs text-muted-foreground hover:bg-muted/30 transition-colors cursor-pointer border-b border-border">
+            <ChevronRight
+              className={cn(
+                "w-3 h-3 transition-transform shrink-0",
+                isPlanExpanded && "rotate-90"
+              )}
+            />
+            <span className="font-medium">Implementation Plan</span>
+            <span className="text-muted-foreground/60 ml-auto">
+              {isPlanExpanded ? "Click to collapse" : "Click to expand"}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="max-h-[400px] overflow-y-auto px-4 py-3 bg-muted/20">
+              <div className="text-sm text-foreground leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-headings:text-foreground prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-pre:my-2 prose-code:text-xs prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-muted prose-pre:p-3 prose-pre:rounded-md">
+                <Markdown remarkPlugins={[remarkGfm]}>{planContent}</Markdown>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
       {/* Content */}
       <div className="p-4 space-y-3">
-        <p className="text-sm text-foreground leading-relaxed">
-          Claude has created a plan for your task. Please review the plan in the conversation
-          above and decide whether to approve it or request revisions.
-        </p>
+        {!planContent && (
+          <p className="text-sm text-foreground leading-relaxed">
+            Claude has created a plan for your task. Please review the plan in the conversation
+            above and decide whether to approve it or request revisions.
+          </p>
+        )}
 
         {showFeedback && (
           <div className="space-y-2">
