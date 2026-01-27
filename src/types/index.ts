@@ -199,3 +199,25 @@ export interface UIState {
 
 // Pane layout types
 export * from "./paneLayout";
+
+// File mention types for @ references in compose bar
+
+/** A file mention inserted via @ reference */
+export interface FileMention {
+  /** Unique ID for React keys */
+  id: string;
+  /** Display name (e.g., "ClaudeComposeBar.tsx") */
+  filename: string;
+  /** Full relative path (e.g., "src/components/claude/ClaudeComposeBar.tsx") */
+  relativePath: string;
+}
+
+/** A file candidate for the @ mention dropdown */
+export interface FileCandidate {
+  /** Filename only (e.g., "ClaudeComposeBar.tsx") */
+  filename: string;
+  /** Full relative path (e.g., "src/components/claude/ClaudeComposeBar.tsx") */
+  relativePath: string;
+  /** File extension (e.g., ".tsx") */
+  extension?: string;
+}
