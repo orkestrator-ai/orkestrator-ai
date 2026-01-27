@@ -259,10 +259,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setModels(availableModels);
 
         // Set default model if not already selected
-        const currentSelectedModel = getSelectedModel(environmentId);
+        const currentSelectedModel = getSelectedModel(sessionKey);
         const firstModel = availableModels[0];
         if (!currentSelectedModel && firstModel) {
-          setSelectedModel(environmentId, firstModel.id);
+          setSelectedModel(sessionKey, firstModel.id);
         }
 
         // Check for existing session - first from component ref, then from Zustand store
@@ -376,9 +376,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             setConnectionState("connected");
 
             // Send the prompt to the server
-            const selectedModel = getSelectedModel(environmentId);
-            const thinkingEnabled = isThinkingEnabled(environmentId);
-            const planModeEnabled = isPlanMode(environmentId);
+            const selectedModel = getSelectedModel(sessionKey);
+            const thinkingEnabled = isThinkingEnabled(sessionKey);
+            const planModeEnabled = isPlanMode(sessionKey);
             const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
 
             // Start SSE subscription first so we can receive the response
@@ -618,12 +618,22 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             }
           } else if (eventType === "plan.enter-requested") {
             // Claude has entered plan mode - enable plan mode in the UI to sync state
-            console.log("[ClaudeChatTab] Plan enter requested, enabling plan mode");
-            setPlanMode(environmentId, true);
+            const planSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
+            if (planSessionKey) {
+              console.log("[ClaudeChatTab] Plan enter requested, enabling plan mode for session:", planSessionKey);
+              setPlanMode(planSessionKey, true);
+            } else {
+              console.warn("[ClaudeChatTab] Could not find session key for plan.enter-requested event, sessionId:", eventSessionId);
+            }
           } else if (eventType === "plan.exit-requested") {
-            // Claude has requested to exit plan mode - disable plan mode for this environment
-            console.log("[ClaudeChatTab] Plan exit requested, disabling plan mode");
-            setPlanMode(environmentId, false);
+            // Claude has requested to exit plan mode - disable plan mode for this session
+            const planSessionKey = eventSessionId ? getSessionKeyBySdkSessionId(eventSessionId) : null;
+            if (planSessionKey) {
+              console.log("[ClaudeChatTab] Plan exit requested, disabling plan mode for session:", planSessionKey);
+              setPlanMode(planSessionKey, false);
+            } else {
+              console.warn("[ClaudeChatTab] Could not find session key for plan.exit-requested event, sessionId:", eventSessionId);
+            }
           } else if (eventType === "plan.approval-requested") {
             // Claude is waiting for plan approval - show approval UI
             const approvalData = event.data as PlanApprovalRequestedEventData | undefined;
@@ -701,7 +711,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     async (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => {
       if (!client || !session) return;
 
-      const selectedModel = getSelectedModel(environmentId);
+      const selectedModel = getSelectedModel(sessionKey);
 
       const userMessage = {
         id: crypto.randomUUID(),
@@ -737,14 +747,14 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setSessionLoading(sessionKey, false);
       }
     },
-    [client, session, sessionKey, environmentId, getSelectedModel, addMessage, setSessionLoading]
+    [client, session, sessionKey, getSelectedModel, addMessage, setSessionLoading]
   );
 
   handleSendRef.current = handleSend;
 
   // Compute thinking and plan mode values outside useEffect to avoid function reference dependencies
-  const thinkingEnabledValue = isThinkingEnabled(environmentId);
-  const planModeEnabledValue = isPlanMode(environmentId);
+  const thinkingEnabledValue = isThinkingEnabled(sessionKey);
+  const planModeEnabledValue = isPlanMode(sessionKey);
 
   // Send initial prompt on RECONNECTION to existing session only.
   // New sessions handle initial prompt directly in initialize() to avoid race conditions.
