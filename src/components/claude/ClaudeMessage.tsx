@@ -11,6 +11,7 @@ import { useTerminalContext } from "@/contexts/TerminalContext";
 import { useFilesPanelStore } from "@/stores";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type ClaudeMessagePart, type ToolDiffMetadata } from "@/lib/claude-client";
 import { toast } from "sonner";
+import { processPartsInOrder } from "@/lib/claude-task-utils";
 
 /** Parsed attachment from XML tags */
 interface ParsedAttachment {
@@ -1221,11 +1222,6 @@ function isEditTool(toolName?: string): boolean {
   return name === "edit" || name === "write";
 }
 
-/** Check if a tool name is a Task tool */
-function isTaskTool(toolName?: string): boolean {
-  if (!toolName) return false;
-  return toolName.toLowerCase() === "task";
-}
 
 /** Check if a tool name is a TodoWrite tool */
 function isTodoTool(toolName?: string): boolean {
@@ -1233,40 +1229,6 @@ function isTodoTool(toolName?: string): boolean {
   return toolName.toLowerCase() === "todowrite";
 }
 
-/** Process parts to group tools under Tasks while preserving order */
-interface ProcessedPart {
-  type: "thinking" | "text" | "file" | "tool-group" | "task-group";
-  part?: ClaudeMessagePart;
-  childTools?: ClaudeMessagePart[];
-}
-
-function processPartsInOrder(parts: ClaudeMessagePart[]): ProcessedPart[] {
-  const result: ProcessedPart[] = [];
-  let currentTask: ProcessedPart | null = null;
-
-  for (const part of parts) {
-    if (part.type === "thinking" || part.type === "text" || part.type === "file") {
-      // Non-tool parts break any active Task context
-      currentTask = null;
-      result.push({ type: part.type, part });
-    } else if (part.type === "tool-invocation") {
-      if (isTaskTool(part.toolName)) {
-        // Start a new Task group
-        currentTask = { type: "task-group", part, childTools: [] };
-        result.push(currentTask);
-      } else if (currentTask) {
-        // Add to current Task's children
-        currentTask.childTools!.push(part);
-      } else {
-        // Standalone tool (no active Task)
-        result.push({ type: "tool-group", part });
-      }
-    }
-    // Skip tool-result type - they're shown inline with invocations
-  }
-
-  return result;
-}
 
 export const ClaudeMessage = memo(function ClaudeMessage({
   message,

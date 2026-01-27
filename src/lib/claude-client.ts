@@ -36,6 +36,10 @@ export interface ClaudeMessagePart {
   toolOutput?: string;
   toolError?: string;
   toolDiff?: ToolDiffMetadata;
+  /** Tool use ID for this tool invocation */
+  toolUseId?: string;
+  /** Parent Task tool use ID - used to group child tools under their parent Task */
+  parentTaskUseId?: string;
   /** Internal: Message UUID for tracking thinking parts (can be ignored by renderers) */
   _messageUuid?: string;
   /** Whether this tool is from an MCP server */

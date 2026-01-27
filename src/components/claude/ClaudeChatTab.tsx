@@ -129,6 +129,10 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     return approvals;
   }, [session?.sessionId, pendingPlanApprovalsMap]);
 
+  // Memoize messages separately to provide stable reference for child components
+  // This prevents unnecessary recalculations when other session properties change
+  const sessionMessages = useMemo(() => session?.messages ?? [], [session?.messages]);
+
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
 
@@ -903,6 +907,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                   approval={approval}
                   client={client}
                   sessionId={session.sessionId}
+                  messages={sessionMessages}
                 />
               ))}
             </div>
