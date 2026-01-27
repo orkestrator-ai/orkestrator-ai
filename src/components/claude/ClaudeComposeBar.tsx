@@ -97,7 +97,17 @@ export function ClaudeComposeBar({
   );
 
   // File search hook for @ mentions
-  const { searchFiles } = useFileSearch(containerId, worktreePath);
+  const { searchFiles, error: fileSearchError } = useFileSearch(containerId, worktreePath);
+
+  // Show toast if file search fails to load
+  useEffect(() => {
+    if (fileSearchError) {
+      toast.error("Failed to load files for @mentions", {
+        description: fileSearchError,
+        duration: 4000,
+      });
+    }
+  }, [fileSearchError]);
 
   // File mentions hook for @ detection and menu management
   const {

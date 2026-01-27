@@ -1,6 +1,7 @@
 import {
   useRef,
   useEffect,
+  useLayoutEffect,
   useCallback,
   forwardRef,
   useImperativeHandle,
@@ -144,7 +145,8 @@ function renderContent(text: string, mentions: FileMention[]): string {
   let result = escapeHtml(text);
 
   for (const pattern of sortedPatterns) {
-    const mention = mentionMap.get(pattern)!;
+    const mention = mentionMap.get(pattern);
+    if (!mention) continue; // Defensive check
     const escapedPattern = escapeHtml(pattern);
     const mentionHtml = `<span class="text-blue-500 font-medium" data-mention="true" data-id="${mention.id}" data-filename="${escapeAttr(mention.filename)}" data-path="${escapeAttr(mention.relativePath)}" contenteditable="false">${escapedPattern}</span>`;
     result = result.replace(new RegExp(escapeRegExp(escapedPattern), "g"), mentionHtml);
@@ -166,6 +168,15 @@ function escapeAttr(text: string): string {
 
 function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Shallow comparison of two FileMention arrays by id.
+ * More efficient than JSON.stringify for small arrays.
+ */
+function areMentionsEqual(a: FileMention[], b: FileMention[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((m, i) => m.id === b[i]?.id);
 }
 
 /**
@@ -192,6 +203,8 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
     const lastValueRef = useRef(value);
     const lastMentionsRef = useRef(mentions);
     const isComposingRef = useRef(false);
+    // Track pending cursor position for mention insertion (avoids race condition with React render)
+    const pendingCursorRef = useRef<number | null>(null);
 
     // Expose methods via ref
     useImperativeHandle(ref, () => ({
@@ -218,14 +231,11 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
             currentText.slice(cursorPos);
 
           const newMentions = [...mentions, mention];
-          onChange(newText, newMentions);
 
-          // Set cursor after the inserted mention + space
-          requestAnimationFrame(() => {
-            if (inputRef.current) {
-              setCursorOffset(inputRef.current, atStart + mention.filename.length + 2);
-            }
-          });
+          // Schedule cursor position after DOM update (handled by useLayoutEffect)
+          pendingCursorRef.current = atStart + mention.filename.length + 2;
+
+          onChange(newText, newMentions);
         }
       },
     }));
@@ -237,7 +247,7 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
       // Skip if this change came from user input (to avoid cursor jumping)
       if (
         value === lastValueRef.current &&
-        JSON.stringify(mentions) === JSON.stringify(lastMentionsRef.current)
+        areMentionsEqual(mentions, lastMentionsRef.current)
       ) {
         return;
       }
@@ -253,6 +263,14 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
 
       // Restore cursor position
       setCursorOffset(inputRef.current, cursorPos);
+    }, [value, mentions]);
+
+    // Apply pending cursor position after DOM updates (for mention insertion)
+    useLayoutEffect(() => {
+      if (pendingCursorRef.current !== null && inputRef.current) {
+        setCursorOffset(inputRef.current, pendingCursorRef.current);
+        pendingCursorRef.current = null;
+      }
     }, [value, mentions]);
 
     // Handle input
@@ -307,14 +325,33 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
         document.removeEventListener("selectionchange", handleSelectionChange);
     }, [onCursorChange]);
 
-    // Handle paste - strip HTML and insert plain text
+    // Handle paste - strip HTML and insert plain text using modern Selection API
     const handlePaste = useCallback(
       (event: ClipboardEvent<HTMLDivElement>) => {
         event.preventDefault();
         const text = event.clipboardData.getData("text/plain");
-        document.execCommand("insertText", false, text);
+
+        // Use modern Selection/Range API instead of deprecated execCommand
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+
+        // Insert text node
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+
+        // Move cursor to end of inserted text
+        range.setStartAfter(textNode);
+        range.setEndAfter(textNode);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // Trigger input handler to sync state
+        handleInput();
       },
-      []
+      [handleInput]
     );
 
     // Handle key down
