@@ -86,9 +86,8 @@ pub async fn start_claude_server(container_id: String) -> Result<ClaudeServerSta
         source ~/.profile 2>/dev/null || true
         source ~/.bashrc 2>/dev/null || true
         source ~/.zshrc 2>/dev/null || true
-        # Also source Bun's env script directly if it exists
-        source ~/.bun/bin/bun 2>/dev/null || true
-        [ -f ~/.bun/bin/bun ] && export PATH="$HOME/.bun/bin:$PATH"
+        # Add Bun's bin directory to PATH if it exists
+        [ -d ~/.bun/bin ] && export PATH="$HOME/.bun/bin:$PATH"
         export PORT=4097
         export HOSTNAME=0.0.0.0
         setsid node /opt/claude-bridge/dist/index.js > /tmp/claude-bridge.log 2>&1 &
