@@ -77,9 +77,18 @@ pub async fn start_claude_server(container_id: String) -> Result<ClaudeServerSta
     // Use setsid to create a new session so the process survives exec termination
     // --port 4097: listen on the mapped container port
     // PORT and HOSTNAME are set as environment variables
+    // Source shell profiles to inherit PATH modifications from setup scripts (e.g., Bun installation)
     let command = r#"
         cd /workspace
         rm -f /tmp/claude-bridge.log
+        # Source shell profiles to get PATH modifications from setup scripts
+        source /etc/profile 2>/dev/null || true
+        source ~/.profile 2>/dev/null || true
+        source ~/.bashrc 2>/dev/null || true
+        source ~/.zshrc 2>/dev/null || true
+        # Also source Bun's env script directly if it exists
+        source ~/.bun/bin/bun 2>/dev/null || true
+        [ -f ~/.bun/bin/bun ] && export PATH="$HOME/.bun/bin:$PATH"
         export PORT=4097
         export HOSTNAME=0.0.0.0
         setsid node /opt/claude-bridge/dist/index.js > /tmp/claude-bridge.log 2>&1 &
