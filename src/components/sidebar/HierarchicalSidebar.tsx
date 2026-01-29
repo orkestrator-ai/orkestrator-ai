@@ -265,7 +265,7 @@ export function HierarchicalSidebar() {
       // Always auto-start the environment after creation
       // The tab type (plain terminal vs agent) is determined by agentOptions.launchAgent
       try {
-        const setupCommands = await startEnvironment(environment.id);
+        const setupCommands = await startEnvironment(environment.id, options.initialPrompt || undefined);
         // If setup commands were returned (local env with orkestrator-ai.json), store them
         // IMPORTANT: Store commands BEFORE marking as resolved to avoid race condition
         if (setupCommands && setupCommands.length > 0) {

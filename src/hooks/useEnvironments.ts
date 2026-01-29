@@ -171,7 +171,7 @@ export function useEnvironments(projectId: string | null) {
   );
 
   const startEnvironment = useCallback(
-    async (environmentId: string) => {
+    async (environmentId: string, initialPrompt?: string) => {
       console.log("[useEnvironments] startEnvironment called:", environmentId);
       const existingEnv = environments.find((env) => env.id === environmentId);
       if (existingEnv) {
@@ -216,7 +216,7 @@ export function useEnvironments(projectId: string | null) {
           description: truncateForToast(message),
           action: {
             label: "Details",
-            onClick: () => showError("Failed to start environment", message),
+            onClick: () => showError("Failed to start environment", message, initialPrompt),
           },
         });
         throw new Error(message);

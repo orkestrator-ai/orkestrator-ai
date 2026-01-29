@@ -27,6 +27,17 @@ export function ErrorDetailsDialog() {
     }
   };
 
+  const handleCopyInitialPrompt = async () => {
+    if (!error?.initialPrompt) return;
+
+    try {
+      await navigator.clipboard.writeText(error.initialPrompt);
+      toast.success("Initial prompt copied to clipboard");
+    } catch {
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
   return (
     <AlertDialog open={error !== null} onOpenChange={(open) => !open && closeError()}>
       <AlertDialogContent className="max-w-lg max-h-[85vh] flex flex-col">
@@ -36,9 +47,28 @@ export function ErrorDetailsDialog() {
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-3">
-              <pre className="whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-sm font-mono text-foreground max-h-[50vh] overflow-y-auto">
+              <pre className="whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-sm font-mono text-foreground max-h-[30vh] overflow-y-auto">
                 {error?.message}
               </pre>
+              {error?.initialPrompt && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-foreground">Initial Prompt</p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={handleCopyInitialPrompt}
+                    >
+                      <Copy className="h-3.5 w-3.5 mr-1" />
+                      Copy
+                    </Button>
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-sm font-mono text-foreground max-h-[20vh] overflow-y-auto">
+                    {error.initialPrompt}
+                  </pre>
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
                 {error?.timestamp.toLocaleString()}
               </p>
