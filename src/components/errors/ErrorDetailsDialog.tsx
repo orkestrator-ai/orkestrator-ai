@@ -18,7 +18,11 @@ export function ErrorDetailsDialog() {
   const handleCopyError = async () => {
     if (!error) return;
 
-    const errorText = `${error.title}\n\n${error.message}\n\nTimestamp: ${error.timestamp.toISOString()}`;
+    let errorText = `${error.title}\n\n${error.message}`;
+    if (error.initialPrompt) {
+      errorText += `\n\nInitial Prompt:\n${error.initialPrompt}`;
+    }
+    errorText += `\n\nTimestamp: ${error.timestamp.toISOString()}`;
     try {
       await navigator.clipboard.writeText(errorText);
       toast.success("Error details copied to clipboard");
@@ -60,7 +64,7 @@ export function ErrorDetailsDialog() {
                       className="h-7 px-2"
                       onClick={handleCopyInitialPrompt}
                     >
-                      <Copy className="h-3.5 w-3.5 mr-1" />
+                      <Copy className="h-3.5 w-3.5 mr-2" />
                       Copy
                     </Button>
                   </div>
