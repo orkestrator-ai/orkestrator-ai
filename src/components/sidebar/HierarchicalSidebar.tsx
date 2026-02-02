@@ -71,6 +71,7 @@ export function HierarchicalSidebar() {
     toggleEnvironmentSelection,
     setMultiSelection,
     clearMultiSelection,
+    collapseEmptyProjects,
   } = useUIStore();
 
   const { setPendingSetupCommands, setSetupCommandsResolved } = useEnvironmentStore();
@@ -113,11 +114,19 @@ export function HierarchicalSidebar() {
           await loadEnvironments(project.id);
         }
       }
+      // After loading all environments, collapse projects without any environments
+      if (projects.length > 0) {
+        const projectsWithEnvs = new Set(allEnvironments.map((e) => e.projectId));
+        collapseEmptyProjects(
+          projects.map((p) => p.id),
+          projectsWithEnvs
+        );
+      }
     };
     if (projects.length > 0) {
       loadNewProjectEnvironments();
     }
-  }, [projects, loadEnvironments]);
+  }, [projects, loadEnvironments, allEnvironments, collapseEmptyProjects]);
 
   // Get environments for a specific project
   const getProjectEnvironments = useCallback(
