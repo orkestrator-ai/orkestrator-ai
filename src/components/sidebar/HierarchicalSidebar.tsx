@@ -71,6 +71,7 @@ export function HierarchicalSidebar() {
     toggleEnvironmentSelection,
     setMultiSelection,
     clearMultiSelection,
+    collapseEmptyProjects,
   } = useUIStore();
 
   const { setPendingSetupCommands, setSetupCommandsResolved } = useEnvironmentStore();
@@ -95,12 +96,15 @@ export function HierarchicalSidebar() {
 
   // Track which project IDs we've already loaded environments for
   const loadedProjectIdsRef = useRef<Set<string>>(new Set());
+  // Track whether initial collapse of empty projects has been done
+  const initialCollapseAppliedRef = useRef(false);
 
   // Reset the loaded ref when store is empty but ref has items
   // (handles hot reload where store is reset but ref persists)
   useEffect(() => {
     if (allEnvironments.length === 0 && loadedProjectIdsRef.current.size > 0) {
       loadedProjectIdsRef.current.clear();
+      initialCollapseAppliedRef.current = false;
     }
   }, [allEnvironments.length]);
 
@@ -118,6 +122,25 @@ export function HierarchicalSidebar() {
       loadNewProjectEnvironments();
     }
   }, [projects, loadEnvironments]);
+
+  // Collapse empty projects on initial load (runs once after environments are loaded)
+  useEffect(() => {
+    if (initialCollapseAppliedRef.current || projects.length === 0) {
+      return;
+    }
+    // Wait until we've attempted to load environments for all projects
+    const allProjectsLoaded = projects.every((p) => loadedProjectIdsRef.current.has(p.id));
+    if (!allProjectsLoaded) {
+      return;
+    }
+    // Apply collapse and mark as done
+    const projectsWithEnvs = new Set(allEnvironments.map((e) => e.projectId));
+    collapseEmptyProjects(
+      projects.map((p) => p.id),
+      projectsWithEnvs
+    );
+    initialCollapseAppliedRef.current = true;
+  }, [projects, allEnvironments, collapseEmptyProjects]);
 
   // Get environments for a specific project
   const getProjectEnvironments = useCallback(

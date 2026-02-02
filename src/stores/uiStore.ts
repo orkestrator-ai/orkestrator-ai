@@ -41,6 +41,8 @@ interface UIState {
   toggleSessionsExpanded: (environmentId: string) => void;
   /** Check if sessions are expanded for an environment */
   isSessionsExpanded: (environmentId: string) => boolean;
+  /** Collapse projects that have no environments (used on initial load) */
+  collapseEmptyProjects: (projectIds: string[], projectsWithEnvironments: Set<string>) => void;
   /** Set zoom level (clamped to 50-200) */
   setZoomLevel: (level: number) => void;
   /** Zoom in by 10% */
@@ -119,6 +121,20 @@ export const useUIStore = create<UIState>()(
 
       isSessionsExpanded: (environmentId) =>
         get().expandedSessionsEnvironments.includes(environmentId),
+
+      collapseEmptyProjects: (projectIds, projectsWithEnvironments) =>
+        set((state) => {
+          // Find projects that have no environments and aren't already collapsed
+          const emptyProjects = projectIds.filter(
+            (id) => !projectsWithEnvironments.has(id) && !state.collapsedProjects.includes(id)
+          );
+          if (emptyProjects.length === 0) {
+            return state; // No change needed
+          }
+          return {
+            collapsedProjects: [...state.collapsedProjects, ...emptyProjects],
+          };
+        }),
 
       setZoomLevel: (level) =>
         set({ zoomLevel: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, level)) }),
