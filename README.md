@@ -41,8 +41,8 @@ A desktop application for managing isolated Docker-based development environment
 git clone <repo-url>
 cd orkestrator-ai
 
-# Install dependencies
-bun install
+# Run setup (downloads bun binary, installs dependencies, builds Claude bridge)
+bun run setup
 
 # Build the Docker base image (required for container functionality)
 cd docker && docker build -t orkestrator-ai:latest . && cd ..
