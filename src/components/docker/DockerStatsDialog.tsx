@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import * as tauri from "@/lib/tauri";
 import type { DockerSystemStats, ContainerInfo, SystemPruneResult } from "@/lib/tauri";
-import { useProjectStore } from "@/stores";
+import { useProjectStore, useEnvironmentStore } from "@/stores";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -92,6 +92,9 @@ export function DockerStatsDialog({ open, onOpenChange }: DockerStatsDialogProps
   // Get project lookup function and projects list
   const getProjectById = useProjectStore((state) => state.getProjectById);
   const projects = useProjectStore((state) => state.projects);
+
+  // Get environment store action to add reattached environments
+  const addEnvironment = useEnvironmentStore((state) => state.addEnvironment);
 
   // Reattach dialog state
   const [showReattachDialog, setShowReattachDialog] = useState(false);
@@ -222,11 +225,13 @@ export function DockerStatsDialog({ open, onOpenChange }: DockerStatsDialogProps
     setError(null);
 
     try {
-      await tauri.reattachContainer(
+      const newEnvironment = await tauri.reattachContainer(
         selectedProjectId,
         reattachingContainer.id,
         reattachName || undefined
       );
+      // Add the new environment to the store so sidebar updates immediately
+      addEnvironment(newEnvironment);
       // Refresh the containers list
       const containersData = await tauri.getOrkestratorContainers();
       setContainers(containersData);

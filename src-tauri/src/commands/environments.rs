@@ -1599,10 +1599,22 @@ pub async fn reattach_container(
     // Determine environment name: use provided name, or fall back to container name
     let env_name = name.unwrap_or_else(|| container_name.clone());
 
-    // Load existing environments to check for duplicate names
+    // Load existing environments to check for duplicate names and existing attachments
     let existing_environments = storage
         .load_environments()
         .map_err(storage_error_to_string)?;
+
+    // Check if this container is already attached to an environment
+    let already_attached = existing_environments
+        .iter()
+        .find(|e| e.container_id.as_ref() == Some(&container_id));
+
+    if let Some(existing_env) = already_attached {
+        return Err(format!(
+            "Container is already attached to environment '{}' (ID: {})",
+            existing_env.name, existing_env.id
+        ));
+    }
 
     // Make the name unique
     let unique_name = make_unique_name(&env_name, &existing_environments);
@@ -1621,6 +1633,10 @@ pub async fn reattach_container(
     };
 
     // Create the environment with the container already attached
+    // Note: The branch field will be auto-generated from the environment name.
+    // This branch may not exist in the container's git repository - the container
+    // retains whatever git state it had when orphaned. The branch field serves as
+    // a placeholder identifier for the reattached environment.
     let mut environment = Environment::with_name(project_id.clone(), unique_name.clone());
     environment.container_id = Some(container_id.clone());
     environment.status = status;
