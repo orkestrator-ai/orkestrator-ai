@@ -260,6 +260,32 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
       console.log("[settings] Received from backend:", JSON.stringify(newConfig, null, 2));
       setConfig(newConfig);
 
+      // Propagate GitHub token to running containers if it changed
+      const oldToken = global.githubToken || "";
+      const newTokenValue = githubToken || "";
+      if (oldToken !== newTokenValue) {
+        console.log("[settings] GitHub token changed, propagating to running containers");
+        try {
+          const propagateResult = await tauri.propagateGithubTokenToContainers(
+            newTokenValue === "" ? null : newTokenValue
+          );
+          if (propagateResult.updated.length > 0) {
+            toast.success(
+              `Updated GitHub token in ${propagateResult.updated.length} container(s)`
+            );
+          }
+          if (propagateResult.failed.length > 0) {
+            console.warn(
+              "[settings] Failed to update some containers:",
+              propagateResult.failed
+            );
+          }
+        } catch (err) {
+          console.error("[settings] Failed to propagate token:", err);
+          // Don't show error toast - the main save succeeded
+        }
+      }
+
       setHasChanges(false);
       console.log("[settings] Save complete");
       setSaveSuccess(true);

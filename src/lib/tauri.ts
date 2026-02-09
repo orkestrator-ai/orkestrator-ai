@@ -395,6 +395,19 @@ export async function getContainerHostPort(containerId: string, containerPort: n
   return invoke<number | null>("get_container_host_port", { containerId, containerPort });
 }
 
+/** Result of propagating GitHub token to containers */
+export interface PropagateTokenResult {
+  /** Environment IDs where token was successfully updated */
+  updated: string[];
+  /** Failed updates: [environment_id, error_message] */
+  failed: [string, string][];
+}
+
+/** Propagate GitHub token to all running containerized environments */
+export async function propagateGithubTokenToContainers(newToken: string | null): Promise<PropagateTokenResult> {
+  return invoke<PropagateTokenResult>("propagate_github_token_to_containers", { newToken });
+}
+
 // --- OpenCode Server Commands ---
 
 export interface OpenCodeServerStartResult {
