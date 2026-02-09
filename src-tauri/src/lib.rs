@@ -167,6 +167,7 @@ pub fn run() {
             get_container_logs,
             stream_container_logs,
             get_container_host_port,
+            propagate_github_token_to_containers,
             // Terminal commands
             attach_terminal,
             create_terminal_session,

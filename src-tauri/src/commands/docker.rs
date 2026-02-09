@@ -440,6 +440,152 @@ pub async fn get_container_host_port(container_id: String, container_port: u16) 
         .map_err(|e| e.to_string())
 }
 
+/// Result of propagating GitHub token to containers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PropagateTokenResult {
+    /// Environment IDs where token was successfully updated
+    pub updated: Vec<String>,
+    /// Failed updates: (environment_id, error_message)
+    pub failed: Vec<(String, String)>,
+}
+
+/// Propagate GitHub token to all running containerized environments
+/// Updates git config inside each container to use the new token for HTTPS auth
+#[tauri::command]
+pub async fn propagate_github_token_to_containers(
+    new_token: Option<String>,
+) -> Result<PropagateTokenResult, String> {
+    let storage = get_storage().map_err(|e| e.to_string())?;
+    let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
+
+    // Get all environments
+    let all_environments = storage.get_all_environments().map_err(|e| e.to_string())?;
+
+    // Filter for running containerized environments
+    let running_containers: Vec<_> = all_environments
+        .iter()
+        .filter(|env| {
+            env.is_containerized()
+                && env.status == EnvironmentStatus::Running
+                && env.container_id.is_some()
+        })
+        .collect();
+
+    info!(
+        count = running_containers.len(),
+        "Propagating GitHub token to running containers"
+    );
+
+    let mut result = PropagateTokenResult {
+        updated: Vec::new(),
+        failed: Vec::new(),
+    };
+
+    for env in running_containers {
+        let container_id = match &env.container_id {
+            Some(id) => id,
+            None => continue,
+        };
+
+        let update_result = if let Some(ref token) = new_token {
+            if token.is_empty() {
+                // Empty token means clear
+                update_container_git_config_clear(&client, container_id).await
+            } else {
+                // Set new token
+                update_container_git_config(&client, container_id, token).await
+            }
+        } else {
+            // None means clear
+            update_container_git_config_clear(&client, container_id).await
+        };
+
+        match update_result {
+            Ok(()) => {
+                debug!(
+                    environment_id = %env.id,
+                    container_id = %container_id,
+                    "Updated GitHub token in container"
+                );
+                result.updated.push(env.id.clone());
+            }
+            Err(e) => {
+                warn!(
+                    environment_id = %env.id,
+                    container_id = %container_id,
+                    error = %e,
+                    "Failed to update GitHub token in container"
+                );
+                result.failed.push((env.id.clone(), e));
+            }
+        }
+    }
+
+    info!(
+        updated = result.updated.len(),
+        failed = result.failed.len(),
+        "GitHub token propagation complete"
+    );
+
+    Ok(result)
+}
+
+/// Update git config in a container to use a new GitHub token
+async fn update_container_git_config(
+    client: &docker::client::DockerClient,
+    container_id: &str,
+    token: &str,
+) -> Result<(), String> {
+    // First, clear any existing token configurations to prevent accumulation
+    update_container_git_config_clear(client, container_id).await?;
+
+    // Git config commands to set token for HTTPS authentication
+    // These match the patterns in docker/workspace-setup.sh
+    let commands = [
+        format!(
+            "git config --global url.\"https://x-access-token:{}@github.com/\".insteadOf \"https://github.com/\"",
+            token
+        ),
+        format!(
+            "git config --global url.\"https://x-access-token:{}@github.com/\".insteadOf \"https://github.com\"",
+            token
+        ),
+        format!(
+            "git config --global url.\"https://x-access-token:{}@github.com/\".insteadOf \"git@github.com:\"",
+            token
+        ),
+    ];
+
+    for cmd in &commands {
+        client
+            .exec_command(container_id, vec!["sh", "-c", cmd])
+            .await
+            .map_err(|e| format!("Failed to execute git config: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Clear git config token entries in a container
+async fn update_container_git_config_clear(
+    client: &docker::client::DockerClient,
+    container_id: &str,
+) -> Result<(), String> {
+    // Find all git config sections that contain x-access-token and remove them.
+    // Git config sections for URL rewriting include the full URL in the section name,
+    // e.g., [url "https://x-access-token:TOKEN@github.com/"]
+    // We need to find these dynamically and remove each section.
+    let cmd = r#"git config --global --list 2>/dev/null | grep '^url\.https://x-access-token:' | sed 's/\.insteadof=.*//' | sort -u | while read section; do git config --global --remove-section "$section" 2>/dev/null || true; done"#;
+
+    client
+        .exec_command(container_id, vec!["sh", "-c", cmd])
+        .await
+        .map_err(|e| format!("Failed to clear git config: {}", e))?;
+
+    Ok(())
+}
+
 /// Payload for container log events
 #[derive(Clone, Serialize)]
 pub struct ContainerLogPayload {
