@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useConfigStore } from "@/stores";
 import * as tauri from "@/lib/tauri";
-import { Loader2, Network, Plus, Trash2, ChevronDown, FolderOpen, ExternalLink, FileText } from "lucide-react";
+import { Loader2, Network, Plus, Trash2, ChevronDown, FolderOpen, ExternalLink, FileText, Container, RefreshCw } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "@/lib/utils";
 import type { Project, RepositoryConfig, PortMapping, PortProtocol } from "@/types";
@@ -69,6 +69,10 @@ export function RepositorySettings({
     initialConfig.filesToCopy ?? []
   );
   const [showFilesConfig, setShowFilesConfig] = useState(false);
+  const [showDockerConfig, setShowDockerConfig] = useState(false);
+  const [dockerfile, setDockerfile] = useState<string | undefined>(initialConfig.dockerfile);
+  const [isEjecting, setIsEjecting] = useState(false);
+  const [isRebuilding, setIsRebuilding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // Reset form when project changes or dialog opens
@@ -87,6 +91,8 @@ export function RepositorySettings({
       setShowPortConfig((config.defaultPortMappings ?? []).length > 0);
       setFilesToCopy(config.filesToCopy ?? []);
       setShowFilesConfig((config.filesToCopy ?? []).length > 0);
+      setDockerfile(config.dockerfile);
+      setShowDockerConfig(!!config.dockerfile);
     }
   }, [open, project.id, project.name, project.localPath, getRepositoryConfig]);
 
@@ -200,6 +206,49 @@ export function RepositorySettings({
     }
   };
 
+  // Docker eject handler
+  const handleEjectDockerfile = async () => {
+    if (!localPath) {
+      toast.error("Local path required", {
+        description: "Set a local path before ejecting the Dockerfile.",
+      });
+      return;
+    }
+
+    setIsEjecting(true);
+    try {
+      const path = await tauri.ejectDockerfile(project.id);
+      // Backend updated the config - reload it to sync the store
+      const freshConfig = await tauri.getConfig();
+      setConfig(freshConfig);
+      setDockerfile(freshConfig.repositories[project.id]?.dockerfile);
+      toast.success("Dockerfile ejected", {
+        description: path,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error("Failed to eject Dockerfile", { description: message });
+    } finally {
+      setIsEjecting(false);
+    }
+  };
+
+  // Docker rebuild handler
+  const handleRebuildImage = async () => {
+    setIsRebuilding(true);
+    try {
+      const tag = await tauri.rebuildCustomImage(project.id);
+      toast.success("Image rebuilt", {
+        description: `Tag: ${tag}`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error("Failed to rebuild image", { description: message });
+    } finally {
+      setIsRebuilding(false);
+    }
+  };
+
   // Validate files to copy - returns { valid: boolean, error?: string }
   const validateFilesToCopy = useCallback((): { valid: boolean; error?: string } => {
     for (const file of filesToCopy) {
@@ -288,6 +337,7 @@ export function RepositorySettings({
         prBaseBranch,
         defaultPortMappings: portMappings.length > 0 ? portMappings : undefined,
         filesToCopy: cleanedFilesToCopy.length > 0 ? cleanedFilesToCopy : undefined,
+        dockerfile,
       };
 
       // Update backend
@@ -320,6 +370,7 @@ export function RepositorySettings({
     setPrBaseBranch(config.prBaseBranch);
     setPortMappings(config.defaultPortMappings ?? []);
     setFilesToCopy(config.filesToCopy ?? []);
+    setDockerfile(config.dockerfile);
     onOpenChange(false);
   };
 
@@ -617,6 +668,98 @@ export function RepositorySettings({
                 <Plus className="h-4 w-4 mr-2" />
                 Add File
               </Button>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Docker Configuration */}
+          <Collapsible open={showDockerConfig} onOpenChange={setShowDockerConfig}>
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full justify-between p-3 h-auto rounded-lg border border-input bg-muted/30 hover:bg-muted/50"
+                disabled={isSaving}
+              >
+                <div className="flex items-center gap-2">
+                  <Container className="h-4 w-4" />
+                  <span className="text-sm font-medium">Docker Configuration</span>
+                  {dockerfile && (
+                    <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      Custom
+                    </span>
+                  )}
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 transition-transform duration-200",
+                    showDockerConfig && "rotate-180"
+                  )}
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3 space-y-3">
+              {!dockerfile ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Eject the built-in Dockerfile to customize the container base image, installed packages, and build steps.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleEjectDockerfile}
+                    disabled={isSaving || isEjecting || !localPath}
+                    className="w-full"
+                  >
+                    {isEjecting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Ejecting...
+                      </>
+                    ) : (
+                      <>
+                        <Container className="h-4 w-4 mr-2" />
+                        Eject Dockerfile
+                      </>
+                    )}
+                  </Button>
+                  {!localPath && (
+                    <p className="text-xs text-destructive">
+                      A local path is required to eject the Dockerfile.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+                    <FileText className="h-4 w-4 shrink-0" />
+                    <span className="font-mono text-xs truncate">{dockerfile}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Edit the Dockerfile in your project, then rebuild to apply changes. The image is cached and only rebuilt when content changes.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRebuildImage}
+                    disabled={isSaving || isRebuilding}
+                    className="w-full"
+                  >
+                    {isRebuilding ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Rebuilding...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Rebuild Image
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
             </CollapsibleContent>
           </Collapsible>
         </div>
