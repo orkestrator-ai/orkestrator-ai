@@ -352,6 +352,15 @@ export async function cleanupOrphanedContainers(): Promise<number> {
   return invoke<number>("cleanup_orphaned_containers");
 }
 
+/** Reattach an orphaned container to a project by creating a new environment entry */
+export async function reattachContainer(
+  projectId: string,
+  containerId: string,
+  name?: string
+): Promise<Environment> {
+  return invoke<Environment>("reattach_container", { projectId, containerId, name });
+}
+
 /** Result of Docker system prune operation */
 export interface SystemPruneResult {
   /** Number of containers deleted */

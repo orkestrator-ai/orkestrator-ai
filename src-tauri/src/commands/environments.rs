@@ -1549,6 +1549,112 @@ pub async fn update_port_mappings(
         .map_err(storage_error_to_string)
 }
 
+/// Reattach an orphaned container to a project by creating a new environment entry
+/// This allows recovery of containers that have become disconnected from their environment entries
+#[tauri::command]
+pub async fn reattach_container(
+    project_id: String,
+    container_id: String,
+    name: Option<String>,
+) -> Result<Environment, String> {
+    info!(
+        project_id = %project_id,
+        container_id = %container_id,
+        name = ?name,
+        "Reattaching container to project"
+    );
+
+    let storage = get_storage().map_err(storage_error_to_string)?;
+
+    // Verify project exists
+    let _ = storage
+        .get_project(&project_id)
+        .map_err(storage_error_to_string)?
+        .ok_or_else(|| format!("Project not found: {}", project_id))?;
+
+    // Get container info to verify it exists and get its name/status
+    let docker = get_docker_client().map_err(|e| e.to_string())?;
+    let container_info = docker.inspect_container(&container_id).await
+        .map_err(|e| format!("Container not found: {}", e))?;
+
+    // Verify it's an orkestrator-ai container by checking labels
+    let labels = container_info.config
+        .as_ref()
+        .and_then(|c| c.labels.as_ref());
+
+    let is_orkestrator = labels
+        .map(|l| l.get("app").map(|v| v == "orkestrator-ai").unwrap_or(false))
+        .unwrap_or(false);
+
+    if !is_orkestrator {
+        return Err("Container is not an Orkestrator-managed container".to_string());
+    }
+
+    // Get the container name (strip leading '/' if present)
+    let container_name = container_info.name
+        .as_ref()
+        .map(|n| n.trim_start_matches('/').to_string())
+        .unwrap_or_else(|| format!("reattached-{}", &container_id[..12.min(container_id.len())]));
+
+    // Determine environment name: use provided name, or fall back to container name
+    let env_name = name.unwrap_or_else(|| container_name.clone());
+
+    // Load existing environments to check for duplicate names and existing attachments
+    let existing_environments = storage
+        .load_environments()
+        .map_err(storage_error_to_string)?;
+
+    // Check if this container is already attached to an environment
+    let already_attached = existing_environments
+        .iter()
+        .find(|e| e.container_id.as_ref() == Some(&container_id));
+
+    if let Some(existing_env) = already_attached {
+        return Err(format!(
+            "Container is already attached to environment '{}' (ID: {})",
+            existing_env.name, existing_env.id
+        ));
+    }
+
+    // Make the name unique
+    let unique_name = make_unique_name(&env_name, &existing_environments);
+    if unique_name != env_name {
+        debug!(
+            requested_name = %env_name,
+            assigned_name = %unique_name,
+            "Name already in use, using unique variant"
+        );
+    }
+
+    // Determine the container's current status
+    let status = match get_container_environment_status(&container_id).await {
+        Ok(s) => s,
+        Err(_) => EnvironmentStatus::Stopped,
+    };
+
+    // Create the environment with the container already attached
+    // Note: The branch field will be auto-generated from the environment name.
+    // This branch may not exist in the container's git repository - the container
+    // retains whatever git state it had when orphaned. The branch field serves as
+    // a placeholder identifier for the reattached environment.
+    let mut environment = Environment::with_name(project_id.clone(), unique_name.clone());
+    environment.container_id = Some(container_id.clone());
+    environment.status = status;
+
+    // Save to storage
+    let created_environment = storage
+        .add_environment(environment)
+        .map_err(storage_error_to_string)?;
+
+    info!(
+        environment_id = %created_environment.id,
+        container_id = %container_id,
+        "Container reattached successfully"
+    );
+
+    Ok(created_environment)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

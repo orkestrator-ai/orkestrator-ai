@@ -144,6 +144,7 @@ pub fn run() {
             recreate_environment,
             sync_environment_status,
             sync_all_environments_with_docker,
+            reattach_container,
             add_environment_domains,
             remove_environment_domains,
             update_environment_allowed_domains,

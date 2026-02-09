@@ -29,12 +29,21 @@ import {
   XCircle,
   Square,
   X,
+  Link2,
 } from "lucide-react";
 import * as tauri from "@/lib/tauri";
 import type { DockerSystemStats, ContainerInfo, SystemPruneResult } from "@/lib/tauri";
-import { useProjectStore } from "@/stores";
+import { useProjectStore, useEnvironmentStore } from "@/stores";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface DockerStatsDialogProps {
   open: boolean;
@@ -80,8 +89,19 @@ export function DockerStatsDialog({ open, onOpenChange }: DockerStatsDialogProps
   const [pruneResult, setPruneResult] = useState<SystemPruneResult | null>(null);
   const [pruneVolumes, setPruneVolumes] = useState(false);
 
-  // Get project lookup function
+  // Get project lookup function and projects list
   const getProjectById = useProjectStore((state) => state.getProjectById);
+  const projects = useProjectStore((state) => state.projects);
+
+  // Get environment store action to add reattached environments
+  const addEnvironment = useEnvironmentStore((state) => state.addEnvironment);
+
+  // Reattach dialog state
+  const [showReattachDialog, setShowReattachDialog] = useState(false);
+  const [reattachingContainer, setReattachingContainer] = useState<ContainerInfo | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [reattachName, setReattachName] = useState<string>("");
+  const [isReattaching, setIsReattaching] = useState(false);
 
   // Count orphaned containers
   const orphanedCount = containers.filter(c => !c.isAssigned).length;
@@ -188,6 +208,43 @@ export function DockerStatsDialog({ open, onOpenChange }: DockerStatsDialogProps
     } finally {
       setIsPruning(false);
       setShowPruneConfirm(false);
+    }
+  };
+
+  const openReattachDialog = (container: ContainerInfo) => {
+    setReattachingContainer(container);
+    setReattachName(container.name);
+    setSelectedProjectId("");
+    setShowReattachDialog(true);
+  };
+
+  const handleReattach = async () => {
+    if (!reattachingContainer || !selectedProjectId) return;
+
+    setIsReattaching(true);
+    setError(null);
+
+    try {
+      const newEnvironment = await tauri.reattachContainer(
+        selectedProjectId,
+        reattachingContainer.id,
+        reattachName || undefined
+      );
+      // Add the new environment to the store so sidebar updates immediately
+      addEnvironment(newEnvironment);
+      // Refresh the containers list
+      const containersData = await tauri.getOrkestratorContainers();
+      setContainers(containersData);
+      // Close dialog
+      setShowReattachDialog(false);
+      setReattachingContainer(null);
+      setSelectedProjectId("");
+      setReattachName("");
+    } catch (err) {
+      console.error("[DockerStatsDialog] Reattach failed:", err);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsReattaching(false);
     }
   };
 
@@ -455,9 +512,19 @@ export function DockerStatsDialog({ open, onOpenChange }: DockerStatsDialogProps
                             <span className="text-xs capitalize">{container.state}</span>
                           </div>
 
-                          {/* Stop/Delete buttons for orphaned containers */}
+                          {/* Reattach/Stop/Delete buttons for orphaned containers */}
                           {isOrphaned && (
                             <div className="flex items-center gap-1 ml-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900/30"
+                                onClick={() => openReattachDialog(container)}
+                                disabled={isOperating || isReattaching}
+                                title="Reattach to project"
+                              >
+                                <Link2 className="h-4 w-4" />
+                              </Button>
                               {isRunning && (
                                 <Button
                                   variant="ghost"
@@ -591,6 +658,88 @@ export function DockerStatsDialog({ open, onOpenChange }: DockerStatsDialogProps
                 </>
               ) : (
                 "Clean Up"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reattach Container Dialog */}
+      <AlertDialog open={showReattachDialog} onOpenChange={(open) => {
+        setShowReattachDialog(open);
+        if (!open) {
+          setReattachingContainer(null);
+          setSelectedProjectId("");
+          setReattachName("");
+        }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reattach Container to Project</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4">
+                <p>
+                  Reattach this container to a project by creating a new environment entry.
+                </p>
+                {reattachingContainer && (
+                  <div className="text-sm p-2 rounded bg-muted">
+                    <span className="font-medium">{reattachingContainer.name}</span>
+                    <span className="text-muted-foreground ml-2">
+                      ({reattachingContainer.id.substring(0, 12)})
+                    </span>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="project-select">Select Project</Label>
+                  <Select
+                    value={selectedProjectId}
+                    onValueChange={setSelectedProjectId}
+                  >
+                    <SelectTrigger id="project-select">
+                      <SelectValue placeholder="Choose a project..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="env-name">Environment Name</Label>
+                  <Input
+                    id="env-name"
+                    value={reattachName}
+                    onChange={(e) => setReattachName(e.target.value)}
+                    placeholder="Enter environment name..."
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave as-is to use the container name, or enter a custom name.
+                  </p>
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isReattaching}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleReattach}
+              disabled={isReattaching || !selectedProjectId}
+            >
+              {isReattaching ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Reattaching...
+                </>
+              ) : (
+                <>
+                  <Link2 className="mr-2 h-4 w-4" />
+                  Reattach
+                </>
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
