@@ -31,10 +31,13 @@ export interface SdkCompactBoundaryMessage extends SdkSystemMessage {
 /** SDK result message when query completes */
 export interface SdkResultMessage extends SdkMessageBase {
   type: "result";
-  subtype?: "success" | "error" | string;
+  subtype?: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string;
   result?: unknown;
-  cost_usd?: number;
+  total_cost_usd?: number;
   duration_ms?: number;
+  duration_api_ms?: number;
+  is_error?: boolean;
+  num_turns?: number;
   errors?: string[];
 }
 

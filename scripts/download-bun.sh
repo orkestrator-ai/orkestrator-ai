@@ -8,7 +8,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BINARIES_DIR="$PROJECT_ROOT/binaries"
 
 # Bun version to download
-BUN_VERSION="1.3.6"
+BUN_VERSION="1.3.8"
 
 # Detect architecture
 ARCH=$(uname -m)

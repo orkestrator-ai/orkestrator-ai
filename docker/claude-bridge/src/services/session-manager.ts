@@ -1065,7 +1065,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           sessionId,
           subtype: resultMsg.subtype,
           result: resultMsg.result,
-          costUSD: resultMsg.cost_usd,
+          costUSD: resultMsg.total_cost_usd,
           durationMs: resultMsg.duration_ms,
         });
         if (resultMsg.subtype === "success") {
