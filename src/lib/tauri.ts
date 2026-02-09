@@ -386,6 +386,18 @@ export async function getContainerHostPort(containerId: string, containerPort: n
   return invoke<number | null>("get_container_host_port", { containerId, containerPort });
 }
 
+// --- Docker Eject Commands ---
+
+/** Eject the internal Dockerfile to the project's .orkestrator folder */
+export async function ejectDockerfile(projectId: string): Promise<string> {
+  return invoke<string>("eject_dockerfile", { projectId });
+}
+
+/** Rebuild the custom Docker image for a project */
+export async function rebuildCustomImage(projectId: string): Promise<string> {
+  return invoke<string>("rebuild_custom_image", { projectId });
+}
+
 // --- OpenCode Server Commands ---
 
 export interface OpenCodeServerStartResult {

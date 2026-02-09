@@ -180,6 +180,8 @@ export interface RepositoryConfig {
   defaultPortMappings?: PortMapping[];
   /** Additional files to copy from local project path to environments (relative paths) */
   filesToCopy?: string[];
+  /** Custom Dockerfile path relative to project root (e.g., ".orkestrator/Dockerfile") */
+  dockerfile?: string;
 }
 
 export interface AppConfig {

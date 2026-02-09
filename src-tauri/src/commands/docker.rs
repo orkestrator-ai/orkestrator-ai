@@ -440,6 +440,111 @@ pub async fn get_container_host_port(container_id: String, container_port: u16) 
         .map_err(|e| e.to_string())
 }
 
+/// The default Dockerfile content, embedded at compile time for ejecting
+const DEFAULT_DOCKERFILE: &str = include_str!("../../docker/Dockerfile");
+
+/// Eject the internal Dockerfile to a project's .orkestrator folder
+///
+/// Copies the built-in Dockerfile to `{project_local_path}/.orkestrator/Dockerfile`
+/// and updates the repository config to use it for future builds.
+#[tauri::command]
+pub async fn eject_dockerfile(project_id: String) -> Result<String, String> {
+    let storage = get_storage().map_err(|e| e.to_string())?;
+
+    // Get the project to find local_path
+    let project = storage
+        .get_project(&project_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Project not found: {}", project_id))?;
+
+    let local_path = project
+        .local_path
+        .as_ref()
+        .ok_or("Project has no local path. A local path is required to eject the Dockerfile.")?;
+
+    let orkestrator_dir = std::path::Path::new(local_path).join(".orkestrator");
+    let dockerfile_path = orkestrator_dir.join("Dockerfile");
+
+    // Create .orkestrator directory if needed
+    std::fs::create_dir_all(&orkestrator_dir)
+        .map_err(|e| format!("Failed to create .orkestrator directory: {}", e))?;
+
+    // Write the Dockerfile
+    std::fs::write(&dockerfile_path, DEFAULT_DOCKERFILE)
+        .map_err(|e| format!("Failed to write Dockerfile: {}", e))?;
+
+    // Update repository config
+    let mut config = storage.load_config().map_err(|e| e.to_string())?;
+    let repo_config = config
+        .repositories
+        .entry(project_id.clone())
+        .or_default();
+    repo_config.dockerfile = Some(".orkestrator/Dockerfile".to_string());
+    storage.save_config(&config).map_err(|e| e.to_string())?;
+
+    info!(
+        project_id = %project_id,
+        path = %dockerfile_path.display(),
+        "Ejected Dockerfile to project"
+    );
+
+    Ok(dockerfile_path.to_string_lossy().to_string())
+}
+
+/// Rebuild the custom Docker image for a project
+///
+/// Force rebuilds even if the image already exists.
+#[tauri::command]
+pub async fn rebuild_custom_image(project_id: String) -> Result<String, String> {
+    let storage = get_storage().map_err(|e| e.to_string())?;
+
+    // Get the project
+    let project = storage
+        .get_project(&project_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Project not found: {}", project_id))?;
+
+    let local_path = project
+        .local_path
+        .as_ref()
+        .ok_or("Project has no local path.")?;
+
+    // Get the config to find the Dockerfile path
+    let config = storage.load_config().map_err(|e| e.to_string())?;
+    let repo_config = config
+        .repositories
+        .get(&project_id)
+        .ok_or("No repository config found for this project.")?;
+
+    let dockerfile_rel = repo_config
+        .dockerfile
+        .as_ref()
+        .ok_or("No custom Dockerfile configured. Eject first.")?;
+
+    let project_path = std::path::Path::new(local_path);
+
+    // Read Dockerfile to generate tag
+    let dockerfile_full = project_path.join(dockerfile_rel);
+    let content = std::fs::read_to_string(&dockerfile_full)
+        .map_err(|e| format!("Failed to read Dockerfile: {}", e))?;
+
+    let tag = docker::image::custom_image_tag(&project_id, &content);
+
+    // Remove existing image if it exists (force rebuild)
+    let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
+    if client.image_exists(&tag).await.unwrap_or(false) {
+        debug!(tag = %tag, "Removing existing image for rebuild");
+        let _ = client.remove_image(&tag, true).await;
+    }
+
+    // Build the image
+    docker::image::build_custom_image(project_path, dockerfile_rel, &tag)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(tag)
+}
+
 /// Payload for container log events
 #[derive(Clone, Serialize)]
 pub struct ContainerLogPayload {

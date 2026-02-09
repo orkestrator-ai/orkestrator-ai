@@ -39,7 +39,8 @@
       "../docker/claude-bridge/dist": "claude-bridge/dist",
       "../docker/claude-bridge/package.json": "claude-bridge/package.json",
       "../docker/claude-bridge/node_modules": "claude-bridge/node_modules",
-      "../binaries/bun": "bin/bun"
+      "../binaries/bun": "bin/bun",
+      "../docker": "docker"
     }
   }
 }
