@@ -44,10 +44,7 @@ cd orkestrator-ai
 # Install dependencies
 bun install
 
-# Build the Docker base image (required for container functionality)
-cd docker && docker build -t orkestrator-ai:latest . && cd ..
-
-# Run the application
+# Run the application (base Docker image is built automatically on first use)
 bun run tauri dev
 ```
 
