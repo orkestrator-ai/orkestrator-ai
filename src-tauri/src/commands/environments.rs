@@ -846,7 +846,7 @@ pub async fn get_environment_status(environment_id: String) -> Result<Environmen
 
 /// Start an environment - creates and starts Docker container or git worktree
 #[tauri::command]
-pub async fn start_environment(environment_id: String) -> Result<StartEnvironmentResult, String> {
+pub async fn start_environment(app_handle: tauri::AppHandle, environment_id: String) -> Result<StartEnvironmentResult, String> {
     info!(environment_id = %environment_id, "Starting environment");
 
     let storage = get_storage().map_err(storage_error_to_string)?;
@@ -953,9 +953,49 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
         "Container config prepared"
     );
 
+    // Determine which Docker image to use
+    let custom_image = {
+        let repo_config = config.repositories.get(&environment.project_id);
+        let dockerfile_rel = repo_config.and_then(|rc| rc.dockerfile.as_deref());
+
+        if let (Some(dockerfile), Some(local_path)) = (dockerfile_rel, &project.local_path) {
+            // Custom Dockerfile configured - build/reuse custom image
+            let project_path = std::path::Path::new(local_path);
+            match crate::docker::image::ensure_custom_image(
+                &environment.project_id,
+                project_path,
+                dockerfile,
+            )
+            .await
+            {
+                Ok(tag) => {
+                    info!(tag = %tag, "Using custom Docker image");
+                    Some(tag)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to build custom image, falling back to base image");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
+    // Ensure base image exists (auto-build if missing)
+    if custom_image.is_none() {
+        if let Some(docker_context) =
+            crate::docker::image::resolve_docker_context_path(&app_handle)
+        {
+            if let Err(e) = crate::docker::image::ensure_base_image(&docker_context).await {
+                warn!(error = %e, "Failed to auto-build base image");
+            }
+        }
+    }
+
     // Create the container
     let create_result: Result<String, DockerError> =
-        create_environment_container(&container_config, None).await;
+        create_environment_container(&container_config, custom_image.as_deref()).await;
     let container_id = create_result.map_err(|e: DockerError| {
         let err_msg = e.to_string();
         warn!(environment_id = %environment_id, error = %err_msg, "Failed to create container");
