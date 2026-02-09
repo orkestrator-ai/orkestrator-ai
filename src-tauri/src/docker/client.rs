@@ -8,14 +8,16 @@ use bollard::container::{
     PruneContainersOptions, LogsOptions, LogOutput,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::image::{CommitContainerOptions, ListImagesOptions, RemoveImageOptions, PruneImagesOptions};
+use bollard::image::{BuildImageOptions, CommitContainerOptions, ListImagesOptions, RemoveImageOptions, PruneImagesOptions};
 use bollard::network::PruneNetworksOptions;
 use bollard::volume::PruneVolumesOptions;
 use bollard::models::{ContainerInspectResponse, ContainerSummary, ImageSummary, PortBinding, SystemInfo, SystemDataUsageResponse};
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use std::collections::HashMap;
+use std::path::Path;
 use thiserror::Error;
+use tracing::{debug, info, warn};
 
 #[derive(Error, Debug)]
 pub enum DockerError {
@@ -100,6 +102,136 @@ impl DockerClient {
                 .iter()
                 .any(|tag| tag.contains(image_name) || tag == image_name)
         }))
+    }
+
+    /// Build a Docker image from a Dockerfile
+    ///
+    /// # Arguments
+    /// * `context_path` - Path to the build context directory
+    /// * `dockerfile` - Relative path to Dockerfile within context (e.g., ".orkestrator/Dockerfile")
+    /// * `tag` - Tag for the built image
+    ///
+    /// # Returns
+    /// Ok(()) on successful build, or DockerError with build logs on failure
+    pub async fn build_image(
+        &self,
+        context_path: &Path,
+        dockerfile: &str,
+        tag: &str,
+    ) -> Result<(), DockerError> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        use walkdir::WalkDir;
+
+        info!(
+            tag = %tag,
+            context = %context_path.display(),
+            dockerfile = %dockerfile,
+            "Starting Docker image build"
+        );
+
+        // Create a gzipped tar archive of the build context
+        let mut tar_gz = GzEncoder::new(Vec::new(), Compression::default());
+        {
+            let mut tar_builder = tar::Builder::new(&mut tar_gz);
+
+            for entry in WalkDir::new(context_path)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                let relative_path = path.strip_prefix(context_path).unwrap_or(path);
+
+                // Skip .git directory and other common excludes
+                let relative_str = relative_path.to_string_lossy();
+                if relative_str.starts_with(".git")
+                    || relative_str.contains("node_modules")
+                    || relative_str.contains("target/debug")
+                    || relative_str.contains("target/release")
+                {
+                    continue;
+                }
+
+                if path.is_file() {
+                    tar_builder
+                        .append_path_with_name(path, relative_path)
+                        .map_err(|e| {
+                            DockerError::OperationFailed(format!(
+                                "Failed to add {} to build context: {}",
+                                path.display(),
+                                e
+                            ))
+                        })?;
+                }
+            }
+
+            tar_builder.finish().map_err(|e| {
+                DockerError::OperationFailed(format!("Failed to create tar archive: {}", e))
+            })?;
+        }
+
+        let tar_data = tar_gz.finish().map_err(|e| {
+            DockerError::OperationFailed(format!("Failed to compress build context: {}", e))
+        })?;
+
+        debug!(
+            size_mb = tar_data.len() as f64 / 1_000_000.0,
+            "Build context prepared"
+        );
+
+        // Build the image
+        let options = BuildImageOptions {
+            t: tag,
+            dockerfile,
+            rm: true,
+            forcerm: true,
+            ..Default::default()
+        };
+
+        let mut build_stream = self.docker.build_image(options, None, Some(tar_data.into()));
+
+        let mut build_logs = String::new();
+        let mut error_message: Option<String> = None;
+
+        while let Some(result) = build_stream.next().await {
+            match result {
+                Ok(output) => {
+                    // Log build progress
+                    if let Some(stream) = output.stream {
+                        let line = stream.trim();
+                        if !line.is_empty() {
+                            debug!(line = %line, "Docker build");
+                            build_logs.push_str(line);
+                            build_logs.push('\n');
+                        }
+                    }
+                    // Capture error messages
+                    if let Some(err) = output.error {
+                        error_message = Some(err.clone());
+                        build_logs.push_str(&format!("ERROR: {}\n", err));
+                    }
+                }
+                Err(e) => {
+                    return Err(DockerError::OperationFailed(format!(
+                        "Docker build failed: {}\n\nBuild logs:\n{}",
+                        e, build_logs
+                    )));
+                }
+            }
+        }
+
+        // Check if there was an error during build
+        if let Some(err) = error_message {
+            return Err(DockerError::OperationFailed(format!(
+                "Docker build failed: {}\n\nBuild logs:\n{}",
+                err, build_logs
+            )));
+        }
+
+        info!(tag = %tag, "Docker image build completed");
+        Ok(())
     }
 
     // --- Container Operations ---

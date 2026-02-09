@@ -695,6 +695,10 @@ pub struct RepositoryConfig {
     /// Additional files to copy from local project path to environments (relative paths)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files_to_copy: Option<Vec<String>>,
+    /// Custom Dockerfile path relative to project root (e.g., ".orkestrator/Dockerfile")
+    /// When set, builds a custom image instead of using orkestrator-ai:latest
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dockerfile: Option<String>,
 }
 
 impl Default for RepositoryConfig {
@@ -704,6 +708,7 @@ impl Default for RepositoryConfig {
             pr_base_branch: "main".to_string(),
             default_port_mappings: None,
             files_to_copy: None,
+            dockerfile: None,
         }
     }
 }

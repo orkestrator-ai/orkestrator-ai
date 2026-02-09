@@ -3,6 +3,7 @@
 
 pub mod client;
 pub mod container;
+pub mod image;
 
 pub use client::{get_docker_client, DockerError};
 pub use container::*;
