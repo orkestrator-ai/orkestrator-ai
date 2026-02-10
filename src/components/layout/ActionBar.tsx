@@ -602,6 +602,12 @@ export function ActionBar() {
     }
   }, [selectedEnvironment?.containerId, selectedEnvironmentId, prUrl, isLocalEnvironment, setEnvironmentPR]);
 
+  // Get target branch for PR dialog
+  const targetBranch = selectedProjectId
+    ? config.repositories[selectedProjectId]?.prBaseBranch || "main"
+    : "main";
+  const sourceBranch = selectedEnvironment?.branch || "current branch";
+
   return (
     <>
       <div className="flex h-12 items-center border-b border-border bg-card">
@@ -1118,7 +1124,7 @@ export function ActionBar() {
           <AlertDialogHeader>
             <AlertDialogTitle>Merge Pull Request</AlertDialogTitle>
             <AlertDialogDescription>
-              This will squash and merge your PR into the target branch.
+              This will squash and merge <span className="font-semibold">{sourceBranch}</span> into <span className="font-semibold">{targetBranch}</span>.
               The feature branch will be deleted after merging.
             </AlertDialogDescription>
           </AlertDialogHeader>
