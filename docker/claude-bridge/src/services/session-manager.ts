@@ -23,7 +23,7 @@ import { eventEmitter } from "./event-emitter.js";
 import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
 import { getPluginsForSdk } from "./plugin-config.js";
 import type { McpToolMetadata } from "../types/mcp.js";
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -107,7 +107,7 @@ function findCliExecutable(name: string): string | null {
 
   // Fall back to PATH lookup
   try {
-    const result = execSync(`command -v ${name}`, { encoding: "utf-8", timeout: 5000 }).trim();
+    const result = execFileSync("which", [name], { encoding: "utf-8", timeout: 5000 }).trim();
     if (result && existsSync(result)) return result;
   } catch {
     // Not found in PATH
@@ -122,36 +122,36 @@ function findCliExecutable(name: string): string | null {
  * Returns the generated title or null if generation fails.
  */
 async function generateTitleViaCli(userMessage: string): Promise<string | null> {
-
   const systemPrompt =
     "Generate a concise title (max 6 words) summarizing the user's request. Return only the title text, no quotes, no punctuation at the end.";
 
   const truncatedMessage = userMessage.slice(0, 500);
 
   // Try Claude CLI first, then OpenCode CLI
-  const claudePath = findCliExecutable("claude");
-  const opencodePath = findCliExecutable("opencode");
-
   let cliPath: string | null = null;
   let args: string[] = [];
 
+  const claudePath = findCliExecutable("claude");
   if (claudePath) {
     cliPath = claudePath;
     args = ["--print", "--model", "haiku", "--system-prompt", systemPrompt, truncatedMessage];
     console.debug("[session-manager] Using Claude CLI for title generation:", claudePath);
-  } else if (opencodePath) {
-    cliPath = opencodePath;
-    args = ["--print", "--system-prompt", systemPrompt, truncatedMessage];
-    console.debug("[session-manager] Using OpenCode CLI for title generation:", opencodePath);
   } else {
-    console.debug("[session-manager] No AI CLI found for title generation");
-    return null;
+    const opencodePath = findCliExecutable("opencode");
+    if (opencodePath) {
+      cliPath = opencodePath;
+      args = ["--print", "--system-prompt", systemPrompt, truncatedMessage];
+      console.debug("[session-manager] Using OpenCode CLI for title generation:", opencodePath);
+    } else {
+      console.debug("[session-manager] No AI CLI found for title generation");
+      return null;
+    }
   }
 
   return new Promise<string | null>((resolve) => {
     const child = spawn(cliPath!, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
+      timeout: 15_000,
     });
 
     let stdout = "";
