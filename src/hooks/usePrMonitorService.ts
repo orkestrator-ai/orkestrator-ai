@@ -44,15 +44,16 @@ type DetectionResult =
 async function detectPR(
   environmentId: string,
   containerId: string | null,
-  isLocal: boolean
+  isLocal: boolean,
+  branch: string
 ): Promise<DetectionResult> {
   if (!environmentId) return { status: "not-found" };
   if (!isLocal && !containerId) return { status: "not-found" };
 
   try {
     const result = isLocal
-      ? await tauri.detectPrLocal(environmentId)
-      : await tauri.detectPr(containerId!);
+      ? await tauri.detectPrLocal(environmentId, branch)
+      : await tauri.detectPr(containerId!, branch);
 
     if (result) {
       return { status: "success", data: result };
@@ -178,7 +179,7 @@ export function usePrMonitorService(): void {
       _setCheckInProgress(environmentId, true);
 
       try {
-        const detectionResult = await detectPR(environmentId, environment.containerId ?? null, isLocal);
+        const detectionResult = await detectPR(environmentId, environment.containerId ?? null, isLocal, environment.branch);
 
         // Only increment errors on actual errors, not on "not found"
         if (detectionResult.status === "error") {
