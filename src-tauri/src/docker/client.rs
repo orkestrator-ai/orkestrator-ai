@@ -517,7 +517,7 @@ impl DockerClient {
         cmd: Vec<&str>,
     ) -> Result<String, DockerError> {
         self.exec_command_internal(container_id, cmd, true).await
-            .map(|(stdout, _)| stdout)
+            .map(|(stdout, _, _)| stdout)
     }
 
     /// Execute a command in a running container and return only stdout
@@ -529,7 +529,7 @@ impl DockerClient {
         container_id: &str,
         cmd: Vec<&str>,
     ) -> Result<String, DockerError> {
-        let (stdout, stderr) = self.exec_command_internal(container_id, cmd, false).await?;
+        let (stdout, stderr, _) = self.exec_command_internal(container_id, cmd, false).await?;
 
         // Log stderr at debug level if present, for troubleshooting failed commands
         if !stderr.is_empty() {
@@ -543,14 +543,30 @@ impl DockerClient {
         Ok(stdout)
     }
 
+    /// Execute a command in a running container and return stdout, stderr, and exit code
+    /// Useful for commands where the exit code determines success/failure
+    pub async fn exec_command_with_status(
+        &self,
+        container_id: &str,
+        cmd: Vec<&str>,
+    ) -> Result<(String, String, i64), DockerError> {
+        let (stdout, stderr, exec_id) = self.exec_command_internal(container_id, cmd, false).await?;
+
+        // Inspect the exec to get the exit code
+        let inspect = self.docker.inspect_exec(&exec_id).await?;
+        let exit_code = inspect.exit_code.unwrap_or(-1);
+
+        Ok((stdout, stderr, exit_code))
+    }
+
     /// Internal helper for executing commands in a container
-    /// Returns (stdout, stderr) tuple. If include_stderr is true, stderr is appended to stdout.
+    /// Returns (stdout, stderr, exec_id) tuple. If include_stderr is true, stderr is appended to stdout.
     async fn exec_command_internal(
         &self,
         container_id: &str,
         cmd: Vec<&str>,
         include_stderr: bool,
-    ) -> Result<(String, String), DockerError> {
+    ) -> Result<(String, String, String), DockerError> {
         let config = CreateExecOptions {
             cmd: Some(cmd),
             attach_stdout: Some(true),
@@ -559,6 +575,7 @@ impl DockerClient {
         };
 
         let exec = self.docker.create_exec(container_id, config).await?;
+        let exec_id = exec.id.clone();
 
         match self.docker.start_exec(&exec.id, None).await? {
             StartExecResults::Attached { mut output, .. } => {
@@ -586,7 +603,7 @@ impl DockerClient {
                         }
                     }
                 }
-                Ok((stdout, stderr))
+                Ok((stdout, stderr, exec_id))
             }
             StartExecResults::Detached => {
                 Err(DockerError::OperationFailed("Exec started in detached mode".to_string()))

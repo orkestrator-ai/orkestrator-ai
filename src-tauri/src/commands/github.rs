@@ -12,9 +12,10 @@ pub struct PrDetectionResult {
     pub has_merge_conflicts: bool,
 }
 
-/// Detect PR URL and state for the current branch by running gh pr view in the container
+/// Detect PR URL and state for the environment's branch by running gh pr view in the container
+/// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
 #[tauri::command]
-pub async fn detect_pr(container_id: String) -> Result<Option<PrDetectionResult>, String> {
+pub async fn detect_pr(container_id: String, branch: String) -> Result<Option<PrDetectionResult>, String> {
     let client = get_docker_client().map_err(|e| e.to_string())?;
 
     // Check if container is running
@@ -27,9 +28,11 @@ pub async fn detect_pr(container_id: String) -> Result<Option<PrDetectionResult>
         return Err("Container is not running".to_string());
     }
 
-    // Run: gh pr view --json url,state,mergeable -q '{url: .url, state: .state, mergeable: .mergeable}'
-    // This returns JSON with URL, state, and mergeable status
-    // mergeable can be: "MERGEABLE", "CONFLICTING", "UNKNOWN"
+    // Run: gh pr view <branch> --json url,state,mergeable -q '{...}'
+    // Pass the branch as a positional argument to check the environment's branch explicitly,
+    // not the currently checked out branch.
+    // After a PR merge with --delete-branch, the workspace may switch to main, so relying on
+    // the current branch would check the wrong PR.
     // Use exec_command_stdout to only capture stdout, as gh CLI may output
     // progress messages to stderr which would corrupt JSON parsing
     let output = client
@@ -39,6 +42,7 @@ pub async fn detect_pr(container_id: String) -> Result<Option<PrDetectionResult>
                 "gh",
                 "pr",
                 "view",
+                &branch,
                 "--json",
                 "url,state,mergeable",
                 "-q",
@@ -116,10 +120,11 @@ pub async fn detect_pr(container_id: String) -> Result<Option<PrDetectionResult>
     }))
 }
 
-/// Detect PR URL and state for the current branch by running gh pr view locally
+/// Detect PR URL and state for the environment's branch by running gh pr view locally
+/// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
 /// Used for local (worktree-based) environments where there's no container
 #[tauri::command]
-pub async fn detect_pr_local(environment_id: String) -> Result<Option<PrDetectionResult>, String> {
+pub async fn detect_pr_local(environment_id: String, branch: String) -> Result<Option<PrDetectionResult>, String> {
     use crate::storage::get_storage;
     use tokio::process::Command;
     use tracing::debug;
@@ -136,13 +141,15 @@ pub async fn detect_pr_local(environment_id: String) -> Result<Option<PrDetectio
         .worktree_path
         .ok_or_else(|| "Environment is not a local environment (no worktree path)".to_string())?;
 
-    debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Detecting PR for local environment");
+    debug!(environment_id = %environment_id, worktree_path = %worktree_path, branch = %branch, "Detecting PR for local environment");
 
-    // Run: gh pr view --json url,state,mergeable -q '{url: .url, state: .state, mergeable: .mergeable}'
+    // Run: gh pr view <branch> --json url,state,mergeable -q '{...}'
+    // Pass the branch as a positional argument to check the environment's branch explicitly
     let output = Command::new("gh")
         .args([
             "pr",
             "view",
+            &branch,
             "--json",
             "url,state,mergeable",
             "-q",
@@ -218,9 +225,10 @@ pub async fn detect_pr_local(environment_id: String) -> Result<Option<PrDetectio
     }))
 }
 
-/// Detect if there's an open PR for the current branch by running gh pr view in the container
+/// Detect if there's an open PR for the environment's branch by running gh pr view in the container
+/// Passes branch as positional arg to explicitly check the correct branch
 #[tauri::command]
-pub async fn detect_pr_url(container_id: String) -> Result<Option<String>, String> {
+pub async fn detect_pr_url(container_id: String, branch: String) -> Result<Option<String>, String> {
     let client = get_docker_client().map_err(|e| e.to_string())?;
 
     // Check if container is running
@@ -233,13 +241,13 @@ pub async fn detect_pr_url(container_id: String) -> Result<Option<String>, Strin
         return Err("Container is not running".to_string());
     }
 
-    // Run: gh pr view --json url -q '.url'
+    // Run: gh pr view <branch> --json url -q '.url'
     // This returns just the URL string if a PR exists, or an error if no PR
     // Use exec_command_stdout to only capture stdout
     let output = client
         .exec_command_stdout(
             &container_id,
-            vec!["gh", "pr", "view", "--json", "url", "-q", ".url"],
+            vec!["gh", "pr", "view", &branch, "--json", "url", "-q", ".url"],
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -371,30 +379,35 @@ pub async fn merge_pr(
     );
 
     // Run: gh pr merge --squash --delete-branch (or other options)
-    // Use exec_command (not exec_command_stdout) to capture both stdout and stderr,
-    // since we need to check for error messages that may appear on either stream
-    let output = client
-        .exec_command(&container_id, cmd)
+    // Use exec_command_with_status to check the exit code for success/failure.
+    // String-based error detection is unreliable because after a successful merge with
+    // --delete-branch, git may auto-pull and output file paths that contain words like
+    // "permission" or "error" (e.g. "permissions-check/page.tsx").
+    let (stdout, stderr, exit_code) = client
+        .exec_command_with_status(&container_id, cmd)
         .await
         .map_err(|e| e.to_string())?;
 
-    let trimmed = output.trim();
-    let trimmed_lower = trimmed.to_lowercase();
+    tracing::debug!(
+        container_id = %container_id,
+        stdout = %stdout.trim(),
+        stderr = %stderr.trim(),
+        exit_code = exit_code,
+        "gh pr merge output"
+    );
 
-    // Check for error indicators
-    if trimmed_lower.contains("error")
-        || trimmed_lower.contains("failed")
-        || trimmed_lower.contains("could not")
-        || trimmed_lower.contains("not mergeable")
-        || trimmed_lower.contains("merge conflict")
-        || trimmed_lower.contains("denied")
-        || trimmed_lower.contains("unauthorized")
-        || trimmed_lower.contains("permission")
-    {
-        return Err(format!("Failed to merge PR: {}", trimmed));
+    if exit_code != 0 {
+        // On failure, stderr contains the error message from gh CLI
+        let error_msg = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            "Unknown error".to_string()
+        };
+        return Err(format!("Failed to merge PR: {}", error_msg));
     }
 
-    tracing::debug!(container_id = %container_id, output = %trimmed, "gh pr merge output");
     info!(container_id = %container_id, "PR merged successfully");
 
     Ok(())

@@ -215,19 +215,19 @@ export async function setEnvironmentPr(
   return invoke<Environment>("set_environment_pr", { environmentId, prUrl, prState, hasMergeConflicts });
 }
 
-/** Detect if there's an open PR for the current branch by running gh pr view in the container */
-export async function detectPrUrl(containerId: string): Promise<string | null> {
-  return invoke<string | null>("detect_pr_url", { containerId });
+/** Detect if there's an open PR for the environment's branch by running gh pr view in the container */
+export async function detectPrUrl(containerId: string, branch: string): Promise<string | null> {
+  return invoke<string | null>("detect_pr_url", { containerId, branch });
 }
 
-/** Detect PR URL and state for the current branch */
-export async function detectPr(containerId: string): Promise<PrDetectionResult | null> {
-  return invoke<PrDetectionResult | null>("detect_pr", { containerId });
+/** Detect PR URL and state for the environment's branch (uses --head to check correct branch) */
+export async function detectPr(containerId: string, branch: string): Promise<PrDetectionResult | null> {
+  return invoke<PrDetectionResult | null>("detect_pr", { containerId, branch });
 }
 
-/** Detect PR URL and state for local (worktree-based) environments */
-export async function detectPrLocal(environmentId: string): Promise<PrDetectionResult | null> {
-  return invoke<PrDetectionResult | null>("detect_pr_local", { environmentId });
+/** Detect PR URL and state for local (worktree-based) environments (uses --head to check correct branch) */
+export async function detectPrLocal(environmentId: string, branch: string): Promise<PrDetectionResult | null> {
+  return invoke<PrDetectionResult | null>("detect_pr_local", { environmentId, branch });
 }
 
 /** Merge method options for PR merging */
