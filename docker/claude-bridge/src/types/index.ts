@@ -102,6 +102,8 @@ export interface NormalizedMessage {
 export interface SessionState {
   id: string;
   title?: string;
+  /** Whether a title generation request is already in flight */
+  titleGenerationPending?: boolean;
   messages: NormalizedMessage[];
   status: "idle" | "running" | "error";
   abortController?: AbortController;

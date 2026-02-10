@@ -77,6 +77,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setSelectedModel,
     addPendingQuestion,
     removePendingQuestion,
+    setSessionTitle,
     addPendingPlanApproval,
     removePendingPlanApproval,
     getOrCreateEventSubscription,
@@ -562,6 +563,14 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               setSessionLoading(sessionTabId, false);
             }
 
+            if (eventType === "session.title-updated") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const titleData = event.data as any;
+              if (titleData?.title) {
+                setSessionTitle(sessionTabId, titleData.title);
+              }
+            }
+
             if (eventType === "session.error") {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const rawError = (event.data as any)?.error;
@@ -605,7 +614,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           // Debug: Warn if no session matched the event
           // Filter out events that are expected during initialization or are informational
           // Also filter message/session updates since they can arrive for old sessions during reconnects
-          const ignoredEventTypes = ["keepalive", "connected", "session.init", "session.title-updated", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded", "system.compact", "system.message"];
+          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "session.title-updated", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded", "system.compact", "system.message"];
           if (!foundMatch && eventSessionId && !ignoredEventTypes.includes(eventType || "")) {
             console.warn("[ClaudeChatTab] No session matched event", {
               eventType,
@@ -720,7 +729,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
   );
 
   const handleSend = useCallback(

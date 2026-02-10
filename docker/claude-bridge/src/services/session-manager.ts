@@ -103,7 +103,7 @@ async function generateAndSetSessionTitle(
         max_tokens: 30,
         system:
           "Generate a concise title (max 6 words) summarizing the user's request. Return only the title text, no quotes, no punctuation at the end.",
-        messages: [{ role: "user", content: userMessage }],
+        messages: [{ role: "user", content: userMessage.slice(0, 500) }],
       }),
     });
 
@@ -1148,7 +1148,8 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     // Generate a session title from the first user message if title is still the default
     const isDefaultTitle = session.title?.startsWith("Session ");
     const firstUserMessage = session.messages.find((m) => m.role === "user");
-    if (isDefaultTitle && firstUserMessage) {
+    if (isDefaultTitle && firstUserMessage && !session.titleGenerationPending) {
+      session.titleGenerationPending = true;
       generateAndSetSessionTitle(sessionId, firstUserMessage.content);
     }
 
