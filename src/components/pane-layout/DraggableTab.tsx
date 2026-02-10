@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import type { TabInfo } from "@/types/paneLayout";
 import { createDraggableTabId } from "@/types/paneLayout";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
 import { useFileDirtyStore } from "@/stores";
 import type { TabType } from "@/contexts";
 
@@ -55,6 +56,13 @@ export function DraggableTab({
   const sessions = useSessionStore((state) => state.sessions);
   const session = Array.from(sessions.values()).find((s) => s.tabId === tab.id);
 
+  // Get Claude session title for claude-native tabs
+  const claudeSessionTitle = useClaudeStore((state) => {
+    if (tab.type !== "claude-native" || !tab.claudeNativeData) return undefined;
+    const key = createClaudeSessionKey(tab.claudeNativeData.environmentId, tab.id);
+    return state.sessions.get(key)?.title;
+  });
+
   // Check if file tab has unsaved changes
   const isDirty = useFileDirtyStore((state) =>
     tab.type === "file" ? state.isDirty(tab.id) : false
@@ -78,6 +86,11 @@ export function DraggableTab({
     if (session?.name) {
       // Custom session name + number for keyboard shortcut reference
       return `${session.name} ${tabNumber}`;
+    }
+
+    // Auto-generated title from Claude native session
+    if (claudeSessionTitle) {
+      return claudeSessionTitle;
     }
 
     // Default names
