@@ -23,6 +23,10 @@ import { eventEmitter } from "./event-emitter.js";
 import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
 import { getPluginsForSdk } from "./plugin-config.js";
 import type { McpToolMetadata } from "../types/mcp.js";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // Store for active sessions
 const sessions = new Map<string, SessionState>();
@@ -77,45 +81,144 @@ function generateMessageId(): string {
 }
 
 /**
- * Generate a concise session title using the Anthropic Messages API.
+ * Find the path to an executable by checking common locations and PATH.
+ * Returns the path if found, null otherwise.
+ */
+function findCliExecutable(name: string): string | null {
+  // Check common locations first
+  const home = homedir();
+  const commonPaths: string[] = [];
+
+  if (name === "claude") {
+    commonPaths.push(
+      join(home, ".claude", "local", "claude"),
+      "/usr/local/bin/claude",
+    );
+  } else if (name === "opencode") {
+    commonPaths.push(
+      join(home, ".local", "bin", "opencode"),
+      "/usr/local/bin/opencode",
+    );
+  }
+
+  for (const p of commonPaths) {
+    if (existsSync(p)) return p;
+  }
+
+  // Fall back to PATH lookup
+  try {
+    const result = execFileSync("which", [name], { encoding: "utf-8", timeout: 5000 }).trim();
+    if (result && existsSync(result)) return result;
+  } catch {
+    // Not found in PATH
+  }
+
+  return null;
+}
+
+/**
+ * Generate a session title by spawning the Claude CLI (or OpenCode CLI as fallback).
+ * Uses the same approach as environment name generation on the Rust side.
+ * Returns the generated title or null if generation fails.
+ */
+async function generateTitleViaCli(userMessage: string): Promise<string | null> {
+  const systemPrompt =
+    "Generate a concise title (max 6 words) summarizing the user's request. Return only the title text, no quotes, no punctuation at the end.";
+
+  const truncatedMessage = userMessage.slice(0, 500);
+
+  // Try Claude CLI first, then OpenCode CLI
+  let cliPath: string | null = null;
+  let args: string[] = [];
+
+  const claudePath = findCliExecutable("claude");
+  if (claudePath) {
+    cliPath = claudePath;
+    args = ["--print", "--model", "haiku", "--system-prompt", systemPrompt, truncatedMessage];
+    console.debug("[session-manager] Using Claude CLI for title generation:", claudePath);
+  } else {
+    const opencodePath = findCliExecutable("opencode");
+    if (opencodePath) {
+      cliPath = opencodePath;
+      args = ["--print", "--system-prompt", systemPrompt, truncatedMessage];
+      console.debug("[session-manager] Using OpenCode CLI for title generation:", opencodePath);
+    } else {
+      console.debug("[session-manager] No AI CLI found for title generation");
+      return null;
+    }
+  }
+
+  return new Promise<string | null>((resolve) => {
+    const child = spawn(cliPath!, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("error", (error: Error) => {
+      console.debug("[session-manager] CLI title generation spawn error:", error.message);
+      resolve(null);
+    });
+
+    child.on("close", (code: number | null) => {
+      if (code !== 0) {
+        console.debug("[session-manager] CLI title generation failed:", { code, stderr: stderr.slice(0, 200) });
+        resolve(null);
+        return;
+      }
+
+      const title = stdout.trim();
+      if (!title) {
+        console.debug("[session-manager] CLI title generation returned empty output");
+        resolve(null);
+        return;
+      }
+
+      resolve(title);
+    });
+  });
+}
+
+/**
+ * Generate a concise session title using available AI CLI tools.
+ * Tries Claude CLI first, then OpenCode CLI, then falls back to extracting
+ * a title from the user message text.
  * Called asynchronously after the first prompt completes - failures are silently ignored.
  */
 async function generateAndSetSessionTitle(
   sessionId: string,
   userMessage: string
 ): Promise<void> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.debug("[session-manager] No ANTHROPIC_API_KEY, skipping title generation");
-    return;
-  }
-
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 30,
-        system:
-          "Generate a concise title (max 6 words) summarizing the user's request. Return only the title text, no quotes, no punctuation at the end.",
-        messages: [{ role: "user", content: userMessage.slice(0, 500) }],
-      }),
-    });
+    // Try generating via CLI (Claude CLI → OpenCode CLI)
+    let title = await generateTitleViaCli(userMessage);
 
-    if (!response.ok) {
-      console.debug("[session-manager] Title generation API error:", response.status);
-      return;
+    // Fallback: extract a simple title from the user message
+    if (!title) {
+      console.debug("[session-manager] CLI title generation unavailable, using text extraction fallback");
+      const cleaned = userMessage
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/`[^`]+`/g, "")
+        .replace(/\n+/g, " ")
+        .trim();
+      const firstSentence = cleaned.split(/[.!?\n]/)[0]?.trim() || cleaned;
+      const words = firstSentence.split(/\s+/).slice(0, 6);
+      title = words.join(" ");
+      // Capitalize first letter
+      if (title.length > 0) {
+        title = title.charAt(0).toUpperCase() + title.slice(1);
+      }
     }
-
-    const result = (await response.json()) as {
-      content: Array<{ type: string; text?: string }>;
-    };
-    const title = result.content?.[0]?.text?.trim();
 
     if (!title) {
       console.debug("[session-manager] Title generation returned empty result");

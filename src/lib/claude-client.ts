@@ -632,6 +632,7 @@ export function subscribeToEvents(
         "session.idle",
         "session.error",
         "session.init",
+        "session.title-updated",
         "message.updated",
         "question.asked",
         "question.answered",
