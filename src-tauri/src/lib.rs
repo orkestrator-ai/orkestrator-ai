@@ -197,7 +197,6 @@ pub fn run() {
             open_in_browser,
             get_environment_pr_url,
             clear_environment_pr,
-            detect_pr_url,
             detect_pr,
             detect_pr_local,
             merge_pr,

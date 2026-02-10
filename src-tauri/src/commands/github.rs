@@ -16,6 +16,10 @@ pub struct PrDetectionResult {
 /// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
 #[tauri::command]
 pub async fn detect_pr(container_id: String, branch: String) -> Result<Option<PrDetectionResult>, String> {
+    if branch.trim().is_empty() {
+        return Err("Branch name cannot be empty".to_string());
+    }
+
     let client = get_docker_client().map_err(|e| e.to_string())?;
 
     // Check if container is running
@@ -129,6 +133,10 @@ pub async fn detect_pr_local(environment_id: String, branch: String) -> Result<O
     use tokio::process::Command;
     use tracing::debug;
 
+    if branch.trim().is_empty() {
+        return Err("Branch name cannot be empty".to_string());
+    }
+
     // Get the environment to find the worktree path
     let storage = get_storage().map_err(|e| e.to_string())?;
     let environment = storage
@@ -223,58 +231,6 @@ pub async fn detect_pr_local(environment_id: String, branch: String) -> Result<O
         state,
         has_merge_conflicts,
     }))
-}
-
-/// Detect if there's an open PR for the environment's branch by running gh pr view in the container
-/// Passes branch as positional arg to explicitly check the correct branch
-#[tauri::command]
-pub async fn detect_pr_url(container_id: String, branch: String) -> Result<Option<String>, String> {
-    let client = get_docker_client().map_err(|e| e.to_string())?;
-
-    // Check if container is running
-    let is_running = client
-        .is_container_running(&container_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !is_running {
-        return Err("Container is not running".to_string());
-    }
-
-    // Run: gh pr view <branch> --json url -q '.url'
-    // This returns just the URL string if a PR exists, or an error if no PR
-    // Use exec_command_stdout to only capture stdout
-    let output = client
-        .exec_command_stdout(
-            &container_id,
-            vec!["gh", "pr", "view", &branch, "--json", "url", "-q", ".url"],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let trimmed = output.trim();
-    let trimmed_lower = trimmed.to_lowercase();
-
-    // If output is empty or contains error indicators, return None
-    // Using case-insensitive matching for robustness across gh CLI versions
-    if trimmed.is_empty()
-        || trimmed_lower.contains("no pull request")
-        || trimmed_lower.contains("could not resolve")
-        || trimmed_lower.contains("not found")
-        || trimmed_lower.contains("error")
-        || trimmed_lower.contains("failed")
-    {
-        return Ok(None);
-    }
-
-    // Validate it looks like a GitHub PR URL
-    // Must start with https:// and contain github.com/...pull/
-    if trimmed.starts_with("https://") && trimmed.contains("github.com/") && trimmed.contains("/pull/") {
-        return Ok(Some(trimmed.to_string()));
-    }
-
-    // If we got unexpected output (not a valid URL), return None
-    Ok(None)
 }
 
 /// Open a URL in the default browser

@@ -56,6 +56,13 @@ pub struct CreateContainerConfig {
     pub exposed_ports: HashMap<String, HashMap<(), ()>>,
 }
 
+/// Result of executing a command inside a container
+struct ExecOutput {
+    stdout: String,
+    stderr: String,
+    exec_id: String,
+}
+
 /// Docker client wrapper providing high-level operations
 pub struct DockerClient {
     docker: Docker,
@@ -517,7 +524,7 @@ impl DockerClient {
         cmd: Vec<&str>,
     ) -> Result<String, DockerError> {
         self.exec_command_internal(container_id, cmd, true).await
-            .map(|(stdout, _, _)| stdout)
+            .map(|output| output.stdout)
     }
 
     /// Execute a command in a running container and return only stdout
@@ -529,18 +536,18 @@ impl DockerClient {
         container_id: &str,
         cmd: Vec<&str>,
     ) -> Result<String, DockerError> {
-        let (stdout, stderr, _) = self.exec_command_internal(container_id, cmd, false).await?;
+        let output = self.exec_command_internal(container_id, cmd, false).await?;
 
         // Log stderr at debug level if present, for troubleshooting failed commands
-        if !stderr.is_empty() {
+        if !output.stderr.is_empty() {
             tracing::debug!(
                 container_id = %container_id,
-                stderr = %stderr.trim(),
+                stderr = %output.stderr.trim(),
                 "Command stderr output (ignored)"
             );
         }
 
-        Ok(stdout)
+        Ok(output.stdout)
     }
 
     /// Execute a command in a running container and return stdout, stderr, and exit code
@@ -550,23 +557,23 @@ impl DockerClient {
         container_id: &str,
         cmd: Vec<&str>,
     ) -> Result<(String, String, i64), DockerError> {
-        let (stdout, stderr, exec_id) = self.exec_command_internal(container_id, cmd, false).await?;
+        let output = self.exec_command_internal(container_id, cmd, false).await?;
 
         // Inspect the exec to get the exit code
-        let inspect = self.docker.inspect_exec(&exec_id).await?;
+        let inspect = self.docker.inspect_exec(&output.exec_id).await?;
         let exit_code = inspect.exit_code.unwrap_or(-1);
 
-        Ok((stdout, stderr, exit_code))
+        Ok((output.stdout, output.stderr, exit_code))
     }
 
     /// Internal helper for executing commands in a container
-    /// Returns (stdout, stderr, exec_id) tuple. If include_stderr is true, stderr is appended to stdout.
+    /// Returns an ExecOutput with stdout, stderr, and exec_id. If include_stderr is true, stderr is appended to stdout.
     async fn exec_command_internal(
         &self,
         container_id: &str,
         cmd: Vec<&str>,
         include_stderr: bool,
-    ) -> Result<(String, String, String), DockerError> {
+    ) -> Result<ExecOutput, DockerError> {
         let config = CreateExecOptions {
             cmd: Some(cmd),
             attach_stdout: Some(true),
@@ -603,7 +610,7 @@ impl DockerClient {
                         }
                     }
                 }
-                Ok((stdout, stderr, exec_id))
+                Ok(ExecOutput { stdout, stderr, exec_id })
             }
             StartExecResults::Detached => {
                 Err(DockerError::OperationFailed("Exec started in detached mode".to_string()))
