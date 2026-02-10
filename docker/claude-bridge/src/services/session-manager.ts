@@ -77,6 +77,68 @@ function generateMessageId(): string {
 }
 
 /**
+ * Generate a concise session title using the Anthropic Messages API.
+ * Called asynchronously after the first prompt completes - failures are silently ignored.
+ */
+async function generateAndSetSessionTitle(
+  sessionId: string,
+  userMessage: string
+): Promise<void> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.debug("[session-manager] No ANTHROPIC_API_KEY, skipping title generation");
+    return;
+  }
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 30,
+        system:
+          "Generate a concise title (max 6 words) summarizing the user's request. Return only the title text, no quotes, no punctuation at the end.",
+        messages: [{ role: "user", content: userMessage }],
+      }),
+    });
+
+    if (!response.ok) {
+      console.debug("[session-manager] Title generation API error:", response.status);
+      return;
+    }
+
+    const result = (await response.json()) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    const title = result.content?.[0]?.text?.trim();
+
+    if (!title) {
+      console.debug("[session-manager] Title generation returned empty result");
+      return;
+    }
+
+    const session = sessions.get(sessionId);
+    if (!session) return;
+
+    session.title = title;
+    console.debug("[session-manager] Generated session title:", { sessionId, title });
+
+    eventEmitter.emit({
+      type: "session.title-updated",
+      sessionId,
+      data: { title },
+    });
+  } catch (error) {
+    console.debug("[session-manager] Title generation failed:", error);
+  }
+}
+
+/**
  * Create a new session
  */
 export function createSession(title?: string): SessionState {
@@ -1081,6 +1143,13 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         // For now, we rely on full assistant messages
       }
       // Note: AskUserQuestion tool handling is done in the canUseTool callback above
+    }
+
+    // Generate a session title from the first user message if title is still the default
+    const isDefaultTitle = session.title?.startsWith("Session ");
+    const firstUserMessage = session.messages.find((m) => m.role === "user");
+    if (isDefaultTitle && firstUserMessage) {
+      generateAndSetSessionTitle(sessionId, firstUserMessage.content);
     }
 
     session.status = "idle";

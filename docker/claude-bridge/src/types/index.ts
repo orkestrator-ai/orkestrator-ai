@@ -156,6 +156,7 @@ export type SSEEventType =
   | "session.idle"
   | "session.error"
   | "session.init"
+  | "session.title-updated"
   | "message.updated"
   | "question.asked"
   | "question.answered"

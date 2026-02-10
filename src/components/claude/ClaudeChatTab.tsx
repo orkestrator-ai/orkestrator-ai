@@ -605,7 +605,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           // Debug: Warn if no session matched the event
           // Filter out events that are expected during initialization or are informational
           // Also filter message/session updates since they can arrive for old sessions during reconnects
-          const ignoredEventTypes = ["keepalive", "connected", "session.init", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded", "system.compact", "system.message"];
+          const ignoredEventTypes = ["keepalive", "connected", "session.init", "session.title-updated", "message.updated", "session.updated", "session.idle", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded", "system.compact", "system.message"];
           if (!foundMatch && eventSessionId && !ignoredEventTypes.includes(eventType || "")) {
             console.warn("[ClaudeChatTab] No session matched event", {
               eventType,
