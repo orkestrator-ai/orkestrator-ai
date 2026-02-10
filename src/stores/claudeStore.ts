@@ -43,6 +43,7 @@ export interface ClaudeSessionState {
   messages: ClaudeMessage[];
   isLoading: boolean;
   error?: string;
+  title?: string;
 }
 
 /** Attachment types for compose bar */
@@ -102,6 +103,7 @@ interface ClaudeState {
   setMessages: (sessionKey: ClaudeSessionKey, messages: ClaudeMessage[]) => void;
   setSessionLoading: (sessionKey: ClaudeSessionKey, isLoading: boolean) => void;
   setSessionError: (sessionKey: ClaudeSessionKey, error: string | undefined) => void;
+  setSessionTitle: (sessionKey: ClaudeSessionKey, title: string) => void;
   addAttachment: (sessionKey: ClaudeSessionKey, attachment: ClaudeAttachment) => void;
   removeAttachment: (sessionKey: ClaudeSessionKey, attachmentId: string) => void;
   clearAttachments: (sessionKey: ClaudeSessionKey) => void;
@@ -302,6 +304,19 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       newMap.set(sessionKey, {
         ...session,
         error,
+      });
+      return { sessions: newMap };
+    }),
+
+  setSessionTitle: (sessionKey, title) =>
+    set((state) => {
+      const session = state.sessions.get(sessionKey);
+      if (!session) return state;
+
+      const newMap = new Map(state.sessions);
+      newMap.set(sessionKey, {
+        ...session,
+        title,
       });
       return { sessions: newMap };
     }),
