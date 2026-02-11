@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useTerminalContext, MAX_TABS, type TerminalTabType, type CreateTabOptions, type CreateFileTabOptions } from "@/contexts";
-import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useFilesPanelStore, useConfigStore, getAllLeaves } from "@/stores";
+import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useConfigStore, getAllLeaves } from "@/stores";
 import { Button } from "@/components/ui/button";
 import { Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -510,9 +510,6 @@ export function TerminalContainer({
     [containerId, isEnvironmentRunning, activePaneId, addTab, getAllTabs, environmentId, opencodeMode, claudeMode, isLocalEnvironmentReady]
   );
 
-  // Get target branch from files panel store for diff view
-  const targetBranch = useFilesPanelStore((state) => state.targetBranch);
-
   // Handler for creating file viewer tabs
   const handleCreateFileTab = useCallback(
     (filePath: string, options?: CreateFileTabOptions) => {
@@ -561,14 +558,14 @@ export function TerminalContainer({
           isLocalEnvironment,
           isDiff: options?.isDiff,
           gitStatus: validatedGitStatus,
-          baseBranch: options?.isDiff ? targetBranch : undefined,
+          baseBranch: undefined,
         },
       };
 
       console.debug("[TerminalContainer] Creating file tab:", newTabId, "path:", filePath, "isDiff:", options?.isDiff, "isLocal:", isLocalEnvironment, "for environment:", environmentId);
       addTab(activePaneId, newTab, environmentId);
     },
-    [containerId, isContainerRunning, isLocalEnvironment, worktreePath, activePaneId, addTab, getAllTabs, targetBranch, environmentId]
+    [containerId, isContainerRunning, isLocalEnvironment, worktreePath, activePaneId, addTab, getAllTabs, environmentId]
   );
 
   // Handler for selecting a tab by index (for Ctrl+1, Ctrl+2, etc.)
