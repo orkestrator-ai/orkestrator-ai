@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent } from "react";
 import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp } from "lucide-react";
 import {
   DropdownMenu,
@@ -62,12 +62,15 @@ export function OpenCodeComposeBar({
     clearAttachments,
     getSelectedModel,
     setSelectedModel,
+    getSelectedVariant,
+    setSelectedVariant,
     getSelectedMode,
     setSelectedMode,
   } = useOpenCodeStore();
 
   const attachments = getAttachments(environmentId);
   const selectedModel = getSelectedModel(environmentId);
+  const selectedVariant = getSelectedVariant(environmentId);
   const selectedMode = getSelectedMode(environmentId);
 
   // Get worktree path for local environments
@@ -223,6 +226,21 @@ export function OpenCodeComposeBar({
 
   const handleModelChange = (modelId: string) => {
     setSelectedModel(environmentId, modelId);
+
+    // Clear variant if the newly selected model doesn't support it
+    const nextModel = models.find((m) => m.id === modelId);
+    if (!nextModel?.variants || nextModel.variants.length === 0) {
+      setSelectedVariant(environmentId, undefined);
+      return;
+    }
+
+    if (selectedVariant && !nextModel.variants.includes(selectedVariant)) {
+      setSelectedVariant(environmentId, undefined);
+    }
+  };
+
+  const handleVariantChange = (variant: string | undefined) => {
+    setSelectedVariant(environmentId, variant);
   };
 
   const textareaRows = Math.min(MAX_LINES, Math.max(1, text.split("\n").length));
@@ -230,7 +248,11 @@ export function OpenCodeComposeBar({
   // Get display name for selected model
   const selectedModelObj = models.find((m) => m.id === selectedModel);
   const selectedModelName = selectedModelObj?.name ?? "Select model";
-  const isSelectedModelFree = selectedModelObj?.inputCost === 0 && selectedModelObj?.outputCost === 0;
+  const availableVariants = useMemo(
+    () => selectedModelObj?.variants ?? [],
+    [selectedModelObj?.id, selectedModelObj?.variants]
+  );
+  const selectedVariantName = selectedVariant ?? "Default";
 
   // Group models by provider
   const modelsByProvider = models.reduce((acc, model) => {
@@ -359,11 +381,6 @@ export function OpenCodeComposeBar({
             <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
               <ChevronDown className="w-3 h-3" />
               <span className="max-w-[200px] truncate">{selectedModelName}</span>
-              {isSelectedModelFree && (
-                <span className="ml-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-green-500/20 text-green-600 dark:text-green-400">
-                  Free
-                </span>
-              )}
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto">
@@ -383,7 +400,6 @@ export function OpenCodeComposeBar({
                     <DropdownMenuPortal>
                       <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
                         {providerModels.map((model) => {
-                          const isFree = model.inputCost === 0 && model.outputCost === 0;
                           return (
                             <DropdownMenuItem
                               key={model.id}
@@ -391,11 +407,6 @@ export function OpenCodeComposeBar({
                               className="text-sm"
                             >
                               <span className="truncate">{model.name}</span>
-                              {isFree && (
-                                <span className="ml-2 px-1.5 py-0.5 text-[10px] font-medium rounded bg-green-500/20 text-green-600 dark:text-green-400">
-                                  Free
-                                </span>
-                              )}
                             </DropdownMenuItem>
                           );
                         })}
@@ -407,6 +418,30 @@ export function OpenCodeComposeBar({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Variant dropdown - model-specific variants (e.g. low/high/xhigh) */}
+        {availableVariants.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                <ChevronDown className="w-3 h-3" />
+                <span className="max-w-[100px] truncate">{selectedVariantName}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => handleVariantChange(undefined)}>
+                {!selectedVariant && <span className="mr-1.5 text-foreground">&#10003;</span>}
+                Default
+              </DropdownMenuItem>
+              {availableVariants.map((variant) => (
+                <DropdownMenuItem key={variant} onClick={() => handleVariantChange(variant)}>
+                  {selectedVariant === variant && <span className="mr-1.5 text-foreground">&#10003;</span>}
+                  {variant}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* Spacer */}
         <div className="flex-1" />

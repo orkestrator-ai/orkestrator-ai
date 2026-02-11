@@ -5,10 +5,14 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/c
 
 export { type OpencodeClient };
 
+const PREFERRED_VARIANT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 export interface OpenCodeModel {
   id: string;
   name: string;
   provider: string;
+  /** Available model variants (e.g., low/high/xhigh) */
+  variants?: string[];
   /** Input cost per token (0 means free) */
   inputCost?: number;
   /** Output cost per token (0 means free) */
@@ -154,10 +158,35 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
           // Cost fields may be in cost.input/cost.output or directly as inputCost/outputCost
           const inputCost = m.cost?.input ?? m.inputCost ?? m.input_cost;
           const outputCost = m.cost?.output ?? m.outputCost ?? m.output_cost;
+
+          // Variants are provider/model specific (e.g. low/high/xhigh)
+          // Response shape: variants: { [variantName]: { disabled?: boolean, ... } }
+          const variantEntries = m.variants && typeof m.variants === "object"
+            ? Object.entries(m.variants as Record<string, { disabled?: boolean }>)
+            : [];
+
+          const variants = variantEntries
+            .filter(([, variantConfig]) => {
+              if (!variantConfig || typeof variantConfig !== "object") return true;
+              return variantConfig.disabled !== true;
+            })
+            .map(([variantName]) => variantName)
+            .sort((a, b) => {
+              const aIndex = PREFERRED_VARIANT_ORDER.indexOf(a);
+              const bIndex = PREFERRED_VARIANT_ORDER.indexOf(b);
+
+              if (aIndex >= 0 && bIndex >= 0) return aIndex - bIndex;
+              if (aIndex >= 0) return -1;
+              if (bIndex >= 0) return 1;
+
+              return a.localeCompare(b);
+            });
+
           models.push({
             id: `${provider.id}/${model.id}`,
             name: model.name || model.id,
             provider: provider.id,
+            variants: variants.length > 0 ? variants : undefined,
             inputCost: typeof inputCost === "number" ? inputCost : undefined,
             outputCost: typeof outputCost === "number" ? outputCost : undefined,
           });
@@ -413,6 +442,7 @@ export async function sendPrompt(
   message: string,
   options?: {
     model?: string;
+    variant?: string;
     mode?: OpenCodeConversationMode;
     attachments?: PromptAttachment[];
   }
@@ -471,6 +501,7 @@ export async function sendPrompt(
         providerID: options.model.split("/")[0] || "",
         modelID: options.model.split("/")[1] || options.model,
       } : undefined,
+      variant: options?.variant,
     });
 
     return true;

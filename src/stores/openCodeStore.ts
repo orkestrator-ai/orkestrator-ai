@@ -64,6 +64,8 @@ interface OpenCodeState {
   models: OpenCodeModel[];
   /** Currently selected model per environment */
   selectedModel: Map<string, string>;
+  /** Currently selected variant per environment */
+  selectedVariant: Map<string, string>;
   /** Currently selected mode per environment */
   selectedMode: Map<string, OpenCodeConversationMode>;
   /** Current attachments per environment (for compose bar) */
@@ -86,6 +88,8 @@ interface OpenCodeState {
   setModels: (models: OpenCodeModel[]) => void;
   /** Set selected model for an environment */
   setSelectedModel: (environmentId: string, modelId: string) => void;
+  /** Set selected variant for an environment (undefined = use model default) */
+  setSelectedVariant: (environmentId: string, variant: string | undefined) => void;
   /** Set selected mode for an environment */
   setSelectedMode: (environmentId: string, mode: OpenCodeConversationMode) => void;
   /** Set session for an environment */
@@ -128,6 +132,8 @@ interface OpenCodeState {
   getSession: (environmentId: string) => OpenCodeSessionState | undefined;
   /** Get selected model for an environment */
   getSelectedModel: (environmentId: string) => string | undefined;
+  /** Get selected variant for an environment */
+  getSelectedVariant: (environmentId: string) => string | undefined;
   /** Get selected mode for an environment */
   getSelectedMode: (environmentId: string) => OpenCodeConversationMode;
   /** Get attachments for an environment */
@@ -147,6 +153,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   clients: new Map(),
   models: [],
   selectedModel: new Map(),
+  selectedVariant: new Map(),
   selectedMode: new Map(),
   attachments: new Map(),
   isComposing: new Map(),
@@ -181,6 +188,17 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newMap = new Map(state.selectedModel);
       newMap.set(environmentId, modelId);
       return { selectedModel: newMap };
+    }),
+
+  setSelectedVariant: (environmentId, variant) =>
+    set((state) => {
+      const newMap = new Map(state.selectedVariant);
+      if (variant && variant.trim().length > 0) {
+        newMap.set(environmentId, variant);
+      } else {
+        newMap.delete(environmentId);
+      }
+      return { selectedVariant: newMap };
     }),
 
   setSelectedMode: (environmentId, mode) =>
@@ -342,6 +360,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newSessions = new Map(state.sessions);
       const newClients = new Map(state.clients);
       const newSelectedModel = new Map(state.selectedModel);
+      const newSelectedVariant = new Map(state.selectedVariant);
       const newSelectedMode = new Map(state.selectedMode);
       const newAttachments = new Map(state.attachments);
       const newIsComposing = new Map(state.isComposing);
@@ -352,6 +371,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       newSessions.delete(environmentId);
       newClients.delete(environmentId);
       newSelectedModel.delete(environmentId);
+      newSelectedVariant.delete(environmentId);
       newSelectedMode.delete(environmentId);
       newAttachments.delete(environmentId);
       newIsComposing.delete(environmentId);
@@ -370,6 +390,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         sessions: newSessions,
         clients: newClients,
         selectedModel: newSelectedModel,
+        selectedVariant: newSelectedVariant,
         selectedMode: newSelectedMode,
         attachments: newAttachments,
         isComposing: newIsComposing,
@@ -469,6 +490,8 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   getSession: (environmentId) => get().sessions.get(environmentId),
 
   getSelectedModel: (environmentId) => get().selectedModel.get(environmentId),
+
+  getSelectedVariant: (environmentId) => get().selectedVariant.get(environmentId),
 
   getSelectedMode: (environmentId) =>
     get().selectedMode.get(environmentId) || "build",
