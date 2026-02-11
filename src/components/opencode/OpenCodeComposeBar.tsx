@@ -16,11 +16,13 @@ import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { useOpenCodeStore, type OpenCodeAttachment } from "@/stores/openCodeStore";
+import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment } from "@/stores/openCodeStore";
 import type { OpenCodeModel, OpenCodeConversationMode } from "@/lib/opencode-client";
 
 interface OpenCodeComposeBarProps {
   environmentId: string;
+  /** Tab ID for multi-tab attachment isolation */
+  tabId: string;
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: OpenCodeModel[];
@@ -44,6 +46,7 @@ function generateImageFilename(): string {
 
 export function OpenCodeComposeBar({
   environmentId,
+  tabId,
   containerId,
   models,
   onSend,
@@ -68,7 +71,10 @@ export function OpenCodeComposeBar({
     setSelectedMode,
   } = useOpenCodeStore();
 
-  const attachments = getAttachments(environmentId);
+  // Use session key so attachments are scoped per tab (not shared across tabs)
+  const attachmentSessionKey = createOpenCodeSessionKey(environmentId, tabId);
+
+  const attachments = getAttachments(attachmentSessionKey);
   const selectedModel = getSelectedModel(environmentId);
   const selectedVariant = getSelectedVariant(environmentId);
   const selectedMode = getSelectedMode(environmentId);
@@ -158,7 +164,7 @@ export function OpenCodeComposeBar({
             previewUrl: dataUrl,
             name: filename,
           };
-          addAttachment(environmentId, attachment);
+          addAttachment(attachmentSessionKey, attachment);
         } else if (worktreePath) {
           // Local environment - write to worktree path
           const fullPath = await writeLocalFile(worktreePath, filePath, base64Data);
@@ -170,7 +176,7 @@ export function OpenCodeComposeBar({
             previewUrl: dataUrl,
             name: filename,
           };
-          addAttachment(environmentId, attachment);
+          addAttachment(attachmentSessionKey, attachment);
         } else {
           toast.error("Cannot save image", {
             description: "Environment not properly configured for attachments",
@@ -185,7 +191,7 @@ export function OpenCodeComposeBar({
         // Let text paste through by not preventing default
       }
     },
-    [containerId, environmentId, worktreePath, addAttachment]
+    [containerId, attachmentSessionKey, worktreePath, addAttachment]
   );
 
   useEffect(() => {
@@ -210,14 +216,14 @@ export function OpenCodeComposeBar({
     try {
       onSend(text.trim(), attachments);
       setText("");
-      clearAttachments(environmentId);
+      clearAttachments(attachmentSessionKey);
     } finally {
       setIsSending(false);
     }
   };
 
   const handleRemoveAttachment = (id: string) => {
-    removeAttachment(environmentId, id);
+    removeAttachment(attachmentSessionKey, id);
   };
 
   const handleModeChange = (mode: string) => {

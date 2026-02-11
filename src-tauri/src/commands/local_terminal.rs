@@ -118,5 +118,7 @@ pub fn close_local_terminal_session(session_id: String) -> Result<(), String> {
     let manager = get_local_terminal_manager()
         .ok_or_else(|| "Local terminal manager not initialized".to_string())?;
 
-    manager.close_session(&session_id).map_err(|e| e.to_string())
+    manager
+        .close_session(&session_id)
+        .map_err(|e| e.to_string())
 }

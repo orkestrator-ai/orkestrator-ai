@@ -7,13 +7,14 @@ use super::process::{get_process_manager, is_process_alive, ProcessType};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-static START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+static START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
 
 fn get_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     let locks = START_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
@@ -101,7 +102,10 @@ pub async fn start_local_opencode_server(
     let manager = get_process_manager();
 
     // Check if already running
-    if manager.is_running(environment_id, ProcessType::OpenCode).await {
+    if manager
+        .is_running(environment_id, ProcessType::OpenCode)
+        .await
+    {
         if let Some(pid) = manager.get_pid(environment_id, ProcessType::OpenCode).await {
             debug!(environment_id = %environment_id, pid = pid, "OpenCode server already running");
             return Ok(LocalServerStartResult {
@@ -123,7 +127,13 @@ pub async fn start_local_opencode_server(
             environment_id,
             ProcessType::OpenCode,
             "opencode",
-            &["serve", "--port", &port.to_string(), "--hostname", "0.0.0.0"],
+            &[
+                "serve",
+                "--port",
+                &port.to_string(),
+                "--hostname",
+                "0.0.0.0",
+            ],
             worktree_path,
             env_vars,
         )
@@ -186,7 +196,9 @@ pub async fn get_local_opencode_status(
             false
         }
     } else {
-        manager.is_running(environment_id, ProcessType::OpenCode).await
+        manager
+            .is_running(environment_id, ProcessType::OpenCode)
+            .await
     };
 
     LocalServerStatus {
@@ -270,12 +282,7 @@ pub async fn start_local_claude_bridge(
     let mut path = std::env::var("PATH").unwrap_or_else(|_| String::new());
 
     // Add common binary locations that might be missing in packaged apps
-    let common_paths = [
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
-    ];
+    let common_paths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
     for common in common_paths {
         if !path.contains(common) {
             path = if path.is_empty() {
@@ -360,7 +367,9 @@ pub async fn start_local_claude_bridge(
     // Wait for server to become healthy
     if !wait_for_server_health(port).await {
         // Try to kill the process if it didn't start properly
-        let _ = manager.kill(environment_id, ProcessType::ClaudeBridge).await;
+        let _ = manager
+            .kill(environment_id, ProcessType::ClaudeBridge)
+            .await;
         return Err("Claude-bridge server failed to start within timeout".to_string());
     }
 
@@ -508,7 +517,10 @@ async fn ensure_claude_bridge_ready(bridge_path: &str, entry_point: &str) -> Res
     Ok(())
 }
 
-fn resolve_js_runtime(entry_point: &str, bundled_bun_path: Option<&str>) -> (&'static str, Vec<String>) {
+fn resolve_js_runtime(
+    entry_point: &str,
+    bundled_bun_path: Option<&str>,
+) -> (&'static str, Vec<String>) {
     // First, try the bundled bun binary (highest priority for packaged apps)
     if let Some(bun_path) = bundled_bun_path {
         let path = PathBuf::from(bun_path);
@@ -584,7 +596,9 @@ fn find_bun_binary() -> Option<String> {
         // Homebrew on Intel
         PathBuf::from("/usr/local/bin/bun"),
         // Bun's default install location
-        home.as_ref().map(|h| PathBuf::from(h).join(".bun/bin/bun")).unwrap_or_default(),
+        home.as_ref()
+            .map(|h| PathBuf::from(h).join(".bun/bin/bun"))
+            .unwrap_or_default(),
     ];
 
     for candidate in candidates {

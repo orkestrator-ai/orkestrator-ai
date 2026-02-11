@@ -53,16 +53,26 @@ pub fn get_claude_credentials() -> Result<ClaudeCredentials, CredentialsError> {
     // Use security CLI - doesn't require account name, just service
     // The -w flag outputs only the password (credentials JSON)
     let output = Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ])
         .output()
-        .map_err(|e| CredentialsError::KeychainError(format!("Failed to run security command: {}", e)))?;
+        .map_err(|e| {
+            CredentialsError::KeychainError(format!("Failed to run security command: {}", e))
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("could not be found") || stderr.contains("SecKeychainSearchCopyNext") {
             return Err(CredentialsError::NotFound);
         }
-        return Err(CredentialsError::KeychainError(format!("security command failed: {}", stderr)));
+        return Err(CredentialsError::KeychainError(format!(
+            "security command failed: {}",
+            stderr
+        )));
     }
 
     let json_str = String::from_utf8(output.stdout)
@@ -74,8 +84,9 @@ pub fn get_claude_credentials() -> Result<ClaudeCredentials, CredentialsError> {
         return Err(CredentialsError::NotFound);
     }
 
-    let credentials: ClaudeCredentials = serde_json::from_str(&json_str)
-        .map_err(|e| CredentialsError::ParseError(format!("Failed to parse credentials JSON: {}", e)))?;
+    let credentials: ClaudeCredentials = serde_json::from_str(&json_str).map_err(|e| {
+        CredentialsError::ParseError(format!("Failed to parse credentials JSON: {}", e))
+    })?;
 
     Ok(credentials)
 }

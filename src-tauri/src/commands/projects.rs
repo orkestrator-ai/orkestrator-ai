@@ -28,28 +28,39 @@ pub async fn add_project(git_url: String, local_path: Option<String>) -> Result<
 
     let storage = get_storage().map_err(storage_error_to_string)?;
     let project = Project::new(normalized_url, local_path);
-    storage.add_project(project).map_err(storage_error_to_string)
+    storage
+        .add_project(project)
+        .map_err(storage_error_to_string)
 }
 
 /// Remove a project by ID
 #[tauri::command]
 pub async fn remove_project(project_id: String) -> Result<(), String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.remove_project(&project_id).map_err(storage_error_to_string)
+    storage
+        .remove_project(&project_id)
+        .map_err(storage_error_to_string)
 }
 
 /// Get a project by ID
 #[tauri::command]
 pub async fn get_project(project_id: String) -> Result<Option<Project>, String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.get_project(&project_id).map_err(storage_error_to_string)
+    storage
+        .get_project(&project_id)
+        .map_err(storage_error_to_string)
 }
 
 /// Update a project
 #[tauri::command]
-pub async fn update_project(project_id: String, updates: serde_json::Value) -> Result<Project, String> {
+pub async fn update_project(
+    project_id: String,
+    updates: serde_json::Value,
+) -> Result<Project, String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.update_project(&project_id, updates).map_err(storage_error_to_string)
+    storage
+        .update_project(&project_id, updates)
+        .map_err(storage_error_to_string)
 }
 
 /// Reorder projects based on the provided array of project IDs
@@ -57,7 +68,9 @@ pub async fn update_project(project_id: String, updates: serde_json::Value) -> R
 #[tauri::command]
 pub async fn reorder_projects(project_ids: Vec<String>) -> Result<Vec<Project>, String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.reorder_projects(&project_ids).map_err(storage_error_to_string)
+    storage
+        .reorder_projects(&project_ids)
+        .map_err(storage_error_to_string)
 }
 
 /// Validate a Git URL format
@@ -103,7 +116,10 @@ fn is_valid_git_url(url: &str) -> bool {
 
     // HTTPS format: https://github.com/user/repo.git
     if url.starts_with("https://") || url.starts_with("http://") {
-        return url.contains("github.com") || url.contains("gitlab.com") || url.contains("bitbucket.org") || url.ends_with(".git");
+        return url.contains("github.com")
+            || url.contains("gitlab.com")
+            || url.contains("bitbucket.org")
+            || url.ends_with(".git");
     }
 
     false
@@ -136,7 +152,9 @@ fn convert_ssh_to_https(url: &str) -> String {
     if url.starts_with("ssh://") {
         let without_scheme = url.strip_prefix("ssh://").unwrap_or(url);
         // Remove git@ prefix if present
-        let without_user = without_scheme.strip_prefix("git@").unwrap_or(without_scheme);
+        let without_user = without_scheme
+            .strip_prefix("git@")
+            .unwrap_or(without_scheme);
         return format!("https://{}", without_user);
     }
 

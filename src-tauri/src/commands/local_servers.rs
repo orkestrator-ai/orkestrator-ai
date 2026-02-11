@@ -3,13 +3,13 @@
 //! These commands manage OpenCode and Claude-bridge servers
 //! for local (non-Docker) environments.
 
+use crate::local::ports::{allocate_ports, is_port_available};
+use crate::local::process::{get_process_manager, is_process_alive, ProcessType};
 use crate::local::{
     get_local_claude_status, get_local_opencode_status, start_local_claude_bridge,
     start_local_opencode_server, stop_local_claude_bridge, stop_local_opencode_server,
     LocalServerStartResult, LocalServerStatus,
 };
-use crate::local::ports::{allocate_ports, is_port_available};
-use crate::local::process::{get_process_manager, is_process_alive, ProcessType};
 use crate::storage::get_storage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -111,9 +111,7 @@ pub async fn start_local_opencode_server_cmd(
 
 /// Stop the OpenCode server for a local environment
 #[tauri::command]
-pub async fn stop_local_opencode_server_cmd(
-    environment_id: String,
-) -> Result<(), String> {
+pub async fn stop_local_opencode_server_cmd(environment_id: String) -> Result<(), String> {
     debug!(environment_id = %environment_id, "Stopping local OpenCode server");
 
     stop_local_opencode_server(&environment_id).await?;
@@ -214,7 +212,10 @@ pub async fn start_local_claude_server_cmd(
 
         if let Some(pid) = environment.claude_bridge_pid {
             if is_process_alive(pid) {
-                if let Err(err) = manager.kill(&environment_id, ProcessType::ClaudeBridge).await {
+                if let Err(err) = manager
+                    .kill(&environment_id, ProcessType::ClaudeBridge)
+                    .await
+                {
                     warn!(
                         environment_id = %environment_id,
                         port = port,
@@ -261,7 +262,14 @@ pub async fn start_local_claude_server_cmd(
     }
 
     // Start the server
-    let result = start_local_claude_bridge(&environment_id, worktree_path, port, &bridge_path, bundled_bun_path.as_deref()).await?;
+    let result = start_local_claude_bridge(
+        &environment_id,
+        worktree_path,
+        port,
+        &bridge_path,
+        bundled_bun_path.as_deref(),
+    )
+    .await?;
 
     // Update the PID in storage if it changed
     if !result.was_running {
@@ -324,7 +332,10 @@ fn resolve_claude_bridge_path(app_handle: &tauri::AppHandle) -> String {
 
     // Try bundled resource path (production)
     // Use resolve_resource which is the Tauri v2 way to access bundled resources
-    if let Ok(bundled) = app_handle.path().resolve("claude-bridge", tauri::path::BaseDirectory::Resource) {
+    if let Ok(bundled) = app_handle
+        .path()
+        .resolve("claude-bridge", tauri::path::BaseDirectory::Resource)
+    {
         debug!(path = %bundled.display(), "Checking bundled claude-bridge path");
         if bundled.exists() {
             debug!(path = %bundled.display(), "Found bundled claude-bridge");
@@ -369,7 +380,10 @@ fn resolve_bundled_bun_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> O
     // Try bundled resource path (production)
     #[cfg(not(debug_assertions))]
     {
-        if let Ok(bundled) = app_handle.path().resolve("bin/bun", tauri::path::BaseDirectory::Resource) {
+        if let Ok(bundled) = app_handle
+            .path()
+            .resolve("bin/bun", tauri::path::BaseDirectory::Resource)
+        {
             debug!(path = %bundled.display(), "Checking bundled bun path");
             if bundled.exists() {
                 debug!(path = %bundled.display(), "Found bundled bun");
@@ -395,9 +409,7 @@ fn resolve_bundled_bun_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> O
 
 /// Stop the Claude-bridge server for a local environment
 #[tauri::command]
-pub async fn stop_local_claude_server_cmd(
-    environment_id: String,
-) -> Result<(), String> {
+pub async fn stop_local_claude_server_cmd(environment_id: String) -> Result<(), String> {
     debug!(environment_id = %environment_id, "Stopping local Claude-bridge server");
 
     stop_local_claude_bridge(&environment_id).await?;

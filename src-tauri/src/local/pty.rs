@@ -173,9 +173,13 @@ impl LocalTerminalManager {
         }
 
         // Get writer and reader from the master
-        let mut writer = pair.master.take_writer()
+        let mut writer = pair
+            .master
+            .take_writer()
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
-        let mut reader = pair.master.try_clone_reader()
+        let mut reader = pair
+            .master
+            .try_clone_reader()
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
 
         // Store just the master for resize operations (no need for a dummy slave)
@@ -256,7 +260,11 @@ impl LocalTerminalManager {
     }
 
     /// Write data to a local terminal session
-    pub async fn write_to_session(&self, session_id: &str, data: Vec<u8>) -> Result<(), LocalPtyError> {
+    pub async fn write_to_session(
+        &self,
+        session_id: &str,
+        data: Vec<u8>,
+    ) -> Result<(), LocalPtyError> {
         let sender = {
             let senders = self.input_senders.lock().unwrap();
             senders
@@ -356,7 +364,8 @@ impl Default for LocalTerminalManager {
 }
 
 // Global local terminal manager instance
-static LOCAL_TERMINAL_MANAGER: std::sync::OnceLock<LocalTerminalManager> = std::sync::OnceLock::new();
+static LOCAL_TERMINAL_MANAGER: std::sync::OnceLock<LocalTerminalManager> =
+    std::sync::OnceLock::new();
 
 /// Initialize the global local terminal manager
 pub fn init_local_terminal_manager() {

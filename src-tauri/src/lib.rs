@@ -11,8 +11,8 @@ mod models;
 mod pty;
 mod storage;
 
-use commands::*;
 use bollard::Docker;
+use commands::*;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
 use tracing::{info, warn};
@@ -53,7 +53,11 @@ pub fn run() {
         .setup(|app| {
             // Create App menu with About and Quit (CMD+Q)
             let app_menu = SubmenuBuilder::new(app, "Orkestrator AI")
-                .item(&PredefinedMenuItem::about(app, Some("About Orkestrator AI"), None)?)
+                .item(&PredefinedMenuItem::about(
+                    app,
+                    Some("About Orkestrator AI"),
+                    None,
+                )?)
                 .separator()
                 .item(&PredefinedMenuItem::hide(app, None)?)
                 .item(&PredefinedMenuItem::hide_others(app, None)?)
@@ -100,19 +104,17 @@ pub fn run() {
             app.set_menu(menu)?;
 
             // Handle menu events
-            app.on_menu_event(move |app_handle, event| {
-                match event.id().0.as_str() {
-                    "zoom_in" => {
-                        let _ = app_handle.emit("menu-zoom", "in");
-                    }
-                    "zoom_out" => {
-                        let _ = app_handle.emit("menu-zoom", "out");
-                    }
-                    "zoom_reset" => {
-                        let _ = app_handle.emit("menu-zoom", "reset");
-                    }
-                    _ => {}
+            app.on_menu_event(move |app_handle, event| match event.id().0.as_str() {
+                "zoom_in" => {
+                    let _ = app_handle.emit("menu-zoom", "in");
                 }
+                "zoom_out" => {
+                    let _ = app_handle.emit("menu-zoom", "out");
+                }
+                "zoom_reset" => {
+                    let _ = app_handle.emit("menu-zoom", "reset");
+                }
+                _ => {}
             });
 
             Ok(())

@@ -219,6 +219,7 @@ log_progress "Claude Code configuration ready"
 # The host's ~/.config/opencode is mounted read-only at /opencode-config
 # The host's ~/.local/share/opencode is mounted read-only at /opencode-data
 # The host's ~/.local/state/opencode is mounted read-only at /opencode-state
+# The host's ~/.local/state/opencode/model.json is mounted read-only at /opencode-model.json
 log_progress "Setting up OpenCode configuration..."
 mkdir -p "$HOME/.config/opencode"
 mkdir -p "$HOME/.local/share/opencode"
@@ -259,6 +260,19 @@ if [ -d /opencode-state ]; then
     if [ -n "$DEBUG" ]; then
         echo "Copied OpenCode state files:"
         ls -la "$HOME/.local/state/opencode/"
+    fi
+fi
+
+# Explicitly inject model.json if available
+# This ensures model selection is present even if the broader state copy is partial
+if [ -f /opencode-model.json ]; then
+    if ! cp /opencode-model.json "$HOME/.local/state/opencode/model.json" 2>/dev/null; then
+        echo "Warning: Failed to copy OpenCode model.json from /opencode-model.json"
+    else
+        chmod 600 "$HOME/.local/state/opencode/model.json" 2>/dev/null || true
+        if [ -n "$DEBUG" ]; then
+            echo "Injected OpenCode model.json"
+        fi
     fi
 fi
 

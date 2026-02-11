@@ -230,11 +230,7 @@ impl LocalProcessManager {
     }
 
     /// Get the PID for a specific process
-    pub async fn get_pid(
-        &self,
-        environment_id: &str,
-        process_type: ProcessType,
-    ) -> Option<u32> {
+    pub async fn get_pid(&self, environment_id: &str, process_type: ProcessType) -> Option<u32> {
         let processes = self.processes.lock().await;
         processes
             .get(environment_id)
@@ -274,11 +270,7 @@ impl LocalProcessManager {
     }
 
     /// Check if a specific process is running
-    pub async fn is_running(
-        &self,
-        environment_id: &str,
-        process_type: ProcessType,
-    ) -> bool {
+    pub async fn is_running(&self, environment_id: &str, process_type: ProcessType) -> bool {
         let processes = self.processes.lock().await;
         if let Some(env_processes) = processes.get(environment_id) {
             if let Some(handle) = env_processes.get(&process_type) {

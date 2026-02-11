@@ -30,7 +30,9 @@ pub async fn create_session(
     let storage = get_storage().map_err(storage_error_to_string)?;
 
     let session = Session::new(environment_id, container_id, tab_id, session_type);
-    let created = storage.add_session(session).map_err(storage_error_to_string)?;
+    let created = storage
+        .add_session(session)
+        .map_err(storage_error_to_string)?;
 
     info!(session_id = %created.id, "Session created");
     Ok(created)
@@ -58,7 +60,9 @@ pub async fn get_sessions_by_environment(environment_id: String) -> Result<Vec<S
 #[tauri::command]
 pub async fn get_session(session_id: String) -> Result<Option<Session>, String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.get_session(&session_id).map_err(storage_error_to_string)
+    storage
+        .get_session(&session_id)
+        .map_err(storage_error_to_string)
 }
 
 /// Update session status (connected/disconnected)
@@ -84,7 +88,9 @@ pub async fn update_session_activity(session_id: String) -> Result<Session, Stri
     debug!(session_id = %session_id, "Updating session activity");
 
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.touch_session(&session_id).map_err(storage_error_to_string)
+    storage
+        .touch_session(&session_id)
+        .map_err(storage_error_to_string)
 }
 
 /// Delete a session
@@ -93,7 +99,9 @@ pub async fn delete_session(session_id: String) -> Result<(), String> {
     debug!(session_id = %session_id, "Deleting session");
 
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.remove_session(&session_id).map_err(storage_error_to_string)?;
+    storage
+        .remove_session(&session_id)
+        .map_err(storage_error_to_string)?;
 
     info!(session_id = %session_id, "Session deleted");
     Ok(())
@@ -158,7 +166,9 @@ pub async fn delete_sessions_by_environment(environment_id: String) -> Result<Ve
 
 /// Mark all sessions for an environment as disconnected
 #[tauri::command]
-pub async fn disconnect_environment_sessions(environment_id: String) -> Result<Vec<Session>, String> {
+pub async fn disconnect_environment_sessions(
+    environment_id: String,
+) -> Result<Vec<Session>, String> {
     debug!(environment_id = %environment_id, "Disconnecting environment sessions");
 
     let storage = get_storage().map_err(storage_error_to_string)?;

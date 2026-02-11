@@ -43,6 +43,8 @@ pub struct ContainerConfig {
     pub opencode_data_path: Option<String>,
     /// Path to ~/.local/state/opencode directory on host (if it exists)
     pub opencode_state_path: Option<String>,
+    /// Path to ~/.local/state/opencode/model.json on host (if it exists)
+    pub opencode_model_json_path: Option<String>,
     /// Path to ~/.gitconfig on host
     pub gitconfig_path: Option<String>,
     /// GitHub Personal Access Token for HTTPS authentication
@@ -72,11 +74,16 @@ pub struct ContainerConfig {
 impl ContainerConfig {
     pub fn new(environment: &Environment, git_url: &str) -> Self {
         let home = dirs::home_dir().unwrap_or_default();
+        Self::new_with_home(environment, git_url, &home)
+    }
+
+    fn new_with_home(environment: &Environment, git_url: &str, home: &std::path::Path) -> Self {
         let claude_dir = home.join(".claude");
         let claude_json = home.join(".claude.json");
         let opencode_config = home.join(".config").join("opencode");
         let opencode_data = home.join(".local").join("share").join("opencode");
         let opencode_state = home.join(".local").join("state").join("opencode");
+        let opencode_model_json = opencode_state.join("model.json");
         let gitconfig = home.join(".gitconfig");
 
         // Only use gitconfig if it exists
@@ -114,6 +121,14 @@ impl ContainerConfig {
             None
         };
 
+        // Only use opencode model file if it exists
+        let opencode_model_json_path =
+            if opencode_model_json.exists() && opencode_model_json.is_file() {
+                Some(opencode_model_json.to_string_lossy().to_string())
+            } else {
+                None
+            };
+
         Self {
             environment_id: environment.id.clone(),
             project_id: environment.project_id.clone(),
@@ -127,6 +142,7 @@ impl ContainerConfig {
             opencode_config_path,
             opencode_data_path,
             opencode_state_path,
+            opencode_model_json_path,
             gitconfig_path,
             github_token: None,
             cpu_limit: None,
@@ -254,6 +270,15 @@ pub async fn create_environment_container(
     if let Some(opencode_state_path) = &config.opencode_state_path {
         debug!(path = %opencode_state_path, "Mounting opencode state");
         binds.push(format!("{}:/opencode-state:ro", opencode_state_path));
+    }
+
+    // Mount ~/.local/state/opencode/model.json if it exists - explicit OpenCode model selection
+    if let Some(opencode_model_json_path) = &config.opencode_model_json_path {
+        debug!(path = %opencode_model_json_path, "Mounting opencode model.json");
+        binds.push(format!(
+            "{}:/opencode-model.json:ro",
+            opencode_model_json_path
+        ));
     }
 
     // Mount gitconfig if it exists - for git user.name, user.email, etc.
@@ -473,6 +498,8 @@ pub async fn list_managed_containers() -> Result<Vec<(String, String)>, DockerEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_container_config() {
@@ -482,5 +509,24 @@ mod tests {
 
         assert_eq!(config.branch, "develop");
         assert_eq!(config.git_url, "https://github.com/test/repo.git");
+    }
+
+    #[test]
+    fn test_container_config_detects_opencode_model_json() {
+        let tmp = tempdir().unwrap();
+        let home = tmp.path();
+        let state_dir = home.join(".local").join("state").join("opencode");
+        let model_path = state_dir.join("model.json");
+
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(&model_path, r#"{"model":"opencode/grok-code"}"#).unwrap();
+
+        let env = Environment::new("project-123".to_string());
+        let config = ContainerConfig::new_with_home(&env, "https://github.com/test/repo.git", home);
+
+        assert_eq!(
+            config.opencode_model_json_path,
+            Some(model_path.to_string_lossy().to_string())
+        );
     }
 }

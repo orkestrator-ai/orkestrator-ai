@@ -56,17 +56,14 @@ pub async fn open_local_in_editor(path: String, editor: PreferredEditor) -> Resu
     let cmd = editor.cli_command();
 
     // Spawn the editor process with the local path
-    Command::new(cmd)
-        .arg(&path)
-        .spawn()
-        .map_err(|e| {
-            format!(
-                "Failed to open {}: {}. Make sure the {} CLI is installed and in your PATH.",
-                editor.display_name(),
-                e,
-                editor.display_name()
-            )
-        })?;
+    Command::new(cmd).arg(&path).spawn().map_err(|e| {
+        format!(
+            "Failed to open {}: {}. Make sure the {} CLI is installed and in your PATH.",
+            editor.display_name(),
+            e,
+            editor.display_name()
+        )
+    })?;
 
     Ok(())
 }

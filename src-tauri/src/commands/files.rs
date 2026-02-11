@@ -303,10 +303,8 @@ fn insert_path_into_tree(
 
         // Recursively insert remaining parts
         if let Some(children) = &mut node.children {
-            let mut child_map: HashMap<String, FileNode> = children
-                .drain(..)
-                .map(|n| (n.name.clone(), n))
-                .collect();
+            let mut child_map: HashMap<String, FileNode> =
+                children.drain(..).map(|n| (n.name.clone(), n)).collect();
             insert_path_into_tree(&mut child_map, &parts[1..], full_path, depth + 1);
             *children = child_map.into_values().collect();
             sort_file_nodes(children);
@@ -316,12 +314,10 @@ fn insert_path_into_tree(
 
 /// Sort file nodes: directories first, then alphabetically
 fn sort_file_nodes(nodes: &mut [FileNode]) {
-    nodes.sort_by(|a, b| {
-        match (a.is_directory, b.is_directory) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    nodes.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     // Recursively sort children
@@ -397,7 +393,14 @@ pub async fn get_git_status(
     let branch_name_status = client
         .exec_command(
             &container_id,
-            vec!["git", "-C", "/workspace", "diff", "--name-status", &branch_diff_ref],
+            vec![
+                "git",
+                "-C",
+                "/workspace",
+                "diff",
+                "--name-status",
+                &branch_diff_ref,
+            ],
         )
         .await
         .unwrap_or_default();
@@ -405,7 +408,14 @@ pub async fn get_git_status(
     let branch_numstat = client
         .exec_command(
             &container_id,
-            vec!["git", "-C", "/workspace", "diff", "--numstat", &branch_diff_ref],
+            vec![
+                "git",
+                "-C",
+                "/workspace",
+                "diff",
+                "--numstat",
+                &branch_diff_ref,
+            ],
         )
         .await
         .unwrap_or_default();
@@ -417,7 +427,8 @@ pub async fn get_git_status(
 
     // Add branch changes to our map
     for (path, status) in branch_files {
-        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..") {
+        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
+        {
             continue;
         }
         let (additions, deletions) = branch_stats.get(&path).copied().unwrap_or((0, 0));
@@ -427,17 +438,26 @@ pub async fn get_git_status(
     // 2. Get uncommitted changes (working tree + staged)
     //    Using git status to catch untracked files too
     let status_output = client
-        .exec_command(&container_id, vec!["git", "-C", "/workspace", "status", "--porcelain", "-uall"])
+        .exec_command(
+            &container_id,
+            vec!["git", "-C", "/workspace", "status", "--porcelain", "-uall"],
+        )
         .await
         .unwrap_or_default();
 
     let unstaged_numstat = client
-        .exec_command(&container_id, vec!["git", "-C", "/workspace", "diff", "--numstat"])
+        .exec_command(
+            &container_id,
+            vec!["git", "-C", "/workspace", "diff", "--numstat"],
+        )
         .await
         .unwrap_or_default();
 
     let staged_numstat = client
-        .exec_command(&container_id, vec!["git", "-C", "/workspace", "diff", "--cached", "--numstat"])
+        .exec_command(
+            &container_id,
+            vec!["git", "-C", "/workspace", "diff", "--cached", "--numstat"],
+        )
         .await
         .unwrap_or_default();
 
@@ -447,7 +467,8 @@ pub async fn get_git_status(
 
     // Merge uncommitted changes into our map (overwrites if already present from branch diff)
     for (path, status) in uncommitted_files {
-        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..") {
+        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
+        {
             continue;
         }
 
@@ -458,9 +479,7 @@ pub async fn get_git_status(
                 .exec_command(&container_id, vec!["wc", "-l", &full_path])
                 .await
                 .ok()
-                .and_then(|output| {
-                    output.split_whitespace().next()?.parse::<u32>().ok()
-                })
+                .and_then(|output| output.split_whitespace().next()?.parse::<u32>().ok())
                 .unwrap_or(0);
             (line_count, 0u32)
         } else {
@@ -531,15 +550,32 @@ pub async fn get_file_tree(container_id: String) -> Result<Vec<FileNode>, String
             vec![
                 "find",
                 "/workspace",
-                "-type", "f",
-                "-not", "-path", "*/.git/*",
-                "-not", "-path", "*/node_modules/*",
-                "-not", "-path", "*/__pycache__/*",
-                "-not", "-path", "*/.next/*",
-                "-not", "-path", "*/dist/*",
-                "-not", "-path", "*/build/*",
-                "-not", "-path", "*/.cache/*",
-                "-not", "-path", "*/target/*",
+                "-type",
+                "f",
+                "-not",
+                "-path",
+                "*/.git/*",
+                "-not",
+                "-path",
+                "*/node_modules/*",
+                "-not",
+                "-path",
+                "*/__pycache__/*",
+                "-not",
+                "-path",
+                "*/.next/*",
+                "-not",
+                "-path",
+                "*/dist/*",
+                "-not",
+                "-path",
+                "*/build/*",
+                "-not",
+                "-path",
+                "*/.cache/*",
+                "-not",
+                "-path",
+                "*/target/*",
             ],
         )
         .await
@@ -840,7 +876,10 @@ pub async fn get_local_git_status(
         return Err(format!("Worktree path does not exist: {}", worktree_path));
     }
     if !path.is_dir() {
-        return Err(format!("Worktree path is not a directory: {}", worktree_path));
+        return Err(format!(
+            "Worktree path is not a directory: {}",
+            worktree_path
+        ));
     }
 
     // Use a HashMap to collect all changes, keyed by path
@@ -857,7 +896,13 @@ pub async fn get_local_git_status(
         let branch_for_fetch = target_branch.clone();
         let fetch_task = tokio::task::spawn_blocking(move || {
             Command::new("git")
-                .args(["-C", &worktree_for_fetch, "fetch", "origin", &branch_for_fetch])
+                .args([
+                    "-C",
+                    &worktree_for_fetch,
+                    "fetch",
+                    "origin",
+                    &branch_for_fetch,
+                ])
                 .output()
         });
 
@@ -889,7 +934,13 @@ pub async fn get_local_git_status(
     let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
 
     let branch_name_status = Command::new("git")
-        .args(["-C", &worktree_path, "diff", "--name-status", &branch_diff_ref])
+        .args([
+            "-C",
+            &worktree_path,
+            "diff",
+            "--name-status",
+            &branch_diff_ref,
+        ])
         .output()
         .map(|o| {
             if !o.status.success() {
@@ -919,7 +970,8 @@ pub async fn get_local_git_status(
 
     // Add branch changes to our map
     for (path, status) in branch_files {
-        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..") {
+        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
+        {
             continue;
         }
         let (additions, deletions) = branch_stats.get(&path).copied().unwrap_or((0, 0));
@@ -969,7 +1021,11 @@ pub async fn get_local_git_status(
 
     // Merge uncommitted changes into our map
     for (file_path, status) in uncommitted_files {
-        if file_path.contains('\0') || file_path.contains('\n') || file_path.contains('\r') || file_path.contains("..") {
+        if file_path.contains('\0')
+            || file_path.contains('\n')
+            || file_path.contains('\r')
+            || file_path.contains("..")
+        {
             continue;
         }
 
@@ -1033,28 +1089,60 @@ pub async fn get_local_file_tree(worktree_path: String) -> Result<Vec<FileNode>,
         return Err(format!("Worktree path does not exist: {}", worktree_path));
     }
     if !path.is_dir() {
-        return Err(format!("Worktree path is not a directory: {}", worktree_path));
+        return Err(format!(
+            "Worktree path is not a directory: {}",
+            worktree_path
+        ));
     }
 
     // Use find command to list files, excluding common directories
     let output = Command::new("find")
         .args([
             &worktree_path,
-            "-type", "f",
-            "-not", "-path", "*/.git/*",
-            "-not", "-path", "*/node_modules/*",
-            "-not", "-path", "*/__pycache__/*",
-            "-not", "-path", "*/.next/*",
-            "-not", "-path", "*/dist/*",
-            "-not", "-path", "*/build/*",
-            "-not", "-path", "*/.cache/*",
-            "-not", "-path", "*/target/*",
-            "-not", "-path", "*/.turbo/*",
-            "-not", "-path", "*/.venv/*",
-            "-not", "-path", "*/venv/*",
-            "-not", "-path", "*/coverage/*",
-            "-not", "-path", "*/.nyc_output/*",
-            "-not", "-path", "*/*.egg-info/*",
+            "-type",
+            "f",
+            "-not",
+            "-path",
+            "*/.git/*",
+            "-not",
+            "-path",
+            "*/node_modules/*",
+            "-not",
+            "-path",
+            "*/__pycache__/*",
+            "-not",
+            "-path",
+            "*/.next/*",
+            "-not",
+            "-path",
+            "*/dist/*",
+            "-not",
+            "-path",
+            "*/build/*",
+            "-not",
+            "-path",
+            "*/.cache/*",
+            "-not",
+            "-path",
+            "*/target/*",
+            "-not",
+            "-path",
+            "*/.turbo/*",
+            "-not",
+            "-path",
+            "*/.venv/*",
+            "-not",
+            "-path",
+            "*/venv/*",
+            "-not",
+            "-path",
+            "*/coverage/*",
+            "-not",
+            "-path",
+            "*/.nyc_output/*",
+            "-not",
+            "-path",
+            "*/*.egg-info/*",
         ])
         .output()
         .map_err(|e| format!("Failed to run find command: {}", e))?;
@@ -1100,9 +1188,11 @@ pub async fn read_local_file(
     };
 
     // Security check: ensure the resolved path is within the worktree
-    let canonical_base = base_path.canonicalize()
+    let canonical_base = base_path
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve worktree path: {}", e))?;
-    let canonical_file = full_path.canonicalize()
+    let canonical_file = full_path
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve file path: {}", e))?;
 
     if !canonical_file.starts_with(&canonical_base) {
@@ -1131,9 +1221,7 @@ pub async fn read_local_file(
 /// - .orkestrator/ directories (for clipboard attachments)
 /// - workspaces/ directories (for worktree files)
 #[tauri::command]
-pub async fn read_file_base64(
-    file_path: String,
-) -> Result<String, String> {
+pub async fn read_file_base64(file_path: String) -> Result<String, String> {
     use base64::Engine;
 
     let path = std::path::Path::new(&file_path);
@@ -1161,7 +1249,8 @@ pub async fn read_file_base64(
     }
 
     // Canonicalize path to resolve symlinks and get absolute path
-    let canonical_path = path.canonicalize()
+    let canonical_path = path
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve file path: {}", e))?;
     let canonical_str = canonical_path.to_string_lossy();
 
@@ -1171,7 +1260,9 @@ pub async fn read_file_base64(
     let is_workspace_dir = canonical_str.contains("/workspaces/");
 
     if !is_orkestrator_dir && !is_workspace_dir {
-        return Err("Invalid file path: must be within .orkestrator/ or workspaces/ directory".to_string());
+        return Err(
+            "Invalid file path: must be within .orkestrator/ or workspaces/ directory".to_string(),
+        );
     }
 
     // Size limit: 10MB for binary files
@@ -1188,8 +1279,8 @@ pub async fn read_file_base64(
     }
 
     // Read file bytes
-    let bytes = std::fs::read(&canonical_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let bytes =
+        std::fs::read(&canonical_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     // Encode as base64
     let base64_content = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -1272,7 +1363,10 @@ pub async fn read_local_file_at_branch(
         Ok(result) => {
             // Git command ran but failed - check if it's a "file not found" error
             let stderr = String::from_utf8_lossy(&result.stderr);
-            if stderr.contains("does not exist") || stderr.contains("exists on disk, but not in") || stderr.contains("fatal: path") {
+            if stderr.contains("does not exist")
+                || stderr.contains("exists on disk, but not in")
+                || stderr.contains("fatal: path")
+            {
                 // File genuinely doesn't exist in this branch (new file)
                 Ok(None)
             } else {
@@ -1368,7 +1462,10 @@ pub async fn write_local_file(
         return Err(format!("Worktree path does not exist: {}", worktree_path));
     }
     if !base_path.is_dir() {
-        return Err(format!("Worktree path is not a directory: {}", worktree_path));
+        return Err(format!(
+            "Worktree path is not a directory: {}",
+            worktree_path
+        ));
     }
 
     // Validate file path doesn't contain dangerous characters
@@ -1403,7 +1500,8 @@ pub async fn write_local_file(
 
     // Security check: ensure the resolved path is within the worktree
     // We can't canonicalize yet since the file doesn't exist, so check parent
-    let parent_dir = full_path.parent()
+    let parent_dir = full_path
+        .parent()
         .ok_or_else(|| "Invalid file path: no parent directory".to_string())?;
 
     // Create parent directories if needed
@@ -1411,9 +1509,11 @@ pub async fn write_local_file(
         .map_err(|e| format!("Failed to create directories: {}", e))?;
 
     // Now we can verify the parent is within worktree
-    let canonical_base = base_path.canonicalize()
+    let canonical_base = base_path
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve worktree path: {}", e))?;
-    let canonical_parent = parent_dir.canonicalize()
+    let canonical_parent = parent_dir
+        .canonicalize()
         .map_err(|e| format!("Failed to resolve parent directory: {}", e))?;
 
     if !canonical_parent.starts_with(&canonical_base) {
@@ -1421,8 +1521,7 @@ pub async fn write_local_file(
     }
 
     // Write the file
-    std::fs::write(&full_path, file_data)
-        .map_err(|e| format!("Failed to write file: {}", e))?;
+    std::fs::write(&full_path, file_data).map_err(|e| format!("Failed to write file: {}", e))?;
 
     // Return the full path as string
     Ok(full_path.to_string_lossy().to_string())

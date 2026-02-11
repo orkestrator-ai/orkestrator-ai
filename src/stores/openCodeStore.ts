@@ -68,7 +68,7 @@ interface OpenCodeState {
   selectedVariant: Map<string, string>;
   /** Currently selected mode per environment */
   selectedMode: Map<string, OpenCodeConversationMode>;
-  /** Current attachments per environment (for compose bar) */
+  /** Current attachments per tab session key (format: env-{environmentId}:{tabId}) */
   attachments: Map<string, OpenCodeAttachment[]>;
   /** Whether the compose bar is loading per environment */
   isComposing: Map<string, boolean>;
@@ -103,11 +103,11 @@ interface OpenCodeState {
   /** Set error message for a session */
   setSessionError: (environmentId: string, error: string | undefined) => void;
   /** Add attachment to compose bar */
-  addAttachment: (environmentId: string, attachment: OpenCodeAttachment) => void;
+  addAttachment: (sessionKey: string, attachment: OpenCodeAttachment) => void;
   /** Remove attachment from compose bar */
-  removeAttachment: (environmentId: string, attachmentId: string) => void;
-  /** Clear all attachments for an environment */
-  clearAttachments: (environmentId: string) => void;
+  removeAttachment: (sessionKey: string, attachmentId: string) => void;
+  /** Clear all attachments for a tab session */
+  clearAttachments: (sessionKey: string) => void;
   /** Set composing state */
   setComposing: (environmentId: string, isComposing: boolean) => void;
   /** Clear all state for an environment (cleanup) */
@@ -136,8 +136,8 @@ interface OpenCodeState {
   getSelectedVariant: (environmentId: string) => string | undefined;
   /** Get selected mode for an environment */
   getSelectedMode: (environmentId: string) => OpenCodeConversationMode;
-  /** Get attachments for an environment */
-  getAttachments: (environmentId: string) => OpenCodeAttachment[];
+  /** Get attachments for a tab session */
+  getAttachments: (sessionKey: string) => OpenCodeAttachment[];
   /** Check if composing for an environment */
   isComposingFor: (environmentId: string) => boolean;
   /** Get pending questions for a session */
@@ -240,9 +240,11 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       // Preserve client-side error messages (IDs starting with ERROR_MESSAGE_PREFIX)
       // These are not stored on the server, so we need to merge them back
       const existingErrors = session.messages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
+      const incomingMessageIds = new Set(messages.map((m) => m.id));
+      const errorsToPreserve = existingErrors.filter((m) => !incomingMessageIds.has(m.id));
 
       // If there are no error messages to preserve, just use server messages
-      if (existingErrors.length === 0) {
+      if (errorsToPreserve.length === 0) {
         const newMap = new Map(state.sessions);
         newMap.set(environmentId, {
           ...session,
@@ -254,7 +256,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       // Merge error messages into server messages based on timestamp
       // Each error should appear after the message it follows chronologically
       const mergedMessages = [...messages];
-      for (const errorMsg of existingErrors) {
+      for (const errorMsg of errorsToPreserve) {
         const errorTime = new Date(errorMsg.createdAt || 0).getTime();
         // Find the position to insert: after the last message with earlier/equal timestamp
         let insertIndex = mergedMessages.length;
@@ -307,29 +309,29 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       return { sessions: newMap };
     }),
 
-  addAttachment: (environmentId, attachment) =>
+  addAttachment: (sessionKey, attachment) =>
     set((state) => {
-      const current = state.attachments.get(environmentId) || [];
+      const current = state.attachments.get(sessionKey) || [];
       const newMap = new Map(state.attachments);
-      newMap.set(environmentId, [...current, attachment]);
+      newMap.set(sessionKey, [...current, attachment]);
       return { attachments: newMap };
     }),
 
-  removeAttachment: (environmentId, attachmentId) =>
+  removeAttachment: (sessionKey, attachmentId) =>
     set((state) => {
-      const current = state.attachments.get(environmentId) || [];
+      const current = state.attachments.get(sessionKey) || [];
       const newMap = new Map(state.attachments);
       newMap.set(
-        environmentId,
+        sessionKey,
         current.filter((a) => a.id !== attachmentId)
       );
       return { attachments: newMap };
     }),
 
-  clearAttachments: (environmentId) =>
+  clearAttachments: (sessionKey) =>
     set((state) => {
       const newMap = new Map(state.attachments);
-      newMap.set(environmentId, []);
+      newMap.set(sessionKey, []);
       return { attachments: newMap };
     }),
 
@@ -367,13 +369,19 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
 
+      const sessionKeyPrefix = `env-${environmentId}:`;
+
       newServerStatus.delete(environmentId);
       newSessions.delete(environmentId);
       newClients.delete(environmentId);
       newSelectedModel.delete(environmentId);
       newSelectedVariant.delete(environmentId);
       newSelectedMode.delete(environmentId);
-      newAttachments.delete(environmentId);
+      for (const key of newAttachments.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          newAttachments.delete(key);
+        }
+      }
       newIsComposing.delete(environmentId);
       newEventSubscriptions.delete(environmentId);
       // Remove pending questions for this environment's sessions
@@ -496,7 +504,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   getSelectedMode: (environmentId) =>
     get().selectedMode.get(environmentId) || "build",
 
-  getAttachments: (environmentId) => get().attachments.get(environmentId) || [],
+  getAttachments: (sessionKey) => get().attachments.get(sessionKey) || [],
 
   isComposingFor: (environmentId) =>
     get().isComposing.get(environmentId) || false,

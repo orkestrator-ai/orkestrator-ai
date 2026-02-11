@@ -2,10 +2,10 @@
 // Stores projects, environments, and config in the app data directory
 
 use crate::models::{AppConfig, Environment, Project, Session, SessionStatus};
+use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
 use thiserror::Error;
-use chrono::Utc;
 use tracing::{debug, info, warn};
 
 #[derive(Error, Debug)]
@@ -136,7 +136,11 @@ impl Storage {
     }
 
     /// Update a project
-    pub fn update_project(&self, project_id: &str, updates: serde_json::Value) -> Result<Project, StorageError> {
+    pub fn update_project(
+        &self,
+        project_id: &str,
+        updates: serde_json::Value,
+    ) -> Result<Project, StorageError> {
         let mut projects = self.load_projects()?;
         let project = projects
             .iter_mut()
@@ -195,7 +199,11 @@ impl Storage {
     /// Uses multiple strategies for efficiency:
     /// 1. Try truncating at the error position and finding the last valid array close
     /// 2. Find all ']' positions and try each one starting from the end
-    fn try_repair_json_array(contents: &str, error_line: usize, _error_column: usize) -> Option<String> {
+    fn try_repair_json_array(
+        contents: &str,
+        error_line: usize,
+        _error_column: usize,
+    ) -> Option<String> {
         let trimmed = contents.trim();
 
         // Must start with '[' to be a valid array
@@ -248,7 +256,10 @@ impl Storage {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let backup_name = format!(
             "{}.corrupted.{}",
-            original_path.file_stem().unwrap_or_default().to_string_lossy(),
+            original_path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy(),
             timestamp
         );
         original_path.with_file_name(format!("{}.json", backup_name))
@@ -311,7 +322,8 @@ impl Storage {
                     "JSON parsing failed for environments.json, attempting recovery"
                 );
 
-                if let Some(repaired) = Self::try_repair_json_array(&contents, e.line(), e.column()) {
+                if let Some(repaired) = Self::try_repair_json_array(&contents, e.line(), e.column())
+                {
                     // Parse the repaired content (should succeed since try_repair validates)
                     match serde_json::from_str::<Vec<Environment>>(&repaired) {
                         Ok(mut environments) => {
@@ -361,7 +373,10 @@ impl Storage {
     }
 
     /// Add a new environment
-    pub fn add_environment(&self, mut environment: Environment) -> Result<Environment, StorageError> {
+    pub fn add_environment(
+        &self,
+        mut environment: Environment,
+    ) -> Result<Environment, StorageError> {
         let mut environments = self.load_environments()?;
 
         // Set order to be at the end within this project (max order + 1)
@@ -385,7 +400,9 @@ impl Storage {
         environments.retain(|e| e.id != environment_id);
 
         if environments.len() == initial_len {
-            return Err(StorageError::EnvironmentNotFound(environment_id.to_string()));
+            return Err(StorageError::EnvironmentNotFound(
+                environment_id.to_string(),
+            ));
         }
 
         self.save_environments(&environments)?;
@@ -393,7 +410,10 @@ impl Storage {
     }
 
     /// Get environments for a project, sorted by order
-    pub fn get_environments_by_project(&self, project_id: &str) -> Result<Vec<Environment>, StorageError> {
+    pub fn get_environments_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Environment>, StorageError> {
         let environments = self.load_environments()?;
         let mut filtered: Vec<Environment> = environments
             .into_iter()
@@ -410,13 +430,20 @@ impl Storage {
     }
 
     /// Get an environment by ID
-    pub fn get_environment(&self, environment_id: &str) -> Result<Option<Environment>, StorageError> {
+    pub fn get_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<Option<Environment>, StorageError> {
         let environments = self.load_environments()?;
         Ok(environments.into_iter().find(|e| e.id == environment_id))
     }
 
     /// Update an environment
-    pub fn update_environment(&self, environment_id: &str, updates: serde_json::Value) -> Result<Environment, StorageError> {
+    pub fn update_environment(
+        &self,
+        environment_id: &str,
+        updates: serde_json::Value,
+    ) -> Result<Environment, StorageError> {
         let mut environments = self.load_environments()?;
         let environment = environments
             .iter_mut()
@@ -474,7 +501,11 @@ impl Storage {
     /// Reorder environments within a project based on the provided order of IDs
     /// The order field of each environment is updated to match its position in the input array
     /// Environments not in the input array are appended at the end in their current relative order
-    pub fn reorder_environments(&self, project_id: &str, environment_ids: &[String]) -> Result<Vec<Environment>, StorageError> {
+    pub fn reorder_environments(
+        &self,
+        project_id: &str,
+        environment_ids: &[String],
+    ) -> Result<Vec<Environment>, StorageError> {
         let mut environments = self.load_environments()?;
 
         // Create a set of provided IDs for quick lookup
@@ -482,7 +513,10 @@ impl Storage {
 
         // Update the order field for each environment based on its position in the input array
         for (index, id) in environment_ids.iter().enumerate() {
-            if let Some(env) = environments.iter_mut().find(|e| e.id == *id && e.project_id == project_id) {
+            if let Some(env) = environments
+                .iter_mut()
+                .find(|e| e.id == *id && e.project_id == project_id)
+            {
                 env.order = index as i32;
             }
         }
@@ -538,7 +572,11 @@ impl Storage {
     const MAX_SESSIONS_PER_ENVIRONMENT: usize = 20;
 
     /// Attempt to recover a corrupted JSON array of sessions
-    fn try_repair_sessions_json(contents: &str, error_line: usize, _error_column: usize) -> Option<String> {
+    fn try_repair_sessions_json(
+        contents: &str,
+        error_line: usize,
+        _error_column: usize,
+    ) -> Option<String> {
         let trimmed = contents.trim();
 
         // Must start with '[' to be a valid array
@@ -630,7 +668,9 @@ impl Storage {
                     "JSON parsing failed for sessions.json, attempting recovery"
                 );
 
-                if let Some(repaired) = Self::try_repair_sessions_json(&contents, e.line(), e.column()) {
+                if let Some(repaired) =
+                    Self::try_repair_sessions_json(&contents, e.line(), e.column())
+                {
                     match serde_json::from_str::<Vec<Session>>(&repaired) {
                         Ok(sessions) => {
                             info!(
@@ -688,11 +728,7 @@ impl Storage {
             .collect();
 
         // Set order to be at the end (max order + 1) within this environment
-        let max_order = env_sessions
-            .iter()
-            .map(|s| s.order)
-            .max()
-            .unwrap_or(-1);
+        let max_order = env_sessions.iter().map(|s| s.order).max().unwrap_or(-1);
         session.order = max_order + 1;
 
         // If at limit, remove oldest disconnected session
@@ -726,7 +762,10 @@ impl Storage {
     }
 
     /// Get sessions for an environment, sorted by order
-    pub fn get_sessions_by_environment(&self, environment_id: &str) -> Result<Vec<Session>, StorageError> {
+    pub fn get_sessions_by_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<Vec<Session>, StorageError> {
         let sessions = self.load_sessions()?;
         let mut filtered: Vec<Session> = sessions
             .into_iter()
@@ -737,7 +776,11 @@ impl Storage {
     }
 
     /// Update session status
-    pub fn update_session_status(&self, session_id: &str, status: SessionStatus) -> Result<Session, StorageError> {
+    pub fn update_session_status(
+        &self,
+        session_id: &str,
+        status: SessionStatus,
+    ) -> Result<Session, StorageError> {
         let mut sessions = self.load_sessions()?;
         let session = sessions
             .iter_mut()
@@ -765,7 +808,11 @@ impl Storage {
     }
 
     /// Rename a session
-    pub fn rename_session(&self, session_id: &str, name: Option<String>) -> Result<Session, StorageError> {
+    pub fn rename_session(
+        &self,
+        session_id: &str,
+        name: Option<String>,
+    ) -> Result<Session, StorageError> {
         let mut sessions = self.load_sessions()?;
         let session = sessions
             .iter_mut()
@@ -779,7 +826,11 @@ impl Storage {
     }
 
     /// Update whether a session has launched its command (e.g., Claude)
-    pub fn set_session_has_launched_command(&self, session_id: &str, has_launched: bool) -> Result<Session, StorageError> {
+    pub fn set_session_has_launched_command(
+        &self,
+        session_id: &str,
+        has_launched: bool,
+    ) -> Result<Session, StorageError> {
         let mut sessions = self.load_sessions()?;
         let session = sessions
             .iter_mut()
@@ -811,7 +862,10 @@ impl Storage {
     }
 
     /// Remove all sessions for an environment
-    pub fn remove_sessions_by_environment(&self, environment_id: &str) -> Result<Vec<String>, StorageError> {
+    pub fn remove_sessions_by_environment(
+        &self,
+        environment_id: &str,
+    ) -> Result<Vec<String>, StorageError> {
         let sessions = self.load_sessions()?;
 
         // Collect session IDs to delete
@@ -837,12 +891,17 @@ impl Storage {
     }
 
     /// Mark all sessions for an environment as disconnected
-    pub fn disconnect_environment_sessions(&self, environment_id: &str) -> Result<Vec<Session>, StorageError> {
+    pub fn disconnect_environment_sessions(
+        &self,
+        environment_id: &str,
+    ) -> Result<Vec<Session>, StorageError> {
         let mut sessions = self.load_sessions()?;
         let mut updated_sessions = Vec::new();
 
         for session in sessions.iter_mut() {
-            if session.environment_id == environment_id && session.status == SessionStatus::Connected {
+            if session.environment_id == environment_id
+                && session.status == SessionStatus::Connected
+            {
                 session.status = SessionStatus::Disconnected;
                 updated_sessions.push(session.clone());
             }
@@ -911,7 +970,11 @@ impl Storage {
     /// Reorder sessions within an environment based on the provided order of IDs
     /// The order field of each session is updated to match its position in the input array
     /// Sessions not in the input array are appended at the end in their current relative order
-    pub fn reorder_sessions(&self, environment_id: &str, session_ids: &[String]) -> Result<Vec<Session>, StorageError> {
+    pub fn reorder_sessions(
+        &self,
+        environment_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<Session>, StorageError> {
         let mut sessions = self.load_sessions()?;
 
         // Create a set of provided IDs for quick lookup
@@ -919,7 +982,10 @@ impl Storage {
 
         // Update the order field for each session based on its position in the input array
         for (index, id) in session_ids.iter().enumerate() {
-            if let Some(session) = sessions.iter_mut().find(|s| s.id == *id && s.environment_id == environment_id) {
+            if let Some(session) = sessions
+                .iter_mut()
+                .find(|s| s.id == *id && s.environment_id == environment_id)
+            {
                 session.order = index as i32;
             }
         }
@@ -955,7 +1021,8 @@ impl Storage {
 
         // Get all session IDs
         let sessions = self.load_sessions()?;
-        let session_ids: std::collections::HashSet<String> = sessions.iter().map(|s| s.id.clone()).collect();
+        let session_ids: std::collections::HashSet<String> =
+            sessions.iter().map(|s| s.id.clone()).collect();
 
         let mut deleted = Vec::new();
 
@@ -992,13 +1059,14 @@ static INIT_LOCK: Mutex<()> = Mutex::new(());
 pub fn get_storage() -> Result<&'static Storage, StorageError> {
     let _guard = INIT_LOCK.lock().unwrap();
 
-    let result = STORAGE.get_or_init(|| {
-        Storage::new().map_err(|e| e.to_string())
-    });
+    let result = STORAGE.get_or_init(|| Storage::new().map_err(|e| e.to_string()));
 
     match result {
         Ok(storage) => Ok(storage),
-        Err(e) => Err(StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.clone()))),
+        Err(e) => Err(StorageError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            e.clone(),
+        ))),
     }
 }
 
@@ -1011,7 +1079,7 @@ pub fn get_config() -> Result<AppConfig, StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{EnvironmentStatus, Session, SessionType, SessionStatus};
+    use crate::models::{EnvironmentStatus, Session, SessionStatus, SessionType};
     use tempfile::tempdir;
 
     fn create_test_storage() -> Storage {
@@ -1206,7 +1274,10 @@ mod tests {
         let updated = storage.update_environment(&env.id, updates).unwrap();
         assert_eq!(updated.status, EnvironmentStatus::Running);
         assert_eq!(updated.container_id, Some("container-abc".to_string()));
-        assert_eq!(updated.pr_url, Some("https://github.com/test/repo/pull/123".to_string()));
+        assert_eq!(
+            updated.pr_url,
+            Some("https://github.com/test/repo/pull/123".to_string())
+        );
 
         // Verify it persisted
         let loaded = storage.get_environment(&env.id).unwrap().unwrap();
@@ -1370,7 +1441,9 @@ mod tests {
         assert_eq!(sessions.len(), 1);
 
         // Update status
-        let updated = storage.update_session_status(&session.id, SessionStatus::Disconnected).unwrap();
+        let updated = storage
+            .update_session_status(&session.id, SessionStatus::Disconnected)
+            .unwrap();
         assert_eq!(updated.status, SessionStatus::Disconnected);
 
         // Delete
@@ -1383,9 +1456,24 @@ mod tests {
     fn test_sessions_by_environment() {
         let storage = create_test_storage();
 
-        let session1 = Session::new("env-1".to_string(), "container-1".to_string(), "tab-1".to_string(), SessionType::Plain);
-        let session2 = Session::new("env-1".to_string(), "container-1".to_string(), "tab-2".to_string(), SessionType::Claude);
-        let session3 = Session::new("env-2".to_string(), "container-2".to_string(), "tab-1".to_string(), SessionType::ClaudeYolo);
+        let session1 = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        let session2 = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
+        let session3 = Session::new(
+            "env-2".to_string(),
+            "container-2".to_string(),
+            "tab-1".to_string(),
+            SessionType::ClaudeYolo,
+        );
 
         storage.add_session(session1).unwrap();
         storage.add_session(session2).unwrap();
@@ -1405,9 +1493,24 @@ mod tests {
     fn test_remove_sessions_by_environment() {
         let storage = create_test_storage();
 
-        let session1 = Session::new("env-1".to_string(), "container-1".to_string(), "tab-1".to_string(), SessionType::Plain);
-        let session2 = Session::new("env-1".to_string(), "container-1".to_string(), "tab-2".to_string(), SessionType::Claude);
-        let session3 = Session::new("env-2".to_string(), "container-2".to_string(), "tab-1".to_string(), SessionType::ClaudeYolo);
+        let session1 = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        let session2 = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
+        let session3 = Session::new(
+            "env-2".to_string(),
+            "container-2".to_string(),
+            "tab-1".to_string(),
+            SessionType::ClaudeYolo,
+        );
 
         storage.add_session(session1).unwrap();
         storage.add_session(session2).unwrap();
@@ -1427,15 +1530,27 @@ mod tests {
     fn test_disconnect_environment_sessions() {
         let storage = create_test_storage();
 
-        let session1 = Session::new("env-1".to_string(), "container-1".to_string(), "tab-1".to_string(), SessionType::Plain);
-        let session2 = Session::new("env-1".to_string(), "container-1".to_string(), "tab-2".to_string(), SessionType::Claude);
+        let session1 = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        let session2 = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
 
         storage.add_session(session1.clone()).unwrap();
         storage.add_session(session2.clone()).unwrap();
 
         // Both should be connected initially
         let sessions = storage.get_sessions_by_environment("env-1").unwrap();
-        assert!(sessions.iter().all(|s| s.status == SessionStatus::Connected));
+        assert!(sessions
+            .iter()
+            .all(|s| s.status == SessionStatus::Connected));
 
         // Disconnect all sessions for env-1
         let disconnected = storage.disconnect_environment_sessions("env-1").unwrap();
@@ -1443,7 +1558,9 @@ mod tests {
 
         // Verify all are now disconnected
         let sessions = storage.get_sessions_by_environment("env-1").unwrap();
-        assert!(sessions.iter().all(|s| s.status == SessionStatus::Disconnected));
+        assert!(sessions
+            .iter()
+            .all(|s| s.status == SessionStatus::Disconnected));
     }
 
     #[test]
@@ -1452,7 +1569,9 @@ mod tests {
 
         // Save buffer
         let buffer_content = "Hello World\nLine 2\n";
-        storage.save_session_buffer("session-123", buffer_content).unwrap();
+        storage
+            .save_session_buffer("session-123", buffer_content)
+            .unwrap();
 
         // Load buffer
         let loaded = storage.load_session_buffer("session-123").unwrap();
@@ -1476,9 +1595,14 @@ mod tests {
         // Create a buffer larger than the limit (500KB)
         let large_buffer: String = "x".repeat(600 * 1024);
 
-        storage.save_session_buffer("session-large", &large_buffer).unwrap();
+        storage
+            .save_session_buffer("session-large", &large_buffer)
+            .unwrap();
 
-        let loaded = storage.load_session_buffer("session-large").unwrap().unwrap();
+        let loaded = storage
+            .load_session_buffer("session-large")
+            .unwrap()
+            .unwrap();
         // Should be truncated to approximately 500KB (might be slightly less due to UTF-8 boundary)
         assert!(loaded.len() <= 500 * 1024);
         assert!(loaded.len() > 400 * 1024); // But not too much less
@@ -1508,7 +1632,9 @@ mod tests {
 
         // Now disconnect the last session so we have all disconnected
         let last_session_id = sessions.last().unwrap().id.clone();
-        storage.update_session_status(&last_session_id, SessionStatus::Disconnected).unwrap();
+        storage
+            .update_session_status(&last_session_id, SessionStatus::Disconnected)
+            .unwrap();
 
         // Add one more session - should remove oldest disconnected
         let new_session = Session::new(

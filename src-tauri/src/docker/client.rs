@@ -1,21 +1,26 @@
 // Docker client wrapper using Bollard
 // Provides high-level API for container operations
 
-use bollard::Docker;
 use bollard::container::{
-    Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
-    RenameContainerOptions, StartContainerOptions, StopContainerOptions, InspectContainerOptions,
-    PruneContainersOptions, LogsOptions, LogOutput,
+    Config, CreateContainerOptions, InspectContainerOptions, ListContainersOptions, LogOutput,
+    LogsOptions, PruneContainersOptions, RemoveContainerOptions, RenameContainerOptions,
+    StartContainerOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::image::{CommitContainerOptions, ListImagesOptions, RemoveImageOptions, PruneImagesOptions};
+use bollard::image::{
+    CommitContainerOptions, ListImagesOptions, PruneImagesOptions, RemoveImageOptions,
+};
+use bollard::models::{
+    ContainerInspectResponse, ContainerSummary, ImageSummary, PortBinding, SystemDataUsageResponse,
+    SystemInfo,
+};
 use bollard::network::PruneNetworksOptions;
 use bollard::volume::PruneVolumesOptions;
-use bollard::models::{ContainerInspectResponse, ContainerSummary, ImageSummary, PortBinding, SystemInfo, SystemDataUsageResponse};
+use bollard::Docker;
 use futures::StreamExt;
-use tokio::sync::mpsc;
 use std::collections::HashMap;
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 #[derive(Error, Debug)]
 pub enum DockerError {
@@ -112,7 +117,11 @@ impl DockerClient {
     // --- Container Operations ---
 
     /// List containers (optionally filter by label)
-    pub async fn list_containers(&self, all: bool, label_filter: Option<&str>) -> Result<Vec<ContainerSummary>, DockerError> {
+    pub async fn list_containers(
+        &self,
+        all: bool,
+        label_filter: Option<&str>,
+    ) -> Result<Vec<ContainerSummary>, DockerError> {
         let mut filters = HashMap::new();
         if let Some(label) = label_filter {
             filters.insert("label", vec![label]);
@@ -203,27 +212,43 @@ impl DockerClient {
     }
 
     /// Stop a container
-    pub async fn stop_container(&self, container_id: &str, timeout: Option<i64>) -> Result<(), DockerError> {
+    pub async fn stop_container(
+        &self,
+        container_id: &str,
+        timeout: Option<i64>,
+    ) -> Result<(), DockerError> {
         let options = StopContainerOptions {
             t: timeout.unwrap_or(10),
         };
-        self.docker.stop_container(container_id, Some(options)).await?;
+        self.docker
+            .stop_container(container_id, Some(options))
+            .await?;
         Ok(())
     }
 
     /// Remove a container
-    pub async fn remove_container(&self, container_id: &str, force: bool) -> Result<(), DockerError> {
+    pub async fn remove_container(
+        &self,
+        container_id: &str,
+        force: bool,
+    ) -> Result<(), DockerError> {
         let options = RemoveContainerOptions {
             force,
             v: true, // Remove volumes
             ..Default::default()
         };
-        self.docker.remove_container(container_id, Some(options)).await?;
+        self.docker
+            .remove_container(container_id, Some(options))
+            .await?;
         Ok(())
     }
 
     /// Rename a container
-    pub async fn rename_container(&self, container_id: &str, new_name: &str) -> Result<(), DockerError> {
+    pub async fn rename_container(
+        &self,
+        container_id: &str,
+        new_name: &str,
+    ) -> Result<(), DockerError> {
         let options = RenameContainerOptions { name: new_name };
         self.docker.rename_container(container_id, options).await?;
         Ok(())
@@ -231,7 +256,12 @@ impl DockerClient {
 
     /// Commit a container to a new image (preserves filesystem state)
     /// Returns the ID of the new image
-    pub async fn commit_container(&self, container_id: &str, image_name: &str, tag: &str) -> Result<String, DockerError> {
+    pub async fn commit_container(
+        &self,
+        container_id: &str,
+        image_name: &str,
+        tag: &str,
+    ) -> Result<String, DockerError> {
         let options = CommitContainerOptions {
             container: container_id,
             repo: image_name,
@@ -240,7 +270,10 @@ impl DockerClient {
             ..Default::default()
         };
 
-        let response = self.docker.commit_container(options, Config::<String>::default()).await?;
+        let response = self
+            .docker
+            .commit_container(options, Config::<String>::default())
+            .await?;
         Ok(response.id.unwrap_or_default())
     }
 
@@ -250,7 +283,9 @@ impl DockerClient {
             force,
             noprune: false,
         };
-        self.docker.remove_image(image_name, Some(options), None).await?;
+        self.docker
+            .remove_image(image_name, Some(options), None)
+            .await?;
         Ok(())
     }
 
@@ -294,8 +329,12 @@ impl DockerClient {
     }
 
     /// Inspect a container
-    pub async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse, DockerError> {
-        let response = self.docker
+    pub async fn inspect_container(
+        &self,
+        container_id: &str,
+    ) -> Result<ContainerInspectResponse, DockerError> {
+        let response = self
+            .docker
             .inspect_container(container_id, None::<InspectContainerOptions>)
             .await?;
         Ok(response)
@@ -308,7 +347,10 @@ impl DockerClient {
             DockerError::OperationFailed("Container state not available".to_string())
         })?;
 
-        Ok(state.status.map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string()))
+        Ok(state
+            .status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string()))
     }
 
     /// Check if a container is running
@@ -319,7 +361,12 @@ impl DockerClient {
 
     /// Get the host port mapped to a specific container port
     /// Returns None if the port is not mapped or the container is not running
-    pub async fn get_host_port(&self, container_id: &str, container_port: u16, protocol: &str) -> Result<Option<u16>, DockerError> {
+    pub async fn get_host_port(
+        &self,
+        container_id: &str,
+        container_port: u16,
+        protocol: &str,
+    ) -> Result<Option<u16>, DockerError> {
         let info = self.inspect_container(container_id).await?;
 
         // Get network settings
@@ -389,7 +436,9 @@ impl DockerClient {
                         // Subtract cache to get active memory (matches Docker Desktop)
                         // For cgroup v1: usage - cache
                         // For cgroup v2: usage - inactive_file
-                        let cache = stats.memory_stats.stats
+                        let cache = stats
+                            .memory_stats
+                            .stats
                             .as_ref()
                             .map(|s| match s {
                                 MemoryStatsStats::V1(v1) => v1.cache,
@@ -493,10 +542,12 @@ impl DockerClient {
         header.set_path(filename)?;
         header.set_size(file_data.len() as u64);
         header.set_mode(0o644);
-        header.set_mtime(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs());
+        header.set_mtime(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
         header.set_cksum();
 
         // Add file to tar archive
@@ -523,7 +574,8 @@ impl DockerClient {
         container_id: &str,
         cmd: Vec<&str>,
     ) -> Result<String, DockerError> {
-        self.exec_command_internal(container_id, cmd, true).await
+        self.exec_command_internal(container_id, cmd, true)
+            .await
             .map(|output| output.stdout)
     }
 
@@ -610,11 +662,15 @@ impl DockerClient {
                         }
                     }
                 }
-                Ok(ExecOutput { stdout, stderr, exec_id })
+                Ok(ExecOutput {
+                    stdout,
+                    stderr,
+                    exec_id,
+                })
             }
-            StartExecResults::Detached => {
-                Err(DockerError::OperationFailed("Exec started in detached mode".to_string()))
-            }
+            StartExecResults::Detached => Err(DockerError::OperationFailed(
+                "Exec started in detached mode".to_string(),
+            )),
         }
     }
 
@@ -673,7 +729,11 @@ impl DockerClient {
 
     /// Get recent container logs (non-streaming)
     /// Returns the last N lines of logs
-    pub async fn get_container_logs(&self, container_id: &str, tail: Option<&str>) -> Result<String, DockerError> {
+    pub async fn get_container_logs(
+        &self,
+        container_id: &str,
+        tail: Option<&str>,
+    ) -> Result<String, DockerError> {
         let options = LogsOptions::<String> {
             follow: false,
             stdout: true,
@@ -711,31 +771,58 @@ impl DockerClient {
 
     /// Perform Docker system prune - removes unused containers, images, networks, and volumes
     /// Returns the total space reclaimed in bytes
-    pub async fn system_prune(&self, prune_volumes: bool) -> Result<SystemPruneResult, DockerError> {
+    pub async fn system_prune(
+        &self,
+        prune_volumes: bool,
+    ) -> Result<SystemPruneResult, DockerError> {
         let mut result = SystemPruneResult::default();
 
         // Prune stopped containers
-        let container_prune = self.docker.prune_containers(None::<PruneContainersOptions<String>>).await?;
-        result.containers_deleted = container_prune.containers_deleted.map(|v| v.len() as u32).unwrap_or(0);
+        let container_prune = self
+            .docker
+            .prune_containers(None::<PruneContainersOptions<String>>)
+            .await?;
+        result.containers_deleted = container_prune
+            .containers_deleted
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
         if let Some(space) = container_prune.space_reclaimed {
             result.space_reclaimed += space as u64;
         }
 
         // Prune unused images (dangling only for safety)
-        let image_prune = self.docker.prune_images(None::<PruneImagesOptions<String>>).await?;
-        result.images_deleted = image_prune.images_deleted.map(|v| v.len() as u32).unwrap_or(0);
+        let image_prune = self
+            .docker
+            .prune_images(None::<PruneImagesOptions<String>>)
+            .await?;
+        result.images_deleted = image_prune
+            .images_deleted
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
         if let Some(space) = image_prune.space_reclaimed {
             result.space_reclaimed += space as u64;
         }
 
         // Prune unused networks
-        let network_prune = self.docker.prune_networks(None::<PruneNetworksOptions<String>>).await?;
-        result.networks_deleted = network_prune.networks_deleted.map(|v| v.len() as u32).unwrap_or(0);
+        let network_prune = self
+            .docker
+            .prune_networks(None::<PruneNetworksOptions<String>>)
+            .await?;
+        result.networks_deleted = network_prune
+            .networks_deleted
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
 
         // Prune unused volumes (optional, can be destructive)
         if prune_volumes {
-            let volume_prune = self.docker.prune_volumes(None::<PruneVolumesOptions<String>>).await?;
-            result.volumes_deleted = volume_prune.volumes_deleted.map(|v| v.len() as u32).unwrap_or(0);
+            let volume_prune = self
+                .docker
+                .prune_volumes(None::<PruneVolumesOptions<String>>)
+                .await?;
+            result.volumes_deleted = volume_prune
+                .volumes_deleted
+                .map(|v| v.len() as u32)
+                .unwrap_or(0);
             if let Some(space) = volume_prune.space_reclaimed {
                 result.space_reclaimed += space as u64;
             }
@@ -770,9 +857,7 @@ static DOCKER_CLIENT: OnceLock<Result<DockerClient, String>> = OnceLock::new();
 
 /// Get the global Docker client instance
 pub fn get_docker_client() -> Result<&'static DockerClient, DockerError> {
-    let result = DOCKER_CLIENT.get_or_init(|| {
-        DockerClient::new().map_err(|e| e.to_string())
-    });
+    let result = DOCKER_CLIENT.get_or_init(|| DockerClient::new().map_err(|e| e.to_string()));
 
     match result {
         Ok(client) => Ok(client),

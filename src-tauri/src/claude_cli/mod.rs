@@ -34,13 +34,13 @@ fn find_cli_in_path(cli_name: &str) -> Option<PathBuf> {
         .output();
 
     #[cfg(windows)]
-    let path_lookup = Command::new("where")
-        .arg(cli_name)
-        .output();
+    let path_lookup = Command::new("where").arg(cli_name).output();
 
     #[cfg(not(any(unix, windows)))]
-    let path_lookup: Result<std::process::Output, std::io::Error> =
-        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Unsupported platform"));
+    let path_lookup: Result<std::process::Output, std::io::Error> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Unsupported platform",
+    ));
 
     if let Ok(output) = path_lookup {
         if output.status.success() {
@@ -75,10 +75,16 @@ pub fn find_claude_cli() -> Option<PathBuf> {
     if let Ok(env_path) = std::env::var(CLAUDE_CLI_PATH_ENV) {
         let path = PathBuf::from(&env_path);
         if path.exists() {
-            println!("[claude_cli] Using CLI path from {}: {}", CLAUDE_CLI_PATH_ENV, env_path);
+            println!(
+                "[claude_cli] Using CLI path from {}: {}",
+                CLAUDE_CLI_PATH_ENV, env_path
+            );
             return Some(path);
         } else {
-            println!("[claude_cli] Warning: {} set to '{}' but path does not exist", CLAUDE_CLI_PATH_ENV, env_path);
+            println!(
+                "[claude_cli] Warning: {} set to '{}' but path does not exist",
+                CLAUDE_CLI_PATH_ENV, env_path
+            );
         }
     }
 
@@ -185,8 +191,8 @@ pub fn find_github_cli() -> Option<PathBuf> {
     // 1. Check common locations (Homebrew on macOS, common Linux paths)
     let common_paths = [
         Some(PathBuf::from("/opt/homebrew/bin/gh")), // Homebrew on Apple Silicon
-        Some(PathBuf::from("/usr/local/bin/gh")),   // Homebrew on Intel Mac / Linux
-        Some(PathBuf::from("/usr/bin/gh")),         // Linux package managers
+        Some(PathBuf::from("/usr/local/bin/gh")),    // Homebrew on Intel Mac / Linux
+        Some(PathBuf::from("/usr/bin/gh")),          // Linux package managers
     ];
 
     for path in common_paths.into_iter().flatten() {
@@ -265,11 +271,7 @@ fn sanitize_slug(raw_name: &str) -> Result<String, String> {
 
     let word_count = name.split('-').count();
     if word_count > 3 {
-        let truncated: String = name
-            .split('-')
-            .take(3)
-            .collect::<Vec<_>>()
-            .join("-");
+        let truncated: String = name.split('-').take(3).collect::<Vec<_>>().join("-");
         debug!(original = %name, truncated = %truncated, "Truncated name to 3 words");
         return Ok(truncated);
     }
@@ -370,7 +372,10 @@ Respond with ONLY a JSON object like {{"slug": "your-slug-here"}}"#,
         // Check for common error conditions
         if stderr.contains("ACTION REQUIRED") || stderr.contains("updated terms") {
             println!("[claude_cli] Claude CLI requires terms acceptance. Run 'claude' in terminal first.");
-            return Err("Claude CLI requires terms acceptance. Run 'claude' in terminal to accept.".to_string());
+            return Err(
+                "Claude CLI requires terms acceptance. Run 'claude' in terminal to accept."
+                    .to_string(),
+            );
         }
 
         return Err(format!("Claude CLI returned error: {}", stderr));
@@ -420,9 +425,7 @@ fn parse_slug_from_response(response: &str) -> Result<String, String> {
         .split_whitespace()
         .filter(|w| {
             // Keep words that look like kebab-case slugs
-            w.chars().all(|c| c.is_alphanumeric() || c == '-')
-                && w.len() > 1
-                && w.len() < 30
+            w.chars().all(|c| c.is_alphanumeric() || c == '-') && w.len() > 1 && w.len() < 30
         })
         .take(3)
         .collect();
@@ -566,12 +569,7 @@ Respond with ONLY a JSON object like {{"slug": "your-slug-here"}}"#,
     // If OpenCode uses different flags, update the args below.
     // See CLI Compatibility Note in the function docstring for details.
     let child = Command::new(&opencode_path)
-        .args([
-            "--print",
-            "--system-prompt",
-            system_prompt,
-            &user_message,
-        ])
+        .args(["--print", "--system-prompt", system_prompt, &user_message])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -693,7 +691,10 @@ mod tests {
         // Test whitespace handling
         assert_eq!(sanitize_slug("  auth  ").unwrap(), "auth");
         assert_eq!(sanitize_slug("fix   auth   bug").unwrap(), "fix-auth-bug");
-        assert_eq!(sanitize_slug(" leading trailing ").unwrap(), "leading-trailing");
+        assert_eq!(
+            sanitize_slug(" leading trailing ").unwrap(),
+            "leading-trailing"
+        );
     }
 
     #[test]
@@ -702,7 +703,10 @@ mod tests {
         assert_eq!(sanitize_slug("dark--mode").unwrap(), "dark-mode");
         assert_eq!(sanitize_slug("---leading").unwrap(), "leading");
         assert_eq!(sanitize_slug("trailing---").unwrap(), "trailing");
-        assert_eq!(sanitize_slug("-leading-trailing-").unwrap(), "leading-trailing");
+        assert_eq!(
+            sanitize_slug("-leading-trailing-").unwrap(),
+            "leading-trailing"
+        );
         assert_eq!(sanitize_slug("a---b---c").unwrap(), "a-b-c");
     }
 
@@ -717,10 +721,7 @@ mod tests {
             sanitize_slug("this is a very long name").unwrap(),
             "this-is-a"
         );
-        assert_eq!(
-            sanitize_slug("a-b-c-d-e-f").unwrap(),
-            "a-b-c"
-        );
+        assert_eq!(sanitize_slug("a-b-c-d-e-f").unwrap(), "a-b-c");
     }
 
     #[test]
