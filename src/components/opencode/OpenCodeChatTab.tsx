@@ -65,6 +65,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     setSessionLoading,
     setServerStatus,
     getSelectedModel,
+    getSelectedVariant,
     getSelectedMode,
     addPendingQuestion,
     removePendingQuestion,
@@ -504,6 +505,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       if (!client || !session) return;
 
       const selectedModel = getSelectedModel(environmentId);
+      const selectedVariant = getSelectedVariant(environmentId);
       const selectedMode = getSelectedMode(environmentId);
 
       // Add user message optimistically
@@ -528,6 +530,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       // Send prompt
       const success = await sendPrompt(client, session.sessionId, text, {
         model: selectedModel,
+        variant: selectedVariant,
         mode: selectedMode,
         attachments: sdkAttachments.length > 0 ? sdkAttachments : undefined,
       });
@@ -538,7 +541,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       }
       // Response will come via SSE events
     },
-    [client, session, sessionKey, environmentId, getSelectedModel, getSelectedMode, addMessage, setSessionLoading]
+    [client, session, sessionKey, environmentId, getSelectedModel, getSelectedVariant, getSelectedMode, addMessage, setSessionLoading]
   );
 
   // Keep handleSendRef updated with the latest handleSend
