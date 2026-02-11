@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
-import { useScrollLock } from "@/hooks";
+import { useScrollLock, clearPersistedScrollState } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
@@ -25,6 +25,7 @@ import {
   type PlanApprovalRespondedEventData,
   type SystemMessageEventData,
 } from "@/lib/claude-client";
+import { extractContextUsage } from "@/lib/context-usage";
 import {
   startClaudeServer,
   getClaudeServerStatus,
@@ -78,6 +79,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     addPendingQuestion,
     removePendingQuestion,
     setSessionTitle,
+    setContextUsage,
     addPendingPlanApproval,
     removePendingPlanApproval,
     getOrCreateEventSubscription,
@@ -115,6 +117,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
     scrollTrigger: session?.messages,
     mountTrigger: connectionState,
+    isActive,
+    persistKey: sessionKey,
   });
 
   const pendingQuestions = useMemo(() => {
@@ -534,6 +538,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
           const eventType = event?.type;
           const eventSessionId = event?.sessionId;
+          const usageFromEvent = extractContextUsage(event.data);
           console.debug("[ClaudeChatTab] SSE event", { eventType, eventSessionId });
 
           if (!eventSessionId && !["question.asked", "question.answered", "plan.enter-requested", "plan.exit-requested", "plan.approval-requested", "plan.approval-responded"].includes(eventType || "")) {
@@ -557,6 +562,14 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
             if (eventType === "message.updated" || eventType === "session.updated" || isFinalEvent) {
               fetchMessagesDebounced(eventSessionId, sessionTabId, isFinalEvent);
+            }
+
+            if (usageFromEvent) {
+              const fallbackModel = useClaudeStore.getState().selectedModel.get(sessionTabId);
+              setContextUsage(sessionTabId, {
+                ...usageFromEvent,
+                modelId: usageFromEvent.modelId ?? fallbackModel,
+              });
             }
 
             if (isFinalEvent) {
@@ -729,7 +742,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
   );
 
   const handleSend = useCallback(
@@ -906,10 +919,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setErrorMessage(null);
     tabSessionIdRef.current = null;
     isInitializedRef.current = false;
+    clearPersistedScrollState(sessionKey);
     setClient(environmentId, null);
     setSession(sessionKey, null);
+    setContextUsage(sessionKey, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
-  }, [sessionKey, environmentId, setClient, setSession, setServerStatus]);
+  }, [sessionKey, environmentId, setClient, setSession, setContextUsage, setServerStatus]);
 
   const handleResumeSession = useCallback(
     async (sessionId: string) => {

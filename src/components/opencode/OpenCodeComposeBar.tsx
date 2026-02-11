@@ -17,6 +17,7 @@ import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment } from "@/stores/openCodeStore";
+import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import type { OpenCodeModel, OpenCodeConversationMode } from "@/lib/opencode-client";
 
 interface OpenCodeComposeBarProps {
@@ -73,6 +74,10 @@ export function OpenCodeComposeBar({
 
   // Use session key so attachments are scoped per tab (not shared across tabs)
   const attachmentSessionKey = createOpenCodeSessionKey(environmentId, tabId);
+
+  const contextUsage = useOpenCodeStore(
+    useCallback((state) => state.contextUsage.get(attachmentSessionKey), [attachmentSessionKey])
+  );
 
   const attachments = getAttachments(attachmentSessionKey);
   const selectedModel = getSelectedModel(environmentId);
@@ -448,6 +453,8 @@ export function OpenCodeComposeBar({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+
+        <ContextUsageWheel usage={contextUsage} className="ml-1" />
 
         {/* Spacer */}
         <div className="flex-1" />
