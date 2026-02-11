@@ -1090,8 +1090,34 @@ async fn start_local_environment(
         .as_ref()
         .ok_or("Project has no local path - cannot create worktree")?;
 
+    // Resolve repository-specific default branch for new environment branching.
+    let base_branch_override = storage
+        .load_config()
+        .ok()
+        .and_then(|config| {
+            config
+                .repositories
+                .get(&project.id)
+                .map(|repo| repo.default_branch.trim().to_string())
+        })
+        .filter(|branch| !branch.is_empty());
+
+    if let Some(branch) = &base_branch_override {
+        debug!(
+            environment_id = %environment_id,
+            project_id = %project.id,
+            branch = %branch,
+            "Using repository default branch for worktree base"
+        );
+    }
+
     // Create the git worktree
-    let worktree_result = create_worktree(source_repo_path, &environment.branch, &project.name)
+    let worktree_result = create_worktree(
+        source_repo_path,
+        &environment.branch,
+        &project.name,
+        base_branch_override.as_deref(),
+    )
         .await
         .map_err(|e| {
             let err_msg = format!("Failed to create worktree: {}", e);

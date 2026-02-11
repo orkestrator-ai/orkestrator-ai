@@ -13,6 +13,10 @@ interface UseScrollLockOptions {
   scrollTrigger?: unknown;
   /** Optional trigger to re-search for viewport when changed (e.g., when component conditionally renders the scroll area) */
   mountTrigger?: unknown;
+  /** Whether the host view is currently active/visible */
+  isActive?: boolean;
+  /** Optional persistence key for retaining scroll position/lock across tab switches */
+  persistKey?: string;
 }
 
 interface UseScrollLockReturn {
@@ -23,6 +27,14 @@ interface UseScrollLockReturn {
   /** Scroll to bottom and re-enable scroll lock */
   scrollToBottom: () => void;
 }
+
+interface PersistedScrollState {
+  scrollTop: number;
+  isAtBottom: boolean;
+  isScrollLocked: boolean;
+}
+
+const persistedScrollState = new Map<string, PersistedScrollState>();
 
 /**
  * Hook to manage scroll lock behavior for chat-like interfaces.
@@ -37,16 +49,27 @@ export function useScrollLock(
   scrollRef: RefObject<HTMLDivElement | null>,
   options: UseScrollLockOptions = {}
 ): UseScrollLockReturn {
-  const { scrollTrigger, mountTrigger } = options;
+  const { scrollTrigger, mountTrigger, isActive = true, persistKey } = options;
 
-  const [isScrollLocked, setIsScrollLocked] = useState(true);
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  const initialPersistedState = persistKey ? persistedScrollState.get(persistKey) : undefined;
+  const [isScrollLocked, setIsScrollLocked] = useState(initialPersistedState?.isScrollLocked ?? true);
+  const [isAtBottom, setIsAtBottom] = useState(initialPersistedState?.isAtBottom ?? true);
   // Track the viewport element in state to trigger re-renders when it becomes available
   const [viewportElement, setViewportElement] = useState<HTMLElement | null>(null);
 
   // Use a ref to track scroll lock for sync access in effects
   // This prevents race conditions where state hasn't updated yet
-  const isScrollLockedRef = useRef(true);
+  const isScrollLockedRef = useRef(initialPersistedState?.isScrollLocked ?? true);
+
+  const persistCurrentState = useCallback(() => {
+    if (!persistKey || !viewportElement) return;
+
+    persistedScrollState.set(persistKey, {
+      scrollTop: viewportElement.scrollTop,
+      isAtBottom,
+      isScrollLocked: isScrollLockedRef.current,
+    });
+  }, [persistKey, viewportElement, isAtBottom]);
 
   // Find the viewport element when the ref changes or mountTrigger changes
   useEffect(() => {
@@ -99,6 +122,22 @@ export function useScrollLock(
   useEffect(() => {
     if (!viewportElement) return;
 
+    if (persistKey) {
+      const persisted = persistedScrollState.get(persistKey);
+      if (persisted) {
+        if (persisted.isScrollLocked || persisted.isAtBottom) {
+          viewportElement.scrollTop = viewportElement.scrollHeight;
+        } else {
+          viewportElement.scrollTop = persisted.scrollTop;
+        }
+
+        setIsAtBottom(persisted.isAtBottom);
+        setIsScrollLocked(persisted.isScrollLocked);
+        isScrollLockedRef.current = persisted.isScrollLocked;
+        return;
+      }
+    }
+
     const { scrollTop, scrollHeight, clientHeight } = viewportElement;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
     const atBottom = distanceFromBottom <= SCROLL_THRESHOLD;
@@ -106,7 +145,7 @@ export function useScrollLock(
     setIsAtBottom(atBottom);
     setIsScrollLocked(atBottom);
     isScrollLockedRef.current = atBottom;
-  }, [viewportElement]);
+  }, [viewportElement, persistKey]);
 
   // Track scroll position to manage scroll lock
   useEffect(() => {
@@ -128,21 +167,61 @@ export function useScrollLock(
         setIsScrollLocked(false);
         isScrollLockedRef.current = false;
       }
+
+      if (persistKey) {
+        persistedScrollState.set(persistKey, {
+          scrollTop: viewportElement.scrollTop,
+          isAtBottom: atBottom,
+          isScrollLocked: isScrollLockedRef.current,
+        });
+      }
     };
 
     viewportElement.addEventListener("scroll", handleScroll, { passive: true });
     return () => viewportElement.removeEventListener("scroll", handleScroll);
-  }, [viewportElement]);
+  }, [viewportElement, persistKey]);
+
+  useEffect(() => {
+    if (!viewportElement || !persistKey) return;
+    persistCurrentState();
+  }, [isAtBottom, isScrollLocked, viewportElement, persistKey, persistCurrentState]);
+
+  useEffect(() => {
+    if (!viewportElement || !persistKey) return;
+
+    if (!isActive) {
+      persistCurrentState();
+      return;
+    }
+
+    const persisted = persistedScrollState.get(persistKey);
+    if (!persisted) {
+      if (isScrollLockedRef.current) {
+        viewportElement.scrollTop = viewportElement.scrollHeight;
+      }
+      return;
+    }
+
+    if (persisted.isScrollLocked || persisted.isAtBottom) {
+      viewportElement.scrollTop = viewportElement.scrollHeight;
+    } else {
+      viewportElement.scrollTop = persisted.scrollTop;
+    }
+
+    setIsAtBottom(persisted.isAtBottom);
+    setIsScrollLocked(persisted.isScrollLocked);
+    isScrollLockedRef.current = persisted.isScrollLocked;
+  }, [isActive, viewportElement, persistKey, persistCurrentState]);
 
   // Auto-scroll to bottom when trigger changes (only if scroll-locked)
   // Uses instant scrolling to keep up with rapid message streaming
   // Uses ref instead of state to avoid race conditions with scroll events
   useEffect(() => {
-    if (!isScrollLockedRef.current || !viewportElement) return;
+    if (!isActive || !isScrollLockedRef.current || !viewportElement) return;
 
     viewportElement.scrollTop = viewportElement.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Using ref instead of state to avoid race condition
-  }, [scrollTrigger, viewportElement]);
+  }, [scrollTrigger, viewportElement, isActive]);
 
   // Handle scroll to bottom button click
   const scrollToBottom = useCallback(() => {
@@ -156,7 +235,14 @@ export function useScrollLock(
     setIsAtBottom(true);
     setIsScrollLocked(true);
     isScrollLockedRef.current = true;
-  }, [viewportElement]);
+    if (persistKey) {
+      persistedScrollState.set(persistKey, {
+        scrollTop: viewportElement.scrollHeight,
+        isAtBottom: true,
+        isScrollLocked: true,
+      });
+    }
+  }, [viewportElement, persistKey]);
 
   return {
     isAtBottom,
