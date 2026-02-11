@@ -555,7 +555,9 @@ export async function listSessions(client: OpencodeClient): Promise<OpenCodeSess
     });
   } catch (error) {
     console.error("[opencode-client] Failed to list sessions:", error);
-    return [];
+    throw error instanceof Error
+      ? error
+      : new Error("Failed to list OpenCode sessions");
   }
 }
 

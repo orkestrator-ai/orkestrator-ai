@@ -248,17 +248,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
               const messages = await getSessionMessages(sdkClient, existingSessionId);
               if (!mounted) return;
 
-              // Preserve any client-side error messages that may not be on the server
-              const currentMessages = existingSessionFromStore.messages || [];
-              const errorMessages = currentMessages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
-              const serverMessageIds = new Set(messages.map((m) => m.id));
-              const errorMessagesToKeep = errorMessages.filter((m) => !serverMessageIds.has(m.id));
-
-              if (errorMessagesToKeep.length > 0) {
-                setMessages(sessionKey, [...messages, ...errorMessagesToKeep]);
-              } else {
-                setMessages(sessionKey, messages);
-              }
+              // setMessages preserves client-side error messages (ERROR_MESSAGE_PREFIX)
+              // from the existing session state when replacing server messages.
+              setMessages(sessionKey, messages);
             } catch (err) {
               console.warn("[OpenCodeChatTab] Failed to refresh messages on reconnect:", err);
               // Keep existing messages from store if refresh fails

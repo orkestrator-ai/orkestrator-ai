@@ -222,9 +222,11 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       // Preserve client-side error messages (IDs starting with ERROR_MESSAGE_PREFIX)
       // These are not stored on the server, so we need to merge them back
       const existingErrors = session.messages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
+      const incomingMessageIds = new Set(messages.map((m) => m.id));
+      const errorsToPreserve = existingErrors.filter((m) => !incomingMessageIds.has(m.id));
 
       // If there are no error messages to preserve, just use server messages
-      if (existingErrors.length === 0) {
+      if (errorsToPreserve.length === 0) {
         const newMap = new Map(state.sessions);
         newMap.set(environmentId, {
           ...session,
@@ -236,7 +238,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       // Merge error messages into server messages based on timestamp
       // Each error should appear after the message it follows chronologically
       const mergedMessages = [...messages];
-      for (const errorMsg of existingErrors) {
+      for (const errorMsg of errorsToPreserve) {
         const errorTime = new Date(errorMsg.createdAt || 0).getTime();
         // Find the position to insert: after the last message with earlier/equal timestamp
         let insertIndex = mergedMessages.length;
