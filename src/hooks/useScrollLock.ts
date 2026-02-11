@@ -34,7 +34,24 @@ interface PersistedScrollState {
   isScrollLocked: boolean;
 }
 
+const MAX_PERSISTED_SCROLL_STATES = 200;
 const persistedScrollState = new Map<string, PersistedScrollState>();
+
+function setPersistedScrollState(persistKey: string, state: PersistedScrollState) {
+  persistedScrollState.delete(persistKey);
+  persistedScrollState.set(persistKey, state);
+
+  if (persistedScrollState.size > MAX_PERSISTED_SCROLL_STATES) {
+    const oldestKey = persistedScrollState.keys().next().value;
+    if (oldestKey) {
+      persistedScrollState.delete(oldestKey);
+    }
+  }
+}
+
+export function clearPersistedScrollState(persistKey: string) {
+  persistedScrollState.delete(persistKey);
+}
 
 /**
  * Hook to manage scroll lock behavior for chat-like interfaces.
@@ -64,7 +81,7 @@ export function useScrollLock(
   const persistCurrentState = useCallback(() => {
     if (!persistKey || !viewportElement) return;
 
-    persistedScrollState.set(persistKey, {
+    setPersistedScrollState(persistKey, {
       scrollTop: viewportElement.scrollTop,
       isAtBottom,
       isScrollLocked: isScrollLockedRef.current,
@@ -169,7 +186,7 @@ export function useScrollLock(
       }
 
       if (persistKey) {
-        persistedScrollState.set(persistKey, {
+        setPersistedScrollState(persistKey, {
           scrollTop: viewportElement.scrollTop,
           isAtBottom: atBottom,
           isScrollLocked: isScrollLockedRef.current,
@@ -236,7 +253,7 @@ export function useScrollLock(
     setIsScrollLocked(true);
     isScrollLockedRef.current = true;
     if (persistKey) {
-      persistedScrollState.set(persistKey, {
+      setPersistedScrollState(persistKey, {
         scrollTop: viewportElement.scrollHeight,
         isAtBottom: true,
         isScrollLocked: true,

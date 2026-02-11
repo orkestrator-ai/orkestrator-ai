@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
-import { useScrollLock } from "@/hooks";
+import { useScrollLock, clearPersistedScrollState } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useOpenCodeStore, createOpenCodeSessionKey } from "@/stores/openCodeStore";
@@ -666,6 +666,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     // Reset initialization state to force new session creation
     tabSessionIdRef.current = null;
     isInitializedRef.current = false;
+    clearPersistedScrollState(sessionKey);
     // Trigger re-initialization by clearing client
     setClient(environmentId, null);
     setSession(sessionKey, null);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
-import { useScrollLock } from "@/hooks";
+import { useScrollLock, clearPersistedScrollState } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
@@ -919,6 +919,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setErrorMessage(null);
     tabSessionIdRef.current = null;
     isInitializedRef.current = false;
+    clearPersistedScrollState(sessionKey);
     setClient(environmentId, null);
     setSession(sessionKey, null);
     setContextUsage(sessionKey, null);

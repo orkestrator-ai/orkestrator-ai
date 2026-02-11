@@ -136,8 +136,19 @@ export function extractContextUsage(payload: unknown): ContextUsageSnapshot | nu
     visited.add(current);
 
     const candidate = readUsageCandidate(current);
-    if (candidate && (!bestCandidate || candidate.usedTokens >= bestCandidate.usedTokens)) {
-      bestCandidate = candidate;
+    if (candidate) {
+      const isBetterCandidate =
+        !bestCandidate
+        || candidate.usedTokens > bestCandidate.usedTokens
+        || (
+          candidate.usedTokens === bestCandidate.usedTokens
+          && !bestCandidate.modelId
+          && !!candidate.modelId
+        );
+
+      if (isBetterCandidate) {
+        bestCandidate = candidate;
+      }
     }
 
     for (const value of Object.values(current)) {

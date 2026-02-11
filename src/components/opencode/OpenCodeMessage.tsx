@@ -569,6 +569,29 @@ function isImageReference(pathOrUrl?: string): boolean {
   );
 }
 
+function parseLocalFilePathFromUrl(fileUrl: string): string | null {
+  if (!fileUrl.startsWith("file://")) return null;
+
+  try {
+    const parsed = new URL(fileUrl);
+    const pathname = decodeURIComponent(parsed.pathname);
+
+    // UNC paths (e.g. file://server/share/path)
+    if (parsed.host) {
+      return `//${parsed.host}${pathname}`;
+    }
+
+    // Windows absolute paths are represented as /C:/path in file URLs.
+    if (/^\/[a-z]:\//i.test(pathname)) {
+      return pathname.slice(1);
+    }
+
+    return pathname;
+  } catch {
+    return null;
+  }
+}
+
 function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -602,7 +625,7 @@ function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
       }
 
       const filePath = fileUrl?.startsWith("file://")
-        ? decodeURIComponent(fileUrl.replace(/^file:\/\//, ""))
+        ? parseLocalFilePathFromUrl(fileUrl)
         : path.startsWith("/")
           ? path
           : null;
