@@ -5,6 +5,8 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/c
 
 export { type OpencodeClient };
 
+const PREFERRED_VARIANT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 export interface OpenCodeModel {
   id: string;
   name: string;
@@ -163,7 +165,6 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
             ? Object.entries(m.variants as Record<string, { disabled?: boolean }>)
             : [];
 
-          const preferredVariantOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
           const variants = variantEntries
             .filter(([, variantConfig]) => {
               if (!variantConfig || typeof variantConfig !== "object") return true;
@@ -171,8 +172,8 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
             })
             .map(([variantName]) => variantName)
             .sort((a, b) => {
-              const aIndex = preferredVariantOrder.indexOf(a);
-              const bIndex = preferredVariantOrder.indexOf(b);
+              const aIndex = PREFERRED_VARIANT_ORDER.indexOf(a);
+              const bIndex = PREFERRED_VARIANT_ORDER.indexOf(b);
 
               if (aIndex >= 0 && bIndex >= 0) return aIndex - bIndex;
               if (aIndex >= 0) return -1;

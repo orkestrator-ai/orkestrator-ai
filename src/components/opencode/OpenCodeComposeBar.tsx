@@ -420,35 +420,28 @@ export function OpenCodeComposeBar({
         </DropdownMenu>
 
         {/* Variant dropdown - model-specific variants (e.g. low/high/xhigh) */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!selectedModelObj || availableVariants.length === 0}
-            >
-              <ChevronDown className="w-3 h-3" />
-              <span className="max-w-[100px] truncate">{selectedVariantName}</span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {!selectedModelObj ? (
-              <DropdownMenuItem disabled>Select a model first</DropdownMenuItem>
-            ) : availableVariants.length === 0 ? (
-              <DropdownMenuItem disabled>No variants available</DropdownMenuItem>
-            ) : (
-              <>
-                <DropdownMenuItem onClick={() => handleVariantChange(undefined)}>
-                  Default
+        {availableVariants.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                <ChevronDown className="w-3 h-3" />
+                <span className="max-w-[100px] truncate">{selectedVariantName}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => handleVariantChange(undefined)}>
+                {!selectedVariant && <span className="mr-1.5 text-foreground">&#10003;</span>}
+                Default
+              </DropdownMenuItem>
+              {availableVariants.map((variant) => (
+                <DropdownMenuItem key={variant} onClick={() => handleVariantChange(variant)}>
+                  {selectedVariant === variant && <span className="mr-1.5 text-foreground">&#10003;</span>}
+                  {variant}
                 </DropdownMenuItem>
-                {availableVariants.map((variant) => (
-                  <DropdownMenuItem key={variant} onClick={() => handleVariantChange(variant)}>
-                    {variant}
-                  </DropdownMenuItem>
-                ))}
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* Spacer */}
         <div className="flex-1" />
