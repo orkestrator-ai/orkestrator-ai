@@ -1,6 +1,6 @@
 {
   "name": "orkestrator-ai",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "bun test",
-    "docker:build": "docker build -t orkestrator-ai:latest --no-cache ./docker"
+    "docker:build": "docker build -t orkestrator-ai:latest --no-cache ./docker",
+    "package": "bun run tauri build && cp -rf \"src-tauri/target/release/bundle/macos/Orkestrator AI.app\" /Applications/"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
