@@ -1,7 +1,7 @@
 import { memo, useCallback, useRef, useLayoutEffect } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useShallow } from "zustand/react/shallow";
-import { usePaneLayoutStore } from "@/stores";
+import { usePaneLayoutStore, useEnvironmentStore, useConfigStore } from "@/stores";
 import { useTerminalPortalStore, createTerminalKey } from "@/stores/terminalPortalStore";
 import type { PaneLeaf } from "@/types/paneLayout";
 import { createTabbarDroppableId } from "@/types/paneLayout";
@@ -46,6 +46,11 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
   const currentEnvState = activeEnvironmentId ? environments.get(activeEnvironmentId) : null;
   const activePaneId = currentEnvState?.activePaneId ?? "default";
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Read target branch reactively from config store (not stale tab data)
+  const projectId = useEnvironmentStore((state) => state.getEnvironmentById(environmentId)?.projectId);
+  const repositories = useConfigStore((state) => state.config.repositories);
+  const targetBranch = projectId ? (repositories[projectId]?.prBaseBranch || "main") : "main";
 
   // Set up droppable for tabbar
   const { setNodeRef, isOver } = useDroppable({
@@ -172,7 +177,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                 language={tab.fileData.language}
                 isDiff={tab.fileData.isDiff}
                 gitStatus={tab.fileData.gitStatus}
-                baseBranch={tab.fileData.baseBranch}
+                baseBranch={tab.fileData.isDiff ? targetBranch : tab.fileData.baseBranch}
               />
             );
           }
