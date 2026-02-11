@@ -1,9 +1,10 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
-import { Loader2, AlertCircle, RefreshCw, ArrowDown } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useOpenCodeStore, createOpenCodeSessionKey } from "@/stores/openCodeStore";
+import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
   createClient,
@@ -25,6 +26,7 @@ import {
 import { OpenCodeMessage } from "./OpenCodeMessage";
 import { OpenCodeComposeBar } from "./OpenCodeComposeBar";
 import { OpenCodeQuestionCard } from "./OpenCodeQuestionCard";
+import { OpenCodeResumeSessionDialog } from "./OpenCodeResumeSessionDialog";
 import type { OpenCodeNativeData } from "@/types/paneLayout";
 import type { OpenCodeAttachment } from "@/stores/openCodeStore";
 
@@ -45,6 +47,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [serverLog, setServerLog] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
 
   // Track this tab's session ID locally to prevent interference between tabs
   const tabSessionIdRef = useRef<string | null>(null);
@@ -81,6 +84,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   // Activity state tracking - use environmentId as key for both local and container environments
   // Use reference counting to handle multiple tabs for the same environment
   const { setContainerState, incrementContainerRef, decrementContainerRef } = useClaudeActivityStore();
+  const { clearTabInitialPrompt } = usePaneLayoutStore();
 
   // Create a unique session key that combines environmentId and tabId
   // This prevents session collisions when multiple environments use the same tab IDs (e.g., "default")
@@ -223,15 +227,50 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         if (!mounted) return;
         setModels(availableModels);
 
-        // Check if this tab already has a session (re-activation case)
-        const existingSessionId = tabSessionIdRef.current;
-        if (existingSessionId && isInitializedRef.current) {
-          // Re-activating an existing tab - DON'T reload messages, just reconnect
-          // Messages are already in the store and SSE will update them
+        // Check for existing session - first from component ref, then from Zustand store
+        // This handles reconnection after tab remount where refs are lost but store persists
+        const existingSessionFromRef = tabSessionIdRef.current;
+        const existingSessionFromStore = useOpenCodeStore.getState().sessions.get(sessionKey);
+        const existingSessionId = existingSessionFromRef || existingSessionFromStore?.sessionId;
+
+        if (existingSessionId) {
+          // Restore session from store - component may have remounted
+          tabSessionIdRef.current = existingSessionId;
+          isInitializedRef.current = true;
           setConnectionState("connected");
 
           // Start shared event subscription if not already running
           startSharedEventSubscription(sdkClient);
+
+          // Refresh messages from server to ensure latest state on reconnection
+          if (existingSessionFromStore) {
+            try {
+              const messages = await getSessionMessages(sdkClient, existingSessionId);
+              if (!mounted) return;
+
+              // Preserve any client-side error messages that may not be on the server
+              const currentMessages = existingSessionFromStore.messages || [];
+              const errorMessages = currentMessages.filter((m) => m.id.startsWith(ERROR_MESSAGE_PREFIX));
+              const serverMessageIds = new Set(messages.map((m) => m.id));
+              const errorMessagesToKeep = errorMessages.filter((m) => !serverMessageIds.has(m.id));
+
+              if (errorMessagesToKeep.length > 0) {
+                setMessages(sessionKey, [...messages, ...errorMessagesToKeep]);
+              } else {
+                setMessages(sessionKey, messages);
+              }
+            } catch (err) {
+              console.warn("[OpenCodeChatTab] Failed to refresh messages on reconnect:", err);
+              // Keep existing messages from store if refresh fails
+            }
+          } else {
+            // Session exists in ref but not in store, restore minimal state
+            setSession(sessionKey, {
+              sessionId: existingSessionId,
+              messages: [],
+              isLoading: false,
+            });
+          }
         } else {
           // First initialization - create a new session
           const newSession = await createSession(sdkClient);
@@ -546,19 +585,24 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
 
   // Send initial prompt after session is ready (for code review, PR creation, etc.)
   useEffect(() => {
+    const sessionHasMessages = !!session?.messages.length;
+
     if (
       connectionState === "connected" &&
       client &&
       session &&
       initialPrompt &&
-      !initialPromptSentRef.current
+      !initialPromptSentRef.current &&
+      !sessionHasMessages
     ) {
       initialPromptSentRef.current = true;
+      // Clear from pane state so it can't be re-sent after remount
+      clearTabInitialPrompt(tabId, environmentId);
       console.debug("[OpenCodeChatTab] Sending initial prompt for tab:", tabId);
       // Use ref to avoid effect re-running when handleSend changes
       handleSendRef.current?.(initialPrompt, []);
     }
-  }, [connectionState, client, session, initialPrompt, tabId]);
+  }, [connectionState, client, session, initialPrompt, tabId, clearTabInitialPrompt, environmentId]);
 
   // Handle retry connection
   const handleRetry = useCallback(() => {
@@ -572,6 +616,30 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     setSession(sessionKey, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
   }, [sessionKey, environmentId, setClient, setSession, setServerStatus]);
+
+  const handleResumeSession = useCallback(
+    async (sessionId: string) => {
+      if (!client) return;
+
+      try {
+        const messages = await getSessionMessages(client, sessionId);
+
+        tabSessionIdRef.current = sessionId;
+        isInitializedRef.current = true;
+
+        setSession(sessionKey, {
+          sessionId,
+          messages,
+          isLoading: false,
+        });
+
+        setResumeDialogOpen(false);
+      } catch (error) {
+        console.error("[OpenCodeChatTab] Failed to resume session:", error);
+      }
+    },
+    [client, sessionKey, setSession]
+  );
 
   // Render loading state
   if (connectionState === "connecting") {
@@ -620,8 +688,18 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
         <div className="py-4">
           {session?.messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground">
+            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground gap-3">
               <p className="text-sm">No messages yet. Start a conversation!</p>
+              {client && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setResumeDialogOpen(true)}
+                >
+                  <History className="w-4 h-4 mr-2" />
+                  Resume Session
+                </Button>
+              )}
             </div>
           ) : (
             session?.messages.map((message) => (
@@ -672,11 +750,22 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       {/* Compose bar */}
       <OpenCodeComposeBar
         environmentId={environmentId}
+        tabId={tabId}
         containerId={containerId}
         models={models}
         onSend={handleSend}
         disabled={!client || !session || session.isLoading}
       />
+
+      {client && (
+        <OpenCodeResumeSessionDialog
+          open={resumeDialogOpen}
+          onOpenChange={setResumeDialogOpen}
+          client={client}
+          onResume={handleResumeSession}
+          currentSessionId={session?.sessionId}
+        />
+      )}
     </div>
   );
 }
