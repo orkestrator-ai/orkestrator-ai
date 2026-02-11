@@ -13,7 +13,9 @@ use crate::local::{
     add_to_git_exclude, allocate_ports, copy_env_files, create_worktree, delete_worktree,
     get_setup_local_commands, stop_all_local_servers,
 };
-use crate::models::{Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState};
+use crate::models::{
+    Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState,
+};
 use crate::storage::{get_config, get_storage, StorageError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -114,9 +116,14 @@ pub async fn get_environments(project_id: String) -> Result<Vec<Environment>, St
 /// Reorder environments within a project based on the provided array of environment IDs
 /// The order of IDs determines the new display order
 #[tauri::command]
-pub async fn reorder_environments(project_id: String, environment_ids: Vec<String>) -> Result<Vec<Environment>, String> {
+pub async fn reorder_environments(
+    project_id: String,
+    environment_ids: Vec<String>,
+) -> Result<Vec<Environment>, String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.reorder_environments(&project_id, &environment_ids).map_err(storage_error_to_string)
+    storage
+        .reorder_environments(&project_id, &environment_ids)
+        .map_err(storage_error_to_string)
 }
 
 /// Generate a unique environment name by appending an integer suffix if needed.
@@ -194,14 +201,15 @@ pub async fn create_environment(
     };
 
     // Determine if we should use background naming
-    let should_background_name = name.is_none() && initial_prompt.as_ref().map_or(false, |p| !p.trim().is_empty());
+    let should_background_name = name.is_none()
+        && initial_prompt
+            .as_ref()
+            .map_or(false, |p| !p.trim().is_empty());
 
     // Determine the base name for the environment
     let base_name = match &name {
         // User provided explicit name - use it
-        Some(custom_name) if !custom_name.trim().is_empty() => {
-            Some(custom_name.trim().to_string())
-        }
+        Some(custom_name) if !custom_name.trim().is_empty() => Some(custom_name.trim().to_string()),
         // No explicit name - use timestamp (background naming will update later if prompt provided)
         _ => None,
     };
@@ -303,7 +311,9 @@ async fn background_rename_environment(
     // This is a blocking call, but we're in a background task
     let generated_name = match tokio::task::spawn_blocking(move || {
         claude_cli::generate_environment_name_with_fallback(&prompt)
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(name)) => name,
         Ok(Err(e)) => {
             warn!(environment_id = %environment_id, error = %e, "Failed to generate name");
@@ -357,7 +367,15 @@ async fn background_rename_environment(
 
                 // Use tokio Command to run git branch rename
                 match tokio::process::Command::new("git")
-                    .args(["-C", worktree_path, "branch", "-m", "--", &old_branch, &unique_name])
+                    .args([
+                        "-C",
+                        worktree_path,
+                        "branch",
+                        "-m",
+                        "--",
+                        &old_branch,
+                        &unique_name,
+                    ])
                     .output()
                     .await
                 {
@@ -402,10 +420,10 @@ async fn background_rename_environment(
                         [ -f /tmp/.workspace-setup-complete ]
                     "#;
 
-                    match docker.exec_command(
-                        container_id,
-                        vec!["sh", "-c", wait_cmd],
-                    ).await {
+                    match docker
+                        .exec_command(container_id, vec!["sh", "-c", wait_cmd])
+                        .await
+                    {
                         Ok(_) => {
                             debug!(environment_id = %environment_id, "Workspace setup complete, proceeding with branch rename");
                         }
@@ -418,10 +436,22 @@ async fn background_rename_environment(
                     // Rename the git branch: git branch -m <old_branch> <new_branch>
                     // Pass arguments directly to git to avoid shell injection vulnerabilities
                     // Using git -C to set the working directory instead of sh -c with cd
-                    match docker.exec_command(
-                        container_id,
-                        vec!["git", "-C", "/workspace", "branch", "-m", "--", &old_branch, &unique_name],
-                    ).await {
+                    match docker
+                        .exec_command(
+                            container_id,
+                            vec![
+                                "git",
+                                "-C",
+                                "/workspace",
+                                "branch",
+                                "-m",
+                                "--",
+                                &old_branch,
+                                &unique_name,
+                            ],
+                        )
+                        .await
+                    {
                         Ok(output) => {
                             debug!(environment_id = %environment_id, output = %output, "Git branch renamed");
                         }
@@ -493,7 +523,14 @@ pub async fn delete_environment(environment_id: String) -> Result<(), String> {
             }
 
             // Delete the worktree if it exists
-            if let (Some(worktree_path), Some(local_path)) = (&env.worktree_path, storage.get_project(&env.project_id).ok().flatten().and_then(|p| p.local_path)) {
+            if let (Some(worktree_path), Some(local_path)) = (
+                &env.worktree_path,
+                storage
+                    .get_project(&env.project_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p.local_path),
+            ) {
                 debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Deleting worktree");
                 if let Err(e) = delete_worktree(&local_path, worktree_path).await {
                     warn!(environment_id = %environment_id, error = %e, "Failed to delete worktree during deletion");
@@ -570,10 +607,9 @@ pub async fn sync_all_environments_with_docker() -> Result<Vec<String>, String> 
                     );
                     // Container exists, update status if different
                     if status != env.status {
-                        if let Err(e) = storage.update_environment(
-                            &env.id,
-                            json!({ "status": status.to_string() }),
-                        ) {
+                        if let Err(e) = storage
+                            .update_environment(&env.id, json!({ "status": status.to_string() }))
+                        {
                             warn!(environment_id = %env.id, error = %e, "Failed to update environment status");
                         }
                     }
@@ -599,10 +635,9 @@ pub async fn sync_all_environments_with_docker() -> Result<Vec<String>, String> 
 
     // Clear container references for environments whose containers are gone
     for env_id in &environments_to_clear {
-        if let Err(e) = storage.update_environment(
-            env_id,
-            json!({ "status": "stopped", "containerId": null }),
-        ) {
+        if let Err(e) =
+            storage.update_environment(env_id, json!({ "status": "stopped", "containerId": null }))
+        {
             warn!(environment_id = %env_id, error = %e, "Failed to clear container reference");
         } else {
             cleared_ids.push(env_id.clone());
@@ -743,7 +778,9 @@ pub async fn rename_environment(
         .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
 
     // Make the name unique (consistent with background_rename_environment)
-    let existing_environments = storage.load_environments().map_err(storage_error_to_string)?;
+    let existing_environments = storage
+        .load_environments()
+        .map_err(storage_error_to_string)?;
     let unique_name = make_unique_name(name, &existing_environments);
 
     if unique_name != name {
@@ -759,7 +796,10 @@ pub async fn rename_environment(
 
     // Update storage with new name and branch
     let updated_env = storage
-        .update_environment(&environment_id, json!({ "name": &unique_name, "branch": &unique_name }))
+        .update_environment(
+            &environment_id,
+            json!({ "name": &unique_name, "branch": &unique_name }),
+        )
         .map_err(storage_error_to_string)?;
 
     // If container exists and is running, rename git branch and container
@@ -767,10 +807,22 @@ pub async fn rename_environment(
         if environment.status == EnvironmentStatus::Running {
             if let Ok(docker) = get_docker_client() {
                 // Rename the git branch inside the container
-                match docker.exec_command(
-                    container_id,
-                    vec!["git", "-C", "/workspace", "branch", "-m", "--", &old_branch, &unique_name],
-                ).await {
+                match docker
+                    .exec_command(
+                        container_id,
+                        vec![
+                            "git",
+                            "-C",
+                            "/workspace",
+                            "branch",
+                            "-m",
+                            "--",
+                            &old_branch,
+                            &unique_name,
+                        ],
+                    )
+                    .await
+                {
                     Ok(output) => {
                         debug!(environment_id = %environment_id, output = %output, "Git branch renamed");
                     }
@@ -827,10 +879,8 @@ pub async fn get_environment_status(environment_id: String) -> Result<Environmen
                 // Update stored status if it differs
                 if status != environment.status {
                     let status_str = status.to_string();
-                    let _ = storage.update_environment(
-                        &environment_id,
-                        json!({ "status": status_str }),
-                    );
+                    let _ = storage
+                        .update_environment(&environment_id, json!({ "status": status_str }));
                 }
                 return Ok(status);
             }
@@ -881,8 +931,7 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
             .update_environment(&environment_id, json!({ "status": "creating" }))
             .map_err(storage_error_to_string)?;
 
-        let start_result: Result<(), DockerError> =
-            start_environment_container(container_id).await;
+        let start_result: Result<(), DockerError> = start_environment_container(container_id).await;
         start_result.map_err(|e: DockerError| {
             let err_msg = e.to_string();
             warn!(environment_id = %environment_id, error = %err_msg, "Failed to start existing container");
@@ -918,7 +967,8 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
 
     // Apply settings from global config
     container_config.cpu_limit = Some(config.global.container_resources.cpu_cores as f64);
-    container_config.memory_limit = Some(config.global.container_resources.memory_gb as i64 * 1024 * 1024 * 1024);
+    container_config.memory_limit =
+        Some(config.global.container_resources.memory_gb as i64 * 1024 * 1024 * 1024);
     container_config.anthropic_api_key = config.global.anthropic_api_key.clone();
     container_config.github_token = config.global.github_token.clone();
     container_config.opencode_model = config.global.opencode_model.clone();
@@ -973,8 +1023,7 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
 
     // Start the container
     debug!(environment_id = %environment_id, "Starting container");
-    let start_result: Result<(), DockerError> =
-        start_environment_container(&container_id).await;
+    let start_result: Result<(), DockerError> = start_environment_container(&container_id).await;
     start_result.map_err(|e: DockerError| {
         let err_msg = e.to_string();
         warn!(environment_id = %environment_id, error = %err_msg, "Failed to start container");
@@ -1085,9 +1134,7 @@ async fn start_local_environment(
         .map_err(storage_error_to_string)?;
 
     info!(environment_id = %environment_id, "Local environment started successfully");
-    Ok(StartEnvironmentResult {
-        setup_commands,
-    })
+    Ok(StartEnvironmentResult { setup_commands })
 }
 
 /// Sync environment status with actual Docker container state
@@ -1121,7 +1168,10 @@ pub async fn sync_environment_status(environment_id: String) -> Result<Environme
                 );
                 environment.status = actual_status.clone();
                 storage
-                    .update_environment(&environment_id, json!({ "status": actual_status.to_string() }))
+                    .update_environment(
+                        &environment_id,
+                        json!({ "status": actual_status.to_string() }),
+                    )
                     .map_err(storage_error_to_string)?;
             }
         }
@@ -1193,8 +1243,7 @@ pub async fn stop_environment(environment_id: String) -> Result<(), String> {
     // Stop the container if it exists (containerized environments)
     if let Some(container_id) = &environment.container_id {
         debug!(environment_id = %environment_id, container_id = %container_id, "Stopping container");
-        let stop_result: Result<(), DockerError> =
-            stop_environment_container(container_id).await;
+        let stop_result: Result<(), DockerError> = stop_environment_container(container_id).await;
         stop_result.map_err(|e: DockerError| {
             warn!(environment_id = %environment_id, error = %e, "Error stopping container");
             e.to_string()
@@ -1269,7 +1318,9 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
     let temp_image_tag = "recreate";
     debug!(environment_id = %environment_id, image = %temp_image_name, "Committing container to temporary image");
 
-    let commit_result = docker.commit_container(&container_id, &temp_image_name, temp_image_tag).await;
+    let commit_result = docker
+        .commit_container(&container_id, &temp_image_name, temp_image_tag)
+        .await;
     if let Err(e) = &commit_result {
         warn!(environment_id = %environment_id, error = %e, "Failed to commit container, falling back to fresh container");
         // Fall back to fresh container creation
@@ -1277,7 +1328,10 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
             warn!(environment_id = %environment_id, error = %e, "Error removing container");
         }
         storage
-            .update_environment(&environment_id, json!({ "containerId": null, "status": "stopped" }))
+            .update_environment(
+                &environment_id,
+                json!({ "containerId": null, "status": "stopped" }),
+            )
             .map_err(storage_error_to_string)?;
         return start_environment(environment_id).await.map(|_| ());
     }
@@ -1304,7 +1358,8 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
     }
 
     container_config.cpu_limit = Some(config.global.container_resources.cpu_cores as f64);
-    container_config.memory_limit = Some(config.global.container_resources.memory_gb as i64 * 1024 * 1024 * 1024);
+    container_config.memory_limit =
+        Some(config.global.container_resources.memory_gb as i64 * 1024 * 1024 * 1024);
     container_config.anthropic_api_key = config.global.anthropic_api_key.clone();
     container_config.github_token = config.global.github_token.clone();
     container_config.opencode_model = config.global.opencode_model.clone();
@@ -1319,7 +1374,8 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
 
     // Step 5: Create new container from the committed image (with new port mappings)
     debug!(environment_id = %environment_id, "Creating new container from committed image");
-    let create_result = create_environment_container(&container_config, Some(&temp_image_full)).await;
+    let create_result =
+        create_environment_container(&container_config, Some(&temp_image_full)).await;
 
     let new_container_id = match create_result {
         Ok(id) => id,
@@ -1328,7 +1384,10 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
             warn!(environment_id = %environment_id, error = %err_msg, "Failed to create container from committed image");
             // Clean up temp image
             let _ = docker.remove_image(&temp_image_full, true).await;
-            let _ = storage.update_environment(&environment_id, json!({ "containerId": null, "status": "error" }));
+            let _ = storage.update_environment(
+                &environment_id,
+                json!({ "containerId": null, "status": "error" }),
+            );
             return Err(err_msg);
         }
     };
@@ -1403,7 +1462,12 @@ pub async fn add_environment_domains(
     let output = docker
         .exec_command(
             container_id,
-            vec!["sudo", "/usr/local/bin/update-firewall.sh", "--add", &domains_csv],
+            vec![
+                "sudo",
+                "/usr/local/bin/update-firewall.sh",
+                "--add",
+                &domains_csv,
+            ],
         )
         .await
         .map_err(|e| format!("Failed to execute firewall update: {}", e))?;
@@ -1446,7 +1510,9 @@ pub async fn remove_environment_domains(
 
     // Verify environment is in restricted mode
     if environment.network_access_mode == NetworkAccessMode::Full {
-        return Err("Cannot remove domains from an environment with full network access".to_string());
+        return Err(
+            "Cannot remove domains from an environment with full network access".to_string(),
+        );
     }
 
     // Get container ID
@@ -1462,7 +1528,12 @@ pub async fn remove_environment_domains(
     let output = docker
         .exec_command(
             container_id,
-            vec!["sudo", "/usr/local/bin/update-firewall.sh", "--remove", &domains_csv],
+            vec![
+                "sudo",
+                "/usr/local/bin/update-firewall.sh",
+                "--remove",
+                &domains_csv,
+            ],
         )
         .await
         .map_err(|e| format!("Failed to execute firewall update: {}", e))?;
@@ -1496,10 +1567,7 @@ pub async fn update_environment_allowed_domains(
 
     // Update stored domains
     let updated = storage
-        .update_environment(
-            &environment_id,
-            json!({ "allowedDomains": domains }),
-        )
+        .update_environment(&environment_id, json!({ "allowedDomains": domains }))
         .map_err(storage_error_to_string)?;
 
     // If environment is running and in restricted mode, sync to container
@@ -1515,7 +1583,12 @@ pub async fn update_environment_allowed_domains(
             let _ = docker
                 .exec_command(
                     container_id,
-                    vec!["sudo", "/usr/local/bin/update-firewall.sh", "--add", &domains_csv],
+                    vec![
+                        "sudo",
+                        "/usr/local/bin/update-firewall.sh",
+                        "--add",
+                        &domains_csv,
+                    ],
                 )
                 .await;
             // Note: We don't fail if this errors - the storage update succeeded
@@ -1542,10 +1615,7 @@ pub async fn update_port_mappings(
     }
 
     storage
-        .update_environment(
-            &environment_id,
-            json!({ "portMappings": port_mappings }),
-        )
+        .update_environment(&environment_id, json!({ "portMappings": port_mappings }))
         .map_err(storage_error_to_string)
 }
 
@@ -1574,11 +1644,14 @@ pub async fn reattach_container(
 
     // Get container info to verify it exists and get its name/status
     let docker = get_docker_client().map_err(|e| e.to_string())?;
-    let container_info = docker.inspect_container(&container_id).await
+    let container_info = docker
+        .inspect_container(&container_id)
+        .await
         .map_err(|e| format!("Container not found: {}", e))?;
 
     // Verify it's an orkestrator-ai container by checking labels
-    let labels = container_info.config
+    let labels = container_info
+        .config
         .as_ref()
         .and_then(|c| c.labels.as_ref());
 
@@ -1591,7 +1664,8 @@ pub async fn reattach_container(
     }
 
     // Get the container name (strip leading '/' if present)
-    let container_name = container_info.name
+    let container_name = container_info
+        .name
         .as_ref()
         .map(|n| n.trim_start_matches('/').to_string())
         .unwrap_or_else(|| format!("reattached-{}", &container_id[..12.min(container_id.len())]));

@@ -110,7 +110,10 @@ pub async fn start_claude_server(container_id: String) -> Result<ClaudeServerSta
 
     loop {
         attempts += 1;
-        tokio::time::sleep(tokio::time::Duration::from_millis(SERVER_STARTUP_POLL_INTERVAL_MS)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            SERVER_STARTUP_POLL_INTERVAL_MS,
+        ))
+        .await;
 
         // Check health endpoint
         match reqwest::get(&health_url).await {
@@ -141,7 +144,15 @@ pub async fn start_claude_server(container_id: String) -> Result<ClaudeServerSta
 
             // Also check if process is running
             let ps_result = client
-                .exec_in_container(&container_id, vec!["bash", "-c", "pgrep -f 'claude-bridge' || echo 'No process found'"], None)
+                .exec_in_container(
+                    &container_id,
+                    vec![
+                        "bash",
+                        "-c",
+                        "pgrep -f 'claude-bridge' || echo 'No process found'",
+                    ],
+                    None,
+                )
                 .await;
 
             if let Ok(ps_output) = ps_result {

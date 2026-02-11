@@ -271,14 +271,21 @@ pub async fn get_docker_system_stats() -> Result<DockerSystemStats, String> {
 
 /// Get container IDs that are visible in the sidebar (belonging to environments under existing projects).
 /// A container is only "assigned" if it belongs to an environment that would be visible in the sidebar.
-fn get_visible_container_ids(storage: &crate::storage::Storage) -> Result<std::collections::HashSet<String>, String> {
+fn get_visible_container_ids(
+    storage: &crate::storage::Storage,
+) -> Result<std::collections::HashSet<String>, String> {
     let all_projects = storage.load_projects().map_err(|e| e.to_string())?;
-    debug!(project_count = all_projects.len(), "Collecting visible container IDs");
+    debug!(
+        project_count = all_projects.len(),
+        "Collecting visible container IDs"
+    );
 
     let mut visible_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for project in &all_projects {
-        let envs = storage.get_environments_by_project(&project.id).map_err(|e| e.to_string())?;
+        let envs = storage
+            .get_environments_by_project(&project.id)
+            .map_err(|e| e.to_string())?;
         trace!(project_name = %project.name, env_count = envs.len(), "Project environments");
 
         for env in &envs {
@@ -289,7 +296,10 @@ fn get_visible_container_ids(storage: &crate::storage::Storage) -> Result<std::c
         }
     }
 
-    debug!(visible_count = visible_ids.len(), "Visible container IDs collected");
+    debug!(
+        visible_count = visible_ids.len(),
+        "Visible container IDs collected"
+    );
     Ok(visible_ids)
 }
 
@@ -303,8 +313,15 @@ pub async fn get_orkestrator_containers() -> Result<Vec<ContainerInfo>, String> 
     let visible_container_ids = get_visible_container_ids(&storage)?;
 
     // List all containers with our app label
-    let label = format!("{}={}", docker::CONTAINER_LABEL_APP, docker::CONTAINER_LABEL_APP_VALUE);
-    let containers = client.list_containers(true, Some(&label)).await.map_err(|e| e.to_string())?;
+    let label = format!(
+        "{}={}",
+        docker::CONTAINER_LABEL_APP,
+        docker::CONTAINER_LABEL_APP_VALUE
+    );
+    let containers = client
+        .list_containers(true, Some(&label))
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut result: Vec<ContainerInfo> = Vec::new();
 
@@ -363,8 +380,15 @@ pub async fn cleanup_orphaned_containers() -> Result<u32, String> {
     let visible_container_ids = get_visible_container_ids(&storage)?;
 
     // List all containers with our app label
-    let label = format!("{}={}", docker::CONTAINER_LABEL_APP, docker::CONTAINER_LABEL_APP_VALUE);
-    let containers = client.list_containers(true, Some(&label)).await.map_err(|e| e.to_string())?;
+    let label = format!(
+        "{}={}",
+        docker::CONTAINER_LABEL_APP,
+        docker::CONTAINER_LABEL_APP_VALUE
+    );
+    let containers = client
+        .list_containers(true, Some(&label))
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut removed_count = 0;
 
@@ -405,10 +429,16 @@ pub struct SystemPruneResult {
 /// Perform Docker system prune - removes unused containers, images, networks, and optionally volumes
 #[tauri::command]
 pub async fn docker_system_prune(prune_volumes: bool) -> Result<SystemPruneResult, String> {
-    info!(prune_volumes = prune_volumes, "Starting Docker system prune");
+    info!(
+        prune_volumes = prune_volumes,
+        "Starting Docker system prune"
+    );
 
     let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
-    let result = client.system_prune(prune_volumes).await.map_err(|e| e.to_string())?;
+    let result = client
+        .system_prune(prune_volumes)
+        .await
+        .map_err(|e| e.to_string())?;
 
     info!(
         containers = result.containers_deleted,
@@ -431,7 +461,10 @@ pub async fn docker_system_prune(prune_volumes: bool) -> Result<SystemPruneResul
 /// Get the host port mapped to a specific container port
 /// Returns None if the port is not mapped or the container is not running
 #[tauri::command]
-pub async fn get_container_host_port(container_id: String, container_port: u16) -> Result<Option<u16>, String> {
+pub async fn get_container_host_port(
+    container_id: String,
+    container_port: u16,
+) -> Result<Option<u16>, String> {
     debug!(container_id = %container_id, container_port = container_port, "Getting host port mapping");
     let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
     client
@@ -595,7 +628,10 @@ pub struct ContainerLogPayload {
 
 /// Get container logs (non-streaming, returns last N lines)
 #[tauri::command]
-pub async fn get_container_logs(container_id: String, tail: Option<String>) -> Result<String, String> {
+pub async fn get_container_logs(
+    container_id: String,
+    tail: Option<String>,
+) -> Result<String, String> {
     debug!(container_id = %container_id, tail = ?tail, "Getting container logs");
     let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
     client

@@ -19,7 +19,9 @@ pub async fn get_config() -> Result<AppConfig, String> {
 #[tauri::command]
 pub async fn save_config(config: AppConfig) -> Result<(), String> {
     let storage = get_storage().map_err(storage_error_to_string)?;
-    storage.save_config(&config).map_err(storage_error_to_string)
+    storage
+        .save_config(&config)
+        .map_err(storage_error_to_string)
 }
 
 /// Get the global configuration
@@ -48,7 +50,10 @@ pub async fn update_global_config(global: GlobalConfig) -> Result<AppConfig, Str
         err
     })?;
 
-    println!("[config] Loaded existing config version: {}", config.version);
+    println!(
+        "[config] Loaded existing config version: {}",
+        config.version
+    );
     config.global = global;
 
     storage.save_config(&config).map_err(|e| {
@@ -83,7 +88,9 @@ pub async fn update_repository_config(
     let storage = get_storage().map_err(storage_error_to_string)?;
     let mut config = storage.load_config().map_err(storage_error_to_string)?;
     config.repositories.insert(project_id, repo_config);
-    storage.save_config(&config).map_err(storage_error_to_string)?;
+    storage
+        .save_config(&config)
+        .map_err(storage_error_to_string)?;
     Ok(config)
 }
 

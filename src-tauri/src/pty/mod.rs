@@ -1,7 +1,7 @@
 // PTY (pseudo-terminal) management for Docker containers
 // Handles terminal sessions, stdin/stdout streaming, and resize events
 
-use bollard::exec::{CreateExecOptions, StartExecOptions, ResizeExecOptions};
+use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions};
 use bollard::Docker;
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -67,8 +67,7 @@ impl TerminalManager {
 
     fn connect_docker() -> Result<Docker, PtyError> {
         // Use a fresh client to avoid hijacked exec connections blocking new requests.
-        Docker::connect_with_local_defaults()
-            .map_err(|e| PtyError::Docker(e.to_string()))
+        Docker::connect_with_local_defaults().map_err(|e| PtyError::Docker(e.to_string()))
     }
 
     /// Create a new terminal session for a container
@@ -117,7 +116,7 @@ impl TerminalManager {
             ]),
             working_dir: Some("/workspace"),
             env: Some(env_refs),
-            user: Some(user.unwrap_or("node")),  // Use provided user or default to node
+            user: Some(user.unwrap_or("node")), // Use provided user or default to node
             ..Default::default()
         };
 
@@ -337,9 +336,9 @@ impl TerminalManager {
     /// Get session info
     pub fn get_session(&self, session_id: &str) -> Option<(String, u16, u16)> {
         let sessions = self.sessions.lock().unwrap();
-        sessions.get(session_id).map(|s| {
-            (s.container_id.clone(), s.cols, s.rows)
-        })
+        sessions
+            .get(session_id)
+            .map(|s| (s.container_id.clone(), s.cols, s.rows))
     }
 
     /// List all active sessions

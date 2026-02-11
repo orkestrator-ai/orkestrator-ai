@@ -15,7 +15,10 @@ pub struct PrDetectionResult {
 /// Detect PR URL and state for the environment's branch by running gh pr view in the container
 /// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
 #[tauri::command]
-pub async fn detect_pr(container_id: String, branch: String) -> Result<Option<PrDetectionResult>, String> {
+pub async fn detect_pr(
+    container_id: String,
+    branch: String,
+) -> Result<Option<PrDetectionResult>, String> {
     if branch.trim().is_empty() {
         return Err("Branch name cannot be empty".to_string());
     }
@@ -128,7 +131,10 @@ pub async fn detect_pr(container_id: String, branch: String) -> Result<Option<Pr
 /// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
 /// Used for local (worktree-based) environments where there's no container
 #[tauri::command]
-pub async fn detect_pr_local(environment_id: String, branch: String) -> Result<Option<PrDetectionResult>, String> {
+pub async fn detect_pr_local(
+    environment_id: String,
+    branch: String,
+) -> Result<Option<PrDetectionResult>, String> {
     use crate::storage::get_storage;
     use tokio::process::Command;
     use tracing::debug;

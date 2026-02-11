@@ -84,7 +84,10 @@ pub fn allocate_ports(existing_environments: &[Environment]) -> Result<PortAlloc
             claude_port: cport,
         }),
         _ => {
-            warn!("Failed to allocate ports in range {}-{}", LOCAL_PORT_RANGE_START, LOCAL_PORT_RANGE_END);
+            warn!(
+                "Failed to allocate ports in range {}-{}",
+                LOCAL_PORT_RANGE_START, LOCAL_PORT_RANGE_END
+            );
             Err(format!(
                 "No available ports in range {}-{}",
                 LOCAL_PORT_RANGE_START, LOCAL_PORT_RANGE_END

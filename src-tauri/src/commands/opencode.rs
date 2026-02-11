@@ -37,7 +37,9 @@ pub struct OpenCodeServerStatus {
 /// Start the OpenCode server in a container
 /// Runs `opencode serve` in the container's workspace directory
 #[tauri::command]
-pub async fn start_opencode_server(container_id: String) -> Result<OpenCodeServerStartResult, String> {
+pub async fn start_opencode_server(
+    container_id: String,
+) -> Result<OpenCodeServerStartResult, String> {
     info!(container_id = %container_id, "Starting OpenCode server");
 
     let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;
@@ -101,7 +103,10 @@ pub async fn start_opencode_server(container_id: String) -> Result<OpenCodeServe
 
     loop {
         attempts += 1;
-        tokio::time::sleep(tokio::time::Duration::from_millis(SERVER_STARTUP_POLL_INTERVAL_MS)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            SERVER_STARTUP_POLL_INTERVAL_MS,
+        ))
+        .await;
 
         // Check health endpoint
         match reqwest::get(&health_url).await {
@@ -132,7 +137,15 @@ pub async fn start_opencode_server(container_id: String) -> Result<OpenCodeServe
 
             // Also check if process is running
             let ps_result = client
-                .exec_in_container(&container_id, vec!["bash", "-c", "pgrep -f 'opencode serve' || echo 'No process found'"], None)
+                .exec_in_container(
+                    &container_id,
+                    vec![
+                        "bash",
+                        "-c",
+                        "pgrep -f 'opencode serve' || echo 'No process found'",
+                    ],
+                    None,
+                )
                 .await;
 
             if let Ok(ps_output) = ps_result {
@@ -202,7 +215,9 @@ pub async fn get_opencode_server_log(container_id: String) -> Result<String, Str
 
 /// Get the status of the OpenCode server in a container
 #[tauri::command]
-pub async fn get_opencode_server_status(container_id: String) -> Result<OpenCodeServerStatus, String> {
+pub async fn get_opencode_server_status(
+    container_id: String,
+) -> Result<OpenCodeServerStatus, String> {
     debug!(container_id = %container_id, "Checking OpenCode server status");
 
     let client = docker::client::get_docker_client().map_err(|e| e.to_string())?;

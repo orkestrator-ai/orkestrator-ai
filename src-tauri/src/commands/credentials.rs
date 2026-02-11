@@ -31,4 +31,3 @@ pub fn get_credential_status() -> CredentialStatus {
         },
     }
 }
-

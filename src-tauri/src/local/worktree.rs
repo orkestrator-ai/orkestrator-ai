@@ -192,7 +192,10 @@ async fn resolve_common_git_dir(git_path: &Path) -> Result<PathBuf, WorktreeErro
     // For worktrees, git_dir points to .git/worktrees/<name>
     // The commondir file contains the path to the main .git directory (usually "../..")
     let commondir_path = git_dir.join("commondir");
-    if tokio::fs::try_exists(&commondir_path).await.unwrap_or(false) {
+    if tokio::fs::try_exists(&commondir_path)
+        .await
+        .unwrap_or(false)
+    {
         let commondir_content = tokio::fs::read_to_string(&commondir_path)
             .await
             .map_err(WorktreeError::Io)?;
@@ -726,10 +729,7 @@ mod tests {
         let path2 = generate_worktree_path(project_name).unwrap();
 
         // Each call should generate a different path (different suffix)
-        assert_ne!(
-            path1, path2,
-            "Each call should generate a unique path"
-        );
+        assert_ne!(path1, path2, "Each call should generate a unique path");
     }
 
     #[tokio::test]

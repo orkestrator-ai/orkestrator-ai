@@ -38,8 +38,8 @@ pub async fn attach_terminal<R: Runtime>(
     user: Option<String>,
 ) -> Result<String, String> {
     debug!("Attaching terminal to container");
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     // Create the session
     let session_id = manager
@@ -69,8 +69,8 @@ pub async fn create_terminal_session(
     user: Option<String>,
 ) -> Result<String, String> {
     debug!("Creating terminal session");
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     let session_id = manager
         .create_session(&container_id, cols, rows, user.as_deref())
@@ -89,8 +89,8 @@ pub async fn start_terminal_session<R: Runtime>(
     session_id: String,
 ) -> Result<(), String> {
     debug!("Starting terminal session");
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     let output_rx = manager
         .start_session(&session_id)
@@ -105,12 +105,9 @@ pub async fn start_terminal_session<R: Runtime>(
 /// Write data to a terminal session
 #[tauri::command]
 #[instrument(fields(session_id = %session_id, data_len = data.len()))]
-pub async fn terminal_write(
-    session_id: String,
-    data: String,
-) -> Result<(), String> {
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+pub async fn terminal_write(session_id: String, data: String) -> Result<(), String> {
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     manager
         .write_to_session(&session_id, data.into_bytes())
@@ -121,13 +118,9 @@ pub async fn terminal_write(
 /// Resize a terminal session
 #[tauri::command]
 #[instrument(fields(session_id = %session_id, cols, rows))]
-pub async fn terminal_resize(
-    session_id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+pub async fn terminal_resize(session_id: String, cols: u16, rows: u16) -> Result<(), String> {
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     manager
         .resize_session(&session_id, cols, rows)
@@ -140,8 +133,8 @@ pub async fn terminal_resize(
 #[instrument(fields(session_id = %session_id))]
 pub async fn detach_terminal(session_id: String) -> Result<(), String> {
     debug!("Detaching terminal session");
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     manager
         .close_session(&session_id)
@@ -152,8 +145,8 @@ pub async fn detach_terminal(session_id: String) -> Result<(), String> {
 #[tauri::command]
 #[instrument]
 pub fn list_terminal_sessions() -> Result<Vec<String>, String> {
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     Ok(manager.list_sessions())
 }
@@ -162,8 +155,8 @@ pub fn list_terminal_sessions() -> Result<Vec<String>, String> {
 #[tauri::command]
 #[instrument(fields(session_id = %session_id))]
 pub fn get_terminal_session(session_id: String) -> Result<Option<(String, u16, u16)>, String> {
-    let manager = get_terminal_manager()
-        .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
 
     Ok(manager.get_session(&session_id))
 }

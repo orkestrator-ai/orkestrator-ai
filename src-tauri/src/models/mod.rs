@@ -188,7 +188,6 @@ pub struct Environment {
     pub port_mappings: Option<Vec<PortMapping>>,
 
     // === Local environment fields ===
-
     /// Type of environment (containerized or local)
     /// Defaults to Containerized for backward compatibility
     #[serde(default)]
@@ -733,23 +732,41 @@ mod tests {
 
     #[test]
     fn test_extract_repo_name_https() {
-        assert_eq!(extract_repo_name("https://github.com/user/repo.git"), "repo");
+        assert_eq!(
+            extract_repo_name("https://github.com/user/repo.git"),
+            "repo"
+        );
         assert_eq!(extract_repo_name("https://github.com/user/repo"), "repo");
-        assert_eq!(extract_repo_name("https://gitlab.com/org/project.git"), "project");
+        assert_eq!(
+            extract_repo_name("https://gitlab.com/org/project.git"),
+            "project"
+        );
     }
 
     #[test]
     fn test_extract_repo_name_ssh() {
         assert_eq!(extract_repo_name("git@github.com:user/repo.git"), "repo");
         assert_eq!(extract_repo_name("git@github.com:user/repo"), "repo");
-        assert_eq!(extract_repo_name("git@gitlab.com:org/project.git"), "project");
+        assert_eq!(
+            extract_repo_name("git@gitlab.com:org/project.git"),
+            "project"
+        );
     }
 
     #[test]
     fn test_extract_repo_name_edge_cases() {
-        assert_eq!(extract_repo_name("  https://github.com/user/repo.git  "), "repo");
-        assert_eq!(extract_repo_name("https://github.com/user/my-repo.git"), "my-repo");
-        assert_eq!(extract_repo_name("https://github.com/user/my_repo.git"), "my_repo");
+        assert_eq!(
+            extract_repo_name("  https://github.com/user/repo.git  "),
+            "repo"
+        );
+        assert_eq!(
+            extract_repo_name("https://github.com/user/my-repo.git"),
+            "my-repo"
+        );
+        assert_eq!(
+            extract_repo_name("https://github.com/user/my_repo.git"),
+            "my_repo"
+        );
     }
 
     #[test]
@@ -879,7 +896,11 @@ mod tests {
         assert_eq!(deserialized.repositories.len(), 1);
         assert!(deserialized.repositories.contains_key("repo-1"));
         assert_eq!(
-            deserialized.repositories.get("repo-1").unwrap().default_branch,
+            deserialized
+                .repositories
+                .get("repo-1")
+                .unwrap()
+                .default_branch,
             "develop"
         );
     }
@@ -915,7 +936,8 @@ mod tests {
 
     #[test]
     fn test_environment_with_name() {
-        let env = Environment::with_name("project-123".to_string(), "my feature branch".to_string());
+        let env =
+            Environment::with_name("project-123".to_string(), "my feature branch".to_string());
         assert_eq!(env.name, "my feature branch");
         assert_eq!(env.branch, "my-feature-branch");
         assert_eq!(env.status, EnvironmentStatus::Stopped);
