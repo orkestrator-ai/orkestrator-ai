@@ -42,6 +42,17 @@ fn storage_error_to_string(err: StorageError) -> String {
     err.to_string()
 }
 
+fn resolve_base_branch_override(
+    config: &crate::models::AppConfig,
+    project_id: &str,
+) -> Option<String> {
+    config
+        .repositories
+        .get(project_id)
+        .map(|repo| repo.default_branch.trim().to_string())
+        .filter(|branch| !branch.is_empty())
+}
+
 /// Fetch setup commands from orkestrator-ai.json and log if any are found
 ///
 /// Returns `None` if no setup commands are configured, otherwise `Some(commands)`.
@@ -924,11 +935,7 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
     // Get configuration
     let config = get_config().map_err(|e| e.to_string())?;
 
-    let base_branch_override = config
-        .repositories
-        .get(&environment.project_id)
-        .map(|repo| repo.default_branch.trim().to_string())
-        .filter(|branch| !branch.is_empty());
+    let base_branch_override = resolve_base_branch_override(&config, &environment.project_id);
 
     if let Some(branch) = &base_branch_override {
         debug!(
@@ -1113,13 +1120,7 @@ async fn start_local_environment(
     let base_branch_override = storage
         .load_config()
         .ok()
-        .and_then(|config| {
-            config
-                .repositories
-                .get(&project.id)
-                .map(|repo| repo.default_branch.trim().to_string())
-        })
-        .filter(|branch| !branch.is_empty());
+        .and_then(|config| resolve_base_branch_override(&config, &project.id));
 
     if let Some(branch) = &base_branch_override {
         debug!(
@@ -1137,13 +1138,13 @@ async fn start_local_environment(
         &project.name,
         base_branch_override.as_deref(),
     )
-        .await
-        .map_err(|e| {
-            let err_msg = format!("Failed to create worktree: {}", e);
-            warn!(environment_id = %environment_id, error = %err_msg);
-            let _ = storage.update_environment(environment_id, json!({ "status": "error" }));
-            err_msg
-        })?;
+    .await
+    .map_err(|e| {
+        let err_msg = format!("Failed to create worktree: {}", e);
+        warn!(environment_id = %environment_id, error = %err_msg);
+        let _ = storage.update_environment(environment_id, json!({ "status": "error" }));
+        err_msg
+    })?;
     let worktree_path = worktree_result.path;
 
     if worktree_result.branch != environment.branch {
@@ -1336,11 +1337,7 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
 
     let config = get_config().map_err(|e| e.to_string())?;
 
-    let base_branch_override = config
-        .repositories
-        .get(&environment.project_id)
-        .map(|repo| repo.default_branch.trim().to_string())
-        .filter(|branch| !branch.is_empty());
+    let base_branch_override = resolve_base_branch_override(&config, &environment.project_id);
 
     if let Some(branch) = &base_branch_override {
         debug!(
@@ -1796,6 +1793,8 @@ pub async fn reattach_container(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{AppConfig, RepositoryConfig};
+    use std::collections::HashMap;
 
     #[test]
     fn test_valid_statuses() {
@@ -1803,5 +1802,38 @@ mod tests {
         for status in valid {
             assert!(valid.contains(&status));
         }
+    }
+
+    #[test]
+    fn test_resolve_base_branch_override_trims_value() {
+        let mut config = AppConfig::default();
+        config.repositories = HashMap::from([(
+            "project-123".to_string(),
+            RepositoryConfig {
+                default_branch: "  develop  ".to_string(),
+                ..RepositoryConfig::default()
+            },
+        )]);
+
+        let branch = resolve_base_branch_override(&config, "project-123");
+        assert_eq!(branch, Some("develop".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_base_branch_override_returns_none_for_missing_or_empty() {
+        let mut config = AppConfig::default();
+        config.repositories = HashMap::from([(
+            "project-123".to_string(),
+            RepositoryConfig {
+                default_branch: "   ".to_string(),
+                ..RepositoryConfig::default()
+            },
+        )]);
+
+        assert_eq!(resolve_base_branch_override(&config, "project-123"), None);
+        assert_eq!(
+            resolve_base_branch_override(&config, "missing-project"),
+            None
+        );
     }
 }

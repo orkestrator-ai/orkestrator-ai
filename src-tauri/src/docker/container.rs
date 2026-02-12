@@ -3,9 +3,9 @@
 
 use super::client::{get_docker_client, CreateContainerConfig, DockerError};
 use crate::models::{Environment, EnvironmentStatus, NetworkAccessMode, PortMapping};
-use tracing::debug;
 use bollard::models::PortBinding;
 use std::collections::HashMap;
+use tracing::debug;
 
 /// Base image name for Claude Code environments
 pub const BASE_IMAGE: &str = "orkestrator-ai:latest";
@@ -204,57 +204,7 @@ pub async fn create_environment_container(
     }
 
     // Prepare environment variables
-    let mut env = vec![
-        format!("GIT_URL={}", config.git_url),
-        format!("GIT_BRANCH={}", config.branch),
-        "TERM=xterm-256color".to_string(),
-    ];
-
-    if let Some(base_branch) = &config.base_branch {
-        env.push(format!("GIT_BASE_BRANCH={}", base_branch));
-    }
-
-    // Add OAuth credentials JSON if available (preferred for Claude Code auth)
-    // This is used by the entrypoint to create ~/.claude/.credentials.json
-    // which is how Linux containers authenticate with Claude Code
-    if let Some(creds_json) = &config.oauth_credentials_json {
-        env.push(format!("CLAUDE_OAUTH_CREDENTIALS={}", creds_json));
-    }
-
-    // Add Anthropic API key as fallback if configured
-    if let Some(api_key) = &config.anthropic_api_key {
-        env.push(format!("ANTHROPIC_API_KEY={}", api_key));
-    }
-
-    // Add GitHub token for HTTPS authentication if configured
-    if let Some(token) = &config.github_token {
-        env.push(format!("GITHUB_TOKEN={}", token));
-        env.push(format!("GH_TOKEN={}", token));
-    }
-
-    // Add OpenCode model if configured
-    if !config.opencode_model.is_empty() {
-        env.push(format!("OPENCODE_MODEL={}", config.opencode_model));
-    }
-
-    // Enable debug mode for verbose entrypoint logging
-    if config.debug_mode {
-        env.push("DEBUG=1".to_string());
-    }
-
-    // Add network access mode configuration
-    match &config.network_access_mode {
-        NetworkAccessMode::Full => {
-            env.push("NETWORK_MODE=full".to_string());
-        }
-        NetworkAccessMode::Restricted => {
-            env.push("NETWORK_MODE=restricted".to_string());
-            // Pass allowed domains as comma-separated list
-            if !config.allowed_domains.is_empty() {
-                env.push(format!("ALLOWED_DOMAINS={}", config.allowed_domains.join(",")));
-            }
-        }
-    }
+    let env = build_container_env(config);
 
     // Prepare bind mounts - use /home/node paths for non-root container user
     let mut binds = vec![
@@ -314,19 +264,34 @@ pub async fn create_environment_container(
         // Mount .env if it exists
         let env_file = local_path.join(".env");
         if env_file.exists() {
-            println!("[create_container] Mounting .env from: {}", env_file.display());
+            println!(
+                "[create_container] Mounting .env from: {}",
+                env_file.display()
+            );
             binds.push(format!("{}:/project-env/.env:ro", env_file.display()));
         } else {
-            println!("[create_container] .env not found at: {}", env_file.display());
+            println!(
+                "[create_container] .env not found at: {}",
+                env_file.display()
+            );
         }
 
         // Mount .env.local if it exists
         let env_local_file = local_path.join(".env.local");
         if env_local_file.exists() {
-            println!("[create_container] Mounting .env.local from: {}", env_local_file.display());
-            binds.push(format!("{}:/project-env/.env.local:ro", env_local_file.display()));
+            println!(
+                "[create_container] Mounting .env.local from: {}",
+                env_local_file.display()
+            );
+            binds.push(format!(
+                "{}:/project-env/.env.local:ro",
+                env_local_file.display()
+            ));
         } else {
-            println!("[create_container] .env.local not found at: {}", env_local_file.display());
+            println!(
+                "[create_container] .env.local not found at: {}",
+                env_local_file.display()
+            );
         }
     } else {
         println!("[create_container] No project local path provided");
@@ -335,12 +300,18 @@ pub async fn create_environment_container(
     // Mount additional files to copy from project local path
     if let Some(local_path) = &config.project_local_path {
         if !config.files_to_copy.is_empty() {
-            debug!(count = config.files_to_copy.len(), "Mounting additional files to copy");
+            debug!(
+                count = config.files_to_copy.len(),
+                "Mounting additional files to copy"
+            );
             let local_path = std::path::Path::new(local_path);
 
             for relative_path in &config.files_to_copy {
                 // Skip empty paths or paths with parent directory traversal
-                if relative_path.is_empty() || relative_path.contains("..") || relative_path.starts_with('/') {
+                if relative_path.is_empty()
+                    || relative_path.contains("..")
+                    || relative_path.starts_with('/')
+                {
                     debug!(path = %relative_path, "Skipping invalid path");
                     continue;
                 }
@@ -365,7 +336,10 @@ pub async fn create_environment_container(
         let opencode_json = local_path.join("opencode.json");
         if opencode_json.exists() && opencode_json.is_file() {
             debug!(path = %opencode_json.display(), "Mounting project opencode.json");
-            binds.push(format!("{}:/opencode-project-json:ro", opencode_json.display()));
+            binds.push(format!(
+                "{}:/opencode-project-json:ro",
+                opencode_json.display()
+            ));
         }
     }
 
@@ -373,9 +347,18 @@ pub async fn create_environment_container(
 
     // Prepare labels
     let mut labels = HashMap::new();
-    labels.insert(CONTAINER_LABEL_APP.to_string(), CONTAINER_LABEL_APP_VALUE.to_string());
-    labels.insert(CONTAINER_LABEL_ENV_ID.to_string(), config.environment_id.clone());
-    labels.insert(CONTAINER_LABEL_PROJECT_ID.to_string(), config.project_id.clone());
+    labels.insert(
+        CONTAINER_LABEL_APP.to_string(),
+        CONTAINER_LABEL_APP_VALUE.to_string(),
+    );
+    labels.insert(
+        CONTAINER_LABEL_ENV_ID.to_string(),
+        config.environment_id.clone(),
+    );
+    labels.insert(
+        CONTAINER_LABEL_PROJECT_ID.to_string(),
+        config.project_id.clone(),
+    );
 
     // Build port bindings for Docker
     let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
@@ -406,7 +389,10 @@ pub async fn create_environment_container(
         host_port: Some("".to_string()), // Empty string = dynamic allocation
     };
     port_bindings.insert(opencode_key, Some(vec![opencode_binding]));
-    debug!("Added OpenCode server port {} with dynamic host allocation", OPENCODE_SERVER_PORT);
+    debug!(
+        "Added OpenCode server port {} with dynamic host allocation",
+        OPENCODE_SERVER_PORT
+    );
 
     // Always expose port 4097 for Claude Bridge server (Claude native mode)
     // Use dynamic host port allocation (empty string) to allow multiple environments
@@ -418,7 +404,10 @@ pub async fn create_environment_container(
         host_port: Some("".to_string()), // Empty string = dynamic allocation
     };
     port_bindings.insert(claude_key, Some(vec![claude_binding]));
-    debug!("Added Claude Bridge server port {} with dynamic host allocation", CLAUDE_BRIDGE_PORT);
+    debug!(
+        "Added Claude Bridge server port {} with dynamic host allocation",
+        CLAUDE_BRIDGE_PORT
+    );
 
     if !config.port_mappings.is_empty() {
         debug!("User port mappings: {:?}", config.port_mappings);
@@ -446,6 +435,65 @@ pub async fn create_environment_container(
     Ok(container_id)
 }
 
+fn build_container_env(config: &ContainerConfig) -> Vec<String> {
+    let mut env = vec![
+        format!("GIT_URL={}", config.git_url),
+        format!("GIT_BRANCH={}", config.branch),
+        "TERM=xterm-256color".to_string(),
+    ];
+
+    if let Some(base_branch) = &config.base_branch {
+        env.push(format!("GIT_BASE_BRANCH={}", base_branch));
+    }
+
+    // Add OAuth credentials JSON if available (preferred for Claude Code auth)
+    // This is used by the entrypoint to create ~/.claude/.credentials.json
+    // which is how Linux containers authenticate with Claude Code
+    if let Some(creds_json) = &config.oauth_credentials_json {
+        env.push(format!("CLAUDE_OAUTH_CREDENTIALS={}", creds_json));
+    }
+
+    // Add Anthropic API key as fallback if configured
+    if let Some(api_key) = &config.anthropic_api_key {
+        env.push(format!("ANTHROPIC_API_KEY={}", api_key));
+    }
+
+    // Add GitHub token for HTTPS authentication if configured
+    if let Some(token) = &config.github_token {
+        env.push(format!("GITHUB_TOKEN={}", token));
+        env.push(format!("GH_TOKEN={}", token));
+    }
+
+    // Add OpenCode model if configured
+    if !config.opencode_model.is_empty() {
+        env.push(format!("OPENCODE_MODEL={}", config.opencode_model));
+    }
+
+    // Enable debug mode for verbose entrypoint logging
+    if config.debug_mode {
+        env.push("DEBUG=1".to_string());
+    }
+
+    // Add network access mode configuration
+    match &config.network_access_mode {
+        NetworkAccessMode::Full => {
+            env.push("NETWORK_MODE=full".to_string());
+        }
+        NetworkAccessMode::Restricted => {
+            env.push("NETWORK_MODE=restricted".to_string());
+            // Pass allowed domains as comma-separated list
+            if !config.allowed_domains.is_empty() {
+                env.push(format!(
+                    "ALLOWED_DOMAINS={}",
+                    config.allowed_domains.join(",")
+                ));
+            }
+        }
+    }
+
+    env
+}
+
 /// Start an environment container
 pub async fn start_environment_container(container_id: &str) -> Result<(), DockerError> {
     let client = get_docker_client()?;
@@ -466,7 +514,9 @@ pub async fn remove_environment_container(container_id: &str) -> Result<(), Dock
 }
 
 /// Get the status of an environment container
-pub async fn get_container_environment_status(container_id: &str) -> Result<EnvironmentStatus, DockerError> {
+pub async fn get_container_environment_status(
+    container_id: &str,
+) -> Result<EnvironmentStatus, DockerError> {
     let client = get_docker_client()?;
     let status = client.get_container_status(container_id).await?;
 
@@ -502,7 +552,12 @@ pub async fn list_managed_containers() -> Result<Vec<(String, String)>, DockerEr
         .iter()
         .filter_map(|c| {
             let id = c.id.clone()?;
-            let name = c.names.as_ref()?.first()?.trim_start_matches('/').to_string();
+            let name = c
+                .names
+                .as_ref()?
+                .first()?
+                .trim_start_matches('/')
+                .to_string();
             Some((id, name))
         })
         .collect();
@@ -526,6 +581,35 @@ mod tests {
         assert_eq!(config.branch, "feature/my-change");
         assert_eq!(config.base_branch, Some("develop".to_string()));
         assert_eq!(config.git_url, "https://github.com/test/repo.git");
+    }
+
+    #[test]
+    fn test_build_container_env_includes_base_branch() {
+        let env = Environment::new("project-123".to_string());
+        let config = ContainerConfig::new(&env, "https://github.com/test/repo.git")
+            .with_branch("feature/new-api")
+            .with_base_branch("develop");
+
+        let vars = build_container_env(&config);
+
+        assert!(vars.contains(&"GIT_URL=https://github.com/test/repo.git".to_string()));
+        assert!(vars.contains(&"GIT_BRANCH=feature/new-api".to_string()));
+        assert!(vars.contains(&"GIT_BASE_BRANCH=develop".to_string()));
+    }
+
+    #[test]
+    fn test_build_container_env_omits_empty_base_branch() {
+        let env = Environment::new("project-123".to_string());
+        let config = ContainerConfig::new(&env, "https://github.com/test/repo.git")
+            .with_branch("feature/new-api")
+            .with_base_branch("   ");
+
+        let vars = build_container_env(&config);
+
+        assert!(vars.contains(&"GIT_BRANCH=feature/new-api".to_string()));
+        assert!(!vars
+            .iter()
+            .any(|entry| entry.starts_with("GIT_BASE_BRANCH=")));
     }
 
     #[test]

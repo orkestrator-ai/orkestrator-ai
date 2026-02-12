@@ -116,7 +116,8 @@ RUN mkdir -p /home/node/.ssh && \
 # Copy entrypoint and workspace setup scripts
 COPY entrypoint.sh /usr/local/bin/
 COPY workspace-setup.sh /usr/local/bin/
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/workspace-setup.sh
+COPY git-branch-helpers.sh /usr/local/bin/
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/workspace-setup.sh /usr/local/bin/git-branch-helpers.sh
 
 USER node
 
