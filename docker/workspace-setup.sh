@@ -11,6 +11,45 @@ YELLOW=$'\033[1;33m'
 RED=$'\033[0;31m'
 NC=$'\033[0m' # No Color
 
+# Load shared git branch helpers when available.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "/usr/local/bin/git-branch-helpers.sh" ]; then
+    # shellcheck source=/dev/null
+    . "/usr/local/bin/git-branch-helpers.sh"
+elif [ -f "$SCRIPT_DIR/git-branch-helpers.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$SCRIPT_DIR/git-branch-helpers.sh"
+fi
+
+if ! declare -F create_branch_from_preferred_bases >/dev/null; then
+    create_branch_from_preferred_bases() {
+        local branch="$1"
+        local configured_base="$2"
+        local remote_default="$3"
+        local candidate=""
+        local tried_branches=""
+
+        for candidate in "$configured_base" "$remote_default" "main" "master"; do
+            if [ -z "$candidate" ]; then
+                continue
+            fi
+
+            if [[ " $tried_branches " == *" $candidate "* ]]; then
+                continue
+            fi
+
+            tried_branches="$tried_branches $candidate"
+
+            if git checkout -b "$branch" "origin/$candidate" >/dev/null 2>&1; then
+                printf "%s" "$candidate"
+                return 0
+            fi
+        done
+
+        return 1
+    }
+fi
+
 # Wait for entrypoint to complete (config files to be set up)
 # This prevents race conditions where Claude is launched before config is ready
 WAIT_COUNT=0
@@ -180,9 +219,13 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
     echo -e "${BLUE}>>> Cloning Repository <<<${NC}"
     echo -e "URL: ${GREEN}$GIT_URL${NC}"
     echo -e "Branch: ${GREEN}${GIT_BRANCH:-main}${NC}"
+    if [ -n "${GIT_BASE_BRANCH:-}" ]; then
+        echo -e "Base branch: ${GREEN}${GIT_BASE_BRANCH}${NC}"
+    fi
     echo ""
 
     BRANCH="${GIT_BRANCH:-main}"
+    BASE_BRANCH="${GIT_BASE_BRANCH:-}"
 
     # Clean /workspace
     echo "Preparing workspace..."
@@ -216,13 +259,16 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
             elif git checkout -b "$BRANCH" "origin/$BRANCH" 2>/dev/null; then
                 echo -e "${GREEN}Checked out remote: origin/$BRANCH${NC}"
             else
-                # Branch doesn't exist remotely - create a new branch from main/master
+                # Branch doesn't exist remotely - create a new branch from configured/default base
                 echo -e "${BLUE}Creating new branch: $BRANCH${NC}"
-                # Try to create from origin/main or origin/master
-                if git checkout -b "$BRANCH" "origin/main" 2>/dev/null; then
-                    echo -e "${GREEN}Created new branch: $BRANCH (from main)${NC}"
-                elif git checkout -b "$BRANCH" "origin/master" 2>/dev/null; then
-                    echo -e "${GREEN}Created new branch: $BRANCH (from master)${NC}"
+
+                REMOTE_HEAD_REF=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+                REMOTE_DEFAULT_BRANCH="${REMOTE_HEAD_REF#origin/}"
+
+                CREATED_FROM=$(create_branch_from_preferred_bases "$BRANCH" "$BASE_BRANCH" "$REMOTE_DEFAULT_BRANCH" || true)
+
+                if [ -n "$CREATED_FROM" ]; then
+                    echo -e "${GREEN}Created new branch: $BRANCH (from $CREATED_FROM)${NC}"
                 else
                     # Create from current HEAD as last resort
                     if git checkout -b "$BRANCH" 2>/dev/null; then
