@@ -8,6 +8,7 @@ import {
   type QuestionRequest,
   type OpenCodeEvent,
 } from "@/lib/opencode-client";
+import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { createSessionKey } from "@/lib/utils";
 
 /**
@@ -78,6 +79,8 @@ interface OpenCodeState {
   pendingQuestions: Map<string, QuestionRequest>;
   /** Shared event subscriptions per environment - only ONE per environment */
   eventSubscriptions: Map<string, EventSubscriptionState>;
+  /** Context usage per tab session key */
+  contextUsage: Map<string, ContextUsageSnapshot>;
 
   // Actions
   /** Set server status for an environment */
@@ -120,6 +123,8 @@ interface OpenCodeState {
   addPendingQuestion: (question: QuestionRequest) => void;
   /** Remove a pending question request */
   removePendingQuestion: (requestId: string) => void;
+  /** Set context usage for a tab session key */
+  setContextUsage: (sessionKey: string, usage: ContextUsageSnapshot | null) => void;
   /** Get or create event subscription for an environment (returns existing if already active) */
   getOrCreateEventSubscription: (environmentId: string) => EventSubscriptionState | null;
   /** Set the event stream for an environment's subscription */
@@ -150,6 +155,8 @@ interface OpenCodeState {
   getPendingQuestionsForSession: (sessionId: string) => QuestionRequest[];
   /** Get a specific pending question by ID */
   getPendingQuestion: (requestId: string) => QuestionRequest | undefined;
+  /** Get context usage for a tab session key */
+  getContextUsage: (sessionKey: string) => ContextUsageSnapshot | undefined;
 }
 
 export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
@@ -166,6 +173,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   isComposing: new Map(),
   pendingQuestions: new Map(),
   eventSubscriptions: new Map(),
+  contextUsage: new Map(),
 
   // Actions
   setServerStatus: (environmentId, status) =>
@@ -387,6 +395,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
+      const newContextUsage = new Map(state.contextUsage);
 
       const sessionKeyPrefix = `env-${environmentId}:`;
 
@@ -404,6 +413,11 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       for (const key of newDraftText.keys()) {
         if (key.startsWith(sessionKeyPrefix)) {
           newDraftText.delete(key);
+        }
+      }
+      for (const key of newContextUsage.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          newContextUsage.delete(key);
         }
       }
       newIsComposing.delete(environmentId);
@@ -429,6 +443,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         eventSubscriptions: newEventSubscriptions,
+        contextUsage: newContextUsage,
       };
     });
   },
@@ -445,6 +460,17 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newMap = new Map(state.pendingQuestions);
       newMap.delete(requestId);
       return { pendingQuestions: newMap };
+    }),
+
+  setContextUsage: (sessionKey, usage) =>
+    set((state) => {
+      const newMap = new Map(state.contextUsage);
+      if (usage) {
+        newMap.set(sessionKey, usage);
+      } else {
+        newMap.delete(sessionKey);
+      }
+      return { contextUsage: newMap };
     }),
 
   getOrCreateEventSubscription: (environmentId) => {
@@ -547,4 +573,6 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   },
 
   getPendingQuestion: (requestId) => get().pendingQuestions.get(requestId),
+
+  getContextUsage: (sessionKey) => get().contextUsage.get(sessionKey),
 }));

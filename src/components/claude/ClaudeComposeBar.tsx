@@ -13,6 +13,7 @@ import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment } from "@/stores/claudeStore";
+import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import type { ClaudeModel } from "@/lib/claude-client";
 import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
 import { FileMentionMenu } from "./FileMentionMenu";
@@ -94,6 +95,10 @@ export function ClaudeComposeBar({
   // Use a selector for sessionInitData to ensure reactivity when SSE session.init event arrives
   const sessionInitData = useClaudeStore(
     (state) => state.sessionInitData.get(environmentId)
+  );
+
+  const contextUsage = useClaudeStore(
+    useCallback((state) => state.contextUsage.get(sessionKey), [sessionKey])
   );
 
   const attachments = getAttachments(sessionKey);
@@ -649,6 +654,8 @@ export function ClaudeComposeBar({
         >
           <Brain className="w-3.5 h-3.5" />
         </button>
+
+        <ContextUsageWheel usage={contextUsage} className="ml-1" />
 
         {/* Spacer */}
         <div className="flex-1" />

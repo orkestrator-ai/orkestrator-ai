@@ -282,6 +282,7 @@ pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<()
 /// * `source_repo_path` - Path to the source git repository
 /// * `branch_name` - Name of the new branch to create in the worktree
 /// * `project_name` - Name of the project (used for worktree directory name)
+/// * `base_branch_override` - Optional configured default branch override
 ///
 /// # Returns
 /// The path to the created worktree
@@ -289,6 +290,7 @@ pub async fn create_worktree(
     source_repo_path: &str,
     branch_name: &str,
     project_name: &str,
+    base_branch_override: Option<&str>,
 ) -> Result<WorktreeCreateResult, WorktreeError> {
     info!(
         source = %source_repo_path,
@@ -315,8 +317,15 @@ pub async fn create_worktree(
     let worktree_path = generate_worktree_path(project_name)?;
     let worktree_path_str = worktree_path.to_string_lossy().to_string();
 
-    // Get the default branch to base the worktree on
-    let default_branch = get_default_branch(source_repo_path).await?;
+    // Resolve the branch to base the worktree on.
+    // Repository settings can provide an explicit branch override.
+    let default_branch = match base_branch_override.map(str::trim).filter(|b| !b.is_empty()) {
+        Some(branch) => {
+            debug!(branch = %branch, "Using configured default branch override");
+            branch.to_string()
+        }
+        None => get_default_branch(source_repo_path).await?,
+    };
 
     // Fetch from origin to ensure we have the latest commits
     debug!(source = %source_repo_path, "Fetching from origin to get latest commits");

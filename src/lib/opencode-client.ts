@@ -19,6 +19,71 @@ export interface OpenCodeModel {
   outputCost?: number;
 }
 
+export interface OpenCodeModelDefaults {
+  modelId?: string;
+  variant?: string;
+}
+
+export interface OpenCodeModelsResponse {
+  models: OpenCodeModel[];
+  defaults: OpenCodeModelDefaults;
+}
+
+function resolveDefaultModelId(defaultConfig: unknown): string | undefined {
+  if (!defaultConfig || typeof defaultConfig !== "object") return undefined;
+
+  const config = defaultConfig as Record<string, unknown>;
+
+  const directModelId = config.model;
+  if (typeof directModelId === "string" && directModelId.includes("/")) {
+    return directModelId;
+  }
+
+  const nestedModel = config.model;
+  if (nestedModel && typeof nestedModel === "object") {
+    const nested = nestedModel as Record<string, unknown>;
+    const providerID = nested.providerID;
+    const modelID = nested.modelID;
+    if (typeof providerID === "string" && typeof modelID === "string") {
+      return `${providerID}/${modelID}`;
+    }
+  }
+
+  const providerID = config.providerID;
+  const modelID = config.modelID;
+  if (typeof providerID === "string" && typeof modelID === "string") {
+    return `${providerID}/${modelID}`;
+  }
+
+  const provider = config.provider;
+  const model = config.model;
+  if (typeof provider === "string" && typeof model === "string") {
+    return `${provider}/${model}`;
+  }
+
+  return undefined;
+}
+
+function resolveDefaultVariant(defaultConfig: unknown): string | undefined {
+  if (!defaultConfig || typeof defaultConfig !== "object") return undefined;
+
+  const config = defaultConfig as Record<string, unknown>;
+
+  if (typeof config.variant === "string") {
+    return config.variant;
+  }
+
+  const nestedModel = config.model;
+  if (nestedModel && typeof nestedModel === "object") {
+    const nested = nestedModel as Record<string, unknown>;
+    if (typeof nested.variant === "string") {
+      return nested.variant;
+    }
+  }
+
+  return undefined;
+}
+
 /** Diff metadata for edit tool operations */
 export interface ToolDiffMetadata {
   /** File path that was edited */
@@ -39,6 +104,8 @@ export interface ToolDiffMetadata {
 export interface OpenCodeMessagePart {
   type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file";
   content: string;
+  /** For file parts - original URL from SDK (may be data URL or file:// URL) */
+  fileUrl?: string;
   /** For tool invocations - the tool name */
   toolName?: string;
   /** For tool invocations - the tool arguments */
@@ -137,11 +204,21 @@ export function createClient(baseUrl: string): OpencodeClient {
  * Get available models/providers from the server
  */
 export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]> {
+  const response = await getModelsWithDefaults(client);
+  return response.models;
+}
+
+/**
+ * Get available models/providers plus server defaults from model.json
+ */
+export async function getModelsWithDefaults(client: OpencodeClient): Promise<OpenCodeModelsResponse> {
   try {
     // Use config.providers() to get the list of configured providers and models
     const response = await client.config.providers();
 
-    if (!response.data) return [];
+    if (!response.data) {
+      return { models: [], defaults: {} };
+    }
 
     const models: OpenCodeModel[] = [];
 
@@ -194,10 +271,17 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
       }
     }
 
-    return models;
+    const defaults = response.data.default && typeof response.data.default === "object"
+      ? {
+          modelId: resolveDefaultModelId(response.data.default),
+          variant: resolveDefaultVariant(response.data.default),
+        }
+      : {};
+
+    return { models, defaults };
   } catch (error) {
     console.error("[opencode-client] Failed to get models:", error);
-    return [];
+    return { models: [], defaults: {} };
   }
 }
 
@@ -401,6 +485,7 @@ export async function getSessionMessages(
             parsedParts.push({
               type: "file",
               content: filePath,
+              fileUrl: typeof p.url === "string" ? p.url : undefined,
             });
           }
           // SKIP: Internal/control parts that we don't need to display
