@@ -41,6 +41,15 @@ export interface TerminalSessionData {
   hasLaunchedCommand?: boolean;
 }
 
+/** Draft image attachment for terminal compose bar persistence */
+export interface TerminalComposeDraftImage {
+  id: string;
+  dataUrl: string;
+  base64Data: string;
+  width: number;
+  height: number;
+}
+
 /**
  * Store for mapping tab IDs to their terminal session data.
  * This allows terminal sessions to persist when tabs are moved between panes.
@@ -53,6 +62,12 @@ export interface TerminalSessionData {
 interface TerminalSessionStore {
   /** Map of tab ID to terminal session data */
   sessions: Map<string, TerminalSessionData>;
+
+  /** Draft text per terminal tab */
+  composeDraftText: Map<string, string>;
+
+  /** Draft image attachments per terminal tab */
+  composeDraftImages: Map<string, TerminalComposeDraftImage[]>;
 
   /** Get session data by tab ID */
   getSession: (tabId: string) => TerminalSessionData | undefined;
@@ -75,6 +90,27 @@ interface TerminalSessionStore {
   /** Mark that the auto-launch command was executed for a tab */
   setHasLaunchedCommand: (tabId: string, launched: boolean) => void;
 
+  /** Get compose draft text for a tab */
+  getComposeDraftText: (tabId: string) => string;
+
+  /** Set compose draft text for a tab */
+  setComposeDraftText: (tabId: string, text: string) => void;
+
+  /** Get compose draft image attachments for a tab */
+  getComposeDraftImages: (tabId: string) => TerminalComposeDraftImage[];
+
+  /** Set compose draft image attachments for a tab */
+  setComposeDraftImages: (tabId: string, images: TerminalComposeDraftImage[]) => void;
+
+  /** Append a compose draft image attachment for a tab */
+  appendComposeDraftImage: (tabId: string, image: TerminalComposeDraftImage) => void;
+
+  /** Remove a compose draft image attachment for a tab */
+  removeComposeDraftImage: (tabId: string, imageId: string) => void;
+
+  /** Clear compose draft (text + images) for a tab */
+  clearComposeDraft: (tabId: string) => void;
+
   /** Remove session mapping when tab is closed */
   removeSession: (tabId: string) => void;
 
@@ -85,6 +121,8 @@ interface TerminalSessionStore {
 export const useTerminalSessionStore = create<TerminalSessionStore>(
   (set, get) => ({
     sessions: new Map(),
+    composeDraftText: new Map(),
+    composeDraftImages: new Map(),
 
     getSession: (tabId: string) => {
       return get().sessions.get(tabId);
@@ -139,16 +177,96 @@ export const useTerminalSessionStore = create<TerminalSessionStore>(
       });
     },
 
+    getComposeDraftText: (tabId: string) => {
+      return get().composeDraftText.get(tabId) || "";
+    },
+
+    setComposeDraftText: (tabId: string, text: string) => {
+      set((state) => {
+        const newDraftText = new Map(state.composeDraftText);
+        if (text.length > 0) {
+          newDraftText.set(tabId, text);
+        } else {
+          newDraftText.delete(tabId);
+        }
+        return { composeDraftText: newDraftText };
+      });
+    },
+
+    getComposeDraftImages: (tabId: string) => {
+      return get().composeDraftImages.get(tabId) || [];
+    },
+
+    setComposeDraftImages: (tabId: string, images: TerminalComposeDraftImage[]) => {
+      set((state) => {
+        const newDraftImages = new Map(state.composeDraftImages);
+        if (images.length > 0) {
+          newDraftImages.set(tabId, images);
+        } else {
+          newDraftImages.delete(tabId);
+        }
+        return { composeDraftImages: newDraftImages };
+      });
+    },
+
+    appendComposeDraftImage: (tabId: string, image: TerminalComposeDraftImage) => {
+      set((state) => {
+        const currentImages = state.composeDraftImages.get(tabId) || [];
+        const newDraftImages = new Map(state.composeDraftImages);
+        newDraftImages.set(tabId, [...currentImages, image]);
+        return { composeDraftImages: newDraftImages };
+      });
+    },
+
+    removeComposeDraftImage: (tabId: string, imageId: string) => {
+      set((state) => {
+        const currentImages = state.composeDraftImages.get(tabId) || [];
+        const filteredImages = currentImages.filter((image) => image.id !== imageId);
+        const newDraftImages = new Map(state.composeDraftImages);
+        if (filteredImages.length > 0) {
+          newDraftImages.set(tabId, filteredImages);
+        } else {
+          newDraftImages.delete(tabId);
+        }
+        return { composeDraftImages: newDraftImages };
+      });
+    },
+
+    clearComposeDraft: (tabId: string) => {
+      set((state) => {
+        const newDraftText = new Map(state.composeDraftText);
+        const newDraftImages = new Map(state.composeDraftImages);
+        newDraftText.delete(tabId);
+        newDraftImages.delete(tabId);
+        return {
+          composeDraftText: newDraftText,
+          composeDraftImages: newDraftImages,
+        };
+      });
+    },
+
     removeSession: (tabId: string) => {
       set((state) => {
         const newSessions = new Map(state.sessions);
+        const newDraftText = new Map(state.composeDraftText);
+        const newDraftImages = new Map(state.composeDraftImages);
         newSessions.delete(tabId);
-        return { sessions: newSessions };
+        newDraftText.delete(tabId);
+        newDraftImages.delete(tabId);
+        return {
+          sessions: newSessions,
+          composeDraftText: newDraftText,
+          composeDraftImages: newDraftImages,
+        };
       });
     },
 
     clearAllSessions: () => {
-      set({ sessions: new Map() });
+      set({
+        sessions: new Map(),
+        composeDraftText: new Map(),
+        composeDraftImages: new Map(),
+      });
     },
   })
 );

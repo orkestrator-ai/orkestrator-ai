@@ -1023,6 +1023,7 @@ export function PersistentTerminal({
       </ContextMenu>
       {isActive && (
         <ComposeBar
+          sessionKey={sessionKey}
           isOpen={isComposeBarOpen}
           onClose={() => {
             setIsComposeBarOpen(false);

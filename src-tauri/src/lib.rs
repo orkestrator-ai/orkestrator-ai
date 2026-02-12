@@ -248,6 +248,7 @@ pub fn run() {
             stop_opencode_server,
             get_opencode_server_status,
             get_opencode_server_log,
+            get_opencode_model_preferences,
             // Claude bridge commands
             start_claude_server,
             stop_claude_server,

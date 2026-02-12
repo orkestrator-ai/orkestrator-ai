@@ -415,6 +415,17 @@ export interface OpenCodeServerStatus {
   hostPort: number | null;
 }
 
+export interface OpenCodeModelRef {
+  providerID: string;
+  modelID: string;
+}
+
+export interface OpenCodeModelPreferences {
+  recent: OpenCodeModelRef[];
+  favorite: OpenCodeModelRef[];
+  variant: Record<string, string>;
+}
+
 /** Start the OpenCode server in a container */
 export async function startOpenCodeServer(containerId: string): Promise<OpenCodeServerStartResult> {
   return invoke<OpenCodeServerStartResult>("start_opencode_server", { containerId });
@@ -433,6 +444,11 @@ export async function getOpenCodeServerStatus(containerId: string): Promise<Open
 /** Get the OpenCode server log from a container (for debugging) */
 export async function getOpenCodeServerLog(containerId: string): Promise<string> {
   return invoke<string>("get_opencode_server_log", { containerId });
+}
+
+/** Get OpenCode model preferences from ~/.local/state/opencode/model.json */
+export async function getOpencodeModelPreferences(): Promise<OpenCodeModelPreferences> {
+  return invoke<OpenCodeModelPreferences>("get_opencode_model_preferences");
 }
 
 // --- Claude Bridge Server Commands ---

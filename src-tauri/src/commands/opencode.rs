@@ -3,6 +3,7 @@
 
 use crate::docker;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 /// OpenCode server port inside the container
@@ -32,6 +33,68 @@ pub struct OpenCodeServerStatus {
     pub running: bool,
     /// The host port if running
     pub host_port: Option<u16>,
+}
+
+/// Model reference in OpenCode model preferences (provider/model pair)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenCodeModelRef {
+    #[serde(rename = "providerID")]
+    pub provider_id: String,
+    #[serde(rename = "modelID")]
+    pub model_id: String,
+}
+
+/// OpenCode model preferences from ~/.local/state/opencode/model.json
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenCodeModelPreferences {
+    #[serde(default)]
+    pub recent: Vec<OpenCodeModelRef>,
+    #[serde(default)]
+    pub favorite: Vec<OpenCodeModelRef>,
+    #[serde(default)]
+    pub variant: HashMap<String, String>,
+}
+
+fn load_opencode_model_preferences_from_path(
+    model_path: &std::path::Path,
+) -> OpenCodeModelPreferences {
+    if !model_path.exists() || !model_path.is_file() {
+        debug!(path = %model_path.display(), "OpenCode model.json not found");
+        return OpenCodeModelPreferences::default();
+    }
+
+    let content = match std::fs::read_to_string(model_path) {
+        Ok(content) => content,
+        Err(error) => {
+            warn!(path = %model_path.display(), error = %error, "Failed to read OpenCode model.json");
+            return OpenCodeModelPreferences::default();
+        }
+    };
+
+    match serde_json::from_str::<OpenCodeModelPreferences>(&content) {
+        Ok(preferences) => preferences,
+        Err(error) => {
+            warn!(path = %model_path.display(), error = %error, "Failed to parse OpenCode model.json");
+            OpenCodeModelPreferences::default()
+        }
+    }
+}
+
+/// Get OpenCode model preferences from ~/.local/state/opencode/model.json
+#[tauri::command]
+pub async fn get_opencode_model_preferences() -> Result<OpenCodeModelPreferences, String> {
+    let Some(home) = dirs::home_dir() else {
+        warn!("Failed to resolve home directory for OpenCode model preferences");
+        return Ok(OpenCodeModelPreferences::default());
+    };
+
+    let model_path = home
+        .join(".local")
+        .join("state")
+        .join("opencode")
+        .join("model.json");
+
+    Ok(load_opencode_model_preferences_from_path(&model_path))
 }
 
 /// Start the OpenCode server in a container
@@ -261,4 +324,64 @@ pub async fn get_opencode_server_status(
         running,
         host_port: if running { Some(host_port) } else { None },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn model_preferences_defaults_for_missing_file() {
+        let temp = tempdir().expect("create temp dir");
+        let missing_path = temp.path().join("missing-model.json");
+
+        let preferences = load_opencode_model_preferences_from_path(&missing_path);
+
+        assert!(preferences.recent.is_empty());
+        assert!(preferences.favorite.is_empty());
+        assert!(preferences.variant.is_empty());
+    }
+
+    #[test]
+    fn model_preferences_defaults_for_invalid_json() {
+        let temp = tempdir().expect("create temp dir");
+        let model_path = temp.path().join("model.json");
+        fs::write(&model_path, "{ not-valid-json").expect("write invalid json");
+
+        let preferences = load_opencode_model_preferences_from_path(&model_path);
+
+        assert!(preferences.recent.is_empty());
+        assert!(preferences.favorite.is_empty());
+        assert!(preferences.variant.is_empty());
+    }
+
+    #[test]
+    fn model_preferences_parses_valid_json() {
+        let temp = tempdir().expect("create temp dir");
+        let model_path = temp.path().join("model.json");
+
+        let json = r#"{
+            "recent": [{"providerID": "anthropic", "modelID": "claude-3-7-sonnet"}],
+            "favorite": [{"providerID": "openai", "modelID": "gpt-5"}],
+            "variant": {"anthropic/claude-3-7-sonnet": "fast"}
+        }"#;
+        fs::write(&model_path, json).expect("write valid json");
+
+        let preferences = load_opencode_model_preferences_from_path(&model_path);
+
+        assert_eq!(preferences.recent.len(), 1);
+        assert_eq!(preferences.recent[0].provider_id, "anthropic");
+        assert_eq!(preferences.recent[0].model_id, "claude-3-7-sonnet");
+
+        assert_eq!(preferences.favorite.len(), 1);
+        assert_eq!(preferences.favorite[0].provider_id, "openai");
+        assert_eq!(preferences.favorite[0].model_id, "gpt-5");
+
+        assert_eq!(
+            preferences.variant.get("anthropic/claude-3-7-sonnet"),
+            Some(&"fast".to_string())
+        );
+    }
 }

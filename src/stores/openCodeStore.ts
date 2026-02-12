@@ -71,6 +71,8 @@ interface OpenCodeState {
   selectedMode: Map<string, OpenCodeConversationMode>;
   /** Current attachments per tab session key (format: env-{environmentId}:{tabId}) */
   attachments: Map<string, OpenCodeAttachment[]>;
+  /** Draft text per tab session key (format: env-{environmentId}:{tabId}) */
+  draftText: Map<string, string>;
   /** Whether the compose bar is loading per environment */
   isComposing: Map<string, boolean>;
   /** Pending question requests (keyed by requestId) */
@@ -111,6 +113,8 @@ interface OpenCodeState {
   removeAttachment: (sessionKey: string, attachmentId: string) => void;
   /** Clear all attachments for a tab session */
   clearAttachments: (sessionKey: string) => void;
+  /** Set draft text for a tab session */
+  setDraftText: (sessionKey: string, text: string) => void;
   /** Set composing state */
   setComposing: (environmentId: string, isComposing: boolean) => void;
   /** Clear all state for an environment (cleanup) */
@@ -143,6 +147,8 @@ interface OpenCodeState {
   getSelectedMode: (environmentId: string) => OpenCodeConversationMode;
   /** Get attachments for a tab session */
   getAttachments: (sessionKey: string) => OpenCodeAttachment[];
+  /** Get draft text for a tab session */
+  getDraftText: (sessionKey: string) => string;
   /** Check if composing for an environment */
   isComposingFor: (environmentId: string) => boolean;
   /** Get pending questions for a session */
@@ -163,6 +169,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   selectedVariant: new Map(),
   selectedMode: new Map(),
   attachments: new Map(),
+  draftText: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
   eventSubscriptions: new Map(),
@@ -343,6 +350,17 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       return { attachments: newMap };
     }),
 
+  setDraftText: (sessionKey, text) =>
+    set((state) => {
+      const newMap = new Map(state.draftText);
+      if (text.length > 0) {
+        newMap.set(sessionKey, text);
+      } else {
+        newMap.delete(sessionKey);
+      }
+      return { draftText: newMap };
+    }),
+
   setComposing: (environmentId, isComposing) =>
     set((state) => {
       const newMap = new Map(state.isComposing);
@@ -373,6 +391,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newSelectedVariant = new Map(state.selectedVariant);
       const newSelectedMode = new Map(state.selectedMode);
       const newAttachments = new Map(state.attachments);
+      const newDraftText = new Map(state.draftText);
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
@@ -389,6 +408,11 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       for (const key of newAttachments.keys()) {
         if (key.startsWith(sessionKeyPrefix)) {
           newAttachments.delete(key);
+        }
+      }
+      for (const key of newDraftText.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          newDraftText.delete(key);
         }
       }
       for (const key of newContextUsage.keys()) {
@@ -415,6 +439,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         selectedVariant: newSelectedVariant,
         selectedMode: newSelectedMode,
         attachments: newAttachments,
+        draftText: newDraftText,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         eventSubscriptions: newEventSubscriptions,
@@ -531,6 +556,8 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
     get().selectedMode.get(environmentId) || "build",
 
   getAttachments: (sessionKey) => get().attachments.get(sessionKey) || [],
+
+  getDraftText: (sessionKey) => get().draftText.get(sessionKey) || "",
 
   isComposingFor: (environmentId) =>
     get().isComposing.get(environmentId) || false,

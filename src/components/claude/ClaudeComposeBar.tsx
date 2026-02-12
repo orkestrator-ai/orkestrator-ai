@@ -41,7 +41,7 @@ interface ClaudeComposeBarProps {
   onQueue?: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => void;
 }
 
-const MAX_LINES = 10;
+const MAX_LINES = 12;
 const LINE_HEIGHT = 20;
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 const MAX_RGBA_SIZE = 32 * 1024 * 1024;
