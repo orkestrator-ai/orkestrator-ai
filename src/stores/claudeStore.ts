@@ -12,6 +12,7 @@ import {
   type ClaudeSessionKey,
   type ClaudeSdkSessionId,
 } from "@/lib/claude-client";
+import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { createSessionKey } from "@/lib/utils";
 import type { FileMention } from "@/types";
 
@@ -82,6 +83,7 @@ interface ClaudeState {
   selectedModel: Map<ClaudeSessionKey, string>;
   messageQueue: Map<ClaudeSessionKey, QueuedMessage[]>;
   sessionInitData: Map<string, SessionInitData>;
+  contextUsage: Map<ClaudeSessionKey, ContextUsageSnapshot>;
 
   // State keyed by request/question ID
   pendingQuestions: Map<string, ClaudeQuestionRequest>;
@@ -113,6 +115,7 @@ interface ClaudeState {
   setThinkingEnabled: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
   setPlanMode: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
   setSessionInitData: (environmentId: string, initData: SessionInitData | null) => void;
+  setContextUsage: (sessionKey: ClaudeSessionKey, usage: ContextUsageSnapshot | null) => void;
   clearEnvironment: (environmentId: string) => void;
 
   // Queue actions - keyed by sessionKey
@@ -143,6 +146,7 @@ interface ClaudeState {
   isThinkingEnabled: (sessionKey: ClaudeSessionKey) => boolean;
   isPlanMode: (sessionKey: ClaudeSessionKey) => boolean;
   getSessionInitData: (environmentId: string) => SessionInitData | undefined;
+  getContextUsage: (sessionKey: ClaudeSessionKey) => ContextUsageSnapshot | undefined;
 
   // Selectors - keyed by SDK session ID
   getPendingQuestionsForSession: (sdkSessionId: ClaudeSdkSessionId) => ClaudeQuestionRequest[];
@@ -179,6 +183,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   planMode: new Map(),
   messageQueue: new Map(),
   sessionInitData: new Map(),
+  contextUsage: new Map(),
 
   // Actions
   setServerStatus: (environmentId, status) =>
@@ -401,6 +406,17 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { sessionInitData: newMap };
     }),
 
+  setContextUsage: (sessionKey, usage) =>
+    set((state) => {
+      const newMap = new Map(state.contextUsage);
+      if (usage) {
+        newMap.set(sessionKey, usage);
+      } else {
+        newMap.delete(sessionKey);
+      }
+      return { contextUsage: newMap };
+    }),
+
   clearEnvironment: (environmentId) => {
     // First close the event subscription if it exists
     const subscription = get().eventSubscriptions.get(environmentId);
@@ -441,6 +457,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newThinkingEnabled = new Map(state.thinkingEnabled);
       const newPlanMode = new Map(state.planMode);
       const newMessageQueue = new Map(state.messageQueue);
+      const newContextUsage = new Map(state.contextUsage);
 
       // Collect session IDs for pending question cleanup before deleting sessions
       const sessionIdsToCleanup: string[] = [];
@@ -478,6 +495,9 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       for (const key of newMessageQueue.keys()) {
         if (key.startsWith(sessionKeyPrefix)) newMessageQueue.delete(key);
       }
+      for (const key of newContextUsage.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newContextUsage.delete(key);
+      }
 
       // Remove pending questions and plan approvals for this environment's sessions
       const newPendingQuestions = new Map(state.pendingQuestions);
@@ -510,6 +530,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         planMode: newPlanMode,
         messageQueue: newMessageQueue,
         sessionInitData: newSessionInitData,
+        contextUsage: newContextUsage,
       };
     });
   },
@@ -659,6 +680,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   isPlanMode: (sessionKey) => get().planMode.get(sessionKey) ?? false,
 
   getSessionInitData: (environmentId) => get().sessionInitData.get(environmentId),
+
+  getContextUsage: (sessionKey) => get().contextUsage.get(sessionKey),
 
   // Selectors - keyed by SDK session ID
   getPendingQuestionsForSession: (sdkSessionId) => {

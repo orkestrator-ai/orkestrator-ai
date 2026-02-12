@@ -1,9 +1,11 @@
-import { memo, useCallback, useState, useMemo, useRef, type AnchorHTMLAttributes } from "react";
-import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { memo, useCallback, useState, useMemo, useEffect, type AnchorHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
+import { Brain, FileText, Image as ImageIcon, X, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { openInBrowser } from "@/lib/tauri";
+import { readFileBase64 } from "@/lib/tauri";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
@@ -41,46 +43,16 @@ interface OpenCodeMessageProps {
   message: OpenCodeMessageType;
 }
 
-/** Render a thinking/reasoning part - collapsible after response completes */
-function ThinkingPart({ content, isComplete }: { content: string; isComplete: boolean }) {
-  // Start expanded while thinking, collapse when complete
-  const [isOpen, setIsOpen] = useState(!isComplete);
-
-  // Auto-collapse when response completes (isComplete changes from false to true)
-  // But don't auto-expand if user manually collapsed
-  const prevIsCompleteRef = useRef(isComplete);
-  if (prevIsCompleteRef.current !== isComplete) {
-    prevIsCompleteRef.current = isComplete;
-    if (isComplete) {
-      setIsOpen(false);
-    }
-  }
-
+/** Render a thinking/reasoning part inline */
+function ThinkingPart({ content }: { content: string }) {
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mb-3">
-      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground w-full py-2 px-3 bg-muted/30 rounded-md hover:bg-muted/50 transition-colors cursor-pointer">
-        <ChevronRight
-          className={cn(
-            "w-3 h-3 transition-transform shrink-0",
-            isOpen && "rotate-90"
-          )}
-        />
-        <Brain className="w-3 h-3" />
-        <span className="font-medium">Thinking</span>
-        {!isOpen && (
-          <span className="text-muted-foreground/50 ml-2 text-xs">
-            (click to expand)
-          </span>
-        )}
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="mt-1 rounded-md bg-muted/20 p-3 border border-border/30">
-          <div className="text-sm text-muted-foreground/80 leading-relaxed prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-headings:text-muted-foreground prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-pre:my-1 prose-code:text-xs prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-muted prose-pre:p-2 prose-pre:rounded-md prose-table:text-xs">
-            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</Markdown>
-          </div>
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+    <div className="my-1.5 flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md">
+      <Brain className="w-3.5 h-3.5 shrink-0" />
+      <span className="font-medium shrink-0">thinking</span>
+      <span className="font-mono text-muted-foreground/80 truncate min-w-0">
+        {content}
+      </span>
+    </div>
   );
 }
 
@@ -529,12 +501,182 @@ function EditToolPart({
 }
 
 /** Render a file attachment part */
-function FilePart({ path }: { path: string }) {
+function ImagePreviewOverlay({
+  imageSrc,
+  filename,
+  onClose,
+}: {
+  imageSrc: string;
+  filename: string;
+  onClose: () => void;
+}) {
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === "Escape") onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
+      onClick={onClose}
+    >
+      <div className="relative max-w-full max-h-full" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onClose}
+          className="absolute -top-10 right-0 p-2 text-white/70 hover:text-white transition-colors"
+        >
+          <X className="w-6 h-6" />
+        </button>
+        <div className="text-white/70 text-sm mb-2 text-center">{filename}</div>
+        <img
+          src={imageSrc}
+          alt={filename}
+          className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
+        />
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function getMimeType(path: string): string {
+  const ext = path.split("?")[0]?.split("#")[0]?.split(".").pop()?.toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    bmp: "image/bmp",
+    ico: "image/x-icon",
+    tiff: "image/tiff",
+    tif: "image/tiff",
+  };
+  return mimeTypes[ext || ""] || "image/png";
+}
+
+function isImageReference(pathOrUrl?: string): boolean {
+  if (!pathOrUrl) return false;
+  if (pathOrUrl.startsWith("data:image/")) return true;
+  const lower = pathOrUrl.toLowerCase();
+  return [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tif", ".tiff"].some((ext) =>
+    lower.includes(ext)
+  );
+}
+
+function parseLocalFilePathFromUrl(fileUrl: string): string | null {
+  if (!fileUrl.startsWith("file://")) return null;
+
+  try {
+    const parsed = new URL(fileUrl);
+    const pathname = decodeURIComponent(parsed.pathname);
+
+    // UNC paths (e.g. file://server/share/path)
+    if (parsed.host) {
+      return `//${parsed.host}${pathname}`;
+    }
+
+    // Windows absolute paths are represented as /C:/path in file URLs.
+    if (/^\/[a-z]:\//i.test(pathname)) {
+      return pathname.slice(1);
+    }
+
+    return pathname;
+  } catch {
+    return null;
+  }
+}
+
+function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  const displayName = path.split("/").pop() || path || "file";
+  const isImage = isImageReference(fileUrl) || isImageReference(path);
+
+  const handleClick = useCallback(async () => {
+    if (!isImage) return;
+
+    if (imageSrc) {
+      setPreviewOpen(true);
+      return;
+    }
+
+    setLoading(true);
+    setLoadError(false);
+    try {
+      if (fileUrl?.startsWith("data:image/")) {
+        setImageSrc(fileUrl);
+        setPreviewOpen(true);
+        return;
+      }
+
+      if (fileUrl?.startsWith("http://") || fileUrl?.startsWith("https://")) {
+        setImageSrc(fileUrl);
+        setPreviewOpen(true);
+        return;
+      }
+
+      const filePath = fileUrl?.startsWith("file://")
+        ? parseLocalFilePathFromUrl(fileUrl)
+        : path.startsWith("/")
+          ? path
+          : null;
+
+      if (!filePath) {
+        throw new Error("No readable local image path available");
+      }
+
+      const base64 = await readFileBase64(filePath);
+      const mimeType = getMimeType(filePath);
+      setImageSrc(`data:${mimeType};base64,${base64}`);
+      setPreviewOpen(true);
+    } catch (err) {
+      console.error("[OpenCodeMessage] Failed to load image preview:", err, { path, fileUrl });
+      setLoadError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [isImage, imageSrc, path, fileUrl]);
+
   return (
-    <div className="flex items-center gap-1.5 text-xs text-muted-foreground my-1.5 py-1 px-2 bg-muted/50 rounded">
-      <FileText className="w-3 h-3" />
-      <span className="font-mono truncate">{path}</span>
-    </div>
+    <>
+      <button
+        onClick={handleClick}
+        disabled={!isImage || loading}
+        className={cn(
+          "inline-flex items-center gap-1.5 text-xs my-1.5 py-1.5 px-2.5 rounded-md border transition-colors",
+          isImage
+            ? "bg-muted/50 border-border hover:bg-muted hover:border-border/80 cursor-pointer"
+            : "bg-muted/30 border-border/50 cursor-default",
+          loading && "opacity-50"
+        )}
+      >
+        {isImage ? (
+          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+        <span className="font-mono truncate max-w-[240px] text-muted-foreground">{displayName}</span>
+        {loading && <span className="text-muted-foreground">(loading...)</span>}
+        {loadError && <span className="text-destructive text-[10px]">(error)</span>}
+      </button>
+
+      {previewOpen && imageSrc && (
+        <ImagePreviewOverlay
+          imageSrc={imageSrc}
+          filename={displayName}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -560,7 +702,7 @@ function MessagePart({ part }: { part: OpenCodeMessagePart }) {
     case "thinking":
       // Thinking parts are typically rendered directly in OpenCodeMessage with isComplete
       // If rendered through MessagePart, assume complete (collapsed by default)
-      return <ThinkingPart content={part.content} isComplete={true} />;
+      return <ThinkingPart content={part.content} />;
     case "text":
       return <TextPart content={part.content} />;
     case "tool-invocation":
@@ -592,7 +734,7 @@ function MessagePart({ part }: { part: OpenCodeMessagePart }) {
       // Tool results are typically shown inline with tool invocations
       return null;
     case "file":
-      return <FilePart path={part.content} />;
+      return <FilePart path={part.content} fileUrl={part.fileUrl} />;
     default:
       return null;
   }
@@ -657,9 +799,9 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
 
         {/* Message content - render parts in order: thinking, tools, text */}
         <div className="space-y-2">
-          {/* Thinking parts first (collapsible) - collapse when response is complete (has text parts) */}
+          {/* Thinking parts first (inline status line) */}
           {thinkingParts.map((part, i) => (
-            <ThinkingPart key={`thinking-${i}`} content={part.content} isComplete={hasTextParts} />
+            <ThinkingPart key={`thinking-${i}`} content={part.content} />
           ))}
 
           {/* Tool invocations */}

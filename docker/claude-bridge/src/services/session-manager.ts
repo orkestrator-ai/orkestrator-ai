@@ -53,6 +53,12 @@ interface PlanApprovalResponse {
   feedback?: string;
 }
 
+interface ContextUsagePayload {
+  usedTokens: number;
+  totalTokens: number;
+  model?: string;
+}
+
 // Plan approval resolvers (for ExitPlanMode flow)
 // Resolves with approval response including feedback
 const planApprovalResolvers = new Map<
@@ -78,6 +84,96 @@ function generateSessionId(): string {
  */
 function generateMessageId(): string {
   return `msg-${crypto.randomUUID()}`;
+}
+
+function parseTokenValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase().replace(/,/g, "");
+    const match = normalized.match(/^(\d+(?:\.\d+)?)([kmb])?$/);
+    if (!match) return undefined;
+    const base = Number(match[1]);
+    if (!Number.isFinite(base)) return undefined;
+    if (match[2] === "k") return Math.round(base * 1_000);
+    if (match[2] === "m") return Math.round(base * 1_000_000);
+    if (match[2] === "b") return Math.round(base * 1_000_000_000);
+    return Math.round(base);
+  }
+  return undefined;
+}
+
+function extractContextUsageFromUnknown(payload: unknown, fallbackModel?: string): ContextUsagePayload | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  const queue: Record<string, unknown>[] = [payload as Record<string, unknown>];
+  const visited = new WeakSet<object>();
+
+  while (queue.length > 0) {
+    const node = queue.shift();
+    if (!node) continue;
+    if (visited.has(node)) continue;
+    visited.add(node);
+
+    const usage = node.usage;
+    const usageObject = usage && typeof usage === "object" && !Array.isArray(usage)
+      ? (usage as Record<string, unknown>)
+      : undefined;
+    const source = usageObject ?? node;
+
+    const usedTokens =
+      parseTokenValue(source.usedTokens)
+      ?? parseTokenValue(source.used_tokens)
+      ?? parseTokenValue(source.totalTokens)
+      ?? parseTokenValue(source.total_tokens)
+      ?? (
+        ((parseTokenValue(source.inputTokens) ?? parseTokenValue(source.input_tokens)) ?? 0)
+        + ((parseTokenValue(source.outputTokens) ?? parseTokenValue(source.output_tokens)) ?? 0)
+      );
+
+    const totalTokens =
+      parseTokenValue(source.totalContextTokens)
+      ?? parseTokenValue(source.total_context_tokens)
+      ?? parseTokenValue(source.maxContextTokens)
+      ?? parseTokenValue(source.max_context_tokens)
+      ?? parseTokenValue(source.contextWindowTokens)
+      ?? parseTokenValue(source.context_window_tokens)
+      ?? parseTokenValue(source.contextWindow)
+      ?? parseTokenValue(source.context_window)
+      ?? parseTokenValue(source.maxTokens)
+      ?? parseTokenValue(source.max_tokens);
+
+    if (usedTokens && totalTokens && usedTokens > 0 && totalTokens > 0 && usedTokens <= totalTokens) {
+      const model =
+        (typeof source.model === "string" ? source.model : undefined)
+        ?? (typeof source.modelId === "string" ? source.modelId : undefined)
+        ?? (typeof source.model_id === "string" ? source.model_id : undefined)
+        ?? fallbackModel;
+
+      return {
+        usedTokens,
+        totalTokens,
+        model,
+      };
+    }
+
+    for (const value of Object.values(node)) {
+      if (value && typeof value === "object") {
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (item && typeof item === "object") {
+              queue.push(item as Record<string, unknown>);
+            }
+          }
+        } else {
+          queue.push(value as Record<string, unknown>);
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -1233,6 +1329,18 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
           costUSD: resultMsg.total_cost_usd,
           durationMs: resultMsg.duration_ms,
         });
+
+        const contextUsage = extractContextUsageFromUnknown(resultMsg, options?.model);
+        if (contextUsage) {
+          eventEmitter.emit({
+            type: "session.updated",
+            sessionId,
+            data: {
+              contextUsage,
+            },
+          });
+        }
+
         if (resultMsg.subtype === "success") {
           console.log("[session-manager] Query completed successfully", { sessionId });
         } else {
