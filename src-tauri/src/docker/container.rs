@@ -29,6 +29,8 @@ pub struct ContainerConfig {
     pub git_url: String,
     /// Branch to clone
     pub branch: String,
+    /// Base branch to use when creating new environment branches
+    pub base_branch: Option<String>,
     /// Path to .env file on host (legacy single file)
     pub env_file_path: Option<String>,
     /// Path to project's local source folder (for mounting .env files)
@@ -135,6 +137,7 @@ impl ContainerConfig {
             name: environment.name.clone(),
             git_url: git_url.to_string(),
             branch: "main".to_string(),
+            base_branch: None,
             env_file_path: None,
             project_local_path: None,
             claude_dir_path: claude_dir.to_string_lossy().to_string(),
@@ -168,6 +171,14 @@ impl ContainerConfig {
         self
     }
 
+    pub fn with_base_branch(mut self, base_branch: &str) -> Self {
+        let trimmed = base_branch.trim();
+        if !trimmed.is_empty() {
+            self.base_branch = Some(trimmed.to_string());
+        }
+        self
+    }
+
     pub fn with_files_to_copy(mut self, files: Vec<String>) -> Self {
         self.files_to_copy = files;
         self
@@ -198,6 +209,10 @@ pub async fn create_environment_container(
         format!("GIT_BRANCH={}", config.branch),
         "TERM=xterm-256color".to_string(),
     ];
+
+    if let Some(base_branch) = &config.base_branch {
+        env.push(format!("GIT_BASE_BRANCH={}", base_branch));
+    }
 
     // Add OAuth credentials JSON if available (preferred for Claude Code auth)
     // This is used by the entrypoint to create ~/.claude/.credentials.json
@@ -505,9 +520,11 @@ mod tests {
     fn test_container_config() {
         let env = Environment::new("project-123".to_string());
         let config = ContainerConfig::new(&env, "https://github.com/test/repo.git")
-            .with_branch("develop");
+            .with_branch("feature/my-change")
+            .with_base_branch("develop");
 
-        assert_eq!(config.branch, "develop");
+        assert_eq!(config.branch, "feature/my-change");
+        assert_eq!(config.base_branch, Some("develop".to_string()));
         assert_eq!(config.git_url, "https://github.com/test/repo.git");
     }
 

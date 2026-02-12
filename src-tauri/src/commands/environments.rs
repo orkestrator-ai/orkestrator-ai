@@ -924,6 +924,21 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
     // Get configuration
     let config = get_config().map_err(|e| e.to_string())?;
 
+    let base_branch_override = config
+        .repositories
+        .get(&environment.project_id)
+        .map(|repo| repo.default_branch.trim().to_string())
+        .filter(|branch| !branch.is_empty());
+
+    if let Some(branch) = &base_branch_override {
+        debug!(
+            environment_id = %environment_id,
+            project_id = %environment.project_id,
+            branch = %branch,
+            "Using repository default branch for container base"
+        );
+    }
+
     // If container already exists, just start it
     if let Some(container_id) = &environment.container_id {
         debug!(environment_id = %environment_id, container_id = %container_id, "Container already exists, starting it");
@@ -957,6 +972,10 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
     let mut container_config = ContainerConfig::new(&environment, &project.git_url)
         .with_project_local_path(project.local_path.clone())
         .with_branch(&environment.branch);
+
+    if let Some(base_branch) = base_branch_override.as_deref() {
+        container_config = container_config.with_base_branch(base_branch);
+    }
 
     // Apply files_to_copy from repository config if available
     if let Some(repo_config) = config.repositories.get(&environment.project_id) {
@@ -1317,6 +1336,21 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
 
     let config = get_config().map_err(|e| e.to_string())?;
 
+    let base_branch_override = config
+        .repositories
+        .get(&environment.project_id)
+        .map(|repo| repo.default_branch.trim().to_string())
+        .filter(|branch| !branch.is_empty());
+
+    if let Some(branch) = &base_branch_override {
+        debug!(
+            environment_id = %environment_id,
+            project_id = %environment.project_id,
+            branch = %branch,
+            "Using repository default branch for recreated container base"
+        );
+    }
+
     // If no container exists, just start a new one
     let container_id = match &environment.container_id {
         Some(id) => id.clone(),
@@ -1375,6 +1409,10 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
     let mut container_config = ContainerConfig::new(&environment, &project.git_url)
         .with_project_local_path(project.local_path.clone())
         .with_branch(&environment.branch);
+
+    if let Some(base_branch) = base_branch_override.as_deref() {
+        container_config = container_config.with_base_branch(base_branch);
+    }
 
     // Apply files_to_copy from repository config if available
     if let Some(repo_config) = config.repositories.get(&environment.project_id) {

@@ -180,9 +180,13 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
     echo -e "${BLUE}>>> Cloning Repository <<<${NC}"
     echo -e "URL: ${GREEN}$GIT_URL${NC}"
     echo -e "Branch: ${GREEN}${GIT_BRANCH:-main}${NC}"
+    if [ -n "${GIT_BASE_BRANCH:-}" ]; then
+        echo -e "Base branch: ${GREEN}${GIT_BASE_BRANCH}${NC}"
+    fi
     echo ""
 
     BRANCH="${GIT_BRANCH:-main}"
+    BASE_BRANCH="${GIT_BASE_BRANCH:-}"
 
     # Clean /workspace
     echo "Preparing workspace..."
@@ -216,13 +220,48 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
             elif git checkout -b "$BRANCH" "origin/$BRANCH" 2>/dev/null; then
                 echo -e "${GREEN}Checked out remote: origin/$BRANCH${NC}"
             else
-                # Branch doesn't exist remotely - create a new branch from main/master
+                # Branch doesn't exist remotely - create a new branch from configured/default base
                 echo -e "${BLUE}Creating new branch: $BRANCH${NC}"
-                # Try to create from origin/main or origin/master
-                if git checkout -b "$BRANCH" "origin/main" 2>/dev/null; then
-                    echo -e "${GREEN}Created new branch: $BRANCH (from main)${NC}"
-                elif git checkout -b "$BRANCH" "origin/master" 2>/dev/null; then
-                    echo -e "${GREEN}Created new branch: $BRANCH (from master)${NC}"
+
+                # Build candidate base branch list in priority order:
+                # 1) Configured repository default branch (if provided)
+                # 2) Remote default branch (origin/HEAD)
+                # 3) Legacy fallbacks (main/master)
+                CANDIDATE_BASE_BRANCHES=()
+                if [ -n "$BASE_BRANCH" ]; then
+                    CANDIDATE_BASE_BRANCHES+=("$BASE_BRANCH")
+                fi
+
+                REMOTE_HEAD_REF=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+                REMOTE_DEFAULT_BRANCH="${REMOTE_HEAD_REF#origin/}"
+                if [ -n "$REMOTE_DEFAULT_BRANCH" ]; then
+                    CANDIDATE_BASE_BRANCHES+=("$REMOTE_DEFAULT_BRANCH")
+                fi
+
+                CANDIDATE_BASE_BRANCHES+=("main" "master")
+
+                CREATED_FROM=""
+                TRIED_BASE_BRANCHES=""
+
+                for candidate in "${CANDIDATE_BASE_BRANCHES[@]}"; do
+                    if [ -z "$candidate" ]; then
+                        continue
+                    fi
+
+                    if [[ " $TRIED_BASE_BRANCHES " == *" $candidate "* ]]; then
+                        continue
+                    fi
+
+                    TRIED_BASE_BRANCHES="$TRIED_BASE_BRANCHES $candidate"
+
+                    if git checkout -b "$BRANCH" "origin/$candidate" 2>/dev/null; then
+                        CREATED_FROM="$candidate"
+                        break
+                    fi
+                done
+
+                if [ -n "$CREATED_FROM" ]; then
+                    echo -e "${GREEN}Created new branch: $BRANCH (from $CREATED_FROM)${NC}"
                 else
                     # Create from current HEAD as last resort
                     if git checkout -b "$BRANCH" 2>/dev/null; then
