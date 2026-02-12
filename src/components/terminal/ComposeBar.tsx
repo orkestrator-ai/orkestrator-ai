@@ -6,6 +6,7 @@ import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
+import { useTerminalSessionStore } from "@/stores/terminalSessionStore";
 
 interface ImageAttachment {
   id: string;
@@ -16,6 +17,7 @@ interface ImageAttachment {
 }
 
 interface ComposeBarProps {
+  sessionKey: string;
   isOpen: boolean;
   onClose: () => void;
   onSend: (images: ImageAttachment[], text: string) => void;
@@ -24,6 +26,7 @@ interface ComposeBarProps {
 
 const MAX_LINES = 10;
 const LINE_HEIGHT = 20; // approximate line height in pixels
+const EMPTY_IMAGES: ImageAttachment[] = [];
 
 /** Maximum image size in bytes (8MB) */
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
@@ -40,9 +43,13 @@ function generateImageFilename(): string {
   return `clipboard-${timestamp}-${random}.png`;
 }
 
-export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarProps) {
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<ImageAttachment[]>([]);
+export function ComposeBar({ sessionKey, isOpen, onClose, onSend, containerId }: ComposeBarProps) {
+  const text = useTerminalSessionStore((state) => state.composeDraftText.get(sessionKey) ?? "");
+  const images = useTerminalSessionStore((state) => state.composeDraftImages.get(sessionKey) ?? EMPTY_IMAGES);
+  const setComposeDraftText = useTerminalSessionStore((state) => state.setComposeDraftText);
+  const setComposeDraftImages = useTerminalSessionStore((state) => state.setComposeDraftImages);
+  const clearComposeDraft = useTerminalSessionStore((state) => state.clearComposeDraft);
+
   const [isSending, setIsSending] = useState(false);
   const [previewImage, setPreviewImage] = useState<ImageAttachment | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -113,12 +120,12 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
         width: finalWidth,
         height: finalHeight,
       };
-      setImages((prev) => [...prev, newImage]);
+      setComposeDraftImages(sessionKey, [...images, newImage]);
     } catch {
       // No image in clipboard - this is expected when pasting text.
       // Let the paste event propagate to native text handling.
     }
-  }, [isOpen]);
+  }, [isOpen, images, sessionKey, setComposeDraftImages]);
 
   // Listen for paste events
   useEffect(() => {
@@ -156,7 +163,10 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
   };
 
   const removeImage = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    setComposeDraftImages(
+      sessionKey,
+      images.filter((img) => img.id !== id)
+    );
   };
 
   const handleSend = async () => {
@@ -188,8 +198,7 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
       if (savedImages.length > 0 || text.trim()) {
         onSend(savedImages, text.trim());
       }
-      setText("");
-      setImages([]);
+      clearComposeDraft(sessionKey);
     } catch (error) {
       console.error("[ComposeBar] Failed to send:", error);
     } finally {
@@ -243,7 +252,7 @@ export function ComposeBar({ isOpen, onClose, onSend, containerId }: ComposeBarP
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => setComposeDraftText(sessionKey, e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Type a message (newlines become spaces)..."
           rows={textareaRows}

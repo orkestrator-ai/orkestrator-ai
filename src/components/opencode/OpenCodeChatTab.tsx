@@ -20,8 +20,11 @@ import {
   startOpenCodeServer,
   getOpenCodeServerStatus,
   getOpenCodeServerLog,
+  getOpencodeModelPreferences,
   startLocalOpencodeServer,
   getLocalOpencodeServerStatus,
+  type OpenCodeModelRef,
+  type OpenCodeModelPreferences,
 } from "@/lib/tauri";
 import { OpenCodeMessage } from "./OpenCodeMessage";
 import { OpenCodeComposeBar } from "./OpenCodeComposeBar";
@@ -40,6 +43,20 @@ interface OpenCodeChatTabProps {
 
 type ConnectionState = "connecting" | "connected" | "error";
 
+const EMPTY_MODEL_PREFERENCES: OpenCodeModelPreferences = {
+  recent: [],
+  favorite: [],
+  variant: {},
+};
+
+function toOpenCodeModelId(modelRef?: OpenCodeModelRef): string | undefined {
+  if (!modelRef?.providerID || !modelRef?.modelID) {
+    return undefined;
+  }
+
+  return `${modelRef.providerID}/${modelRef.modelID}`;
+}
+
 export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCodeChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,6 +65,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   const [serverLog, setServerLog] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
+  const [modelPreferences, setModelPreferences] = useState<OpenCodeModelPreferences>(EMPTY_MODEL_PREFERENCES);
 
   // Track this tab's session ID locally to prevent interference between tabs
   const tabSessionIdRef = useRef<string | null>(null);
@@ -67,6 +85,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     setMessages,
     setSessionLoading,
     setServerStatus,
+    setSelectedModel,
+    setSelectedVariant,
     getSelectedModel,
     getSelectedVariant,
     getSelectedMode,
@@ -112,6 +132,20 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     }
     return questions;
   }, [session?.sessionId, pendingQuestionsMap]);
+
+  const favoriteModelIds = useMemo(() => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+
+    for (const favorite of modelPreferences.favorite) {
+      const modelId = toOpenCodeModelId(favorite);
+      if (!modelId || seen.has(modelId)) continue;
+      seen.add(modelId);
+      ids.push(modelId);
+    }
+
+    return ids;
+  }, [modelPreferences]);
 
   // Track OpenCode activity state based on session loading - update the environment icon in sidebar
   // For native mode, we use environmentId as the key (works for both local and containerized)
@@ -223,10 +257,43 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         const sdkClient = createClient(baseUrl);
         setClient(environmentId, sdkClient);
 
-        // Fetch available models
-        const availableModels = await getModels(sdkClient);
+        // Fetch available models and model preferences
+        const [availableModels, preferences] = await Promise.all([
+          getModels(sdkClient),
+          getOpencodeModelPreferences().catch((error) => {
+            console.warn("[OpenCodeChatTab] Failed to load model preferences:", error);
+            return EMPTY_MODEL_PREFERENCES;
+          }),
+        ]);
+
         if (!mounted) return;
+
         setModels(availableModels);
+        setModelPreferences(preferences);
+
+        const selectedModel = getSelectedModel(environmentId);
+        const selectedModelExists =
+          !!selectedModel && availableModels.some((model) => model.id === selectedModel);
+
+        if (!selectedModelExists) {
+          const recentModelId = toOpenCodeModelId(preferences.recent[0]);
+          const defaultModelId =
+            recentModelId && availableModels.some((model) => model.id === recentModelId)
+              ? recentModelId
+              : availableModels[0]?.id;
+
+          if (defaultModelId) {
+            setSelectedModel(environmentId, defaultModelId);
+
+            const defaultVariant = preferences.variant[defaultModelId];
+            const modelConfig = availableModels.find((model) => model.id === defaultModelId);
+            if (defaultVariant && modelConfig?.variants?.includes(defaultVariant)) {
+              setSelectedVariant(environmentId, defaultVariant);
+            } else {
+              setSelectedVariant(environmentId, undefined);
+            }
+          }
+        }
 
         // Check for existing session - first from component ref, then from Zustand store
         // This handles reconnection after tab remount where refs are lost but store persists
@@ -748,8 +815,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         tabId={tabId}
         containerId={containerId}
         models={models}
+        favoriteModelIds={favoriteModelIds}
         onSend={handleSend}
-        disabled={!client || !session || session.isLoading}
+        disabled={!client || !session}
       />
 
       {client && (

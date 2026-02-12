@@ -3,6 +3,7 @@
 
 use crate::docker;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 /// OpenCode server port inside the container
@@ -32,6 +33,62 @@ pub struct OpenCodeServerStatus {
     pub running: bool,
     /// The host port if running
     pub host_port: Option<u16>,
+}
+
+/// Model reference in OpenCode model preferences (provider/model pair)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenCodeModelRef {
+    #[serde(rename = "providerID")]
+    pub provider_id: String,
+    #[serde(rename = "modelID")]
+    pub model_id: String,
+}
+
+/// OpenCode model preferences from ~/.local/state/opencode/model.json
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenCodeModelPreferences {
+    #[serde(default)]
+    pub recent: Vec<OpenCodeModelRef>,
+    #[serde(default)]
+    pub favorite: Vec<OpenCodeModelRef>,
+    #[serde(default)]
+    pub variant: HashMap<String, String>,
+}
+
+/// Get OpenCode model preferences from ~/.local/state/opencode/model.json
+#[tauri::command]
+pub async fn get_opencode_model_preferences() -> Result<OpenCodeModelPreferences, String> {
+    let Some(home) = dirs::home_dir() else {
+        warn!("Failed to resolve home directory for OpenCode model preferences");
+        return Ok(OpenCodeModelPreferences::default());
+    };
+
+    let model_path = home
+        .join(".local")
+        .join("state")
+        .join("opencode")
+        .join("model.json");
+
+    if !model_path.exists() || !model_path.is_file() {
+        debug!(path = %model_path.display(), "OpenCode model.json not found");
+        return Ok(OpenCodeModelPreferences::default());
+    }
+
+    let content = match std::fs::read_to_string(&model_path) {
+        Ok(content) => content,
+        Err(error) => {
+            warn!(path = %model_path.display(), error = %error, "Failed to read OpenCode model.json");
+            return Ok(OpenCodeModelPreferences::default());
+        }
+    };
+
+    match serde_json::from_str::<OpenCodeModelPreferences>(&content) {
+        Ok(preferences) => Ok(preferences),
+        Err(error) => {
+            warn!(path = %model_path.display(), error = %error, "Failed to parse OpenCode model.json");
+            Ok(OpenCodeModelPreferences::default())
+        }
+    }
 }
 
 /// Start the OpenCode server in a container

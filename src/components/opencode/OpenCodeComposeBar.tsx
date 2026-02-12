@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent } from "react";
 import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
@@ -26,14 +27,17 @@ interface OpenCodeComposeBarProps {
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: OpenCodeModel[];
+  favoriteModelIds?: string[];
   onSend: (text: string, attachments: OpenCodeAttachment[]) => void;
   disabled?: boolean;
 }
 
-const MAX_LINES = 10;
+const MAX_LINES = 12;
 const LINE_HEIGHT = 20;
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 const MAX_RGBA_SIZE = 32 * 1024 * 1024;
+const MIN_TEXTAREA_HEIGHT = LINE_HEIGHT + 8;
+const MAX_TEXTAREA_HEIGHT = MAX_LINES * LINE_HEIGHT + 16;
 
 function generateImageFilename(): string {
   const timestamp = new Date()
@@ -49,10 +53,10 @@ export function OpenCodeComposeBar({
   tabId,
   containerId,
   models,
+  favoriteModelIds = [],
   onSend,
   disabled = false,
 }: OpenCodeComposeBarProps) {
-  const [text, setText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -63,6 +67,8 @@ export function OpenCodeComposeBar({
     addAttachment,
     removeAttachment,
     clearAttachments,
+    getDraftText,
+    setDraftText,
     getSelectedModel,
     setSelectedModel,
     getSelectedVariant,
@@ -75,6 +81,7 @@ export function OpenCodeComposeBar({
   const attachmentSessionKey = createOpenCodeSessionKey(environmentId, tabId);
 
   const attachments = getAttachments(attachmentSessionKey);
+  const text = getDraftText(attachmentSessionKey);
   const selectedModel = getSelectedModel(environmentId);
   const selectedVariant = getSelectedVariant(environmentId);
   const selectedMode = getSelectedMode(environmentId);
@@ -84,12 +91,35 @@ export function OpenCodeComposeBar({
     (state) => state.getEnvironmentById(environmentId)?.worktreePath
   );
 
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    const clampedHeight = Math.min(
+      MAX_TEXTAREA_HEIGHT,
+      Math.max(MIN_TEXTAREA_HEIGHT, textarea.scrollHeight)
+    );
+    textarea.style.height = `${clampedHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
+  }, []);
+
   // Focus textarea on mount
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.focus();
+      adjustTextareaHeight();
     }
-  }, []);
+  }, [adjustTextareaHeight]);
+
+  useLayoutEffect(() => {
+    adjustTextareaHeight();
+  }, [text, adjustTextareaHeight]);
+
+  useEffect(() => {
+    window.addEventListener("resize", adjustTextareaHeight);
+    return () => window.removeEventListener("resize", adjustTextareaHeight);
+  }, [adjustTextareaHeight]);
 
   // Close attachment menu when clicking outside
   useEffect(() => {
@@ -215,7 +245,7 @@ export function OpenCodeComposeBar({
     setIsSending(true);
     try {
       onSend(text.trim(), attachments);
-      setText("");
+      setDraftText(attachmentSessionKey, "");
       clearAttachments(attachmentSessionKey);
     } finally {
       setIsSending(false);
@@ -249,8 +279,6 @@ export function OpenCodeComposeBar({
     setSelectedVariant(environmentId, variant);
   };
 
-  const textareaRows = Math.min(MAX_LINES, Math.max(1, text.split("\n").length));
-
   // Get display name for selected model
   const selectedModelObj = models.find((m) => m.id === selectedModel);
   const selectedModelName = selectedModelObj?.name ?? "Select model";
@@ -272,6 +300,24 @@ export function OpenCodeComposeBar({
 
   // Sort providers alphabetically
   const sortedProviders = Object.keys(modelsByProvider).sort();
+
+  const favoriteModels = useMemo(() => {
+    const byId = new Map(models.map((model) => [model.id, model]));
+    const seen = new Set<string>();
+    const favorites: OpenCodeModel[] = [];
+
+    for (const id of favoriteModelIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+
+      const model = byId.get(id);
+      if (model) {
+        favorites.push(model);
+      }
+    }
+
+    return favorites;
+  }, [models, favoriteModelIds]);
 
   // Capitalize mode for display
   const modeDisplayName = selectedMode === "plan" ? "Planning" : "Build";
@@ -311,19 +357,19 @@ export function OpenCodeComposeBar({
       <textarea
         ref={textareaRef}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setDraftText(attachmentSessionKey, e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Ask anything (⌘L), @ to mention, / for workflows"
-        rows={textareaRows}
+        rows={1}
         className={cn(
           "w-full bg-transparent border-none px-1 py-1",
           "text-sm text-foreground placeholder:text-muted-foreground",
-          "resize-none outline-none",
+          "resize-none outline-none overflow-y-hidden",
           "transition-colors"
         )}
         style={{
-          minHeight: LINE_HEIGHT + 8,
-          maxHeight: MAX_LINES * LINE_HEIGHT + 16,
+          minHeight: MIN_TEXTAREA_HEIGHT,
+          maxHeight: MAX_TEXTAREA_HEIGHT,
         }}
         disabled={disabled || isSending}
       />
@@ -393,34 +439,64 @@ export function OpenCodeComposeBar({
             {models.length === 0 ? (
               <DropdownMenuItem disabled>No models available</DropdownMenuItem>
             ) : (
-              sortedProviders.map((provider) => {
-                const providerModels = modelsByProvider[provider] ?? [];
-                return (
-                  <DropdownMenuSub key={provider}>
-                    <DropdownMenuSubTrigger className="text-sm">
-                      {provider}
-                      <span className="ml-2 text-muted-foreground text-[10px]">
-                        ({providerModels.length})
-                      </span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuPortal>
-                      <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                        {providerModels.map((model) => {
-                          return (
-                            <DropdownMenuItem
-                              key={model.id}
-                              onClick={() => handleModelChange(model.id)}
-                              className="text-sm"
-                            >
-                              <span className="truncate">{model.name}</span>
-                            </DropdownMenuItem>
-                          );
-                        })}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuPortal>
-                  </DropdownMenuSub>
-                );
-              })
+              <>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="text-sm">
+                    Favorites
+                    <span className="ml-2 text-muted-foreground text-[10px]">
+                      ({favoriteModels.length})
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
+                      {favoriteModels.length === 0 ? (
+                        <DropdownMenuItem disabled>No favorites</DropdownMenuItem>
+                      ) : (
+                        favoriteModels.map((model) => (
+                          <DropdownMenuItem
+                            key={model.id}
+                            onClick={() => handleModelChange(model.id)}
+                            className="text-sm"
+                          >
+                            <span className="truncate">{model.name}</span>
+                          </DropdownMenuItem>
+                        ))
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuPortal>
+                </DropdownMenuSub>
+
+                <DropdownMenuSeparator />
+
+                {sortedProviders.map((provider) => {
+                  const providerModels = modelsByProvider[provider] ?? [];
+                  return (
+                    <DropdownMenuSub key={provider}>
+                      <DropdownMenuSubTrigger className="text-sm">
+                        {provider}
+                        <span className="ml-2 text-muted-foreground text-[10px]">
+                          ({providerModels.length})
+                        </span>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuPortal>
+                        <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
+                          {providerModels.map((model) => {
+                            return (
+                              <DropdownMenuItem
+                                key={model.id}
+                                onClick={() => handleModelChange(model.id)}
+                                className="text-sm"
+                              >
+                                <span className="truncate">{model.name}</span>
+                              </DropdownMenuItem>
+                            );
+                          })}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuPortal>
+                    </DropdownMenuSub>
+                  );
+                })}
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
