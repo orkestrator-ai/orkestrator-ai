@@ -118,3 +118,34 @@ describe("openCodeStore attachment cleanup", () => {
     expect(useOpenCodeStore.getState().getAttachments("env-env-999:tab-1")).toHaveLength(1);
   });
 });
+
+describe("openCodeStore draft text", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("setDraftText stores and clears draft text per tab session", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-123:tab-1";
+
+    store.setDraftText(sessionKey, "draft message");
+    expect(useOpenCodeStore.getState().getDraftText(sessionKey)).toBe("draft message");
+
+    store.setDraftText(sessionKey, "");
+    expect(useOpenCodeStore.getState().getDraftText(sessionKey)).toBe("");
+  });
+
+  test("clearEnvironment removes draft text for every tab in the environment", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setDraftText("env-env-123:tab-1", "draft a");
+    store.setDraftText("env-env-123:tab-2", "draft b");
+    store.setDraftText("env-env-999:tab-1", "keep");
+
+    store.clearEnvironment("env-123");
+
+    expect(useOpenCodeStore.getState().getDraftText("env-env-123:tab-1")).toBe("");
+    expect(useOpenCodeStore.getState().getDraftText("env-env-123:tab-2")).toBe("");
+    expect(useOpenCodeStore.getState().getDraftText("env-env-999:tab-1")).toBe("keep");
+  });
+});

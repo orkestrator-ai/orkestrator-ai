@@ -102,6 +102,12 @@ interface TerminalSessionStore {
   /** Set compose draft image attachments for a tab */
   setComposeDraftImages: (tabId: string, images: TerminalComposeDraftImage[]) => void;
 
+  /** Append a compose draft image attachment for a tab */
+  appendComposeDraftImage: (tabId: string, image: TerminalComposeDraftImage) => void;
+
+  /** Remove a compose draft image attachment for a tab */
+  removeComposeDraftImage: (tabId: string, imageId: string) => void;
+
   /** Clear compose draft (text + images) for a tab */
   clearComposeDraft: (tabId: string) => void;
 
@@ -196,6 +202,29 @@ export const useTerminalSessionStore = create<TerminalSessionStore>(
         const newDraftImages = new Map(state.composeDraftImages);
         if (images.length > 0) {
           newDraftImages.set(tabId, images);
+        } else {
+          newDraftImages.delete(tabId);
+        }
+        return { composeDraftImages: newDraftImages };
+      });
+    },
+
+    appendComposeDraftImage: (tabId: string, image: TerminalComposeDraftImage) => {
+      set((state) => {
+        const currentImages = state.composeDraftImages.get(tabId) || [];
+        const newDraftImages = new Map(state.composeDraftImages);
+        newDraftImages.set(tabId, [...currentImages, image]);
+        return { composeDraftImages: newDraftImages };
+      });
+    },
+
+    removeComposeDraftImage: (tabId: string, imageId: string) => {
+      set((state) => {
+        const currentImages = state.composeDraftImages.get(tabId) || [];
+        const filteredImages = currentImages.filter((image) => image.id !== imageId);
+        const newDraftImages = new Map(state.composeDraftImages);
+        if (filteredImages.length > 0) {
+          newDraftImages.set(tabId, filteredImages);
         } else {
           newDraftImages.delete(tabId);
         }

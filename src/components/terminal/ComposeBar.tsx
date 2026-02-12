@@ -47,7 +47,8 @@ export function ComposeBar({ sessionKey, isOpen, onClose, onSend, containerId }:
   const text = useTerminalSessionStore((state) => state.composeDraftText.get(sessionKey) ?? "");
   const images = useTerminalSessionStore((state) => state.composeDraftImages.get(sessionKey) ?? EMPTY_IMAGES);
   const setComposeDraftText = useTerminalSessionStore((state) => state.setComposeDraftText);
-  const setComposeDraftImages = useTerminalSessionStore((state) => state.setComposeDraftImages);
+  const appendComposeDraftImage = useTerminalSessionStore((state) => state.appendComposeDraftImage);
+  const removeComposeDraftImage = useTerminalSessionStore((state) => state.removeComposeDraftImage);
   const clearComposeDraft = useTerminalSessionStore((state) => state.clearComposeDraft);
 
   const [isSending, setIsSending] = useState(false);
@@ -120,12 +121,12 @@ export function ComposeBar({ sessionKey, isOpen, onClose, onSend, containerId }:
         width: finalWidth,
         height: finalHeight,
       };
-      setComposeDraftImages(sessionKey, [...images, newImage]);
+      appendComposeDraftImage(sessionKey, newImage);
     } catch {
       // No image in clipboard - this is expected when pasting text.
       // Let the paste event propagate to native text handling.
     }
-  }, [isOpen, images, sessionKey, setComposeDraftImages]);
+  }, [isOpen, sessionKey, appendComposeDraftImage]);
 
   // Listen for paste events
   useEffect(() => {
@@ -163,10 +164,7 @@ export function ComposeBar({ sessionKey, isOpen, onClose, onSend, containerId }:
   };
 
   const removeImage = (id: string) => {
-    setComposeDraftImages(
-      sessionKey,
-      images.filter((img) => img.id !== id)
-    );
+    removeComposeDraftImage(sessionKey, id);
   };
 
   const handleSend = async () => {
