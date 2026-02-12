@@ -471,6 +471,18 @@ export function ActionBar() {
             createTab?.("opencode");
           }
           break;
+        case "r":
+          if (canCreateTab && selectedProjectId) {
+            e.preventDefault();
+            handleReview();
+          }
+          break;
+        case "p":
+          if (canCreateTab && !isLoadingRunCommands && hasRunCommands) {
+            e.preventDefault();
+            handleRun();
+          }
+          break;
         case "o":
           if (canOpenEditor) {
             e.preventDefault();
@@ -496,7 +508,22 @@ export function ActionBar() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [createTab, selectTab, closeActiveTab, tabCount, canCreateTab, canOpenEditor, handleOpenInEditor, selectedEnvironment, toggleFilesPanel]);
+  }, [
+    createTab,
+    selectTab,
+    closeActiveTab,
+    tabCount,
+    canCreateTab,
+    canOpenEditor,
+    handleOpenInEditor,
+    selectedEnvironment,
+    selectedProjectId,
+    handleReview,
+    isLoadingRunCommands,
+    hasRunCommands,
+    handleRun,
+    toggleFilesPanel,
+  ]);
 
   // Handler for PR creation - launches agent tab with PR workflow prompt
   const handleCreatePR = useCallback(() => {
@@ -774,6 +801,7 @@ export function ActionBar() {
                 <TooltipContent>
                   <p>Code Review</p>
                   <p className="text-xs text-muted-foreground">Commit changes and review code</p>
+                  <p className="text-xs text-muted-foreground">⌘R</p>
                 </TooltipContent>
               </Tooltip>
 
@@ -801,6 +829,7 @@ export function ActionBar() {
                       ? "Execute run commands from orkestrator-ai.json"
                       : "Add 'run' array to orkestrator-ai.json to enable"}
                   </p>
+                  <p className="text-xs text-muted-foreground">⌘P</p>
                 </TooltipContent>
               </Tooltip>
 
