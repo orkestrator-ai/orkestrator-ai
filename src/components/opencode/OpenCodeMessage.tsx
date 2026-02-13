@@ -1,26 +1,59 @@
-import { memo, useCallback, useState, useMemo, useEffect, type AnchorHTMLAttributes } from "react";
+import {
+  memo,
+  useCallback,
+  useState,
+  useMemo,
+  useEffect,
+  type AnchorHTMLAttributes,
+} from "react";
 import { createPortal } from "react-dom";
-import { Brain, FileText, Image as ImageIcon, X, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import {
+  Brain,
+  FileText,
+  Image as ImageIcon,
+  X,
+  ChevronRight,
+  Wrench,
+  AlertCircle,
+  Pencil,
+  ExternalLink as ExternalLinkIcon,
+} from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { openInBrowser } from "@/lib/tauri";
 import { readFileBase64 } from "@/lib/tauri";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
-import { ERROR_MESSAGE_PREFIX, type OpenCodeMessage as OpenCodeMessageType, type OpenCodeMessagePart, type ToolDiffMetadata } from "@/lib/opencode-client";
+import {
+  ERROR_MESSAGE_PREFIX,
+  type OpenCodeMessage as OpenCodeMessageType,
+  type OpenCodeMessagePart,
+  type ToolDiffMetadata,
+} from "@/lib/opencode-client";
 
 /** Custom link component that opens URLs in the system browser */
-function ExternalLink({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const handleClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault();
-    if (href) {
-      openInBrowser(href).catch((err) => {
-        console.error("[OpenCodeMessage] Failed to open link:", err);
-      });
-    }
-  }, [href]);
+function ExternalLink({
+  href,
+  children,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLAnchorElement>) => {
+      e.preventDefault();
+      if (href) {
+        openInBrowser(href).catch((err) => {
+          console.error("[OpenCodeMessage] Failed to open link:", err);
+        });
+      }
+    },
+    [href],
+  );
 
   return (
     <a
@@ -41,6 +74,7 @@ const markdownComponents: Components = {
 
 interface OpenCodeMessageProps {
   message: OpenCodeMessageType;
+  previousMessage?: OpenCodeMessageType | null;
 }
 
 /** Render a thinking/reasoning part inline */
@@ -81,7 +115,8 @@ function ToolPart({
   };
 
   // Determine if there's content to show when expanded
-  const hasExpandableContent = toolOutput || toolError || (toolArgs && Object.keys(toolArgs).length > 0);
+  const hasExpandableContent =
+    toolOutput || toolError || (toolArgs && Object.keys(toolArgs).length > 0);
 
   // Extract display info from toolArgs based on tool type
   const getDisplayInfo = (): string | null => {
@@ -146,7 +181,7 @@ function ToolPart({
         className={cn(
           "flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors",
           hasExpandableContent && "cursor-pointer",
-          !hasExpandableContent && "cursor-default"
+          !hasExpandableContent && "cursor-default",
         )}
         disabled={!hasExpandableContent}
       >
@@ -154,7 +189,7 @@ function ToolPart({
           className={cn(
             "w-3 h-3 transition-transform shrink-0",
             isOpen && "rotate-90",
-            !hasExpandableContent && "opacity-0"
+            !hasExpandableContent && "opacity-0",
           )}
         />
         <Wrench className="w-3.5 h-3.5 shrink-0" />
@@ -170,7 +205,9 @@ function ToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+          <span
+            className={cn("ml-auto shrink-0", stateColors[toolState] || "")}
+          >
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}
@@ -216,11 +253,17 @@ function ToolPart({
 }
 
 /** Parse unified diff output into lines with +/- indicators */
-function parseDiffLines(output: string): Array<{ type: "add" | "remove" | "context" | "header"; content: string }> {
+function parseDiffLines(
+  output: string,
+): Array<{ type: "add" | "remove" | "context" | "header"; content: string }> {
   if (!output) return [];
   const lines = output.split("\n");
   return lines.map((line) => {
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+    if (
+      line.startsWith("+++") ||
+      line.startsWith("---") ||
+      line.startsWith("@@")
+    ) {
       return { type: "header" as const, content: line };
     } else if (line.startsWith("+")) {
       return { type: "add" as const, content: line };
@@ -235,9 +278,12 @@ function parseDiffLines(output: string): Array<{ type: "add" | "remove" | "conte
 /** Generate diff lines from before/after content */
 function generateDiffFromBeforeAfter(
   before?: string,
-  after?: string
+  after?: string,
 ): Array<{ type: "add" | "remove" | "context" | "header"; content: string }> {
-  const result: Array<{ type: "add" | "remove" | "context" | "header"; content: string }> = [];
+  const result: Array<{
+    type: "add" | "remove" | "context" | "header";
+    content: string;
+  }> = [];
 
   // If we have both before and after, show the diff
   if (before !== undefined && after !== undefined) {
@@ -269,7 +315,10 @@ function generateDiffFromBeforeAfter(
 }
 
 /** Count additions and deletions from diff output or metadata */
-function countDiffStats(output?: string, metadata?: ToolDiffMetadata): { additions: number; deletions: number } {
+function countDiffStats(
+  output?: string,
+  metadata?: ToolDiffMetadata,
+): { additions: number; deletions: number } {
   // First try to use pre-calculated metadata if available
   if (metadata?.additions !== undefined || metadata?.deletions !== undefined) {
     return {
@@ -280,7 +329,9 @@ function countDiffStats(output?: string, metadata?: ToolDiffMetadata): { additio
 
   // Try to calculate from before/after content
   if (metadata?.before !== undefined || metadata?.after !== undefined) {
-    const beforeLines = metadata.before ? metadata.before.split("\n").length : 0;
+    const beforeLines = metadata.before
+      ? metadata.before.split("\n").length
+      : 0;
     const afterLines = metadata.after ? metadata.after.split("\n").length : 0;
     return {
       additions: afterLines,
@@ -336,7 +387,7 @@ function EditToolPart({
   // Calculate diff stats
   const { additions, deletions } = useMemo(
     () => countDiffStats(toolOutput, toolDiff),
-    [toolOutput, toolDiff]
+    [toolOutput, toolDiff],
   );
 
   // Parse diff lines for display - try unified diff first, then output, then generate from before/after
@@ -345,7 +396,7 @@ function EditToolPart({
     if (toolDiff?.diff) {
       const diffLines = parseDiffLines(toolDiff.diff);
       const hasActualDiffContent = diffLines.some(
-        (line) => line.type === "add" || line.type === "remove"
+        (line) => line.type === "add" || line.type === "remove",
       );
       if (hasActualDiffContent) {
         return diffLines;
@@ -355,7 +406,7 @@ function EditToolPart({
     // Then try parsing from output (if it's in diff format)
     const outputLines = parseDiffLines(toolOutput || "");
     const hasActualDiffContent = outputLines.some(
-      (line) => line.type === "add" || line.type === "remove"
+      (line) => line.type === "add" || line.type === "remove",
     );
     if (hasActualDiffContent) {
       return outputLines;
@@ -370,7 +421,13 @@ function EditToolPart({
   }, [toolOutput, toolDiff]);
 
   // Determine if there's content to show when expanded
-  const hasExpandableContent = toolOutput || toolError || diffLines.length > 0 || toolDiff?.diff || toolDiff?.before || toolDiff?.after;
+  const hasExpandableContent =
+    toolOutput ||
+    toolError ||
+    diffLines.length > 0 ||
+    toolDiff?.diff ||
+    toolDiff?.before ||
+    toolDiff?.after;
 
   // Handle pop-out to open diff in new tab
   const handlePopOut = useCallback(
@@ -380,7 +437,7 @@ function EditToolPart({
         createFileTab(filePath, { isDiff: true, gitStatus: "M" });
       }
     },
-    [createFileTab, filePath]
+    [createFileTab, filePath],
   );
 
   return (
@@ -389,7 +446,7 @@ function EditToolPart({
         className={cn(
           "flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors",
           hasExpandableContent && "cursor-pointer",
-          !hasExpandableContent && "cursor-default"
+          !hasExpandableContent && "cursor-default",
         )}
         disabled={!hasExpandableContent}
       >
@@ -397,7 +454,7 @@ function EditToolPart({
           className={cn(
             "w-3 h-3 transition-transform shrink-0",
             isOpen && "rotate-90",
-            !hasExpandableContent && "opacity-0"
+            !hasExpandableContent && "opacity-0",
           )}
         />
         <Pencil className="w-3.5 h-3.5 shrink-0" />
@@ -424,7 +481,9 @@ function EditToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+          <span
+            className={cn("ml-auto shrink-0", stateColors[toolState] || "")}
+          >
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}
@@ -462,8 +521,9 @@ function EditToolPart({
                         "px-3 py-0.5",
                         line.type === "add" && "bg-green-500/20 text-green-400",
                         line.type === "remove" && "bg-red-500/20 text-red-400",
-                        line.type === "header" && "bg-blue-500/10 text-blue-400",
-                        line.type === "context" && "text-foreground/60"
+                        line.type === "header" &&
+                          "bg-blue-500/10 text-blue-400",
+                        line.type === "context" && "text-foreground/60",
                       )}
                     >
                       {line.content}
@@ -510,9 +570,12 @@ function ImagePreviewOverlay({
   filename: string;
   onClose: () => void;
 }) {
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === "Escape") onClose();
-  }, [onClose]);
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    },
+    [onClose],
+  );
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
@@ -524,7 +587,10 @@ function ImagePreviewOverlay({
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
       onClick={onClose}
     >
-      <div className="relative max-w-full max-h-full" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="relative max-w-full max-h-full"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           onClick={onClose}
           className="absolute -top-10 right-0 p-2 text-white/70 hover:text-white transition-colors"
@@ -539,12 +605,17 @@ function ImagePreviewOverlay({
         />
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 function getMimeType(path: string): string {
-  const ext = path.split("?")[0]?.split("#")[0]?.split(".").pop()?.toLowerCase();
+  const ext = path
+    .split("?")[0]
+    ?.split("#")[0]
+    ?.split(".")
+    .pop()
+    ?.toLowerCase();
   const mimeTypes: Record<string, string> = {
     png: "image/png",
     jpg: "image/jpeg",
@@ -564,9 +635,18 @@ function isImageReference(pathOrUrl?: string): boolean {
   if (!pathOrUrl) return false;
   if (pathOrUrl.startsWith("data:image/")) return true;
   const lower = pathOrUrl.toLowerCase();
-  return [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tif", ".tiff"].some((ext) =>
-    lower.includes(ext)
-  );
+  return [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".bmp",
+    ".ico",
+    ".tif",
+    ".tiff",
+  ].some((ext) => lower.includes(ext));
 }
 
 function parseLocalFilePathFromUrl(fileUrl: string): string | null {
@@ -639,7 +719,10 @@ function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
       setImageSrc(`data:${mimeType};base64,${base64}`);
       setPreviewOpen(true);
     } catch (err) {
-      console.error("[OpenCodeMessage] Failed to load image preview:", err, { path, fileUrl });
+      console.error("[OpenCodeMessage] Failed to load image preview:", err, {
+        path,
+        fileUrl,
+      });
       setLoadError(true);
     } finally {
       setLoading(false);
@@ -656,7 +739,7 @@ function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
           isImage
             ? "bg-muted/50 border-border hover:bg-muted hover:border-border/80 cursor-pointer"
             : "bg-muted/30 border-border/50 cursor-default",
-          loading && "opacity-50"
+          loading && "opacity-50",
         )}
       >
         {isImage ? (
@@ -664,9 +747,13 @@ function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
         ) : (
           <FileText className="w-3.5 h-3.5 text-muted-foreground" />
         )}
-        <span className="font-mono truncate max-w-[240px] text-muted-foreground">{displayName}</span>
+        <span className="font-mono truncate max-w-[240px] text-muted-foreground">
+          {displayName}
+        </span>
         {loading && <span className="text-muted-foreground">(loading...)</span>}
-        {loadError && <span className="text-destructive text-[10px]">(error)</span>}
+        {loadError && (
+          <span className="text-destructive text-[10px]">(error)</span>
+        )}
       </button>
 
       {previewOpen && imageSrc && (
@@ -684,7 +771,9 @@ function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
 function TextPart({ content }: { content: string }) {
   return (
     <div className="text-sm text-foreground leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-pre:my-2 prose-code:text-xs prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-muted prose-pre:p-3 prose-pre:rounded-md prose-table:text-xs prose-table:my-2">
-      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {content}
+      </Markdown>
     </div>
   );
 }
@@ -742,9 +831,16 @@ function MessagePart({ part }: { part: OpenCodeMessagePart }) {
 
 export const OpenCodeMessage = memo(function OpenCodeMessage({
   message,
+  previousMessage = null,
 }: OpenCodeMessageProps) {
   const isUser = message.role === "user";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
+  const isContinuation =
+    !isUser &&
+    !isError &&
+    previousMessage?.role === "assistant" &&
+    !previousMessage.id.startsWith(ERROR_MESSAGE_PREFIX) &&
+    isSameMinute(previousMessage.createdAt, message.createdAt);
 
   // Group parts by type for better rendering order
   const thinkingParts = message.parts.filter((p) => p.type === "thinking");
@@ -777,25 +873,28 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
   return (
     <div
       className={cn(
-        "px-4 py-3",
-        isUser ? "bg-muted/30" : "bg-transparent"
+        "px-4",
+        isUser ? "bg-muted/30 py-3" : "bg-transparent",
+        !isUser && (isContinuation ? "pt-0 pb-3" : "py-3"),
       )}
     >
       <div className="max-w-3xl mx-auto">
         {/* Role indicator with timestamp */}
-        <div className="mb-1.5">
-          <span
-            className={cn(
-              "text-xs font-medium",
-              isUser ? "text-primary" : "text-muted-foreground"
-            )}
-          >
-            {isUser ? "You" : "OpenCode"}
-          </span>
-          <span className="text-[10px] text-muted-foreground/60 ml-2">
-            {formatTime(message.createdAt)}
-          </span>
-        </div>
+        {!isContinuation && (
+          <div className="mb-1.5">
+            <span
+              className={cn(
+                "text-xs font-medium",
+                isUser ? "text-primary" : "text-muted-foreground",
+              )}
+            >
+              {isUser ? "You" : "OpenCode"}
+            </span>
+            <span className="text-[10px] text-muted-foreground/60 ml-2">
+              {formatTime(message.createdAt)}
+            </span>
+          </div>
+        )}
 
         {/* Message content - render parts in order: thinking, tools, text */}
         <div className="space-y-2">
@@ -846,5 +945,26 @@ function formatTime(isoString: string): string {
     });
   } catch {
     return "";
+  }
+}
+
+function isSameMinute(a: string, b: string): boolean {
+  try {
+    const first = new Date(a);
+    const second = new Date(b);
+
+    if (Number.isNaN(first.getTime()) || Number.isNaN(second.getTime())) {
+      return false;
+    }
+
+    return (
+      first.getFullYear() === second.getFullYear() &&
+      first.getMonth() === second.getMonth() &&
+      first.getDate() === second.getDate() &&
+      first.getHours() === second.getHours() &&
+      first.getMinutes() === second.getMinutes()
+    );
+  } catch {
+    return false;
   }
 }

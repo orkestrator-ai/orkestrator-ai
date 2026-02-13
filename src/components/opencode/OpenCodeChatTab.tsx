@@ -1,9 +1,18 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
-import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  ArrowDown,
+  History,
+} from "lucide-react";
 import { useScrollLock, clearPersistedScrollState } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useOpenCodeStore, createOpenCodeSessionKey } from "@/stores/openCodeStore";
+import {
+  useOpenCodeStore,
+  createOpenCodeSessionKey,
+} from "@/stores/openCodeStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import {
@@ -58,15 +67,22 @@ function toOpenCodeModelId(modelRef?: OpenCodeModelRef): string | undefined {
   return `${modelRef.providerID}/${modelRef.modelID}`;
 }
 
-export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCodeChatTabProps) {
+export function OpenCodeChatTab({
+  tabId,
+  data,
+  isActive,
+  initialPrompt,
+}: OpenCodeChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [connectionState, setConnectionState] =
+    useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [serverLog, setServerLog] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
-  const [modelPreferences, setModelPreferences] = useState<OpenCodeModelPreferences>(EMPTY_MODEL_PREFERENCES);
+  const [modelPreferences, setModelPreferences] =
+    useState<OpenCodeModelPreferences>(EMPTY_MODEL_PREFERENCES);
 
   // Track this tab's session ID locally to prevent interference between tabs
   const tabSessionIdRef = useRef<string | null>(null);
@@ -75,7 +91,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
   // Track if initial prompt has been sent (to prevent duplicate sends)
   const initialPromptSentRef = useRef(false);
   // Ref to store handleSend for use in effects without causing re-runs
-  const handleSendRef = useRef<((text: string, attachments: OpenCodeAttachment[]) => Promise<void>) | null>(null);
+  const handleSendRef = useRef<
+    ((text: string, attachments: OpenCodeAttachment[]) => Promise<void>) | null
+  >(null);
 
   const {
     setClient,
@@ -106,17 +124,27 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
 
   // Activity state tracking - use environmentId as key for both local and container environments
   // Use reference counting to handle multiple tabs for the same environment
-  const { setContainerState, incrementContainerRef, decrementContainerRef } = useClaudeActivityStore();
+  const { setContainerState, incrementContainerRef, decrementContainerRef } =
+    useClaudeActivityStore();
   const { clearTabInitialPrompt } = usePaneLayoutStore();
 
   // Create a unique session key that combines environmentId and tabId
   // This prevents session collisions when multiple environments use the same tab IDs (e.g., "default")
-  const sessionKey = useMemo(() => createOpenCodeSessionKey(environmentId, tabId), [environmentId, tabId]);
+  const sessionKey = useMemo(
+    () => createOpenCodeSessionKey(environmentId, tabId),
+    [environmentId, tabId],
+  );
 
   // Get client from Map (shared per environment) - subscribing to the Map ensures re-render on changes
-  const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
+  const client = useMemo(
+    () => clientsMap.get(environmentId),
+    [clientsMap, environmentId],
+  );
   // Get session from Map keyed by sessionKey (each tab has its own session, scoped by environment)
-  const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
+  const session = useMemo(
+    () => sessionsMap.get(sessionKey),
+    [sessionsMap, sessionKey],
+  );
 
   // Scroll lock - auto-scroll only when user is at bottom
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
@@ -171,7 +199,13 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       // OpenCode is idle
       setContainerState(environmentId, "idle");
     }
-  }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
+  }, [
+    connectionState,
+    session?.isLoading,
+    pendingQuestions.length,
+    environmentId,
+    setContainerState,
+  ]);
 
   // Track container reference count for activity state management
   // Increment on mount, decrement on unmount - state is only removed when last tab closes
@@ -228,7 +262,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         } else {
           // Containerized environment - use container server commands
           if (!containerId) {
-            throw new Error("Container ID is required for containerized environments");
+            throw new Error(
+              "Container ID is required for containerized environments",
+            );
           }
 
           let status = await getOpenCodeServerStatus(containerId);
@@ -263,13 +299,17 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         setClient(environmentId, sdkClient);
 
         // Fetch available models, server defaults, and model preferences
-        const [{ models: availableModels, defaults }, preferences] = await Promise.all([
-          getModelsWithDefaults(sdkClient),
-          getOpencodeModelPreferences().catch((error) => {
-            console.warn("[OpenCodeChatTab] Failed to load model preferences:", error);
-            return EMPTY_MODEL_PREFERENCES;
-          }),
-        ]);
+        const [{ models: availableModels, defaults }, preferences] =
+          await Promise.all([
+            getModelsWithDefaults(sdkClient),
+            getOpencodeModelPreferences().catch((error) => {
+              console.warn(
+                "[OpenCodeChatTab] Failed to load model preferences:",
+                error,
+              );
+              return EMPTY_MODEL_PREFERENCES;
+            }),
+          ]);
         if (!mounted) return;
 
         setModels(availableModels);
@@ -288,7 +328,10 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         if (!resolvedModel) {
           if (recentModelId && availableModelIds.has(recentModelId)) {
             resolvedModel = recentModelId;
-          } else if (defaults.modelId && availableModelIds.has(defaults.modelId)) {
+          } else if (
+            defaults.modelId &&
+            availableModelIds.has(defaults.modelId)
+          ) {
             resolvedModel = defaults.modelId;
           } else {
             resolvedModel = availableModels[0]?.id;
@@ -299,7 +342,9 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
           setSelectedModel(environmentId, resolvedModel);
         }
 
-        const resolvedModelObj = availableModels.find((m) => m.id === resolvedModel);
+        const resolvedModelObj = availableModels.find(
+          (m) => m.id === resolvedModel,
+        );
         const availableVariants = resolvedModelObj?.variants ?? [];
         const currentVariant = getSelectedVariant(environmentId);
 
@@ -310,7 +355,10 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
 
         if (!resolvedVariant && resolvedModel) {
           const preferredVariant = preferences.variant[resolvedModel];
-          if (preferredVariant && availableVariants.includes(preferredVariant)) {
+          if (
+            preferredVariant &&
+            availableVariants.includes(preferredVariant)
+          ) {
             resolvedVariant = preferredVariant;
           }
         }
@@ -331,8 +379,11 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         // Check for existing session - first from component ref, then from Zustand store
         // This handles reconnection after tab remount where refs are lost but store persists
         const existingSessionFromRef = tabSessionIdRef.current;
-        const existingSessionFromStore = useOpenCodeStore.getState().sessions.get(sessionKey);
-        const existingSessionId = existingSessionFromRef || existingSessionFromStore?.sessionId;
+        const existingSessionFromStore = useOpenCodeStore
+          .getState()
+          .sessions.get(sessionKey);
+        const existingSessionId =
+          existingSessionFromRef || existingSessionFromStore?.sessionId;
 
         if (existingSessionId) {
           // Restore session from store - component may have remounted
@@ -346,14 +397,20 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
           // Refresh messages from server to ensure latest state on reconnection
           if (existingSessionFromStore) {
             try {
-              const messages = await getSessionMessages(sdkClient, existingSessionId);
+              const messages = await getSessionMessages(
+                sdkClient,
+                existingSessionId,
+              );
               if (!mounted) return;
 
               // setMessages preserves client-side error messages (ERROR_MESSAGE_PREFIX)
               // from the existing session state when replacing server messages.
               setMessages(sessionKey, messages);
             } catch (err) {
-              console.warn("[OpenCodeChatTab] Failed to refresh messages on reconnect:", err);
+              console.warn(
+                "[OpenCodeChatTab] Failed to refresh messages on reconnect:",
+                err,
+              );
               // Keep existing messages from store if refresh fails
             }
           } else {
@@ -403,7 +460,8 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         }
         // Add hint for port mapping issues
         if (message.includes("port") && message.includes("not mapped")) {
-          message += ". Try recreating the environment to enable native mode support.";
+          message +=
+            ". Try recreating the environment to enable native mode support.";
         }
         setErrorMessage(message);
 
@@ -415,7 +473,10 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
               setServerLog(log);
             }
           } catch (logError) {
-            console.error("[OpenCodeChatTab] Failed to fetch server log:", logError);
+            console.error(
+              "[OpenCodeChatTab] Failed to fetch server log:",
+              logError,
+            );
           }
         }
       }
@@ -429,8 +490,18 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       // The subscription will be closed when the environment is cleaned up
       // We also don't clear the client - it's shared per environment
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, isActive, isLocal, getSelectedModel, getSelectedVariant, setSelectedModel, setSelectedVariant]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    containerId,
+    environmentId,
+    tabId,
+    isActive,
+    isLocal,
+    getSelectedModel,
+    getSelectedVariant,
+    setSelectedModel,
+    setSelectedVariant,
+  ]);
 
   // Start shared event subscription for the environment (only if not already running)
   const startSharedEventSubscription = useCallback(
@@ -464,7 +535,11 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
 
         // Helper to fetch messages with debouncing
         // Note: sessionKey is the session key from the sessions Map (e.g., "env-{envId}:{tabId}")
-        const fetchMessagesDebounced = (sessionId: string, sessionKey: string, immediate = false) => {
+        const fetchMessagesDebounced = (
+          sessionId: string,
+          sessionKey: string,
+          immediate = false,
+        ) => {
           // Clear any pending reload for this session
           const pendingTimeout = pendingReloads.get(sessionId);
           if (pendingTimeout) {
@@ -515,15 +590,23 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
           // - message events: properties.info?.sessionID
           // - session.updated events: properties.info?.id (the session ID itself)
           const props = event?.properties;
-          const eventSessionId = props?.sessionID
-            || props?.part?.sessionID
-            || props?.info?.sessionID
-            || props?.info?.id
-            || props?.message?.sessionID
-            || (event as any)?.sessionID;
+          const eventSessionId =
+            props?.sessionID ||
+            props?.part?.sessionID ||
+            props?.info?.sessionID ||
+            props?.info?.id ||
+            props?.message?.sessionID ||
+            (event as any)?.sessionID;
 
           // Skip events we don't care about (heartbeats, etc)
-          if (!eventSessionId && !["question.asked", "question.replied", "question.rejected"].includes(eventType || "")) {
+          if (
+            !eventSessionId &&
+            ![
+              "question.asked",
+              "question.replied",
+              "question.rejected",
+            ].includes(eventType || "")
+          ) {
             continue;
           }
 
@@ -535,19 +618,29 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
             if (sessionState.sessionId !== eventSessionId) continue;
 
             // Determine if this is a "final" event that should trigger immediate refresh
-            const isFinalEvent = eventType === "session.idle"
-              || (eventType === "session.status" && props?.status?.type === "idle");
+            const isFinalEvent =
+              eventType === "session.idle" ||
+              (eventType === "session.status" &&
+                props?.status?.type === "idle");
 
             // Events that should trigger message refresh
-            if (eventType === "message.part.updated"
-                || eventType === "message.updated"
-                || eventType === "session.updated"
-                || isFinalEvent) {
-              fetchMessagesDebounced(eventSessionId, sessionTabId, isFinalEvent);
+            if (
+              eventType === "message.part.updated" ||
+              eventType === "message.updated" ||
+              eventType === "session.updated" ||
+              isFinalEvent
+            ) {
+              fetchMessagesDebounced(
+                eventSessionId,
+                sessionTabId,
+                isFinalEvent,
+              );
             }
 
             if (usageFromEvent) {
-              const fallbackModel = useOpenCodeStore.getState().selectedModel.get(environmentId);
+              const fallbackModel = useOpenCodeStore
+                .getState()
+                .selectedModel.get(environmentId);
               setContextUsage(sessionTabId, {
                 ...usageFromEvent,
                 modelId: usageFromEvent.modelId ?? fallbackModel,
@@ -572,17 +665,28 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
                 // Error might be nested: { name: "APIError", data: { errorType: "...", message: "..." } }
                 const errObj = rawError as Record<string, unknown>;
                 // Check for nested data object first (common API error structure)
-                const dataObj = errObj.data as Record<string, unknown> | undefined;
+                const dataObj = errObj.data as
+                  | Record<string, unknown>
+                  | undefined;
                 if (dataObj && typeof dataObj === "object") {
                   errorMsg = String(
-                    dataObj.errorType || dataObj.error || dataObj.message || dataObj.detail ||
-                    errObj.detail || errObj.message || errObj.name ||
-                    JSON.stringify(rawError)
+                    dataObj.errorType ||
+                      dataObj.error ||
+                      dataObj.message ||
+                      dataObj.detail ||
+                      errObj.detail ||
+                      errObj.message ||
+                      errObj.name ||
+                      JSON.stringify(rawError),
                   );
                 } else {
                   errorMsg = String(
-                    errObj.detail || errObj.message || errObj.error || errObj.errorType ||
-                    errObj.name || JSON.stringify(rawError)
+                    errObj.detail ||
+                      errObj.message ||
+                      errObj.error ||
+                      errObj.errorType ||
+                      errObj.name ||
+                      JSON.stringify(rawError),
                   );
                 }
               } else {
@@ -636,7 +740,18 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion]
+    [
+      environmentId,
+      hasActiveEventSubscription,
+      getOrCreateEventSubscription,
+      setEventStream,
+      setMessages,
+      setSessionLoading,
+      setContextUsage,
+      addMessage,
+      addPendingQuestion,
+      removePendingQuestion,
+    ],
   );
 
   // Handle sending a message
@@ -681,7 +796,17 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       }
       // Response will come via SSE events
     },
-    [client, session, sessionKey, environmentId, getSelectedModel, getSelectedVariant, getSelectedMode, addMessage, setSessionLoading]
+    [
+      client,
+      session,
+      sessionKey,
+      environmentId,
+      getSelectedModel,
+      getSelectedVariant,
+      getSelectedMode,
+      addMessage,
+      setSessionLoading,
+    ],
   );
 
   // Keep handleSendRef updated with the latest handleSend
@@ -706,7 +831,15 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       // Use ref to avoid effect re-running when handleSend changes
       handleSendRef.current?.(initialPrompt, []);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, clearTabInitialPrompt, environmentId]);
+  }, [
+    connectionState,
+    client,
+    session,
+    initialPrompt,
+    tabId,
+    clearTabInitialPrompt,
+    environmentId,
+  ]);
 
   // Handle retry connection
   const handleRetry = useCallback(() => {
@@ -721,7 +854,14 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
     setSession(sessionKey, null);
     setContextUsage(sessionKey, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
-  }, [sessionKey, environmentId, setClient, setSession, setContextUsage, setServerStatus]);
+  }, [
+    sessionKey,
+    environmentId,
+    setClient,
+    setSession,
+    setContextUsage,
+    setServerStatus,
+  ]);
 
   const handleResumeSession = useCallback(
     async (sessionId: string) => {
@@ -744,7 +884,7 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
         console.error("[OpenCodeChatTab] Failed to resume session:", error);
       }
     },
-    [client, sessionKey, setSession]
+    [client, sessionKey, setSession],
   );
 
   // Render loading state
@@ -763,16 +903,29 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
       <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground p-4">
         <AlertCircle className="w-10 h-10 text-destructive" />
         <div className="text-center">
-          <p className="text-sm font-medium text-foreground">Connection Failed</p>
-          <p className="text-xs mt-1">{errorMessage || "Unable to connect to OpenCode server"}</p>
+          <p className="text-sm font-medium text-foreground">
+            Connection Failed
+          </p>
+          <p className="text-xs mt-1">
+            {errorMessage || "Unable to connect to OpenCode server"}
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={handleRetry} className="gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRetry}
+            className="gap-2"
+          >
             <RefreshCw className="w-4 h-4" />
             Retry
           </Button>
           {serverLog && (
-            <Button variant="ghost" size="sm" onClick={() => setShowLog(!showLog)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowLog(!showLog)}
+            >
               {showLog ? "Hide Log" : "Show Log"}
             </Button>
           )}
@@ -808,8 +961,12 @@ export function OpenCodeChatTab({ tabId, data, isActive, initialPrompt }: OpenCo
               )}
             </div>
           ) : (
-            session?.messages.map((message) => (
-              <OpenCodeMessage key={message.id} message={message} />
+            session?.messages.map((message, index, messages) => (
+              <OpenCodeMessage
+                key={message.id}
+                message={message}
+                previousMessage={index > 0 ? messages[index - 1] : null}
+              />
             ))
           )}
 

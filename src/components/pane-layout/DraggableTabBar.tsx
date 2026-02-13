@@ -43,14 +43,17 @@ export function DraggableTabBar({
   const { isDirty, clearDirty } = useFileDirtyStore();
 
   // State for unsaved changes confirmation dialog
-  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  const [pendingCloseTabIds, setPendingCloseTabIds] = useState<string[]>([]);
+  const [pendingCloseTabNames, setPendingCloseTabNames] = useState<string[]>(
+    [],
+  );
 
   // Create sortable IDs for all tabs in this pane
   // When a tab from another pane is being dragged over this pane,
   // include it in the sortable items so dnd-kit can show visual feedback
   const sortableIds = useMemo(() => {
     const ids: string[] = pane.tabs.map((tab) =>
-      createDraggableTabId(tab.id, pane.id)
+      createDraggableTabId(tab.id, pane.id),
     );
 
     // If a tab from another pane is being dragged over this pane, add it to the list
@@ -68,29 +71,97 @@ export function DraggableTabBar({
   // All tabs can be closed
   const canClose = true;
 
-  const handleClose = useCallback((tabId: string) => {
-    // Check if this is a file tab with unsaved changes
-    const tab = pane.tabs.find((t) => t.id === tabId);
-    if (tab?.type === "file" && isDirty(tabId)) {
-      // Show confirmation dialog
-      setPendingCloseTabId(tabId);
-      return;
+  const closeTabs = useCallback(
+    (tabIds: string[]) => {
+      const uniqueTabIds = Array.from(new Set(tabIds));
+      const idsInPane = uniqueTabIds.filter((tabId) =>
+        pane.tabs.some((tab) => tab.id === tabId),
+      );
+
+      if (idsInPane.length === 0) {
+        return;
+      }
+
+      // If any file tabs are dirty, confirm before closing any of the selected tabs.
+      const dirtyFileIds = idsInPane.filter((tabId) => {
+        const tab = pane.tabs.find((t) => t.id === tabId);
+        return tab?.type === "file" && isDirty(tabId);
+      });
+
+      if (dirtyFileIds.length > 0) {
+        setPendingCloseTabIds(idsInPane);
+        setPendingCloseTabNames(
+          dirtyFileIds.map((tabId) => {
+            const dirtyTab = pane.tabs.find((tab) => tab.id === tabId);
+            return dirtyTab?.fileData?.filePath.split("/").pop() ?? "file";
+          }),
+        );
+        return;
+      }
+
+      for (let i = idsInPane.length - 1; i >= 0; i--) {
+        removeTab(pane.id, idsInPane[i]!);
+      }
+    },
+    [pane.id, pane.tabs, removeTab, isDirty],
+  );
+
+  const handleClose = useCallback(
+    (tabId: string) => {
+      closeTabs([tabId]);
+    },
+    [closeTabs],
+  );
+
+  const handleCloseAll = useCallback(() => {
+    closeTabs(pane.tabs.map((tab) => tab.id));
+  }, [closeTabs, pane.tabs]);
+
+  const handleCloseOthers = useCallback(
+    (tabId: string) => {
+      closeTabs(
+        pane.tabs.filter((tab) => tab.id !== tabId).map((tab) => tab.id),
+      );
+    },
+    [closeTabs, pane.tabs],
+  );
+
+  const handleCloseToRight = useCallback(
+    (tabId: string) => {
+      const index = pane.tabs.findIndex((tab) => tab.id === tabId);
+      if (index < 0) return;
+      closeTabs(pane.tabs.slice(index + 1).map((tab) => tab.id));
+    },
+    [closeTabs, pane.tabs],
+  );
+
+  const pendingCloseTabLabel = useMemo(() => {
+    if (pendingCloseTabNames.length === 1) {
+      return pendingCloseTabNames[0];
     }
-    // No unsaved changes, close immediately
-    removeTab(pane.id, tabId);
-  }, [pane.tabs, pane.id, isDirty, removeTab]);
+    return `${pendingCloseTabNames.length} files`;
+  }, [pendingCloseTabNames]);
 
   const handleConfirmClose = useCallback(() => {
-    if (pendingCloseTabId) {
-      // Clear dirty state and close the tab
-      clearDirty(pendingCloseTabId);
-      removeTab(pane.id, pendingCloseTabId);
-      setPendingCloseTabId(null);
+    if (pendingCloseTabIds.length === 0) {
+      return;
     }
-  }, [pendingCloseTabId, pane.id, clearDirty, removeTab]);
+
+    for (const tabId of pendingCloseTabIds) {
+      clearDirty(tabId);
+    }
+
+    for (let i = pendingCloseTabIds.length - 1; i >= 0; i--) {
+      removeTab(pane.id, pendingCloseTabIds[i]!);
+    }
+
+    setPendingCloseTabIds([]);
+    setPendingCloseTabNames([]);
+  }, [pendingCloseTabIds, pane.id, clearDirty, removeTab]);
 
   const handleCancelClose = useCallback(() => {
-    setPendingCloseTabId(null);
+    setPendingCloseTabIds([]);
+    setPendingCloseTabNames([]);
   }, []);
 
   // Always show tab bar when there's at least one tab (even for single-tab panes).
@@ -100,18 +171,12 @@ export function DraggableTabBar({
     return null;
   }
 
-  // Get the filename from the pending close tab for the dialog
-  const pendingCloseTab = pendingCloseTabId
-    ? pane.tabs.find((t) => t.id === pendingCloseTabId)
-    : null;
-  const pendingFileName = pendingCloseTab?.fileData?.filePath?.split("/").pop() ?? "this file";
-
   return (
     <>
       <div
         className={cn(
           "flex items-center gap-0.5 border-b border-border bg-[#252526] px-1 min-h-[32px]",
-          isDropTarget && "bg-primary/10"
+          isDropTarget && "bg-primary/10",
         )}
       >
         <SortableContext
@@ -130,7 +195,13 @@ export function DraggableTabBar({
                 isFocused={isActive && isPaneFocused}
                 onSelect={() => onTabSelect(tab.id)}
                 onClose={() => handleClose(tab.id)}
+                onCloseAll={() => handleCloseAll()}
+                onCloseOthers={() => handleCloseOthers(tab.id)}
+                onCloseToRight={() => handleCloseToRight(tab.id)}
                 canClose={canClose}
+                canCloseAll={pane.tabs.length > 1}
+                canCloseOthers={pane.tabs.length > 1}
+                canCloseToRight={index < pane.tabs.length - 1}
               />
             );
           })}
@@ -138,17 +209,27 @@ export function DraggableTabBar({
       </div>
 
       {/* Confirmation dialog for closing tabs with unsaved changes */}
-      <AlertDialog open={pendingCloseTabId !== null} onOpenChange={(open) => !open && handleCancelClose()}>
+      <AlertDialog
+        open={pendingCloseTabIds.length > 0}
+        onOpenChange={(open) => !open && handleCancelClose()}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
             <AlertDialogDescription>
-              You have unsaved changes in {pendingFileName}. Are you sure you want to close this tab? Your changes will be lost.
+              You have unsaved changes in {pendingCloseTabLabel}. Are you sure
+              you want to close these tabs without saving? Your changes will be
+              lost.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleCancelClose}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmClose} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogCancel onClick={handleCancelClose}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmClose}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               Close Without Saving
             </AlertDialogAction>
           </AlertDialogFooter>

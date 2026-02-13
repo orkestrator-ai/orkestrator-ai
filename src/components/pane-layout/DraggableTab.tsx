@@ -2,7 +2,18 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FileCode, Terminal as TerminalIcon, X } from "lucide-react";
 import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import type { TabInfo } from "@/types/paneLayout";
 import { createDraggableTabId } from "@/types/paneLayout";
@@ -28,6 +39,15 @@ interface DraggableTabProps {
   isFocused?: boolean;
   onSelect: () => void;
   onClose?: () => void;
+  onCloseAll?: () => void;
+  onCloseOthers?: () => void;
+  onCloseToRight?: () => void;
+  /** Whether "Close all" should be enabled for this tab */
+  canCloseAll?: boolean;
+  /** Whether "Close others" should be enabled for this tab */
+  canCloseOthers?: boolean;
+  /** Whether "Close to the right" should be enabled for this tab */
+  canCloseToRight?: boolean;
   canClose: boolean;
 }
 
@@ -39,6 +59,12 @@ export function DraggableTab({
   isFocused = false,
   onSelect,
   onClose,
+  onCloseAll,
+  onCloseOthers,
+  onCloseToRight,
+  canCloseAll = true,
+  canCloseOthers = true,
+  canCloseToRight = true,
   canClose,
 }: DraggableTabProps) {
   const {
@@ -59,13 +85,16 @@ export function DraggableTab({
   // Get Claude session title for claude-native tabs
   const claudeSessionTitle = useClaudeStore((state) => {
     if (tab.type !== "claude-native" || !tab.claudeNativeData) return undefined;
-    const key = createClaudeSessionKey(tab.claudeNativeData.environmentId, tab.id);
+    const key = createClaudeSessionKey(
+      tab.claudeNativeData.environmentId,
+      tab.id,
+    );
     return state.sessions.get(key)?.title;
   });
 
   // Check if file tab has unsaved changes
   const isDirty = useFileDirtyStore((state) =>
-    tab.type === "file" ? state.isDirty(tab.id) : false
+    tab.type === "file" ? state.isDirty(tab.id) : false,
   );
 
   const style = {
@@ -121,50 +150,66 @@ export function DraggableTab({
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          ref={setNodeRef}
-          style={style}
-          {...attributes}
-          {...listeners}
-          className={cn(
-            "group relative flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-grab active:cursor-grabbing select-none",
-            isActive
-              ? "bg-[#1e1e1e] text-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-[#2a2a2a]",
-            isDragging && "opacity-50 z-50"
-          )}
-          onClick={onSelect}
-        >
-          {/* Blue focus indicator line at top */}
-          {isFocused && (
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary" />
-          )}
-          {getTabIcon()}
-          <span className="max-w-[120px] truncate">{getTabTitle()}</span>
-          {isDirty && (
-            <span
-              className="h-2 w-2 rounded-full bg-muted-foreground"
-              title="Unsaved changes"
-            />
-          )}
-          {canClose && (
-            <button
-              className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
-              onClick={handleClose}
-              onMouseDown={(e) => e.stopPropagation()}
+    <ContextMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ContextMenuTrigger asChild>
+            <div
+              ref={setNodeRef}
+              style={style}
+              {...attributes}
+              {...listeners}
+              className={cn(
+                "group relative flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-grab active:cursor-grabbing select-none",
+                isActive
+                  ? "bg-[#1e1e1e] text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-[#2a2a2a]",
+                isDragging && "opacity-50 z-50",
+              )}
+              onClick={onSelect}
             >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </div>
-      </TooltipTrigger>
-      {tab.type === "file" && tab.fileData && (
-        <TooltipContent side="bottom">
-          {tab.fileData.filePath}
-        </TooltipContent>
-      )}
-    </Tooltip>
+              {/* Blue focus indicator line at top */}
+              {isFocused && (
+                <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary" />
+              )}
+              {getTabIcon()}
+              <span className="max-w-[120px] truncate">{getTabTitle()}</span>
+              {isDirty && (
+                <span
+                  className="h-2 w-2 rounded-full bg-muted-foreground"
+                  title="Unsaved changes"
+                />
+              )}
+              {canClose && (
+                <button
+                  className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
+                  onClick={handleClose}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          </ContextMenuTrigger>
+        </TooltipTrigger>
+        {tab.type === "file" && tab.fileData && (
+          <TooltipContent side="bottom">{tab.fileData.filePath}</TooltipContent>
+        )}
+      </Tooltip>
+
+      <ContextMenuContent>
+        <ContextMenuItem onClick={onClose}>Close</ContextMenuItem>
+        <ContextMenuItem onClick={onCloseAll} disabled={!canCloseAll}>
+          Close all
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onCloseOthers} disabled={!canCloseOthers}>
+          Close others
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={onCloseToRight} disabled={!canCloseToRight}>
+          Close to the right
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
