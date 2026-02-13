@@ -21,6 +21,7 @@ import {
   createSession,
   getSessionMessages,
   sendPrompt,
+  abortSession,
   subscribeToEvents,
   ERROR_MESSAGE_PREFIX,
   type QuestionRequest,
@@ -863,6 +864,18 @@ export function OpenCodeChatTab({
     setServerStatus,
   ]);
 
+  // Handle stopping the current query
+  const handleStop = useCallback(async () => {
+    if (!client || !session) return;
+
+    const success = await abortSession(client, session.sessionId);
+    if (success) {
+      setSessionLoading(sessionKey, false);
+    } else {
+      console.error("[OpenCodeChatTab] Failed to abort session");
+    }
+  }, [client, session, sessionKey, setSessionLoading]);
+
   const handleResumeSession = useCallback(
     async (sessionId: string) => {
       if (!client) return;
@@ -1020,6 +1033,8 @@ export function OpenCodeChatTab({
         favoriteModelIds={favoriteModelIds}
         onSend={handleSend}
         disabled={!client || !session}
+        isLoading={session?.isLoading ?? false}
+        onStop={handleStop}
       />
 
       {client && (
