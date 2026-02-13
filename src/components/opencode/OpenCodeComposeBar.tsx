@@ -1,5 +1,21 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp } from "lucide-react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  KeyboardEvent,
+} from "react";
+import {
+  X,
+  Plus,
+  FileText,
+  Image as ImageIcon,
+  ChevronDown,
+  ArrowUp,
+  Square,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +47,10 @@ interface OpenCodeComposeBarProps {
   favoriteModelIds?: string[];
   onSend: (text: string, attachments: OpenCodeAttachment[]) => void;
   disabled?: boolean;
+  /** Whether OpenCode is currently processing a query */
+  isLoading?: boolean;
+  /** Callback when stop button is clicked */
+  onStop?: () => void;
 }
 
 const MAX_LINES = 12;
@@ -57,6 +77,8 @@ export function OpenCodeComposeBar({
   favoriteModelIds = [],
   onSend,
   disabled = false,
+  isLoading = false,
+  onStop,
 }: OpenCodeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
@@ -244,7 +266,7 @@ export function OpenCodeComposeBar({
   };
 
   const handleSend = async () => {
-    if (isSending || disabled) return;
+    if (isSending || disabled || isLoading) return;
     if (attachments.length === 0 && !text.trim()) return;
 
     setIsSending(true);
@@ -254,6 +276,12 @@ export function OpenCodeComposeBar({
       clearAttachments(attachmentSessionKey);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleStop = () => {
+    if (onStop) {
+      onStop();
     }
   };
 
@@ -535,18 +563,39 @@ export function OpenCodeComposeBar({
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Send button - round grey style */}
-        <button
-          onClick={handleSend}
-          disabled={disabled || isSending || (attachments.length === 0 && !text.trim())}
-          className={cn(
-            "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-            "bg-muted hover:bg-muted/80",
-            "disabled:opacity-50 disabled:cursor-not-allowed"
-          )}
-        >
-          <ArrowUp className="w-4 h-4" />
-        </button>
+        {/* Send/Stop button - round grey style */}
+        {isLoading ? (
+          <button
+            onClick={handleStop}
+            disabled={disabled || !onStop}
+            className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+              "bg-destructive/10 hover:bg-destructive/20 text-destructive",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+            title="Stop current query"
+          >
+            <Square className="w-4 h-4 fill-current" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={
+              disabled ||
+              isSending ||
+              isLoading ||
+              (attachments.length === 0 && !text.trim())
+            }
+            className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+              "bg-muted hover:bg-muted/80",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+            title="Send message"
+          >
+            <ArrowUp className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </div>
   );
