@@ -266,7 +266,7 @@ export function OpenCodeComposeBar({
   };
 
   const handleSend = async () => {
-    if (isSending || disabled) return;
+    if (isSending || disabled || isLoading) return;
     if (attachments.length === 0 && !text.trim()) return;
 
     setIsSending(true);
@@ -564,10 +564,10 @@ export function OpenCodeComposeBar({
         <div className="flex-1" />
 
         {/* Send/Stop button - round grey style */}
-        {isLoading && !text.trim() && attachments.length === 0 ? (
+        {isLoading ? (
           <button
             onClick={handleStop}
-            disabled={disabled}
+            disabled={disabled || !onStop}
             className={cn(
               "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
               "bg-destructive/10 hover:bg-destructive/20 text-destructive",
@@ -583,6 +583,7 @@ export function OpenCodeComposeBar({
             disabled={
               disabled ||
               isSending ||
+              isLoading ||
               (attachments.length === 0 && !text.trim())
             }
             className={cn(

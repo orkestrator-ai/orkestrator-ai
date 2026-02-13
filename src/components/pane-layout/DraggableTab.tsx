@@ -198,7 +198,9 @@ export function DraggableTab({
       </Tooltip>
 
       <ContextMenuContent>
-        <ContextMenuItem onClick={onClose}>Close</ContextMenuItem>
+        <ContextMenuItem onClick={onClose} disabled={!canClose || !onClose}>
+          Close
+        </ContextMenuItem>
         <ContextMenuItem onClick={onCloseAll} disabled={!canCloseAll}>
           Close all
         </ContextMenuItem>
