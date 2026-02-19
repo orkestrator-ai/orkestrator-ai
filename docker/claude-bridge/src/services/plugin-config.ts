@@ -9,8 +9,8 @@
  * Project-specific configs override global configs for plugins with the same name.
  */
 
-import { readFile, access } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, readdir, access } from "node:fs/promises";
+import { join, resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import type { PluginInfo, PluginConfig, ClaudeJsonPluginsConfig, InstalledPluginsFile } from "../types/plugins.js";
 
@@ -43,6 +43,52 @@ async function pathExists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Check whether a candidate path is contained within a parent directory.
+ */
+function isPathWithin(parentDir: string, candidatePath: string): boolean {
+  const relativePath = relative(parentDir, candidatePath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+  );
+}
+
+/**
+ * Fallback scan of ~/.claude/plugins/ for installations that don't have
+ * installed_plugins.json available.
+ */
+async function scanCliPluginsDirectory(pluginsDir: string): Promise<PluginConfig[]> {
+  if (!(await pathExists(pluginsDir))) {
+    return [];
+  }
+
+  try {
+    const entries = await readdir(pluginsDir, { withFileTypes: true });
+    const plugins: PluginConfig[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const pluginPath = join(pluginsDir, entry.name);
+      const manifestPath = join(pluginPath, ".claude-plugin", "plugin.json");
+
+      if (await pathExists(manifestPath)) {
+        plugins.push({
+          type: "local",
+          path: pluginPath,
+        });
+      }
+    }
+
+    return plugins;
+  } catch {
+    return [];
   }
 }
 
@@ -87,11 +133,12 @@ export async function loadCliInstalledPlugins(): Promise<PluginConfig[]> {
 
   const installedPlugins = await readJsonFile<InstalledPluginsFile>(installedPluginsPath);
   if (!installedPlugins?.plugins) {
-    return [];
+    return scanCliPluginsDirectory(pluginsDir);
   }
 
   const plugins: PluginConfig[] = [];
   const CLAUDE_PLUGINS_MARKER = "/.claude/plugins/";
+  const pluginsRoot = resolve(pluginsDir);
 
   for (const entries of Object.values(installedPlugins.plugins)) {
     for (const entry of entries) {
@@ -104,7 +151,14 @@ export async function loadCliInstalledPlugins(): Promise<PluginConfig[]> {
         const relativePath = entry.installPath.substring(
           markerIdx + CLAUDE_PLUGINS_MARKER.length
         );
-        resolvedPath = join(pluginsDir, relativePath);
+        const remappedPath = resolve(pluginsDir, relativePath);
+        if (!isPathWithin(pluginsRoot, remappedPath)) {
+          console.warn(
+            `[plugin-config] Skipping plugin with unsafe install path: "${entry.installPath}"`
+          );
+          continue;
+        }
+        resolvedPath = remappedPath;
       } else {
         resolvedPath = entry.installPath;
       }

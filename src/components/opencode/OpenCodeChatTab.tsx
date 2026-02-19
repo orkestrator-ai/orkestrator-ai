@@ -247,6 +247,22 @@ export function OpenCodeChatTab({
       sdkClient: ReturnType<typeof createClient>,
       sessionId: string,
     ) => {
+      const stateBeforeSync = useOpenCodeStore.getState();
+      const existingQuestionIds = new Set<string>();
+      const existingPermissionIds = new Set<string>();
+
+      for (const existingQuestion of stateBeforeSync.pendingQuestions.values()) {
+        if (existingQuestion.sessionID === sessionId) {
+          existingQuestionIds.add(existingQuestion.id);
+        }
+      }
+
+      for (const existingPermission of stateBeforeSync.pendingPermissions.values()) {
+        if (existingPermission.sessionID === sessionId) {
+          existingPermissionIds.add(existingPermission.id);
+        }
+      }
+
       const [questions, permissions] = await Promise.all([
         getPendingQuestions(sdkClient),
         getPendingPermissions(sdkClient),
@@ -266,22 +282,17 @@ export function OpenCodeChatTab({
         addPendingPermission(permission);
       }
 
-      // Prune stale pending items for this session
-      const state = useOpenCodeStore.getState();
-      for (const existingQuestion of state.pendingQuestions.values()) {
-        if (
-          existingQuestion.sessionID === sessionId &&
-          !questionIds.has(existingQuestion.id)
-        ) {
-          removePendingQuestion(existingQuestion.id);
+      // Prune only items that existed before sync started.
+      // This avoids deleting requests that arrive via SSE during the sync window.
+      for (const existingQuestionId of existingQuestionIds) {
+        if (!questionIds.has(existingQuestionId)) {
+          removePendingQuestion(existingQuestionId);
         }
       }
-      for (const existingPermission of state.pendingPermissions.values()) {
-        if (
-          existingPermission.sessionID === sessionId &&
-          !permissionIds.has(existingPermission.id)
-        ) {
-          removePendingPermission(existingPermission.id);
+
+      for (const existingPermissionId of existingPermissionIds) {
+        if (!permissionIds.has(existingPermissionId)) {
+          removePendingPermission(existingPermissionId);
         }
       }
     },
