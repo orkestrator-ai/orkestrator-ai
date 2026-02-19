@@ -178,8 +178,32 @@ export interface QuestionRequest {
   };
 }
 
+/** Permission request from OpenCode */
+export interface PermissionRequest {
+  /** Request ID */
+  id: string;
+  /** Session ID */
+  sessionID: string;
+  /** Permission type (e.g. read, edit, bash) */
+  permission: string;
+  /** Requested path patterns */
+  patterns: string[];
+  /** Additional metadata from the tool invocation */
+  metadata: Record<string, unknown>;
+  /** Patterns that can be persisted with "always" */
+  always: string[];
+  /** Associated tool info */
+  tool?: {
+    messageID: string;
+    callID: string;
+  };
+}
+
 /** Answer to a question (array of selected labels or typed text) */
 export type QuestionAnswer = string[];
+
+/** Reply to a permission request */
+export type PermissionReply = "once" | "always" | "reject";
 
 /** Prefix for client-side error message IDs (used to preserve errors across message refreshes) */
 export const ERROR_MESSAGE_PREFIX = "error-";
@@ -598,7 +622,7 @@ export async function sendPrompt(
 
 /** Event types from OpenCode SSE stream */
 export interface OpenCodeEvent {
-  type: "message.updated" | "session.updated" | "session.error" | "file.edited" | "file.watcher.updated" | "question.asked" | "question.replied" | "question.rejected" | string;
+  type: "message.updated" | "session.updated" | "session.error" | "file.edited" | "file.watcher.updated" | "permission.asked" | "permission.replied" | "question.asked" | "question.replied" | "question.rejected" | string;
   properties?: {
     sessionID?: string;
     info?: {
@@ -615,6 +639,13 @@ export interface OpenCodeEvent {
       messageID: string;
       callID: string;
     };
+    /** For permission.asked events */
+    permission?: string;
+    patterns?: string[];
+    metadata?: Record<string, unknown>;
+    always?: string[];
+    /** For permission.replied events */
+    reply?: PermissionReply;
     /** For question.replied events */
     requestID?: string;
     answers?: QuestionAnswer[];
@@ -722,6 +753,20 @@ export async function getPendingQuestions(client: OpencodeClient): Promise<Quest
 }
 
 /**
+ * Get pending permission requests
+ */
+export async function getPendingPermissions(client: OpencodeClient): Promise<PermissionRequest[]> {
+  try {
+    const response = await client.permission.list();
+    if (!response.data) return [];
+    return response.data as PermissionRequest[];
+  } catch (error) {
+    console.error("[opencode-client] Failed to get pending permissions:", error);
+    return [];
+  }
+}
+
+/**
  * Reply to a question request
  * @param client The SDK client
  * @param requestId The question request ID
@@ -740,6 +785,28 @@ export async function replyToQuestion(
     return true;
   } catch (error) {
     console.error("[opencode-client] Failed to reply to question:", error);
+    return false;
+  }
+}
+
+/**
+ * Reply to a permission request
+ */
+export async function replyToPermission(
+  client: OpencodeClient,
+  requestId: string,
+  reply: PermissionReply,
+  message?: string
+): Promise<boolean> {
+  try {
+    await client.permission.reply({
+      requestID: requestId,
+      reply,
+      message,
+    });
+    return true;
+  } catch (error) {
+    console.error("[opencode-client] Failed to reply to permission:", error);
     return false;
   }
 }

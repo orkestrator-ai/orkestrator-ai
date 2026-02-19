@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ERROR_MESSAGE_PREFIX, type OpenCodeMessage } from "../lib/opencode-client";
+import { ERROR_MESSAGE_PREFIX, type OpenCodeMessage, type PermissionRequest } from "../lib/opencode-client";
 import { type OpenCodeAttachment, useOpenCodeStore } from "./openCodeStore";
 
 function resetOpenCodeStore() {
@@ -15,7 +15,9 @@ function resetOpenCodeStore() {
     draftText: new Map(),
     isComposing: new Map(),
     pendingQuestions: new Map(),
+    pendingPermissions: new Map(),
     eventSubscriptions: new Map(),
+    contextUsage: new Map(),
   });
 }
 
@@ -147,5 +149,84 @@ describe("openCodeStore draft text", () => {
     expect(useOpenCodeStore.getState().getDraftText("env-env-123:tab-1")).toBe("");
     expect(useOpenCodeStore.getState().getDraftText("env-env-123:tab-2")).toBe("");
     expect(useOpenCodeStore.getState().getDraftText("env-env-999:tab-1")).toBe("keep");
+  });
+});
+
+describe("openCodeStore pending permissions", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("tracks pending permissions per session", () => {
+    const store = useOpenCodeStore.getState();
+
+    const permission: PermissionRequest = {
+      id: "perm-1",
+      sessionID: "session-1",
+      permission: "read",
+      patterns: ["/workspace/**"],
+      metadata: {},
+      always: ["/workspace/**"],
+    };
+
+    store.addPendingPermission(permission);
+
+    const permissions = useOpenCodeStore
+      .getState()
+      .getPendingPermissionsForSession("session-1");
+
+    expect(permissions).toHaveLength(1);
+    expect(permissions[0]?.id).toBe("perm-1");
+  });
+
+  test("clearEnvironment removes pending permissions for every tab session", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setSession("env-env-123:tab-1", {
+      sessionId: "session-1",
+      messages: [],
+      isLoading: false,
+    });
+    store.setSession("env-env-123:tab-2", {
+      sessionId: "session-2",
+      messages: [],
+      isLoading: false,
+    });
+    store.setSession("env-env-999:tab-1", {
+      sessionId: "session-3",
+      messages: [],
+      isLoading: false,
+    });
+
+    store.addPendingPermission({
+      id: "perm-a",
+      sessionID: "session-1",
+      permission: "read",
+      patterns: ["/workspace/a/**"],
+      metadata: {},
+      always: ["/workspace/a/**"],
+    });
+    store.addPendingPermission({
+      id: "perm-b",
+      sessionID: "session-2",
+      permission: "bash",
+      patterns: ["*"],
+      metadata: {},
+      always: [],
+    });
+    store.addPendingPermission({
+      id: "perm-c",
+      sessionID: "session-3",
+      permission: "read",
+      patterns: ["/workspace/c/**"],
+      metadata: {},
+      always: ["/workspace/c/**"],
+    });
+
+    store.clearEnvironment("env-123");
+
+    expect(useOpenCodeStore.getState().getPendingPermission("perm-a")).toBeUndefined();
+    expect(useOpenCodeStore.getState().getPendingPermission("perm-b")).toBeUndefined();
+    expect(useOpenCodeStore.getState().getPendingPermission("perm-c")).toBeDefined();
   });
 });

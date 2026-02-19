@@ -25,6 +25,25 @@ export interface ClaudeJsonPluginsConfig {
 }
 
 /**
+ * Structure of ~/.claude/plugins/installed_plugins.json
+ * This is the registry of all CLI/marketplace-installed plugins.
+ */
+export interface InstalledPluginsFile {
+  version: number;
+  plugins: Record<
+    string,
+    Array<{
+      scope: string;
+      installPath: string;
+      version: string;
+      installedAt: string;
+      lastUpdated: string;
+      gitCommitSha: string;
+    }>
+  >;
+}
+
+/**
  * Plugin info for frontend display
  */
 export interface PluginInfo {
