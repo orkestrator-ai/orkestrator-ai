@@ -20,10 +20,13 @@ import {
   getModelsWithDefaults,
   createSession,
   getSessionMessages,
+  getPendingPermissions,
+  getPendingQuestions,
   sendPrompt,
   abortSession,
   subscribeToEvents,
   ERROR_MESSAGE_PREFIX,
+  type PermissionRequest,
   type QuestionRequest,
 } from "@/lib/opencode-client";
 import { extractContextUsage } from "@/lib/context-usage";
@@ -39,6 +42,7 @@ import {
 } from "@/lib/tauri";
 import { OpenCodeMessage } from "./OpenCodeMessage";
 import { OpenCodeComposeBar } from "./OpenCodeComposeBar";
+import { OpenCodePermissionCard } from "./OpenCodePermissionCard";
 import { OpenCodeQuestionCard } from "./OpenCodeQuestionCard";
 import { OpenCodeResumeSessionDialog } from "./OpenCodeResumeSessionDialog";
 import type { OpenCodeNativeData } from "@/types/paneLayout";
@@ -111,7 +115,9 @@ export function OpenCodeChatTab({
     getSelectedVariant,
     getSelectedMode,
     setContextUsage,
+    addPendingPermission,
     addPendingQuestion,
+    removePendingPermission,
     removePendingQuestion,
     // Event subscription management (shared per environment)
     getOrCreateEventSubscription,
@@ -120,6 +126,7 @@ export function OpenCodeChatTab({
     // Subscribe to Maps directly for proper reactivity (triggers re-render on changes)
     clients: clientsMap,
     sessions: sessionsMap,
+    pendingPermissions: pendingPermissionsMap,
     pendingQuestions: pendingQuestionsMap,
   } = useOpenCodeStore();
 
@@ -167,6 +174,18 @@ export function OpenCodeChatTab({
     return questions;
   }, [session?.sessionId, pendingQuestionsMap]);
 
+  // Get pending permissions for this session - subscribe to the Map for reactivity
+  const pendingPermissions = useMemo(() => {
+    if (!session?.sessionId) return [];
+    const permissions: PermissionRequest[] = [];
+    for (const permission of pendingPermissionsMap.values()) {
+      if (permission.sessionID === session.sessionId) {
+        permissions.push(permission);
+      }
+    }
+    return permissions;
+  }, [session?.sessionId, pendingPermissionsMap]);
+
   const favoriteModelIds = useMemo(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
@@ -193,8 +212,8 @@ export function OpenCodeChatTab({
     if (session?.isLoading) {
       // OpenCode is working on a response
       setContainerState(environmentId, "working");
-    } else if (pendingQuestions.length > 0) {
-      // OpenCode is waiting for user input (question)
+    } else if (pendingQuestions.length > 0 || pendingPermissions.length > 0) {
+      // OpenCode is waiting for user input (question or permission)
       setContainerState(environmentId, "waiting");
     } else {
       // OpenCode is idle
@@ -204,6 +223,7 @@ export function OpenCodeChatTab({
     connectionState,
     session?.isLoading,
     pendingQuestions.length,
+    pendingPermissions.length,
     environmentId,
     setContainerState,
   ]);
@@ -220,6 +240,69 @@ export function OpenCodeChatTab({
   // Track last initialization time to prevent rapid re-initialization
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000; // Don't re-initialize within 1 second
+
+  // Hydrate pending permission/question requests in case SSE events were missed
+  const syncPendingRequests = useCallback(
+    async (
+      sdkClient: ReturnType<typeof createClient>,
+      sessionId: string,
+    ) => {
+      const stateBeforeSync = useOpenCodeStore.getState();
+      const existingQuestionIds = new Set<string>();
+      const existingPermissionIds = new Set<string>();
+
+      for (const existingQuestion of stateBeforeSync.pendingQuestions.values()) {
+        if (existingQuestion.sessionID === sessionId) {
+          existingQuestionIds.add(existingQuestion.id);
+        }
+      }
+
+      for (const existingPermission of stateBeforeSync.pendingPermissions.values()) {
+        if (existingPermission.sessionID === sessionId) {
+          existingPermissionIds.add(existingPermission.id);
+        }
+      }
+
+      const [questions, permissions] = await Promise.all([
+        getPendingQuestions(sdkClient),
+        getPendingPermissions(sdkClient),
+      ]);
+
+      const questionIds = new Set<string>();
+      for (const question of questions) {
+        if (question.sessionID !== sessionId) continue;
+        questionIds.add(question.id);
+        addPendingQuestion(question);
+      }
+
+      const permissionIds = new Set<string>();
+      for (const permission of permissions) {
+        if (permission.sessionID !== sessionId) continue;
+        permissionIds.add(permission.id);
+        addPendingPermission(permission);
+      }
+
+      // Prune only items that existed before sync started.
+      // This avoids deleting requests that arrive via SSE during the sync window.
+      for (const existingQuestionId of existingQuestionIds) {
+        if (!questionIds.has(existingQuestionId)) {
+          removePendingQuestion(existingQuestionId);
+        }
+      }
+
+      for (const existingPermissionId of existingPermissionIds) {
+        if (!permissionIds.has(existingPermissionId)) {
+          removePendingPermission(existingPermissionId);
+        }
+      }
+    },
+    [
+      addPendingPermission,
+      addPendingQuestion,
+      removePendingPermission,
+      removePendingQuestion,
+    ],
+  );
 
   // Initialize connection on mount
   useEffect(() => {
@@ -395,6 +478,9 @@ export function OpenCodeChatTab({
           // Start shared event subscription if not already running
           startSharedEventSubscription(sdkClient);
 
+          // Sync pending interactions in case we missed early SSE events
+          await syncPendingRequests(sdkClient, existingSessionId);
+
           // Refresh messages from server to ensure latest state on reconnection
           if (existingSessionFromStore) {
             try {
@@ -445,6 +531,9 @@ export function OpenCodeChatTab({
 
           // Start shared event subscription if not already running
           startSharedEventSubscription(sdkClient);
+
+          // Sync pending interactions in case we missed early SSE events
+          await syncPendingRequests(sdkClient, newSession.id);
         }
       } catch (error) {
         console.error("[OpenCodeChatTab] Initialization failed:", error);
@@ -498,6 +587,7 @@ export function OpenCodeChatTab({
     tabId,
     isActive,
     isLocal,
+    syncPendingRequests,
     getSelectedModel,
     getSelectedVariant,
     setSelectedModel,
@@ -593,6 +683,7 @@ export function OpenCodeChatTab({
           const props = event?.properties;
           const eventSessionId =
             props?.sessionID ||
+            props?.sessionId ||
             props?.part?.sessionID ||
             props?.info?.sessionID ||
             props?.info?.id ||
@@ -603,6 +694,8 @@ export function OpenCodeChatTab({
           if (
             !eventSessionId &&
             ![
+              "permission.asked",
+              "permission.replied",
               "question.asked",
               "question.replied",
               "question.rejected",
@@ -706,13 +799,51 @@ export function OpenCodeChatTab({
             }
           }
 
+          // Handle permission events (not session-specific, need to match by sessionID in the event)
+          if (eventType === "permission.asked") {
+            const permissionProps = event.properties;
+            if (permissionProps?.id && permissionProps?.permission) {
+              const permissionRequest: PermissionRequest = {
+                id: permissionProps.id,
+                sessionID:
+                  permissionProps.sessionID ||
+                  permissionProps.sessionId ||
+                  eventSessionId ||
+                  "",
+                permission: permissionProps.permission,
+                patterns: Array.isArray(permissionProps.patterns)
+                  ? permissionProps.patterns
+                  : [],
+                metadata:
+                  permissionProps.metadata &&
+                  typeof permissionProps.metadata === "object"
+                    ? permissionProps.metadata
+                    : {},
+                always: Array.isArray(permissionProps.always)
+                  ? permissionProps.always
+                  : [],
+                tool: permissionProps.tool,
+              };
+              addPendingPermission(permissionRequest);
+            }
+          }
+          // Handle permission replied events (remove the permission request)
+          else if (eventType === "permission.replied") {
+            if (event.properties?.requestID) {
+              removePendingPermission(event.properties.requestID);
+            }
+          }
           // Handle question events (not session-specific, need to match by sessionID in the event)
-          if (eventType === "question.asked") {
+          else if (eventType === "question.asked") {
             const questionProps = event.properties;
             if (questionProps?.id && questionProps?.questions) {
               const questionRequest: QuestionRequest = {
                 id: questionProps.id,
-                sessionID: questionProps.sessionID || "",
+                sessionID:
+                  questionProps.sessionID ||
+                  questionProps.sessionId ||
+                  eventSessionId ||
+                  "",
                 questions: questionProps.questions,
                 tool: questionProps.tool,
               };
@@ -750,7 +881,9 @@ export function OpenCodeChatTab({
       setSessionLoading,
       setContextUsage,
       addMessage,
+      addPendingPermission,
       addPendingQuestion,
+      removePendingPermission,
       removePendingQuestion,
     ],
   );
@@ -892,12 +1025,14 @@ export function OpenCodeChatTab({
           isLoading: false,
         });
 
+        await syncPendingRequests(client, sessionId);
+
         setResumeDialogOpen(false);
       } catch (error) {
         console.error("[OpenCodeChatTab] Failed to resume session:", error);
       }
     },
-    [client, sessionKey, setSession],
+    [client, sessionKey, setSession, syncPendingRequests],
   );
 
   // Render loading state
@@ -992,6 +1127,19 @@ export function OpenCodeChatTab({
                   <span className="text-xs">OpenCode is thinking...</span>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Pending permissions */}
+          {session && client && pendingPermissions.length > 0 && (
+            <div className="max-w-3xl mx-auto">
+              {pendingPermissions.map((permission) => (
+                <OpenCodePermissionCard
+                  key={permission.id}
+                  permission={permission}
+                  client={client}
+                />
+              ))}
             </div>
           )}
 

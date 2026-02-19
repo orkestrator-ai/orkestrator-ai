@@ -6,6 +6,7 @@ import {
   type OpenCodeConversationMode,
   type OpencodeClient,
   type QuestionRequest,
+  type PermissionRequest,
   type OpenCodeEvent,
 } from "@/lib/opencode-client";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
@@ -77,6 +78,8 @@ interface OpenCodeState {
   isComposing: Map<string, boolean>;
   /** Pending question requests (keyed by requestId) */
   pendingQuestions: Map<string, QuestionRequest>;
+  /** Pending permission requests (keyed by requestId) */
+  pendingPermissions: Map<string, PermissionRequest>;
   /** Shared event subscriptions per environment - only ONE per environment */
   eventSubscriptions: Map<string, EventSubscriptionState>;
   /** Context usage per tab session key */
@@ -123,6 +126,10 @@ interface OpenCodeState {
   addPendingQuestion: (question: QuestionRequest) => void;
   /** Remove a pending question request */
   removePendingQuestion: (requestId: string) => void;
+  /** Add a pending permission request */
+  addPendingPermission: (permission: PermissionRequest) => void;
+  /** Remove a pending permission request */
+  removePendingPermission: (requestId: string) => void;
   /** Set context usage for a tab session key */
   setContextUsage: (sessionKey: string, usage: ContextUsageSnapshot | null) => void;
   /** Get or create event subscription for an environment (returns existing if already active) */
@@ -155,6 +162,10 @@ interface OpenCodeState {
   getPendingQuestionsForSession: (sessionId: string) => QuestionRequest[];
   /** Get a specific pending question by ID */
   getPendingQuestion: (requestId: string) => QuestionRequest | undefined;
+  /** Get pending permissions for a session */
+  getPendingPermissionsForSession: (sessionId: string) => PermissionRequest[];
+  /** Get a specific pending permission by ID */
+  getPendingPermission: (requestId: string) => PermissionRequest | undefined;
   /** Get context usage for a tab session key */
   getContextUsage: (sessionKey: string) => ContextUsageSnapshot | undefined;
 }
@@ -172,6 +183,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   draftText: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
+  pendingPermissions: new Map(),
   eventSubscriptions: new Map(),
   contextUsage: new Map(),
 
@@ -394,13 +406,20 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newDraftText = new Map(state.draftText);
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
+      const newPendingPermissions = new Map(state.pendingPermissions);
       const newEventSubscriptions = new Map(state.eventSubscriptions);
       const newContextUsage = new Map(state.contextUsage);
 
       const sessionKeyPrefix = `env-${environmentId}:`;
+      const environmentSessionIds = new Set<string>();
 
       newServerStatus.delete(environmentId);
-      newSessions.delete(environmentId);
+      for (const [sessionKey, sessionState] of state.sessions) {
+        if (sessionKey.startsWith(sessionKeyPrefix)) {
+          newSessions.delete(sessionKey);
+          environmentSessionIds.add(sessionState.sessionId);
+        }
+      }
       newClients.delete(environmentId);
       newSelectedModel.delete(environmentId);
       newSelectedVariant.delete(environmentId);
@@ -424,10 +443,14 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       newEventSubscriptions.delete(environmentId);
       // Remove pending questions for this environment's sessions
       for (const [requestId, question] of newPendingQuestions) {
-        // Find the session for this environment
-        const session = state.sessions.get(environmentId);
-        if (session && question.sessionID === session.sessionId) {
+        if (environmentSessionIds.has(question.sessionID)) {
           newPendingQuestions.delete(requestId);
+        }
+      }
+      // Remove pending permissions for this environment's sessions
+      for (const [requestId, permission] of newPendingPermissions) {
+        if (environmentSessionIds.has(permission.sessionID)) {
+          newPendingPermissions.delete(requestId);
         }
       }
 
@@ -442,6 +465,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         draftText: newDraftText,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
+        pendingPermissions: newPendingPermissions,
         eventSubscriptions: newEventSubscriptions,
         contextUsage: newContextUsage,
       };
@@ -460,6 +484,20 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newMap = new Map(state.pendingQuestions);
       newMap.delete(requestId);
       return { pendingQuestions: newMap };
+    }),
+
+  addPendingPermission: (permission) =>
+    set((state) => {
+      const newMap = new Map(state.pendingPermissions);
+      newMap.set(permission.id, permission);
+      return { pendingPermissions: newMap };
+    }),
+
+  removePendingPermission: (requestId) =>
+    set((state) => {
+      const newMap = new Map(state.pendingPermissions);
+      newMap.delete(requestId);
+      return { pendingPermissions: newMap };
     }),
 
   setContextUsage: (sessionKey, usage) =>
@@ -573,6 +611,18 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   },
 
   getPendingQuestion: (requestId) => get().pendingQuestions.get(requestId),
+
+  getPendingPermissionsForSession: (sessionId) => {
+    const permissions: PermissionRequest[] = [];
+    for (const permission of get().pendingPermissions.values()) {
+      if (permission.sessionID === sessionId) {
+        permissions.push(permission);
+      }
+    }
+    return permissions;
+  },
+
+  getPendingPermission: (requestId) => get().pendingPermissions.get(requestId),
 
   getContextUsage: (sessionKey) => get().contextUsage.get(sessionKey),
 }));

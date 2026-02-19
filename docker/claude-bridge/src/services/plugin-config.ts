@@ -10,9 +10,9 @@
  */
 
 import { readFile, readdir, access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
-import type { PluginInfo, PluginConfig, ClaudeJsonPluginsConfig } from "../types/plugins.js";
+import type { PluginInfo, PluginConfig, ClaudeJsonPluginsConfig, InstalledPluginsFile } from "../types/plugins.js";
 
 /**
  * SDK plugin config type - matching the SDK's expected format
@@ -47,6 +47,52 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 /**
+ * Check whether a candidate path is contained within a parent directory.
+ */
+function isPathWithin(parentDir: string, candidatePath: string): boolean {
+  const relativePath = relative(parentDir, candidatePath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+  );
+}
+
+/**
+ * Fallback scan of ~/.claude/plugins/ for installations that don't have
+ * installed_plugins.json available.
+ */
+async function scanCliPluginsDirectory(pluginsDir: string): Promise<PluginConfig[]> {
+  if (!(await pathExists(pluginsDir))) {
+    return [];
+  }
+
+  try {
+    const entries = await readdir(pluginsDir, { withFileTypes: true });
+    const plugins: PluginConfig[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const pluginPath = join(pluginsDir, entry.name);
+      const manifestPath = join(pluginPath, ".claude-plugin", "plugin.json");
+
+      if (await pathExists(manifestPath)) {
+        plugins.push({
+          type: "local",
+          path: pluginPath,
+        });
+      }
+    }
+
+    return plugins;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Load global plugin configurations from ~/.claude.json
  */
 export async function loadGlobalPlugins(): Promise<PluginConfig[]> {
@@ -75,37 +121,56 @@ export async function loadProjectPlugins(cwd: string): Promise<PluginConfig[]> {
 }
 
 /**
- * Scan ~/.claude/plugins/ directory for CLI-installed plugins
+ * Load CLI/marketplace-installed plugins from ~/.claude/plugins/installed_plugins.json
+ *
+ * The install paths in this file may contain host-specific absolute paths
+ * (e.g. /Users/username/.claude/plugins/...) which won't exist inside a container.
+ * We detect the common `.claude/plugins/` segment and remap to the local home directory.
  */
 export async function loadCliInstalledPlugins(): Promise<PluginConfig[]> {
   const pluginsDir = join(homedir(), ".claude", "plugins");
+  const installedPluginsPath = join(pluginsDir, "installed_plugins.json");
 
-  if (!(await pathExists(pluginsDir))) {
-    return [];
+  const installedPlugins = await readJsonFile<InstalledPluginsFile>(installedPluginsPath);
+  if (!installedPlugins?.plugins) {
+    return scanCliPluginsDirectory(pluginsDir);
   }
 
-  try {
-    const entries = await readdir(pluginsDir, { withFileTypes: true });
-    const plugins: PluginConfig[] = [];
+  const plugins: PluginConfig[] = [];
+  const CLAUDE_PLUGINS_MARKER = "/.claude/plugins/";
+  const pluginsRoot = resolve(pluginsDir);
 
+  for (const entries of Object.values(installedPlugins.plugins)) {
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const pluginPath = join(pluginsDir, entry.name);
-        const manifestPath = join(pluginPath, ".claude-plugin", "plugin.json");
+      // Remap host-absolute paths to container-local paths
+      // e.g. /Users/arkaydeus/.claude/plugins/marketplaces/... → /home/node/.claude/plugins/marketplaces/...
+      const markerIdx = entry.installPath.indexOf(CLAUDE_PLUGINS_MARKER);
+      let resolvedPath: string;
 
-        if (await pathExists(manifestPath)) {
-          plugins.push({
-            type: "local",
-            path: pluginPath,
-          });
+      if (markerIdx !== -1) {
+        const relativePath = entry.installPath.substring(
+          markerIdx + CLAUDE_PLUGINS_MARKER.length
+        );
+        const remappedPath = resolve(pluginsDir, relativePath);
+        if (!isPathWithin(pluginsRoot, remappedPath)) {
+          console.warn(
+            `[plugin-config] Skipping plugin with unsafe install path: "${entry.installPath}"`
+          );
+          continue;
         }
+        resolvedPath = remappedPath;
+      } else {
+        resolvedPath = entry.installPath;
       }
-    }
 
-    return plugins;
-  } catch {
-    return [];
+      plugins.push({
+        type: "local",
+        path: resolvedPath,
+      });
+    }
   }
+
+  return plugins;
 }
 
 /**
