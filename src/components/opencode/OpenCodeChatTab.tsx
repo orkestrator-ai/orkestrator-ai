@@ -115,6 +115,7 @@ export function OpenCodeChatTab({
     setClient,
     models,
     setModels,
+    getSession,
     setSession,
     addMessage,
     setMessages,
@@ -998,70 +999,70 @@ export function OpenCodeChatTab({
     ],
   );
 
-  // Process queued prompts when the session becomes idle
-  useEffect(() => {
-    if (
-      connectionState === "connected" &&
-      client &&
-      session &&
-      !session.isLoading &&
-      queueLength > 0 &&
-      !isProcessingQueueRef.current
-    ) {
-      const nextMessage = removeFromQueue(sessionKey);
-      if (nextMessage) {
-        isProcessingQueueRef.current = true;
+  const processQueue = useCallback(() => {
+    if (isProcessingQueueRef.current) return;
+    if (connectionState !== "connected" || !client) return;
 
-        const sendPromise = handleSendRef.current?.(
-          nextMessage.text,
-          nextMessage.attachments,
-          {
-            model: nextMessage.model,
-            variant: nextMessage.variant,
-            mode: nextMessage.mode,
-          },
-        );
+    const latestSession = getSession(sessionKey);
+    if (!latestSession || latestSession.isLoading) return;
 
-        if (sendPromise) {
-          sendPromise
-            .catch((error) => {
-              console.error(
-                "[OpenCodeChatTab] Failed to send queued prompt:",
-                error,
-              );
-              const errorText = `Failed to send queued prompt: ${
-                error instanceof Error ? error.message : "Unknown error"
-              }`;
-              addMessage(sessionKey, {
-                id: `${ERROR_MESSAGE_PREFIX}${crypto.randomUUID()}`,
-                role: "assistant",
-                content: errorText,
-                parts: [{ type: "text", content: errorText }],
-                createdAt: new Date().toISOString(),
-              });
-              setSessionLoading(sessionKey, false);
-            })
-            .finally(() => {
-              setTimeout(() => {
-                isProcessingQueueRef.current = false;
-              }, 100);
-            });
-        } else {
-          isProcessingQueueRef.current = false;
-        }
-      }
+    const nextMessage = removeFromQueue(sessionKey);
+    if (!nextMessage) return;
+
+    isProcessingQueueRef.current = true;
+
+    const sendPromise = handleSendRef.current?.(
+      nextMessage.text,
+      nextMessage.attachments,
+      {
+        model: nextMessage.model,
+        variant: nextMessage.variant,
+        mode: nextMessage.mode,
+      },
+    );
+
+    if (!sendPromise) {
+      isProcessingQueueRef.current = false;
+      return;
     }
+
+    sendPromise
+      .catch((error) => {
+        console.error("[OpenCodeChatTab] Failed to send queued prompt:", error);
+        const errorText = `Failed to send queued prompt: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`;
+        addMessage(sessionKey, {
+          id: `${ERROR_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+          role: "assistant",
+          content: errorText,
+          parts: [{ type: "text", content: errorText }],
+          createdAt: new Date().toISOString(),
+        });
+        setSessionLoading(sessionKey, false);
+      })
+      .finally(() => {
+        isProcessingQueueRef.current = false;
+        queueMicrotask(() => {
+          processQueue();
+        });
+      });
   }, [
     connectionState,
     client,
-    session,
-    session?.isLoading,
-    queueLength,
-    removeFromQueue,
+    getSession,
     sessionKey,
+    removeFromQueue,
     addMessage,
     setSessionLoading,
   ]);
+
+  // Process queued prompts whenever there is queued work and the session can accept input.
+  useEffect(() => {
+    if (queueLength > 0) {
+      processQueue();
+    }
+  }, [queueLength, session?.isLoading, processQueue]);
 
   // Send initial prompt after session is ready (for code review, PR creation, etc.)
   useEffect(() => {

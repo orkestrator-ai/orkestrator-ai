@@ -618,8 +618,8 @@ export function OpenCodeComposeBar({
           </button>
         )}
 
-        {/* Send/Stop button - round grey style */}
-        {isLoading && !text.trim() && attachments.length === 0 ? (
+        {/* Stop button stays available while loading */}
+        {isLoading && (
           <button
             onClick={handleStop}
             disabled={disabled || !onStop}
@@ -632,26 +632,26 @@ export function OpenCodeComposeBar({
           >
             <Square className="w-4 h-4 fill-current" />
           </button>
-        ) : (
-          <button
-            onClick={handleSend}
-            disabled={
-              disabled ||
-              isSending ||
-              (attachments.length === 0 && !text.trim())
-            }
-            className={cn(
-              "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-              isLoading
-                ? "bg-primary/20 hover:bg-primary/30 text-primary"
-                : "bg-muted hover:bg-muted/80",
-              "disabled:opacity-50 disabled:cursor-not-allowed",
-            )}
-            title={isLoading ? "Add to queue" : "Send message"}
-          >
-            <ArrowUp className="w-4 h-4" />
-          </button>
         )}
+
+        <button
+          onClick={handleSend}
+          disabled={
+            disabled ||
+            isSending ||
+            (attachments.length === 0 && !text.trim())
+          }
+          className={cn(
+            "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+            isLoading
+              ? "bg-primary/20 hover:bg-primary/30 text-primary"
+              : "bg-muted hover:bg-muted/80",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+          )}
+          title={isLoading ? "Add to queue" : "Send message"}
+        >
+          <ArrowUp className="w-4 h-4" />
+        </button>
       </div>
       </div>
 
