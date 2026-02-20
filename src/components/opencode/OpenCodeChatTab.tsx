@@ -23,6 +23,7 @@ import {
   getPendingPermissions,
   getPendingQuestions,
   sendPrompt,
+  formatOpenCodeError,
   abortSession,
   subscribeToEvents,
   ERROR_MESSAGE_PREFIX,
@@ -539,15 +540,8 @@ export function OpenCodeChatTab({
         console.error("[OpenCodeChatTab] Initialization failed:", error);
         if (!mounted) return;
         setConnectionState("error");
-        // Extract error message - Tauri errors come as strings
-        let message = "Connection failed";
-        if (error instanceof Error) {
-          message = error.message;
-        } else if (typeof error === "string") {
-          message = error;
-        } else if (error && typeof error === "object" && "message" in error) {
-          message = String(error.message);
-        }
+        // Extract error message with structured details when available.
+        let message = formatOpenCodeError(error);
         // Add hint for port mapping issues
         if (message.includes("port") && message.includes("not mapped")) {
           message +=
@@ -750,42 +744,7 @@ export function OpenCodeChatTab({
             if (eventType === "session.error") {
               console.error("[OpenCodeChatTab] Session error:", props?.error);
               setSessionLoading(sessionTabId, false);
-              // Extract error message - convert object to string if needed
-              const rawError = props?.error as unknown;
-              let errorMsg: string;
-              if (typeof rawError === "string") {
-                errorMsg = rawError;
-              } else if (rawError && typeof rawError === "object") {
-                // Error might be nested: { name: "APIError", data: { errorType: "...", message: "..." } }
-                const errObj = rawError as Record<string, unknown>;
-                // Check for nested data object first (common API error structure)
-                const dataObj = errObj.data as
-                  | Record<string, unknown>
-                  | undefined;
-                if (dataObj && typeof dataObj === "object") {
-                  errorMsg = String(
-                    dataObj.errorType ||
-                      dataObj.error ||
-                      dataObj.message ||
-                      dataObj.detail ||
-                      errObj.detail ||
-                      errObj.message ||
-                      errObj.name ||
-                      JSON.stringify(rawError),
-                  );
-                } else {
-                  errorMsg = String(
-                    errObj.detail ||
-                      errObj.message ||
-                      errObj.error ||
-                      errObj.errorType ||
-                      errObj.name ||
-                      JSON.stringify(rawError),
-                  );
-                }
-              } else {
-                errorMsg = "An unknown error occurred";
-              }
+              const errorMsg = formatOpenCodeError(props?.error);
               // Add error as a message with special ID prefix so it persists
               // The setMessages function preserves messages with ERROR_MESSAGE_PREFIX
               const errorMessage = {
@@ -895,7 +854,7 @@ export function OpenCodeChatTab({
 
       const selectedModel = getSelectedModel(environmentId);
       const selectedVariant = getSelectedVariant(environmentId);
-      const selectedMode = getSelectedMode(environmentId);
+      const selectedMode = getSelectedMode(sessionKey);
 
       // Add user message optimistically
       const userMessage = {
@@ -917,15 +876,23 @@ export function OpenCodeChatTab({
       }));
 
       // Send prompt
-      const success = await sendPrompt(client, session.sessionId, text, {
+      const sendResult = await sendPrompt(client, session.sessionId, text, {
         model: selectedModel,
         variant: selectedVariant,
         mode: selectedMode,
         attachments: sdkAttachments.length > 0 ? sdkAttachments : undefined,
       });
 
-      if (!success) {
+      if (!sendResult.success) {
         console.error("[OpenCodeChatTab] Failed to send prompt");
+        const errorText = sendResult.error || "Failed to send prompt";
+        addMessage(sessionKey, {
+          id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          role: "assistant" as const,
+          content: errorText,
+          parts: [{ type: "text" as const, content: errorText }],
+          createdAt: new Date().toISOString(),
+        });
         setSessionLoading(sessionKey, false);
       }
       // Response will come via SSE events
@@ -1054,7 +1021,7 @@ export function OpenCodeChatTab({
           <p className="text-sm font-medium text-foreground">
             Connection Failed
           </p>
-          <p className="text-xs mt-1">
+          <p className="text-xs mt-1 whitespace-pre-wrap break-words text-left max-w-lg">
             {errorMessage || "Unable to connect to OpenCode server"}
           </p>
         </div>

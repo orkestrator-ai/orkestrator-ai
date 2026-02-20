@@ -3,6 +3,7 @@ import {
   getModelsWithDefaults,
   getSessionMessages,
   listSessions,
+  sendPrompt,
   type OpencodeClient,
 } from "./opencode-client";
 
@@ -181,5 +182,62 @@ describe("opencode-client getSessionMessages", () => {
     expect(part?.type).toBe("tool-invocation");
     expect(part?.toolOutput).toBe(JSON.stringify(outputPayload, null, 2));
     expect(part?.toolError).toBe(JSON.stringify(errorPayload, null, 2));
+  });
+});
+
+describe("opencode-client sendPrompt", () => {
+  test("maps build/plan mode to SDK agent", async () => {
+    let capturedRequest: Record<string, unknown> | undefined;
+
+    const client = {
+      session: {
+        promptAsync: async (request: Record<string, unknown>) => {
+          capturedRequest = request;
+          return { data: null };
+        },
+      },
+    } as unknown as OpencodeClient;
+
+    const result = await sendPrompt(client, "session-1", "Hello", {
+      model: "anthropic/claude-sonnet-4",
+      variant: "high",
+      mode: "plan",
+    });
+
+    expect(result.success).toBe(true);
+    expect(capturedRequest).toEqual(
+      expect.objectContaining({
+        sessionID: "session-1",
+        agent: "plan",
+        variant: "high",
+      }),
+    );
+  });
+
+  test("returns detailed error information on prompt failure", async () => {
+    const client = {
+      session: {
+        promptAsync: async () => {
+          throw {
+            name: "APIError",
+            data: {
+              errorType: "rate_limit_error",
+              message: "Too many requests. Please retry in 30 seconds.",
+              status: 429,
+              requestID: "req_123",
+            },
+          };
+        },
+      },
+    } as unknown as OpencodeClient;
+
+    const result = await sendPrompt(client, "session-1", "Hello");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("rate_limit_error");
+    expect(result.error).toContain("Too many requests");
+    expect(result.error).toContain("Status: 429");
+    expect(result.error).toContain("Request ID: req_123");
+    expect(result.error).toContain("Raw error:");
   });
 });
