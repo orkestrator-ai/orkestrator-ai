@@ -28,6 +28,7 @@ import {
   ERROR_MESSAGE_PREFIX,
   type PermissionRequest,
   type QuestionRequest,
+  type OpenCodeConversationMode,
 } from "@/lib/opencode-client";
 import { extractContextUsage } from "@/lib/context-usage";
 import {
@@ -95,9 +96,19 @@ export function OpenCodeChatTab({
   const isInitializedRef = useRef(false);
   // Track if initial prompt has been sent (to prevent duplicate sends)
   const initialPromptSentRef = useRef(false);
+  // Track when we are currently draining queued prompts
+  const isProcessingQueueRef = useRef(false);
   // Ref to store handleSend for use in effects without causing re-runs
   const handleSendRef = useRef<
-    ((text: string, attachments: OpenCodeAttachment[]) => Promise<void>) | null
+    ((
+      text: string,
+      attachments: OpenCodeAttachment[],
+      options?: {
+        model?: string;
+        variant?: string;
+        mode?: OpenCodeConversationMode;
+      },
+    ) => Promise<void>) | null
   >(null);
 
   const {
@@ -115,6 +126,9 @@ export function OpenCodeChatTab({
     getSelectedVariant,
     getSelectedMode,
     setContextUsage,
+    addToQueue,
+    removeFromQueue,
+    clearQueue,
     addPendingPermission,
     addPendingQuestion,
     removePendingPermission,
@@ -199,6 +213,14 @@ export function OpenCodeChatTab({
 
     return ids;
   }, [modelPreferences]);
+
+  // Queue length for this tab session - subscribe narrowly for fewer re-renders
+  const queueLength = useOpenCodeStore(
+    useCallback(
+      (state) => state.messageQueue.get(sessionKey)?.length ?? 0,
+      [sessionKey],
+    ),
+  );
 
   // Track OpenCode activity state based on session loading - update the environment icon in sidebar
   // For native mode, we use environmentId as the key (works for both local and containerized)
@@ -890,12 +912,21 @@ export function OpenCodeChatTab({
 
   // Handle sending a message
   const handleSend = useCallback(
-    async (text: string, attachments: OpenCodeAttachment[]) => {
+    async (
+      text: string,
+      attachments: OpenCodeAttachment[],
+      options?: {
+        model?: string;
+        variant?: string;
+        mode?: OpenCodeConversationMode;
+      },
+    ) => {
       if (!client || !session) return;
 
-      const selectedModel = getSelectedModel(environmentId);
-      const selectedVariant = getSelectedVariant(environmentId);
-      const selectedMode = getSelectedMode(environmentId);
+      const selectedModel = options?.model ?? getSelectedModel(environmentId);
+      const selectedVariant =
+        options?.variant ?? getSelectedVariant(environmentId);
+      const selectedMode = options?.mode ?? getSelectedMode(environmentId);
 
       // Add user message optimistically
       const userMessage = {
@@ -945,6 +976,92 @@ export function OpenCodeChatTab({
 
   // Keep handleSendRef updated with the latest handleSend
   handleSendRef.current = handleSend;
+
+  const handleQueue = useCallback(
+    (text: string, attachments: OpenCodeAttachment[]) => {
+      addToQueue(sessionKey, {
+        id: crypto.randomUUID(),
+        text,
+        attachments,
+        model: getSelectedModel(environmentId),
+        variant: getSelectedVariant(environmentId),
+        mode: getSelectedMode(environmentId),
+      });
+    },
+    [
+      addToQueue,
+      sessionKey,
+      getSelectedModel,
+      getSelectedVariant,
+      getSelectedMode,
+      environmentId,
+    ],
+  );
+
+  // Process queued prompts when the session becomes idle
+  useEffect(() => {
+    if (
+      connectionState === "connected" &&
+      client &&
+      session &&
+      !session.isLoading &&
+      queueLength > 0 &&
+      !isProcessingQueueRef.current
+    ) {
+      const nextMessage = removeFromQueue(sessionKey);
+      if (nextMessage) {
+        isProcessingQueueRef.current = true;
+
+        const sendPromise = handleSendRef.current?.(
+          nextMessage.text,
+          nextMessage.attachments,
+          {
+            model: nextMessage.model,
+            variant: nextMessage.variant,
+            mode: nextMessage.mode,
+          },
+        );
+
+        if (sendPromise) {
+          sendPromise
+            .catch((error) => {
+              console.error(
+                "[OpenCodeChatTab] Failed to send queued prompt:",
+                error,
+              );
+              const errorText = `Failed to send queued prompt: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`;
+              addMessage(sessionKey, {
+                id: `${ERROR_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+                role: "assistant",
+                content: errorText,
+                parts: [{ type: "text", content: errorText }],
+                createdAt: new Date().toISOString(),
+              });
+              setSessionLoading(sessionKey, false);
+            })
+            .finally(() => {
+              setTimeout(() => {
+                isProcessingQueueRef.current = false;
+              }, 100);
+            });
+        } else {
+          isProcessingQueueRef.current = false;
+        }
+      }
+    }
+  }, [
+    connectionState,
+    client,
+    session,
+    session?.isLoading,
+    queueLength,
+    removeFromQueue,
+    sessionKey,
+    addMessage,
+    setSessionLoading,
+  ]);
 
   // Send initial prompt after session is ready (for code review, PR creation, etc.)
   useEffect(() => {
@@ -1001,13 +1118,16 @@ export function OpenCodeChatTab({
   const handleStop = useCallback(async () => {
     if (!client || !session) return;
 
+    // Cancel queued prompts when stopping current execution
+    clearQueue(sessionKey);
+
     const success = await abortSession(client, session.sessionId);
     if (success) {
       setSessionLoading(sessionKey, false);
     } else {
       console.error("[OpenCodeChatTab] Failed to abort session");
     }
-  }, [client, session, sessionKey, setSessionLoading]);
+  }, [client, session, sessionKey, clearQueue, setSessionLoading]);
 
   const handleResumeSession = useCallback(
     async (sessionId: string) => {
@@ -1182,7 +1302,9 @@ export function OpenCodeChatTab({
         onSend={handleSend}
         disabled={!client || !session}
         isLoading={session?.isLoading ?? false}
+        queueLength={queueLength}
         onStop={handleStop}
+        onQueue={handleQueue}
       />
 
       {client && (

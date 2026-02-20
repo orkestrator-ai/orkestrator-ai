@@ -13,6 +13,7 @@ function resetOpenCodeStore() {
     selectedMode: new Map(),
     attachments: new Map(),
     draftText: new Map(),
+    messageQueue: new Map(),
     isComposing: new Map(),
     pendingQuestions: new Map(),
     pendingPermissions: new Map(),
@@ -149,6 +150,123 @@ describe("openCodeStore draft text", () => {
     expect(useOpenCodeStore.getState().getDraftText("env-env-123:tab-1")).toBe("");
     expect(useOpenCodeStore.getState().getDraftText("env-env-123:tab-2")).toBe("");
     expect(useOpenCodeStore.getState().getDraftText("env-env-999:tab-1")).toBe("keep");
+  });
+});
+
+describe("openCodeStore queue", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("queues prompts per tab and dequeues in FIFO order", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-123:tab-1";
+
+    store.addToQueue(sessionKey, {
+      id: "queue-1",
+      text: "First prompt",
+      attachments: [],
+      mode: "build",
+    });
+    store.addToQueue(sessionKey, {
+      id: "queue-2",
+      text: "Second prompt",
+      attachments: [],
+      mode: "plan",
+    });
+
+    expect(useOpenCodeStore.getState().getQueueLength(sessionKey)).toBe(2);
+
+    const first = store.removeFromQueue(sessionKey);
+    const second = store.removeFromQueue(sessionKey);
+    const third = store.removeFromQueue(sessionKey);
+
+    expect(first?.id).toBe("queue-1");
+    expect(second?.id).toBe("queue-2");
+    expect(third).toBeUndefined();
+    expect(useOpenCodeStore.getState().getQueueLength(sessionKey)).toBe(0);
+  });
+
+  test("clearEnvironment removes queued prompts for every tab session", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.addToQueue("env-env-123:tab-1", {
+      id: "queue-a",
+      text: "A",
+      attachments: [],
+      mode: "build",
+    });
+    store.addToQueue("env-env-123:tab-2", {
+      id: "queue-b",
+      text: "B",
+      attachments: [],
+      mode: "build",
+    });
+    store.addToQueue("env-env-999:tab-1", {
+      id: "queue-c",
+      text: "C",
+      attachments: [],
+      mode: "build",
+    });
+
+    store.clearEnvironment("env-123");
+
+    expect(useOpenCodeStore.getState().getQueueLength("env-env-123:tab-1")).toBe(0);
+    expect(useOpenCodeStore.getState().getQueueLength("env-env-123:tab-2")).toBe(0);
+    expect(useOpenCodeStore.getState().getQueueLength("env-env-999:tab-1")).toBe(1);
+  });
+
+  test("removeQueueItem removes only the targeted queued prompt", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-123:tab-1";
+
+    store.addToQueue(sessionKey, {
+      id: "queue-1",
+      text: "First",
+      attachments: [],
+      mode: "build",
+    });
+    store.addToQueue(sessionKey, {
+      id: "queue-2",
+      text: "Second",
+      attachments: [],
+      mode: "build",
+    });
+
+    store.removeQueueItem(sessionKey, "queue-1");
+
+    expect(useOpenCodeStore.getState().getQueueLength(sessionKey)).toBe(1);
+    expect(store.removeFromQueue(sessionKey)?.id).toBe("queue-2");
+  });
+
+  test("moveQueueItem reorders queued prompts", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-123:tab-1";
+
+    store.addToQueue(sessionKey, {
+      id: "queue-1",
+      text: "First",
+      attachments: [],
+      mode: "build",
+    });
+    store.addToQueue(sessionKey, {
+      id: "queue-2",
+      text: "Second",
+      attachments: [],
+      mode: "build",
+    });
+    store.addToQueue(sessionKey, {
+      id: "queue-3",
+      text: "Third",
+      attachments: [],
+      mode: "build",
+    });
+
+    store.moveQueueItem(sessionKey, 2, 0);
+
+    expect(store.removeFromQueue(sessionKey)?.id).toBe("queue-3");
+    expect(store.removeFromQueue(sessionKey)?.id).toBe("queue-1");
+    expect(store.removeFromQueue(sessionKey)?.id).toBe("queue-2");
   });
 });
 

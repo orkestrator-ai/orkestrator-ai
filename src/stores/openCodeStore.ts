@@ -54,6 +54,16 @@ export interface OpenCodeAttachment {
   name: string;
 }
 
+/** Queued message for sending when session becomes idle */
+export interface OpenCodeQueuedMessage {
+  id: string;
+  text: string;
+  attachments: OpenCodeAttachment[];
+  model?: string;
+  variant?: string;
+  mode: OpenCodeConversationMode;
+}
+
 interface OpenCodeState {
   // State per environment (keyed by environmentId)
   /** Server status per environment */
@@ -74,6 +84,8 @@ interface OpenCodeState {
   attachments: Map<string, OpenCodeAttachment[]>;
   /** Draft text per tab session key (format: env-{environmentId}:{tabId}) */
   draftText: Map<string, string>;
+  /** Queued messages per tab session key */
+  messageQueue: Map<string, OpenCodeQueuedMessage[]>;
   /** Whether the compose bar is loading per environment */
   isComposing: Map<string, boolean>;
   /** Pending question requests (keyed by requestId) */
@@ -120,6 +132,18 @@ interface OpenCodeState {
   setDraftText: (sessionKey: string, text: string) => void;
   /** Set composing state */
   setComposing: (environmentId: string, isComposing: boolean) => void;
+  /** Add message to queue for this tab session */
+  addToQueue: (sessionKey: string, message: OpenCodeQueuedMessage) => void;
+  /** Remove and return first queued message for this tab session */
+  removeFromQueue: (sessionKey: string) => OpenCodeQueuedMessage | undefined;
+  /** Clear queued messages for this tab session */
+  clearQueue: (sessionKey: string) => void;
+  /** Remove one queued message by ID for this tab session */
+  removeQueueItem: (sessionKey: string, messageId: string) => void;
+  /** Reorder one queued message within this tab session */
+  moveQueueItem: (sessionKey: string, fromIndex: number, toIndex: number) => void;
+  /** Get number of queued messages for this tab session */
+  getQueueLength: (sessionKey: string) => number;
   /** Clear all state for an environment (cleanup) */
   clearEnvironment: (environmentId: string) => void;
   /** Add a pending question request */
@@ -181,6 +205,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   selectedMode: new Map(),
   attachments: new Map(),
   draftText: new Map(),
+  messageQueue: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
   pendingPermissions: new Map(),
@@ -380,6 +405,76 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       return { isComposing: newMap };
     }),
 
+  addToQueue: (sessionKey, message) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) || [];
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, [...current, message]);
+      return { messageQueue: newMap };
+    }),
+
+  removeFromQueue: (sessionKey) => {
+    const state = get();
+    const current = state.messageQueue.get(sessionKey) || [];
+    if (current.length === 0) return undefined;
+
+    const [first, ...rest] = current;
+    const newMap = new Map(state.messageQueue);
+    newMap.set(sessionKey, rest);
+    set({ messageQueue: newMap });
+    return first;
+  },
+
+  clearQueue: (sessionKey) =>
+    set((state) => {
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, []);
+      return { messageQueue: newMap };
+    }),
+
+  removeQueueItem: (sessionKey, messageId) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) || [];
+      if (current.length === 0) return state;
+
+      const next = current.filter((message) => message.id !== messageId);
+      if (next.length === current.length) return state;
+
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, next);
+      return { messageQueue: newMap };
+    }),
+
+  moveQueueItem: (sessionKey, fromIndex, toIndex) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) || [];
+      if (
+        current.length < 2 ||
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex >= current.length
+      ) {
+        return state;
+      }
+
+      const reordered = [...current];
+      const [item] = reordered.splice(fromIndex, 1);
+      if (!item) return state;
+
+      reordered.splice(toIndex, 0, item);
+
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, reordered);
+      return { messageQueue: newMap };
+    }),
+
+  getQueueLength: (sessionKey) => {
+    const queue = get().messageQueue.get(sessionKey);
+    return queue?.length || 0;
+  },
+
   clearEnvironment: (environmentId) => {
     // First close the event subscription if it exists
     const subscription = get().eventSubscriptions.get(environmentId);
@@ -404,6 +499,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newSelectedMode = new Map(state.selectedMode);
       const newAttachments = new Map(state.attachments);
       const newDraftText = new Map(state.draftText);
+      const newMessageQueue = new Map(state.messageQueue);
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
       const newPendingPermissions = new Map(state.pendingPermissions);
@@ -432,6 +528,11 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       for (const key of newDraftText.keys()) {
         if (key.startsWith(sessionKeyPrefix)) {
           newDraftText.delete(key);
+        }
+      }
+      for (const key of newMessageQueue.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          newMessageQueue.delete(key);
         }
       }
       for (const key of newContextUsage.keys()) {
@@ -463,6 +564,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         selectedMode: newSelectedMode,
         attachments: newAttachments,
         draftText: newDraftText,
+        messageQueue: newMessageQueue,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
         pendingPermissions: newPendingPermissions,
