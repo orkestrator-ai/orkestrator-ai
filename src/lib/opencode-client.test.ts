@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  formatOpenCodeError,
   getModelsWithDefaults,
   getSessionMessages,
   listSessions,
@@ -239,5 +240,35 @@ describe("opencode-client sendPrompt", () => {
     expect(result.error).toContain("Status: 429");
     expect(result.error).toContain("Request ID: req_123");
     expect(result.error).toContain("Raw error:");
+  });
+});
+
+describe("opencode-client formatOpenCodeError", () => {
+  test("redacts sensitive values from raw error details", () => {
+    const errorText = formatOpenCodeError({
+      name: "APIError",
+      data: {
+        message: "Unauthorized",
+        status: 401,
+        requestID: "req_redact_1",
+        authorization: "Bearer top-secret-token",
+        apiKey: "sk-secret-key",
+        nested: {
+          refresh_token: "refresh-secret",
+          safeField: "safe-value",
+        },
+      },
+    });
+
+    expect(errorText).toContain("Unauthorized");
+    expect(errorText).toContain("Status: 401");
+    expect(errorText).toContain("Request ID: req_redact_1");
+    expect(errorText).toContain('"authorization": "[REDACTED]"');
+    expect(errorText).toContain('"apiKey": "[REDACTED]"');
+    expect(errorText).toContain('"refresh_token": "[REDACTED]"');
+    expect(errorText).toContain('"safeField": "safe-value"');
+    expect(errorText).not.toContain("top-secret-token");
+    expect(errorText).not.toContain("sk-secret-key");
+    expect(errorText).not.toContain("refresh-secret");
   });
 });

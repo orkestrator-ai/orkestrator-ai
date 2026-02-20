@@ -238,9 +238,73 @@ function toDisplayString(value: unknown): string | undefined {
   return undefined;
 }
 
+const REDACTED_VALUE = "[REDACTED]";
+const SENSITIVE_KEY_FRAGMENTS = [
+  "authorization",
+  "apikey",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "cookie",
+  "credential",
+  "privatekey",
+];
+
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = normalizeKey(key);
+  if (!normalized) return false;
+  return SENSITIVE_KEY_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
+
+function redactSensitiveText(text: string): string {
+  return text
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+\-/=]+/gi, `$1${REDACTED_VALUE}`)
+    .replace(/(Basic\s+)[A-Za-z0-9+/=]+/gi, `$1${REDACTED_VALUE}`);
+}
+
+function redactSensitiveData(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveData(item, seen));
+  }
+
+  if (isRecord(value)) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+
+    seen.add(value);
+
+    const redacted: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (isSensitiveKey(key)) {
+        redacted[key] = REDACTED_VALUE;
+        continue;
+      }
+
+      redacted[key] = redactSensitiveData(child, seen);
+    }
+
+    return redacted;
+  }
+
+  if (typeof value === "string") {
+    return redactSensitiveText(value);
+  }
+
+  return value;
+}
+
 function safeJSONStringify(value: unknown, maxLength = 4000): string | undefined {
   try {
-    const json = JSON.stringify(value, null, 2);
+    const sanitized = redactSensitiveData(value);
+    const json = JSON.stringify(sanitized, null, 2);
     if (!json || json === "{}") {
       return undefined;
     }
@@ -258,7 +322,7 @@ function safeJSONStringify(value: unknown, maxLength = 4000): string | undefined
 /** Format OpenCode/SDK errors into a user-readable detailed message. */
 export function formatOpenCodeError(error: unknown): string {
   if (typeof error === "string") {
-    return error;
+    return redactSensitiveText(error);
   }
 
   const fallbackFromError = error instanceof Error
@@ -290,6 +354,7 @@ export function formatOpenCodeError(error: unknown): string {
   if (summary && errorType && !summary.toLowerCase().includes(errorType.toLowerCase())) {
     headline = `${errorType}: ${summary}`;
   }
+  headline = redactSensitiveText(headline);
 
   const detailLines: string[] = [];
   const code = toDisplayString(data?.code ?? error.code);
