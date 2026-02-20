@@ -412,10 +412,26 @@ export async function getSessionMessages(
             // According to SDK types, output is in ToolStateCompleted when status === "completed"
             // But let's also try direct access as fallback
             let toolOutput: string | undefined;
-            if (p.state?.output && typeof p.state.output === "string") {
+            if (typeof p.state?.output === "string") {
               toolOutput = p.state.output;
+            } else if (p.state?.output !== undefined) {
+              try {
+                toolOutput = JSON.stringify(p.state.output, null, 2);
+              } catch {
+                toolOutput = String(p.state.output);
+              }
             }
-            const toolError = p.state?.error as string | undefined;
+
+            let toolError: string | undefined;
+            if (typeof p.state?.error === "string") {
+              toolError = p.state.error;
+            } else if (p.state?.error !== undefined) {
+              try {
+                toolError = JSON.stringify(p.state.error, null, 2);
+              } catch {
+                toolError = String(p.state.error);
+              }
+            }
 
             // Extract diff metadata for edit tools
             // The metadata may contain file info and diff stats

@@ -17,6 +17,9 @@ import {
   AlertCircle,
   Pencil,
   ExternalLink as ExternalLinkIcon,
+  ListTodo,
+  Square,
+  CheckSquare,
 } from "lucide-react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -36,6 +39,7 @@ import {
   type OpenCodeMessagePart,
   type ToolDiffMetadata,
 } from "@/lib/opencode-client";
+import { getTodoItems } from "@/lib/todo-tool";
 
 /** Custom link component that opens URLs in the system browser */
 function ExternalLink({
@@ -560,6 +564,144 @@ function EditToolPart({
   );
 }
 
+/** Render a TodoWrite tool invocation with completion status */
+function TodoToolPart({
+  toolName,
+  toolState,
+  toolArgs,
+  toolOutput,
+  toolError,
+}: {
+  toolName?: string;
+  toolState?: "success" | "failure" | "pending";
+  toolArgs?: Record<string, unknown>;
+  toolOutput?: string;
+  toolError?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const todos = getTodoItems(toolArgs, toolOutput);
+  const completedCount = todos.filter((t) => t.status === "completed").length;
+  const cancelledCount = todos.filter((t) => t.status === "cancelled").length;
+  const totalCount = todos.length;
+
+  const hasExpandableContent =
+    totalCount > 0 || Boolean(toolOutput) || Boolean(toolError);
+
+  const stateColors = {
+    success: "text-green-600",
+    failure: "text-red-600",
+    pending: "text-yellow-600 animate-pulse",
+  };
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-1.5">
+      <CollapsibleTrigger
+        className={cn(
+          "flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors",
+          hasExpandableContent && "cursor-pointer",
+          !hasExpandableContent && "cursor-default",
+        )}
+        disabled={!hasExpandableContent}
+      >
+        <ChevronRight
+          className={cn(
+            "w-3 h-3 transition-transform shrink-0",
+            isOpen && "rotate-90",
+            !hasExpandableContent && "opacity-0",
+          )}
+        />
+        <ListTodo className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium shrink-0">{toolName || "TodoWrite"}</span>
+        {totalCount > 0 && (
+          <span className="text-muted-foreground/80 flex-1 text-left">
+            {completedCount}/{totalCount} complete
+            {cancelledCount > 0 ? ` (${cancelledCount} cancelled)` : ""}
+          </span>
+        )}
+        {toolState && (
+          <span className={cn("ml-auto shrink-0", stateColors[toolState] || "")}>
+            {toolState === "pending" ? "running..." : toolState}
+          </span>
+        )}
+      </CollapsibleTrigger>
+
+      {hasExpandableContent && (
+        <CollapsibleContent className="mt-1">
+          <div className="rounded-md bg-muted/30 border border-border/50 overflow-hidden">
+            {totalCount > 0 && (
+              <div className="px-3 py-2 space-y-1.5">
+                {todos.map((todo, i) => (
+                  <div
+                    key={`todo-${i}-${todo.content.slice(0, 30)}`}
+                    className={cn(
+                      "flex items-start gap-2 text-xs",
+                      todo.status === "completed" && "text-muted-foreground/60",
+                    )}
+                  >
+                    {todo.status === "completed" ? (
+                      <CheckSquare className="w-3.5 h-3.5 shrink-0 mt-0.5 text-green-500" />
+                    ) : (
+                      <Square
+                        className={cn(
+                          "w-3.5 h-3.5 shrink-0 mt-0.5",
+                          todo.status === "in_progress"
+                            ? "text-yellow-500"
+                            : todo.status === "cancelled"
+                              ? "text-red-500"
+                            : "text-muted-foreground/50",
+                        )}
+                      />
+                    )}
+                    <span
+                      className={cn(
+                        "flex-1",
+                        todo.status === "completed" && "line-through",
+                        todo.status === "cancelled" && "line-through text-muted-foreground/70",
+                        todo.status === "in_progress" &&
+                          "text-foreground font-medium",
+                      )}
+                    >
+                      {todo.content}
+                    </span>
+                    {todo.status === "in_progress" && (
+                      <span className="text-yellow-500 text-[10px] shrink-0">
+                        in progress
+                      </span>
+                    )}
+                    {todo.status === "cancelled" && (
+                      <span className="text-red-500 text-[10px] shrink-0">cancelled</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {totalCount === 0 && toolOutput && (
+              <div className="px-3 py-2 max-h-64 overflow-auto">
+                <pre className="text-xs font-mono text-foreground/80 whitespace-pre-wrap break-all">
+                  {toolOutput}
+                </pre>
+              </div>
+            )}
+
+            {toolError && (
+              <div className="px-3 py-2 bg-destructive/10">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
+                  <pre className="text-xs font-mono text-destructive whitespace-pre-wrap break-all">
+                    {toolError}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      )}
+    </Collapsible>
+  );
+}
+
 /** Render a file attachment part */
 function ImagePreviewOverlay({
   imageSrc,
@@ -785,6 +927,12 @@ function isEditTool(toolName?: string): boolean {
   return name === "edit" || name === "write";
 }
 
+/** Check if a tool name is a TodoWrite tool */
+function isTodoTool(toolName?: string): boolean {
+  if (!toolName) return false;
+  return toolName.toLowerCase() === "todowrite";
+}
+
 /** Render a single message part based on its type */
 function MessagePart({ part }: { part: OpenCodeMessagePart }) {
   switch (part.type) {
@@ -805,6 +953,18 @@ function MessagePart({ part }: { part: OpenCodeMessagePart }) {
             toolOutput={part.toolOutput}
             toolError={part.toolError}
             toolDiff={part.toolDiff}
+          />
+        );
+      }
+      // Use specialized TodoToolPart for TodoWrite tools
+      if (isTodoTool(part.toolName)) {
+        return (
+          <TodoToolPart
+            toolName={part.toolName}
+            toolState={part.toolState}
+            toolArgs={part.toolArgs}
+            toolOutput={part.toolOutput}
+            toolError={part.toolError}
           />
         );
       }
