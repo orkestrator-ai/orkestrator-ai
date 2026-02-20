@@ -13,6 +13,7 @@ import {
   FileText,
   Image as ImageIcon,
   ChevronDown,
+  ChevronUp,
   ArrowUp,
   Square,
 } from "lucide-react";
@@ -27,6 +28,14 @@ import {
   DropdownMenuSubContent,
   DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
@@ -49,8 +58,12 @@ interface OpenCodeComposeBarProps {
   disabled?: boolean;
   /** Whether OpenCode is currently processing a query */
   isLoading?: boolean;
+  /** Number of prompts waiting in queue */
+  queueLength?: number;
   /** Callback when stop button is clicked */
   onStop?: () => void;
+  /** Callback when prompt should be queued instead of sent */
+  onQueue?: (text: string, attachments: OpenCodeAttachment[]) => void;
 }
 
 const MAX_LINES = 12;
@@ -78,10 +91,13 @@ export function OpenCodeComposeBar({
   onSend,
   disabled = false,
   isLoading = false,
+  queueLength = 0,
   onStop,
+  onQueue,
 }: OpenCodeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+  const [queueDialogOpen, setQueueDialogOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +114,8 @@ export function OpenCodeComposeBar({
     setSelectedVariant,
     getSelectedMode,
     setSelectedMode,
+    removeQueueItem,
+    moveQueueItem,
   } = useOpenCodeStore();
 
   // Use session key so tab-scoped state (draft, attachments, mode) is isolated per tab
@@ -105,6 +123,10 @@ export function OpenCodeComposeBar({
 
   const contextUsage = useOpenCodeStore(
     useCallback((state) => state.contextUsage.get(sessionKey), [sessionKey])
+  );
+
+  const queuedMessages = useOpenCodeStore(
+    useCallback((state) => state.messageQueue.get(sessionKey) || [], [sessionKey])
   );
 
   const attachments = getAttachments(sessionKey);
@@ -273,12 +295,16 @@ export function OpenCodeComposeBar({
   };
 
   const handleSend = async () => {
-    if (isSending || disabled || isLoading) return;
+    if (isSending || disabled) return;
     if (attachments.length === 0 && !text.trim()) return;
 
     setIsSending(true);
     try {
-      onSend(text.trim(), attachments);
+      if (isLoading && onQueue) {
+        onQueue(text.trim(), attachments);
+      } else {
+        onSend(text.trim(), attachments);
+      }
       setDraftText(sessionKey, "");
       clearAttachments(sessionKey);
     } finally {
@@ -294,6 +320,14 @@ export function OpenCodeComposeBar({
 
   const handleRemoveAttachment = (id: string) => {
     removeAttachment(sessionKey, id);
+  };
+
+  const handleRemoveQueuedMessage = (messageId: string) => {
+    removeQueueItem(sessionKey, messageId);
+  };
+
+  const handleMoveQueuedMessage = (fromIndex: number, toIndex: number) => {
+    moveQueueItem(sessionKey, fromIndex, toIndex);
   };
 
   const handleModeChange = (mode: string) => {
@@ -359,11 +393,17 @@ export function OpenCodeComposeBar({
     return favorites;
   }, [models, favoriteModelIds]);
 
+  const modelNameById = useMemo(
+    () => new Map(models.map((model) => [model.id, model.name])),
+    [models]
+  );
+
   // Capitalize mode for display
   const modeDisplayName = selectedMode === "plan" ? "Planning" : "Build";
 
   return (
-    <div className="border-t border-border bg-background p-3">
+    <>
+      <div className="border-t border-border bg-background p-3">
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -573,8 +613,20 @@ export function OpenCodeComposeBar({
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Send/Stop button - round grey style */}
-        {isLoading ? (
+        {/* Queue indicator */}
+        {queueLength > 0 && (
+          <button
+            type="button"
+            onClick={() => setQueueDialogOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50 hover:bg-muted transition-colors"
+            title="View queued prompts"
+          >
+            <span>+{queueLength} queued</span>
+          </button>
+        )}
+
+        {/* Stop button stays available while loading */}
+        {isLoading && (
           <button
             onClick={handleStop}
             disabled={disabled || !onStop}
@@ -587,26 +639,116 @@ export function OpenCodeComposeBar({
           >
             <Square className="w-4 h-4 fill-current" />
           </button>
-        ) : (
-          <button
-            onClick={handleSend}
-            disabled={
-              disabled ||
-              isSending ||
-              isLoading ||
-              (attachments.length === 0 && !text.trim())
-            }
-            className={cn(
-              "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-              "bg-muted hover:bg-muted/80",
-              "disabled:opacity-50 disabled:cursor-not-allowed",
-            )}
-            title="Send message"
-          >
-            <ArrowUp className="w-4 h-4" />
-          </button>
         )}
+
+        <button
+          onClick={handleSend}
+          disabled={
+            disabled ||
+            isSending ||
+            (attachments.length === 0 && !text.trim())
+          }
+          className={cn(
+            "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+            isLoading
+              ? "bg-primary/20 hover:bg-primary/30 text-primary"
+              : "bg-muted hover:bg-muted/80",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
+          )}
+          title={isLoading ? "Add to queue" : "Send message"}
+        >
+          <ArrowUp className="w-4 h-4" />
+        </button>
       </div>
-    </div>
+      </div>
+
+      <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Queued Prompts</DialogTitle>
+            <DialogDescription>
+              Review pending prompts, remove items, or reorder what sends next.
+            </DialogDescription>
+          </DialogHeader>
+
+          {queuedMessages.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Queue is empty.
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[380px] pr-3">
+              <div className="space-y-2">
+                {queuedMessages.map((message, index) => {
+                  const modelLabel = message.model
+                    ? modelNameById.get(message.model) || message.model
+                    : "Default model";
+                  const modeLabel = message.mode === "plan" ? "Planning" : "Build";
+                  const attachmentCount = message.attachments.length;
+
+                  return (
+                    <div
+                      key={message.id}
+                      className="rounded-md border border-border bg-muted/20 p-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 shrink-0 text-xs font-medium text-muted-foreground">
+                          #{index + 1}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm whitespace-pre-wrap break-words line-clamp-4">
+                            {message.text}
+                          </p>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span>{modeLabel}</span>
+                            <span>{modelLabel}</span>
+                            {message.variant && <span>{message.variant}</span>}
+                            {attachmentCount > 0 && (
+                              <span>
+                                {attachmentCount} attachment
+                                {attachmentCount === 1 ? "" : "s"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 flex-col gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveQueuedMessage(index, index - 1)}
+                            disabled={index === 0}
+                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Move up"
+                          >
+                            <ChevronUp className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveQueuedMessage(index, index + 1)}
+                            disabled={index === queuedMessages.length - 1}
+                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Move down"
+                          >
+                            <ChevronDown className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveQueuedMessage(message.id)}
+                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                            title="Remove queued prompt"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
