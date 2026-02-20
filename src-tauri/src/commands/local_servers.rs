@@ -13,9 +13,22 @@ use crate::local::{
 use crate::storage::get_storage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tauri::Manager;
 use tracing::{debug, info, warn};
+
+static CLAUDE_START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
+
+fn get_claude_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let locks = CLAUDE_START_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut map = locks.lock().unwrap();
+    map.entry(environment_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
 
 /// Result type for local server start commands
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +176,11 @@ pub async fn start_local_claude_server_cmd(
 ) -> Result<LocalServerResult, String> {
     debug!(environment_id = %environment_id, "Starting local Claude-bridge server");
 
+    // Serialize starts per environment to avoid races when React mounts/remounts tabs
+    // quickly and triggers overlapping start requests.
+    let start_lock = get_claude_start_lock(&environment_id);
+    let _guard = start_lock.lock().await;
+
     let storage = get_storage().map_err(|e| e.to_string())?;
     let environment = storage
         .get_environment(&environment_id)
@@ -190,18 +208,65 @@ pub async fn start_local_claude_server_cmd(
 
     let manager = get_process_manager();
 
-    if let Some(pid) = environment.claude_bridge_pid {
-        if is_process_alive(pid) {
-            manager
-                .recover_from_pid(&environment_id, ProcessType::ClaudeBridge, pid)
-                .await;
-        }
-    }
-
     // Get the allocated port
     let mut port = environment
         .local_claude_port
         .ok_or("Local environment missing Claude-bridge port")?;
+
+    if let Some(pid) = environment.claude_bridge_pid {
+        if is_process_alive(pid) {
+            // Only recover a stored PID if it is actually responding as Claude-bridge
+            // on the expected port. This avoids false positives when PID was reused by
+            // an unrelated process.
+            let stored_status =
+                get_local_claude_status(&environment_id, Some(port), Some(pid)).await;
+            if stored_status.running {
+                manager
+                    .recover_from_pid(&environment_id, ProcessType::ClaudeBridge, pid)
+                    .await;
+                debug!(
+                    environment_id = %environment_id,
+                    port = port,
+                    pid = pid,
+                    "Reusing existing healthy Claude-bridge server"
+                );
+                return Ok(LocalServerResult {
+                    port,
+                    pid,
+                    was_running: true,
+                });
+            }
+
+            warn!(
+                environment_id = %environment_id,
+                pid = pid,
+                port = port,
+                "Stored Claude-bridge PID is alive but unhealthy; clearing stale PID"
+            );
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "claudeBridgePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        } else {
+            debug!(
+                environment_id = %environment_id,
+                pid = pid,
+                "Stored Claude-bridge PID is no longer alive; clearing"
+            );
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "claudeBridgePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        }
+    }
 
     if !is_port_available(port) {
         warn!(
@@ -210,19 +275,22 @@ pub async fn start_local_claude_server_cmd(
             "Claude-bridge port already in use; attempting to recover"
         );
 
-        if let Some(pid) = environment.claude_bridge_pid {
-            if is_process_alive(pid) {
-                if let Err(err) = manager
-                    .kill(&environment_id, ProcessType::ClaudeBridge)
-                    .await
-                {
-                    warn!(
-                        environment_id = %environment_id,
-                        port = port,
-                        error = %err,
-                        "Failed to kill existing Claude-bridge process"
-                    );
-                }
+        // If we are currently tracking a Claude-bridge process for this environment,
+        // stop it before trying to recover/reassign the port.
+        if manager
+            .is_running(&environment_id, ProcessType::ClaudeBridge)
+            .await
+        {
+            if let Err(err) = manager
+                .kill(&environment_id, ProcessType::ClaudeBridge)
+                .await
+            {
+                warn!(
+                    environment_id = %environment_id,
+                    port = port,
+                    error = %err,
+                    "Failed to kill existing Claude-bridge process"
+                );
             }
         }
 
@@ -271,13 +339,16 @@ pub async fn start_local_claude_server_cmd(
     )
     .await?;
 
-    // Update the PID in storage if it changed
-    if !result.was_running {
+    // Persist any changed runtime metadata (PID and possibly reassigned port)
+    if environment.claude_bridge_pid != Some(result.pid)
+        || environment.local_claude_port != Some(result.port)
+    {
         storage
             .update_environment(
                 &environment_id,
                 json!({
-                    "claudeBridgePid": result.pid
+                    "claudeBridgePid": result.pid,
+                    "localClaudePort": result.port
                 }),
             )
             .map_err(|e| format!("Failed to update environment: {}", e))?;
