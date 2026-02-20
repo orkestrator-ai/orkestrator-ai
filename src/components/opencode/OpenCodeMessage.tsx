@@ -39,6 +39,7 @@ import {
   type OpenCodeMessagePart,
   type ToolDiffMetadata,
 } from "@/lib/opencode-client";
+import { getTodoItems } from "@/lib/todo-tool";
 
 /** Custom link component that opens URLs in the system browser */
 function ExternalLink({
@@ -563,43 +564,6 @@ function EditToolPart({
   );
 }
 
-interface TodoItem {
-  content: string;
-  status: "pending" | "in_progress" | "completed";
-}
-
-function isTodoItem(item: unknown): item is TodoItem {
-  if (typeof item !== "object" || item === null) return false;
-  const obj = item as Record<string, unknown>;
-  return (
-    typeof obj.content === "string" &&
-    typeof obj.status === "string" &&
-    ["pending", "in_progress", "completed"].includes(obj.status)
-  );
-}
-
-function parseTodosFromOutput(toolOutput?: string): unknown[] {
-  if (!toolOutput) return [];
-  try {
-    const parsed = JSON.parse(toolOutput) as unknown;
-
-    if (Array.isArray(parsed)) {
-      return parsed;
-    }
-
-    if (typeof parsed === "object" && parsed !== null) {
-      const parsedObj = parsed as Record<string, unknown>;
-      if (Array.isArray(parsedObj.todos)) {
-        return parsedObj.todos;
-      }
-    }
-
-    return [];
-  } catch {
-    return [];
-  }
-}
-
 /** Render a TodoWrite tool invocation with completion status */
 function TodoToolPart({
   toolName,
@@ -616,11 +580,9 @@ function TodoToolPart({
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const todosFromArgs = Array.isArray(toolArgs?.todos) ? toolArgs.todos : [];
-  const todosSource =
-    todosFromArgs.length > 0 ? todosFromArgs : parseTodosFromOutput(toolOutput);
-  const todos = todosSource.filter(isTodoItem);
+  const todos = getTodoItems(toolArgs, toolOutput);
   const completedCount = todos.filter((t) => t.status === "completed").length;
+  const cancelledCount = todos.filter((t) => t.status === "cancelled").length;
   const totalCount = todos.length;
 
   const hasExpandableContent =
@@ -654,6 +616,7 @@ function TodoToolPart({
         {totalCount > 0 && (
           <span className="text-muted-foreground/80 flex-1 text-left">
             {completedCount}/{totalCount} complete
+            {cancelledCount > 0 ? ` (${cancelledCount} cancelled)` : ""}
           </span>
         )}
         {toolState && (
@@ -684,6 +647,8 @@ function TodoToolPart({
                           "w-3.5 h-3.5 shrink-0 mt-0.5",
                           todo.status === "in_progress"
                             ? "text-yellow-500"
+                            : todo.status === "cancelled"
+                              ? "text-red-500"
                             : "text-muted-foreground/50",
                         )}
                       />
@@ -692,6 +657,7 @@ function TodoToolPart({
                       className={cn(
                         "flex-1",
                         todo.status === "completed" && "line-through",
+                        todo.status === "cancelled" && "line-through text-muted-foreground/70",
                         todo.status === "in_progress" &&
                           "text-foreground font-medium",
                       )}
@@ -702,6 +668,9 @@ function TodoToolPart({
                       <span className="text-yellow-500 text-[10px] shrink-0">
                         in progress
                       </span>
+                    )}
+                    {todo.status === "cancelled" && (
+                      <span className="text-red-500 text-[10px] shrink-0">cancelled</span>
                     )}
                   </div>
                 ))}

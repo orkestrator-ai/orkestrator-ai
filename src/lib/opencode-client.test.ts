@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   getModelsWithDefaults,
+  getSessionMessages,
   listSessions,
   type OpencodeClient,
 } from "./opencode-client";
@@ -125,5 +126,60 @@ describe("opencode-client getModelsWithDefaults", () => {
       modelId: "openai/gpt-5",
       variant: "medium",
     });
+  });
+});
+
+describe("opencode-client getSessionMessages", () => {
+  test("serializes non-string tool output and error values", async () => {
+    const createdMs = 1739232000000;
+    const outputPayload = {
+      todos: [{ content: "Handle edge case", status: "cancelled" }],
+    };
+    const errorPayload = {
+      reason: "tool failed",
+      retryable: false,
+    };
+
+    const client = {
+      session: {
+        messages: async () => ({
+          data: [
+            {
+              info: {
+                id: "msg-1",
+                role: "assistant",
+                time: {
+                  created: createdMs,
+                },
+              },
+              parts: [
+                {
+                  type: "tool",
+                  tool: "TodoWrite",
+                  state: {
+                    status: "completed",
+                    input: {
+                      todos: [{ content: "Task", status: "pending" }],
+                    },
+                    output: outputPayload,
+                    error: errorPayload,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    } as unknown as OpencodeClient;
+
+    const messages = await getSessionMessages(client, "session-1");
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe("msg-1");
+
+    const part = messages[0]?.parts[0];
+    expect(part?.type).toBe("tool-invocation");
+    expect(part?.toolOutput).toBe(JSON.stringify(outputPayload, null, 2));
+    expect(part?.toolError).toBe(JSON.stringify(errorPayload, null, 2));
   });
 });
