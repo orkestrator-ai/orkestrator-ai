@@ -118,25 +118,22 @@ export function OpenCodeComposeBar({
     moveQueueItem,
   } = useOpenCodeStore();
 
-  // Use session key so attachments are scoped per tab (not shared across tabs)
-  const attachmentSessionKey = createOpenCodeSessionKey(environmentId, tabId);
+  // Use session key so tab-scoped state (draft, attachments, mode) is isolated per tab
+  const sessionKey = createOpenCodeSessionKey(environmentId, tabId);
 
   const contextUsage = useOpenCodeStore(
-    useCallback((state) => state.contextUsage.get(attachmentSessionKey), [attachmentSessionKey])
+    useCallback((state) => state.contextUsage.get(sessionKey), [sessionKey])
   );
 
   const queuedMessages = useOpenCodeStore(
-    useCallback(
-      (state) => state.messageQueue.get(attachmentSessionKey) || [],
-      [attachmentSessionKey]
-    )
+    useCallback((state) => state.messageQueue.get(sessionKey) || [], [sessionKey])
   );
 
-  const attachments = getAttachments(attachmentSessionKey);
-  const text = getDraftText(attachmentSessionKey);
+  const attachments = getAttachments(sessionKey);
+  const text = getDraftText(sessionKey);
   const selectedModel = getSelectedModel(environmentId);
   const selectedVariant = getSelectedVariant(environmentId);
-  const selectedMode = getSelectedMode(environmentId);
+  const selectedMode = getSelectedMode(sessionKey);
 
   // Get worktree path for local environments
   const worktreePath = useEnvironmentStore(
@@ -246,7 +243,7 @@ export function OpenCodeComposeBar({
             previewUrl: dataUrl,
             name: filename,
           };
-          addAttachment(attachmentSessionKey, attachment);
+          addAttachment(sessionKey, attachment);
         } else if (worktreePath) {
           // Local environment - write to worktree path
           const fullPath = await writeLocalFile(worktreePath, filePath, base64Data);
@@ -258,7 +255,7 @@ export function OpenCodeComposeBar({
             previewUrl: dataUrl,
             name: filename,
           };
-          addAttachment(attachmentSessionKey, attachment);
+          addAttachment(sessionKey, attachment);
         } else {
           toast.error("Cannot save image", {
             description: "Environment not properly configured for attachments",
@@ -273,7 +270,7 @@ export function OpenCodeComposeBar({
         // Let text paste through by not preventing default
       }
     },
-    [containerId, attachmentSessionKey, worktreePath, addAttachment]
+    [containerId, sessionKey, worktreePath, addAttachment]
   );
 
   useEffect(() => {
@@ -284,6 +281,13 @@ export function OpenCodeComposeBar({
   }, [handlePaste]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Tab" && event.shiftKey) {
+      event.preventDefault();
+      const nextMode: OpenCodeConversationMode = selectedMode === "plan" ? "build" : "plan";
+      setSelectedMode(sessionKey, nextMode);
+      return;
+    }
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleSend();
@@ -301,8 +305,8 @@ export function OpenCodeComposeBar({
       } else {
         onSend(text.trim(), attachments);
       }
-      setDraftText(attachmentSessionKey, "");
-      clearAttachments(attachmentSessionKey);
+      setDraftText(sessionKey, "");
+      clearAttachments(sessionKey);
     } finally {
       setIsSending(false);
     }
@@ -315,19 +319,19 @@ export function OpenCodeComposeBar({
   };
 
   const handleRemoveAttachment = (id: string) => {
-    removeAttachment(attachmentSessionKey, id);
+    removeAttachment(sessionKey, id);
   };
 
   const handleRemoveQueuedMessage = (messageId: string) => {
-    removeQueueItem(attachmentSessionKey, messageId);
+    removeQueueItem(sessionKey, messageId);
   };
 
   const handleMoveQueuedMessage = (fromIndex: number, toIndex: number) => {
-    moveQueueItem(attachmentSessionKey, fromIndex, toIndex);
+    moveQueueItem(sessionKey, fromIndex, toIndex);
   };
 
   const handleModeChange = (mode: string) => {
-    setSelectedMode(environmentId, mode as OpenCodeConversationMode);
+    setSelectedMode(sessionKey, mode as OpenCodeConversationMode);
   };
 
   const handleModelChange = (modelId: string) => {
@@ -433,7 +437,7 @@ export function OpenCodeComposeBar({
       <textarea
         ref={textareaRef}
         value={text}
-        onChange={(e) => setDraftText(attachmentSessionKey, e.target.value)}
+        onChange={(e) => setDraftText(sessionKey, e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Ask anything (⌘L), @ to mention, / for workflows"
         rows={1}
@@ -488,7 +492,10 @@ export function OpenCodeComposeBar({
         {/* Mode dropdown - minimal style */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+            <button
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title={`${modeDisplayName} mode (Shift+Tab to cycle)`}
+            >
               <ChevronDown className="w-3 h-3" />
               <span>{modeDisplayName}</span>
             </button>

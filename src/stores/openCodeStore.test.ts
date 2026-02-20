@@ -153,6 +153,37 @@ describe("openCodeStore draft text", () => {
   });
 });
 
+describe("openCodeStore selected mode", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("stores mode per tab session key", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setSelectedMode("env-env-123:tab-1", "plan");
+    store.setSelectedMode("env-env-123:tab-2", "build");
+
+    expect(useOpenCodeStore.getState().getSelectedMode("env-env-123:tab-1")).toBe("plan");
+    expect(useOpenCodeStore.getState().getSelectedMode("env-env-123:tab-2")).toBe("build");
+    expect(useOpenCodeStore.getState().getSelectedMode("env-env-123:tab-3")).toBe("build");
+  });
+
+  test("clearEnvironment removes tab-scoped mode keys for the environment", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setSelectedMode("env-env-123:tab-1", "plan");
+    store.setSelectedMode("env-env-123:tab-2", "plan");
+    store.setSelectedMode("env-env-999:tab-1", "plan");
+
+    store.clearEnvironment("env-123");
+
+    expect(useOpenCodeStore.getState().getSelectedMode("env-env-123:tab-1")).toBe("build");
+    expect(useOpenCodeStore.getState().getSelectedMode("env-env-123:tab-2")).toBe("build");
+    expect(useOpenCodeStore.getState().getSelectedMode("env-env-999:tab-1")).toBe("plan");
+  });
+});
+
 describe("openCodeStore queue", () => {
   beforeEach(() => {
     resetOpenCodeStore();

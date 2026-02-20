@@ -78,7 +78,7 @@ interface OpenCodeState {
   selectedModel: Map<string, string>;
   /** Currently selected variant per environment */
   selectedVariant: Map<string, string>;
-  /** Currently selected mode per environment */
+  /** Currently selected mode per tab session key (format: env-{environmentId}:{tabId}) */
   selectedMode: Map<string, OpenCodeConversationMode>;
   /** Current attachments per tab session key (format: env-{environmentId}:{tabId}) */
   attachments: Map<string, OpenCodeAttachment[]>;
@@ -110,8 +110,8 @@ interface OpenCodeState {
   setSelectedModel: (environmentId: string, modelId: string) => void;
   /** Set selected variant for an environment (undefined = use model default) */
   setSelectedVariant: (environmentId: string, variant: string | undefined) => void;
-  /** Set selected mode for an environment */
-  setSelectedMode: (environmentId: string, mode: OpenCodeConversationMode) => void;
+  /** Set selected mode for a tab session key */
+  setSelectedMode: (sessionKey: string, mode: OpenCodeConversationMode) => void;
   /** Set session for an environment */
   setSession: (environmentId: string, session: OpenCodeSessionState | null) => void;
   /** Add a message to a session */
@@ -174,8 +174,8 @@ interface OpenCodeState {
   getSelectedModel: (environmentId: string) => string | undefined;
   /** Get selected variant for an environment */
   getSelectedVariant: (environmentId: string) => string | undefined;
-  /** Get selected mode for an environment */
-  getSelectedMode: (environmentId: string) => OpenCodeConversationMode;
+  /** Get selected mode for a tab session key */
+  getSelectedMode: (sessionKey: string) => OpenCodeConversationMode;
   /** Get attachments for a tab session */
   getAttachments: (sessionKey: string) => OpenCodeAttachment[];
   /** Get draft text for a tab session */
@@ -253,10 +253,10 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       return { selectedVariant: newMap };
     }),
 
-  setSelectedMode: (environmentId, mode) =>
+  setSelectedMode: (sessionKey, mode) =>
     set((state) => {
       const newMap = new Map(state.selectedMode);
-      newMap.set(environmentId, mode);
+      newMap.set(sessionKey, mode);
       return { selectedMode: newMap };
     }),
 
@@ -519,7 +519,14 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       newClients.delete(environmentId);
       newSelectedModel.delete(environmentId);
       newSelectedVariant.delete(environmentId);
+      // Remove legacy environment-scoped mode key (backward compatibility)
       newSelectedMode.delete(environmentId);
+      // Remove tab-scoped mode keys for this environment
+      for (const key of newSelectedMode.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          newSelectedMode.delete(key);
+        }
+      }
       for (const key of newAttachments.keys()) {
         if (key.startsWith(sessionKeyPrefix)) {
           newAttachments.delete(key);
@@ -692,8 +699,8 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
 
   getSelectedVariant: (environmentId) => get().selectedVariant.get(environmentId),
 
-  getSelectedMode: (environmentId) =>
-    get().selectedMode.get(environmentId) || "build",
+  getSelectedMode: (sessionKey) =>
+    get().selectedMode.get(sessionKey) || "build",
 
   getAttachments: (sessionKey) => get().attachments.get(sessionKey) || [],
 

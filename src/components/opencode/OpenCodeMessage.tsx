@@ -1019,7 +1019,9 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
           <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20">
             <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
-              <div className="text-sm text-destructive">{message.content}</div>
+              <div className="text-sm text-destructive whitespace-pre-wrap break-words">
+                {message.content}
+              </div>
               <div className="text-[10px] text-destructive/60 mt-1">
                 {formatTime(message.createdAt)}
               </div>

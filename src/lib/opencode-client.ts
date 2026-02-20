@@ -208,6 +208,186 @@ export type PermissionReply = "once" | "always" | "reject";
 /** Prefix for client-side error message IDs (used to preserve errors across message refreshes) */
 export const ERROR_MESSAGE_PREFIX = "error-";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function firstNonEmptyString(values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function toDisplayString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return undefined;
+}
+
+const REDACTED_VALUE = "[REDACTED]";
+const SENSITIVE_KEY_FRAGMENTS = [
+  "authorization",
+  "apikey",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "cookie",
+  "credential",
+  "privatekey",
+];
+
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = normalizeKey(key);
+  if (!normalized) return false;
+  return SENSITIVE_KEY_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
+
+function redactSensitiveText(text: string): string {
+  return text
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+\-/=]+/gi, `$1${REDACTED_VALUE}`)
+    .replace(/(Basic\s+)[A-Za-z0-9+/=]+/gi, `$1${REDACTED_VALUE}`);
+}
+
+function redactSensitiveData(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveData(item, seen));
+  }
+
+  if (isRecord(value)) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+
+    seen.add(value);
+
+    const redacted: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (isSensitiveKey(key)) {
+        redacted[key] = REDACTED_VALUE;
+        continue;
+      }
+
+      redacted[key] = redactSensitiveData(child, seen);
+    }
+
+    return redacted;
+  }
+
+  if (typeof value === "string") {
+    return redactSensitiveText(value);
+  }
+
+  return value;
+}
+
+function safeJSONStringify(value: unknown, maxLength = 4000): string | undefined {
+  try {
+    const sanitized = redactSensitiveData(value);
+    const json = JSON.stringify(sanitized, null, 2);
+    if (!json || json === "{}") {
+      return undefined;
+    }
+
+    if (json.length <= maxLength) {
+      return json;
+    }
+
+    return `${json.slice(0, maxLength)}\n... (details truncated)`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Format OpenCode/SDK errors into a user-readable detailed message. */
+export function formatOpenCodeError(error: unknown): string {
+  if (typeof error === "string") {
+    return redactSensitiveText(error);
+  }
+
+  const fallbackFromError = error instanceof Error
+    ? firstNonEmptyString([error.message, error.name])
+    : undefined;
+
+  if (!isRecord(error)) {
+    return fallbackFromError || "An unknown error occurred";
+  }
+
+  const data = isRecord(error.data) ? error.data : undefined;
+  const summary = firstNonEmptyString([
+    data?.message,
+    data?.detail,
+    data?.error,
+    error.message,
+    error.detail,
+    error.error,
+  ]);
+  const errorType = firstNonEmptyString([
+    data?.errorType,
+    data?.type,
+    error.errorType,
+    error.type,
+    error.name,
+  ]);
+
+  let headline = summary || errorType || fallbackFromError || "An unknown error occurred";
+  if (summary && errorType && !summary.toLowerCase().includes(errorType.toLowerCase())) {
+    headline = `${errorType}: ${summary}`;
+  }
+  headline = redactSensitiveText(headline);
+
+  const detailLines: string[] = [];
+  const code = toDisplayString(data?.code ?? error.code);
+  const status = toDisplayString(data?.status ?? data?.statusCode ?? error.status ?? error.statusCode);
+  const requestId = firstNonEmptyString([
+    data?.requestID,
+    data?.requestId,
+    error.requestID,
+    error.requestId,
+  ]);
+
+  if (code) {
+    detailLines.push(`Code: ${code}`);
+  }
+  if (status) {
+    detailLines.push(`Status: ${status}`);
+  }
+  if (requestId) {
+    detailLines.push(`Request ID: ${requestId}`);
+  }
+
+  const rawDetails = safeJSONStringify(error);
+  if (rawDetails) {
+    detailLines.push(`Raw error:\n${rawDetails}`);
+  }
+
+  if (detailLines.length === 0) {
+    return headline;
+  }
+
+  return `${headline}\n\n${detailLines.join("\n")}`;
+}
+
 /** Structure for filediff metadata from the SDK */
 interface FileDiffMetadata {
   file?: string;
@@ -558,6 +738,11 @@ export interface PromptAttachment {
   filename?: string;
 }
 
+export interface SendPromptResult {
+  success: boolean;
+  error?: string;
+}
+
 /**
  * Send a prompt to a session
  */
@@ -571,7 +756,7 @@ export async function sendPrompt(
     mode?: OpenCodeConversationMode;
     attachments?: PromptAttachment[];
   }
-): Promise<boolean> {
+): Promise<SendPromptResult> {
   try {
     // Build the parts array with proper typing
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -626,13 +811,17 @@ export async function sendPrompt(
         providerID: options.model.split("/")[0] || "",
         modelID: options.model.split("/")[1] || options.model,
       } : undefined,
+      agent: options?.mode,
       variant: options?.variant,
     });
 
-    return true;
+    return { success: true };
   } catch (error) {
     console.error("[opencode-client] Failed to send prompt:", error);
-    return false;
+    return {
+      success: false,
+      error: formatOpenCodeError(error),
+    };
   }
 }
 
