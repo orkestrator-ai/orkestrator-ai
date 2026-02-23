@@ -412,6 +412,15 @@ export function HierarchicalSidebar() {
               // Mark as resolved even on error
               setSetupCommandsResolved(environment.id, true);
             });
+        } else if (
+          environment.environmentType === "local" &&
+          environment.worktreePath
+        ) {
+          // Already-started local environment: mark setup commands as resolved
+          // so TerminalContainer can proceed with tab creation.
+          // This is needed because setupCommandsResolved is runtime-only state
+          // that's lost on app restart or when re-selecting an environment.
+          setSetupCommandsResolved(environment.id, true);
         }
       }
     }
