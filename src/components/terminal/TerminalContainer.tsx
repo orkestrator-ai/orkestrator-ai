@@ -20,6 +20,7 @@ import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useConf
 import { Button } from "@/components/ui/button";
 import { Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { shouldAutoResolveSetupCommands } from "@/lib/setup-commands";
 import { PaneTree } from "@/components/pane-layout";
 import { TerminalPortalHost } from "./TerminalPortalHost";
 import { InitializationLogs } from "./InitializationLogs";
@@ -192,16 +193,20 @@ export function TerminalContainer({
   // no one calls setSetupCommandsResolved, causing the init effect below to block forever.
   // Fix: if the environment is already running and no one has pending setup commands, resolve immediately.
   useEffect(() => {
+    const hasPendingCommands = useEnvironmentStore
+      .getState()
+      .pendingSetupCommands.has(environmentId);
+
     if (
-      isLocalEnvironment &&
-      isLocalEnvironmentReady &&
-      !setupCommandsResolved
+      shouldAutoResolveSetupCommands({
+        isLocalEnvironment,
+        isLocalEnvironmentReady,
+        setupCommandsResolved,
+        hasPendingCommands,
+      })
     ) {
-      const hasPendingCommands = useEnvironmentStore.getState().pendingSetupCommands.has(environmentId);
-      if (!hasPendingCommands) {
-        console.log("[TerminalContainer] Auto-resolving setup commands for already-running local environment:", environmentId);
-        setSetupCommandsResolved(environmentId, true);
-      }
+      console.log("[TerminalContainer] Auto-resolving setup commands for already-running local environment:", environmentId);
+      setSetupCommandsResolved(environmentId, true);
     }
   }, [isLocalEnvironment, isLocalEnvironmentReady, setupCommandsResolved, environmentId, setSetupCommandsResolved]);
 

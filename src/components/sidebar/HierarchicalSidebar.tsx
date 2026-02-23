@@ -36,6 +36,7 @@ import { useProjects } from "@/hooks/useProjects";
 import { useEnvironments } from "@/hooks/useEnvironments";
 import { useUIStore, useClaudeOptionsStore, useConfigStore, useEnvironmentStore } from "@/stores";
 import { RepositorySettings } from "@/components/settings/RepositorySettings";
+import { shouldResolveSetupCommandsOnSelection } from "@/lib/setup-commands";
 import type { Environment, Project } from "@/types";
 
 export function HierarchicalSidebar() {
@@ -412,10 +413,7 @@ export function HierarchicalSidebar() {
               // Mark as resolved even on error
               setSetupCommandsResolved(environment.id, true);
             });
-        } else if (
-          environment.environmentType === "local" &&
-          environment.worktreePath
-        ) {
+        } else if (shouldResolveSetupCommandsOnSelection(environment)) {
           // Already-started local environment: mark setup commands as resolved
           // so TerminalContainer can proceed with tab creation.
           // This is needed because setupCommandsResolved is runtime-only state
