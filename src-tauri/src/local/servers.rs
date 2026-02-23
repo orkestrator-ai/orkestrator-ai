@@ -92,6 +92,9 @@ pub async fn start_local_opencode_server(
     worktree_path: &str,
     port: u16,
 ) -> Result<LocalServerStartResult, String> {
+    let start_lock = get_start_lock(environment_id);
+    let _guard = start_lock.lock().await;
+
     info!(
         environment_id = %environment_id,
         worktree_path = %worktree_path,
