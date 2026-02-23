@@ -20,6 +20,7 @@ import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useConf
 import { Button } from "@/components/ui/button";
 import { Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { shouldAutoResolveSetupCommands } from "@/lib/setup-commands";
 import { PaneTree } from "@/components/pane-layout";
 import { TerminalPortalHost } from "./TerminalPortalHost";
 import { InitializationLogs } from "./InitializationLogs";
@@ -117,6 +118,7 @@ export function TerminalContainer({
   const getEnvironmentById = useEnvironmentStore((state) => state.getEnvironmentById);
   const consumePendingSetupCommands = useEnvironmentStore((state) => state.consumePendingSetupCommands);
   const isSetupCommandsResolved = useEnvironmentStore((state) => state.isSetupCommandsResolved);
+  const setSetupCommandsResolved = useEnvironmentStore((state) => state.setSetupCommandsResolved);
   // Subscribe to setup commands resolved state - needed for local environments to know when we can create tabs
   const setupCommandsResolved = isSetupCommandsResolved(environmentId);
   const workspaceReady = isWorkspaceReady(environmentId);
@@ -184,6 +186,29 @@ export function TerminalContainer({
       setActiveEnvironment(environmentId);
     }
   }, [isActive, environmentId, setActiveEnvironment]);
+
+  // Auto-resolve setup commands for already-running local environments.
+  // setupCommandsResolved is runtime-only state (not persisted), so it's lost on app restart.
+  // When the app starts with a local environment that was previously started (has worktreePath),
+  // no one calls setSetupCommandsResolved, causing the init effect below to block forever.
+  // Fix: if the environment is already running and no one has pending setup commands, resolve immediately.
+  useEffect(() => {
+    const hasPendingCommands = useEnvironmentStore
+      .getState()
+      .pendingSetupCommands.has(environmentId);
+
+    if (
+      shouldAutoResolveSetupCommands({
+        isLocalEnvironment,
+        isLocalEnvironmentReady,
+        setupCommandsResolved,
+        hasPendingCommands,
+      })
+    ) {
+      console.log("[TerminalContainer] Auto-resolving setup commands for already-running local environment:", environmentId);
+      setSetupCommandsResolved(environmentId, true);
+    }
+  }, [isLocalEnvironment, isLocalEnvironmentReady, setupCommandsResolved, environmentId, setSetupCommandsResolved]);
 
   // DnD sensors
   const sensors = useSensors(

@@ -200,6 +200,13 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   setSetupCommandsResolved: (environmentId, resolved) =>
     set((state) => {
+      const isCurrentlyResolved = state.setupCommandsResolved.has(environmentId);
+
+      // No-op when state is unchanged to avoid unnecessary rerenders.
+      if (isCurrentlyResolved === resolved) {
+        return state;
+      }
+
       const newSet = new Set(state.setupCommandsResolved);
       if (resolved) {
         newSet.add(environmentId);
