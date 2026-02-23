@@ -42,7 +42,7 @@ import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment } from "@/stores/openCodeStore";
+import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment, type OpenCodeQueuedMessage } from "@/stores/openCodeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import type { OpenCodeModel, OpenCodeConversationMode } from "@/lib/opencode-client";
 
@@ -81,6 +81,9 @@ function generateImageFilename(): string {
   const random = Math.random().toString(36).substring(2, 8);
   return `clipboard-${timestamp}-${random}.png`;
 }
+
+/** Stable empty array to avoid infinite re-render loops in useSyncExternalStore */
+const EMPTY_QUEUE: OpenCodeQueuedMessage[] = [];
 
 export function OpenCodeComposeBar({
   environmentId,
@@ -126,7 +129,10 @@ export function OpenCodeComposeBar({
   );
 
   const queuedMessages = useOpenCodeStore(
-    useCallback((state) => state.messageQueue.get(sessionKey) || [], [sessionKey])
+    useCallback(
+      (state) => state.messageQueue.get(sessionKey) ?? EMPTY_QUEUE,
+      [sessionKey]
+    )
   );
 
   const attachments = getAttachments(sessionKey);
