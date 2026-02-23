@@ -19,6 +19,17 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tauri::Manager;
 use tracing::{debug, info, warn};
 
+static OPENCODE_START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
+
+fn get_opencode_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let locks = OPENCODE_START_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut map = locks.lock().unwrap();
+    map.entry(environment_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
 static CLAUDE_START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     OnceLock::new();
 
@@ -75,6 +86,11 @@ pub async fn start_local_opencode_server_cmd(
 ) -> Result<LocalServerResult, String> {
     debug!(environment_id = %environment_id, "Starting local OpenCode server");
 
+    // Serialize starts per environment to avoid races when React mounts/remounts
+    // quickly and triggers overlapping start requests.
+    let start_lock = get_opencode_start_lock(&environment_id);
+    let _guard = start_lock.lock().await;
+
     let storage = get_storage().map_err(|e| e.to_string())?;
     let environment = storage
         .get_environment(&environment_id)
@@ -92,21 +108,128 @@ pub async fn start_local_opencode_server_cmd(
         .as_ref()
         .ok_or("Local environment missing worktree path")?;
 
+    let manager = get_process_manager();
+
     // Get the allocated port
-    let port = environment
+    let mut port = environment
         .local_opencode_port
         .ok_or("Local environment missing OpenCode port")?;
+
+    // Check for stale PID from a previous app session and try to recover
+    if let Some(pid) = environment.opencode_pid {
+        if is_process_alive(pid) {
+            let stored_status =
+                get_local_opencode_status(&environment_id, Some(port), Some(pid)).await;
+            if stored_status.running {
+                manager
+                    .recover_from_pid(&environment_id, ProcessType::OpenCode, pid)
+                    .await;
+                debug!(
+                    environment_id = %environment_id,
+                    port = port,
+                    pid = pid,
+                    "Reusing existing healthy OpenCode server"
+                );
+                return Ok(LocalServerResult {
+                    port,
+                    pid,
+                    was_running: true,
+                });
+            }
+
+            warn!(
+                environment_id = %environment_id,
+                pid = pid,
+                port = port,
+                "Stored OpenCode PID is alive but unhealthy; clearing stale PID"
+            );
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "opencodePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        } else {
+            debug!(
+                environment_id = %environment_id,
+                pid = pid,
+                "Stored OpenCode PID is no longer alive; clearing"
+            );
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "opencodePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        }
+    }
+
+    // Check if port is already in use (e.g., stale process from previous app session)
+    if !is_port_available(port) {
+        warn!(
+            environment_id = %environment_id,
+            port = port,
+            "OpenCode port already in use; attempting to recover"
+        );
+
+        // If we are currently tracking an OpenCode process, stop it
+        if manager
+            .is_running(&environment_id, ProcessType::OpenCode)
+            .await
+        {
+            if let Err(err) = manager
+                .kill(&environment_id, ProcessType::OpenCode)
+                .await
+            {
+                warn!(
+                    environment_id = %environment_id,
+                    port = port,
+                    error = %err,
+                    "Failed to kill existing OpenCode process"
+                );
+            }
+        }
+
+        if !is_port_available(port) {
+            let all_envs = storage.get_all_environments().map_err(|e| e.to_string())?;
+            let allocation = allocate_ports(&all_envs)?;
+            let new_port = allocation.opencode_port;
+            warn!(
+                environment_id = %environment_id,
+                old_port = port,
+                new_port = new_port,
+                "Reassigning OpenCode port"
+            );
+            port = new_port;
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "localOpencodePort": new_port,
+                        "opencodePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        }
+    }
 
     // Start the server
     let result = start_local_opencode_server(&environment_id, worktree_path, port).await?;
 
-    // Update the PID in storage if it changed
-    if !result.was_running {
+    // Persist any changed runtime metadata (PID and possibly reassigned port)
+    if environment.opencode_pid != Some(result.pid)
+        || environment.local_opencode_port != Some(result.port)
+    {
         storage
             .update_environment(
                 &environment_id,
                 json!({
-                    "opencodePid": result.pid
+                    "opencodePid": result.pid,
+                    "localOpencodePort": result.port
                 }),
             )
             .map_err(|e| format!("Failed to update environment: {}", e))?;
