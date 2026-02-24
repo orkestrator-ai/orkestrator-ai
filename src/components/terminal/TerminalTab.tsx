@@ -14,7 +14,12 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
 import { openInBrowser, loadSessionBuffer, setSessionHasLaunchedCommand } from "@/lib/tauri";
 import type { TabType } from "@/contexts";
-import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK, ROOT_TERMINAL_USER } from "@/constants/terminal";
+import {
+  DEFAULT_TERMINAL_APPEARANCE,
+  DEFAULT_TERMINAL_SCROLLBACK,
+  ROOT_TERMINAL_USER,
+  resolveTerminalBackgroundColor,
+} from "@/constants/terminal";
 import { stripAnsi, tabTypeToSessionType, ENVIRONMENT_READY_MARKER, SHELL_PROMPT_PATTERNS } from "@/lib/terminal-utils";
 import {
   ContextMenu,
@@ -65,6 +70,9 @@ export function TerminalTab({
   const terminalAppearance = useConfigStore(
     (state) => state.config.global.terminalAppearance
   ) || DEFAULT_TERMINAL_APPEARANCE;
+  const terminalBackgroundColor = resolveTerminalBackgroundColor(
+    terminalAppearance.backgroundColor,
+  );
   const terminalScrollback = useConfigStore(
     (state) => state.config.global.terminalScrollback
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
@@ -528,10 +536,10 @@ export function TerminalTab({
       lineHeight: 1.2,
       scrollback: terminalScrollback,
       theme: {
-        background: terminalAppearance.backgroundColor,
+        background: terminalBackgroundColor,
         foreground: "#e4e4e7",
         cursor: "#e4e4e7",
-        cursorAccent: terminalAppearance.backgroundColor,
+        cursorAccent: terminalBackgroundColor,
         selectionBackground: "#4b4b4b",
         black: "#1e1e1e",
         red: "#f87171",
@@ -684,8 +692,8 @@ export function TerminalTab({
     // Safely spread existing theme options (fallback to empty object if undefined)
     term.options.theme = {
       ...(term.options.theme || {}),
-      background: terminalAppearance.backgroundColor,
-      cursorAccent: terminalAppearance.backgroundColor,
+      background: terminalBackgroundColor,
+      cursorAccent: terminalBackgroundColor,
     };
     term.options.scrollback = terminalScrollback;
 
@@ -693,7 +701,7 @@ export function TerminalTab({
     if (fitAddonRef.current) {
       fitAddonRef.current.fit();
     }
-  }, [terminalAppearance.fontFamily, terminalAppearance.fontSize, terminalAppearance.backgroundColor, terminalScrollback]);
+  }, [terminalAppearance.fontFamily, terminalAppearance.fontSize, terminalBackgroundColor, terminalScrollback]);
 
   // Handle resize
   useEffect(() => {
@@ -823,7 +831,7 @@ export function TerminalTab({
             "absolute inset-0",
             !isActive && "opacity-0 pointer-events-none"
           )}
-          style={{ backgroundColor: terminalAppearance.backgroundColor }}
+          style={{ backgroundColor: terminalBackgroundColor }}
         />
       </ContextMenuTrigger>
       <ContextMenuContent>

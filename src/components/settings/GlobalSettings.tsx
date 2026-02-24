@@ -765,7 +765,11 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
             <div className="flex gap-3 items-center">
               <Input
                 type="color"
-                value={isValidHexColor(terminalBackgroundColor) ? terminalBackgroundColor : "#1e1e1e"}
+                value={
+                  isValidHexColor(terminalBackgroundColor)
+                    ? terminalBackgroundColor
+                    : DEFAULT_TERMINAL_APPEARANCE.backgroundColor
+                }
                 onChange={(e) => handleBackgroundColorChange(e.target.value)}
                 className="w-16 h-10 p-1 cursor-pointer"
               />
@@ -773,7 +777,7 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                 type="text"
                 value={terminalBackgroundColor}
                 onChange={(e) => handleBackgroundColorChange(e.target.value)}
-                placeholder="#1e1e1e"
+                placeholder={DEFAULT_TERMINAL_APPEARANCE.backgroundColor}
                 className={`font-mono w-32 ${colorError ? "border-red-500" : ""}`}
               />
               <Button
@@ -781,7 +785,7 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  handleBackgroundColorChange("#1e1e1e");
+                  handleBackgroundColorChange(DEFAULT_TERMINAL_APPEARANCE.backgroundColor);
                 }}
               >
                 Reset
@@ -804,7 +808,9 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                 <div
                   className="rounded-md p-4 border"
                   style={{
-                    backgroundColor: isValidHexColor(terminalBackgroundColor) ? terminalBackgroundColor : "#1e1e1e",
+                    backgroundColor: isValidHexColor(terminalBackgroundColor)
+                      ? terminalBackgroundColor
+                      : DEFAULT_TERMINAL_APPEARANCE.backgroundColor,
                     fontFamily: `"${terminalFontFamily}", "Fira Code", monospace`,
                     fontSize: `${terminalFontSize}px`,
                     color: previewColors.foreground,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   formatOpenCodeError,
+  getAvailableSlashCommands,
   getModelsWithDefaults,
   getSessionMessages,
   listSessions,
@@ -128,6 +129,82 @@ describe("opencode-client getModelsWithDefaults", () => {
       modelId: "openai/gpt-5",
       variant: "medium",
     });
+  });
+});
+
+describe("opencode-client getAvailableSlashCommands", () => {
+  test("normalizes, deduplicates, and sorts commands", async () => {
+    const client = {
+      command: {
+        list: async () => ({
+          data: [
+            {
+              name: "fix",
+              description: "Fix issues",
+              hints: ["fix lint", "fix tests"],
+            },
+            {
+              name: " /build ",
+              hints: ["Build project"],
+            },
+            {
+              name: "/fix",
+              description: "Duplicate should be ignored",
+            },
+            {
+              name: " ",
+              description: "Ignored empty command",
+            },
+          ],
+        }),
+      },
+    } as unknown as OpencodeClient;
+
+    const commands = await getAvailableSlashCommands(client);
+
+    expect(commands).toEqual([
+      {
+        name: "/build",
+        description: "Build project",
+        hints: ["Build project"],
+      },
+      {
+        name: "/fix",
+        description: "Fix issues",
+        hints: ["fix lint", "fix tests"],
+      },
+    ]);
+  });
+
+  test("passes directory when provided", async () => {
+    let capturedDirectory: unknown;
+
+    const client = {
+      command: {
+        list: async (request?: { directory?: string }) => {
+          capturedDirectory = request;
+          return { data: [] };
+        },
+      },
+    } as unknown as OpencodeClient;
+
+    await getAvailableSlashCommands(client, "/workspace");
+
+    expect(capturedDirectory).toEqual({ directory: "/workspace" });
+  });
+
+  test("returns empty array when command list fails", async () => {
+    const client = {
+      command: {
+        list: async () => {
+          throw new Error("not available");
+        },
+      },
+    } as unknown as OpencodeClient;
+
+    const commands = await getAvailableSlashCommands(client);
+
+    expect(commands).toEqual([]);
   });
 });
 

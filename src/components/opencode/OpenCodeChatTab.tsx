@@ -22,6 +22,7 @@ import {
   getSessionMessages,
   getPendingPermissions,
   getPendingQuestions,
+  getAvailableSlashCommands,
   sendPrompt,
   formatOpenCodeError,
   abortSession,
@@ -30,6 +31,7 @@ import {
   type PermissionRequest,
   type QuestionRequest,
   type OpenCodeConversationMode,
+  type OpenCodeSlashCommand,
 } from "@/lib/opencode-client";
 import { extractContextUsage } from "@/lib/context-usage";
 import {
@@ -65,6 +67,8 @@ const EMPTY_MODEL_PREFERENCES: OpenCodeModelPreferences = {
   favorite: [],
   variant: {},
 };
+
+const EMPTY_SLASH_COMMANDS: OpenCodeSlashCommand[] = [];
 
 function toOpenCodeModelId(modelRef?: OpenCodeModelRef): string | undefined {
   if (!modelRef?.providerID || !modelRef?.modelID) {
@@ -124,6 +128,7 @@ export function OpenCodeChatTab({
     setServerStatus,
     setSelectedModel,
     setSelectedVariant,
+    setSlashCommands,
     getSelectedModel,
     getSelectedVariant,
     getSelectedMode,
@@ -221,6 +226,13 @@ export function OpenCodeChatTab({
     useCallback(
       (state) => state.messageQueue.get(sessionKey)?.length ?? 0,
       [sessionKey],
+    ),
+  );
+
+  const slashCommands = useOpenCodeStore(
+    useCallback(
+      (state) => state.slashCommands.get(environmentId) ?? EMPTY_SLASH_COMMANDS,
+      [environmentId],
     ),
   );
 
@@ -407,7 +419,7 @@ export function OpenCodeChatTab({
         setClient(environmentId, sdkClient);
 
         // Fetch available models, server defaults, and model preferences
-        const [{ models: availableModels, defaults }, preferences] =
+        const [{ models: availableModels, defaults }, preferences, availableSlashCommands] =
           await Promise.all([
             getModelsWithDefaults(sdkClient),
             getOpencodeModelPreferences().catch((error) => {
@@ -417,10 +429,18 @@ export function OpenCodeChatTab({
               );
               return EMPTY_MODEL_PREFERENCES;
             }),
+            getAvailableSlashCommands(sdkClient).catch((error) => {
+              console.warn(
+                "[OpenCodeChatTab] Failed to load slash commands:",
+                error,
+              );
+              return EMPTY_SLASH_COMMANDS;
+            }),
           ]);
         if (!mounted) return;
 
         setModels(availableModels);
+        setSlashCommands(environmentId, availableSlashCommands);
         setModelPreferences(preferences);
 
         // Initialize selected model/variant while preserving valid user-selected values.
@@ -609,6 +629,7 @@ export function OpenCodeChatTab({
     getSelectedVariant,
     setSelectedModel,
     setSelectedVariant,
+    setSlashCommands,
   ]);
 
   // Start shared event subscription for the environment (only if not already running)
@@ -1266,6 +1287,7 @@ export function OpenCodeChatTab({
         tabId={tabId}
         containerId={containerId}
         models={models}
+        slashCommands={slashCommands}
         favoriteModelIds={favoriteModelIds}
         onSend={handleSend}
         disabled={!client || !session}

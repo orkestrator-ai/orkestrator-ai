@@ -17,10 +17,14 @@
         "height": 800,
         "minWidth": 800,
         "minHeight": 600,
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "resizable": true,
         "fullscreen": false
       }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": null
     }

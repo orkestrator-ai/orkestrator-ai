@@ -122,14 +122,32 @@ pub async fn start_local_opencode_server(
     // Prepare environment variables
     let mut env_vars = HashMap::new();
     env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+    let path = build_comprehensive_path(None);
+    env_vars.insert("PATH".to_string(), path.clone());
+
+    let opencode_cmd = find_opencode_binary().unwrap_or_else(|| "opencode".to_string());
+    if opencode_cmd == "opencode" {
+        warn!(
+            environment_id = %environment_id,
+            path = %path,
+            "OpenCode binary not found in known locations; falling back to PATH lookup"
+        );
+    } else {
+        debug!(
+            environment_id = %environment_id,
+            opencode_path = %opencode_cmd,
+            path = %path,
+            "Resolved OpenCode binary for local server"
+        );
+    }
 
     // Spawn the opencode serve process
-    // The opencode CLI should be in the PATH
+    // Prefer resolved executable path to avoid shell PATH inconsistencies.
     let pid = manager
         .spawn(
             environment_id,
             ProcessType::OpenCode,
-            "opencode",
+            opencode_cmd.as_str(),
             &[
                 "serve",
                 "--port",
@@ -280,57 +298,18 @@ pub async fn start_local_claude_bridge(
     // Increase bash output limit for code reviews and large diffs (default is 30000)
     env_vars.insert("BASH_MAX_OUTPUT_LENGTH".to_string(), "200000".to_string());
 
-    // Build a comprehensive PATH for packaged apps
-    // Start with the current PATH or common locations
-    let mut path = std::env::var("PATH").unwrap_or_else(|_| String::new());
-
-    // Add common binary locations that might be missing in packaged apps
-    let common_paths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
-    for common in common_paths {
-        if !path.contains(common) {
-            path = if path.is_empty() {
-                common.to_string()
-            } else {
-                format!("{}:{}", path, common)
-            };
-        }
-    }
-
-    // Add bun's directory if found
-    if let Some(bun_path) = find_bun_binary() {
-        if let Some(parent) = PathBuf::from(&bun_path).parent() {
-            let parent_str = parent.to_string_lossy();
-            if !path.contains(parent_str.as_ref()) {
-                path = format!("{}:{}", parent_str, path);
-            }
-        }
-    }
+    // Build a comprehensive PATH for packaged apps and GUI launches.
+    let path = build_comprehensive_path(bundled_bun_path);
 
     // Add node's directory if found
     let node_binary = resolve_node_binary();
     if let Some(ref node_path) = node_binary {
-        if let Some(parent) = PathBuf::from(node_path).parent() {
-            let parent_str = parent.to_string_lossy();
-            if !path.contains(parent_str.as_ref()) {
-                path = format!("{}:{}", parent_str, path);
-            }
-        }
         env_vars.insert("NODE_BINARY".to_string(), node_path.clone());
         env_vars.insert("NODE".to_string(), node_path.clone());
     } else {
         // Hint the SDK where node lives if it supports NODE_BINARY/NODE
         env_vars.insert("NODE_BINARY".to_string(), "node".to_string());
         env_vars.insert("NODE".to_string(), "node".to_string());
-    }
-
-    // Add bundled bun directory to PATH if available
-    if let Some(bun_path) = bundled_bun_path {
-        if let Some(parent) = PathBuf::from(bun_path).parent() {
-            let parent_str = parent.to_string_lossy();
-            if !path.contains(parent_str.as_ref()) {
-                path = format!("{}:{}", parent_str, path);
-            }
-        }
     }
 
     env_vars.insert("PATH".to_string(), path.clone());
@@ -569,6 +548,72 @@ fn resolve_js_runtime(
     ("node", vec![entry_point.to_string()])
 }
 
+fn path_has_entry(path: &str, entry: &str) -> bool {
+    path.split(':').any(|candidate| candidate == entry)
+}
+
+fn prepend_path_entry(path: &mut String, entry: &str) {
+    if entry.is_empty() || path_has_entry(path, entry) {
+        return;
+    }
+
+    if path.is_empty() {
+        *path = entry.to_string();
+    } else {
+        *path = format!("{}:{}", entry, path);
+    }
+}
+
+fn append_path_entry(path: &mut String, entry: &str) {
+    if entry.is_empty() || path_has_entry(path, entry) {
+        return;
+    }
+
+    if path.is_empty() {
+        *path = entry.to_string();
+    } else {
+        *path = format!("{}:{}", path, entry);
+    }
+}
+
+/// Build a robust PATH for child processes started from GUI apps.
+fn build_comprehensive_path(bundled_bun_path: Option<&str>) -> String {
+    let mut path = std::env::var("PATH").unwrap_or_else(|_| String::new());
+
+    // Ensure common system locations are always present.
+    let common_paths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    for common in common_paths {
+        append_path_entry(&mut path, common);
+    }
+
+    // Prefer discovered OpenCode/Bun/Node locations first.
+    if let Some(opencode_path) = find_opencode_binary() {
+        if let Some(parent) = PathBuf::from(opencode_path).parent() {
+            prepend_path_entry(&mut path, parent.to_string_lossy().as_ref());
+        }
+    }
+
+    if let Some(bun_path) = find_bun_binary() {
+        if let Some(parent) = PathBuf::from(bun_path).parent() {
+            prepend_path_entry(&mut path, parent.to_string_lossy().as_ref());
+        }
+    }
+
+    if let Some(node_path) = resolve_node_binary() {
+        if let Some(parent) = PathBuf::from(node_path).parent() {
+            prepend_path_entry(&mut path, parent.to_string_lossy().as_ref());
+        }
+    }
+
+    if let Some(bun_path) = bundled_bun_path {
+        if let Some(parent) = PathBuf::from(bun_path).parent() {
+            prepend_path_entry(&mut path, parent.to_string_lossy().as_ref());
+        }
+    }
+
+    path
+}
+
 /// Get the user's home directory using multiple methods
 fn get_home_dir() -> Option<PathBuf> {
     // Try dirs crate first (most reliable)
@@ -598,6 +643,10 @@ fn find_bun_binary() -> Option<String> {
         PathBuf::from("/opt/homebrew/bin/bun"),
         // Homebrew on Intel
         PathBuf::from("/usr/local/bin/bun"),
+        // Optional user-level symlink location
+        home.as_ref()
+            .map(|h| PathBuf::from(h).join(".local/bin/bun"))
+            .unwrap_or_default(),
         // Bun's default install location
         home.as_ref()
             .map(|h| PathBuf::from(h).join(".bun/bin/bun"))
@@ -613,6 +662,54 @@ fn find_bun_binary() -> Option<String> {
 
     // Try which as last resort (works if PATH is set correctly)
     if let Ok(output) = std::process::Command::new("which").arg("bun").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() && PathBuf::from(&path).exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+/// Find OpenCode binary by checking common installation locations.
+fn find_opencode_binary() -> Option<String> {
+    // Check explicit environment variable overrides first.
+    for var_name in ["OPENCODE_BINARY", "OPENCODE_CLI_PATH"] {
+        if let Ok(path) = std::env::var(var_name) {
+            if !path.is_empty() && PathBuf::from(&path).exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    let home = get_home_dir();
+    let candidates: Vec<PathBuf> = vec![
+        // Homebrew on Apple Silicon
+        PathBuf::from("/opt/homebrew/bin/opencode"),
+        // Homebrew on Intel
+        PathBuf::from("/usr/local/bin/opencode"),
+        // Common Linux location
+        PathBuf::from("/usr/bin/opencode"),
+        // User-local location
+        home.as_ref()
+            .map(|h| PathBuf::from(h).join(".local/bin/opencode"))
+            .unwrap_or_default(),
+        // OpenCode install script location
+        home.as_ref()
+            .map(|h| PathBuf::from(h).join(".opencode/bin/opencode"))
+            .unwrap_or_default(),
+    ];
+
+    for candidate in candidates {
+        if !candidate.as_os_str().is_empty() && candidate.exists() {
+            debug!(path = %candidate.display(), "Found opencode binary");
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    if let Ok(output) = std::process::Command::new("which").arg("opencode").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() && PathBuf::from(&path).exists() {
