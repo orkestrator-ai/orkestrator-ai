@@ -15,6 +15,7 @@ import {
 } from "@/stores/openCodeStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
+import { useEnvironmentStore } from "@/stores/environmentStore";
 import {
   createClient,
   getModelsWithDefaults,
@@ -220,6 +221,15 @@ export function OpenCodeChatTab({
 
     return ids;
   }, [modelPreferences]);
+
+  const worktreePath = useEnvironmentStore(
+    useCallback(
+      (state) => state.getEnvironmentById(environmentId)?.worktreePath,
+      [environmentId],
+    ),
+  );
+
+  const slashCommandDirectory = isLocal ? worktreePath : "/workspace";
 
   // Queue length for this tab session - subscribe narrowly for fewer re-renders
   const queueLength = useOpenCodeStore(
@@ -429,7 +439,7 @@ export function OpenCodeChatTab({
               );
               return EMPTY_MODEL_PREFERENCES;
             }),
-            getAvailableSlashCommands(sdkClient).catch((error) => {
+            getAvailableSlashCommands(sdkClient, slashCommandDirectory).catch((error) => {
               console.warn(
                 "[OpenCodeChatTab] Failed to load slash commands:",
                 error,
@@ -630,6 +640,7 @@ export function OpenCodeChatTab({
     setSelectedModel,
     setSelectedVariant,
     setSlashCommands,
+    slashCommandDirectory,
   ]);
 
   // Start shared event subscription for the environment (only if not already running)
