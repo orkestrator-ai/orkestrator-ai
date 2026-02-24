@@ -90,10 +90,6 @@ body {
   background-color: var(--color-card);
 }
 
-.main-content-area {
-  --color-background: #000000;
-}
-
 /* Prevent text selection during resize operations */
 .no-select {
   user-select: none;

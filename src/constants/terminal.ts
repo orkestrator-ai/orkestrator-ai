@@ -17,6 +17,19 @@ export const DEFAULT_TERMINAL_APPEARANCE: TerminalAppearance = {
   backgroundColor: TERMINAL_BACKGROUND_COLOR,
 };
 
+/**
+ * Returns a safe terminal background color with fallback to defaults.
+ */
+export function resolveTerminalBackgroundColor(
+  backgroundColor: string | undefined,
+): string {
+  if (!backgroundColor || !isValidHexColor(backgroundColor)) {
+    return DEFAULT_TERMINAL_APPEARANCE.backgroundColor;
+  }
+
+  return backgroundColor;
+}
+
 /** Default terminal scrollback buffer (lines) */
 export const DEFAULT_TERMINAL_SCROLLBACK = 1000;
 

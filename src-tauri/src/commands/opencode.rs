@@ -169,12 +169,57 @@ pub async fn start_opencode_server(
     "#;
 
     // Execute the command in the container
-    let exec_result = client
-        .exec_in_container(&container_id, vec!["bash", "-c", command], None)
+    let (exec_stdout, exec_stderr, exec_exit_code) = client
+        .exec_command_with_status(&container_id, vec!["bash", "-c", command])
         .await
         .map_err(|e| format!("Failed to start OpenCode server: {}", e))?;
 
-    debug!(container_id = %container_id, result = %exec_result, "Exec result from starting OpenCode server");
+    if exec_exit_code != 0 {
+        let startup_log = client
+            .exec_in_container(
+                &container_id,
+                vec![
+                    "bash",
+                    "-c",
+                    "cat /tmp/opencode-serve.log 2>/dev/null || true",
+                ],
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
+        let detail = if !startup_log.trim().is_empty() {
+            startup_log.trim().to_string()
+        } else if !exec_stderr.trim().is_empty() {
+            exec_stderr.trim().to_string()
+        } else if !exec_stdout.trim().is_empty() {
+            exec_stdout.trim().to_string()
+        } else {
+            "Unknown error while launching OpenCode server".to_string()
+        };
+
+        error!(
+            container_id = %container_id,
+            exit_code = exec_exit_code,
+            stdout = %exec_stdout,
+            stderr = %exec_stderr,
+            startup_log = %startup_log,
+            "OpenCode startup command failed"
+        );
+
+        return Err(format!(
+            "Failed to launch OpenCode server (exit code {}): {}",
+            exec_exit_code, detail
+        ));
+    }
+
+    debug!(
+        container_id = %container_id,
+        exit_code = exec_exit_code,
+        stdout = %exec_stdout,
+        stderr = %exec_stderr,
+        "Exec result from starting OpenCode server"
+    );
 
     // Wait for the server to start (poll health endpoint)
     // OpenCode server may need time to initialize, especially on first run

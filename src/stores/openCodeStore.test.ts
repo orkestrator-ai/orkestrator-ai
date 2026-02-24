@@ -185,6 +185,44 @@ describe("openCodeStore selected mode", () => {
   });
 });
 
+describe("openCodeStore slash commands", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("stores slash commands per environment", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setSlashCommands("env-123", [
+      { name: "/build", description: "Build" },
+      { name: "/fix", description: "Fix" },
+    ]);
+    store.setSlashCommands("env-999", [{ name: "/test", description: "Test" }]);
+
+    expect(store.getSlashCommands("env-123")).toEqual([
+      { name: "/build", description: "Build" },
+      { name: "/fix", description: "Fix" },
+    ]);
+    expect(store.getSlashCommands("env-999")).toEqual([
+      { name: "/test", description: "Test" },
+    ]);
+  });
+
+  test("clearEnvironment removes slash commands for that environment", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setSlashCommands("env-123", [{ name: "/build", description: "Build" }]);
+    store.setSlashCommands("env-999", [{ name: "/test", description: "Test" }]);
+
+    store.clearEnvironment("env-123");
+
+    expect(store.getSlashCommands("env-123")).toEqual([]);
+    expect(store.getSlashCommands("env-999")).toEqual([
+      { name: "/test", description: "Test" },
+    ]);
+  });
+});
+
 describe("openCodeStore queue", () => {
   beforeEach(() => {
     resetOpenCodeStore();

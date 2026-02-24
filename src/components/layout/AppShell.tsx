@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -6,7 +7,11 @@ import {
 import { Sidebar } from "./Sidebar";
 import { ActionBar } from "./ActionBar";
 import { FilesPanel } from "@/components/files-panel";
-import { useFilesPanelStore } from "@/stores";
+import { useConfigStore, useFilesPanelStore } from "@/stores";
+import {
+  DEFAULT_TERMINAL_APPEARANCE,
+  resolveTerminalBackgroundColor,
+} from "@/constants/terminal";
 import { cn } from "@/lib/utils";
 
 interface AppShellProps {
@@ -15,6 +20,27 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const { isOpen: filesPanelOpen } = useFilesPanelStore();
+  const terminalAppearance =
+    useConfigStore((state) => state.config.global.terminalAppearance) ??
+    DEFAULT_TERMINAL_APPEARANCE;
+
+  const panelBackgroundColor = resolveTerminalBackgroundColor(
+    terminalAppearance.backgroundColor,
+  );
+
+  const centralPanelThemeVars = useMemo(
+    () =>
+      ({
+        "--color-background": panelBackgroundColor,
+        "--color-card": panelBackgroundColor,
+        "--color-popover": panelBackgroundColor,
+        "--color-muted": panelBackgroundColor,
+        "--color-secondary": panelBackgroundColor,
+        "--color-accent": panelBackgroundColor,
+        "--color-input": panelBackgroundColor,
+      }) as React.CSSProperties,
+    [panelBackgroundColor],
+  );
 
   const handleTitleBarMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -49,9 +75,9 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* Main Content Panel */}
         <ResizablePanel defaultSize={filesPanelOpen ? 50 : 78} minSize={30}>
-          <div className="flex h-full flex-col bg-card">
+          <div className="flex h-full flex-col" style={centralPanelThemeVars}>
             <ActionBar />
-            <main className={cn("main-content-area flex-1 overflow-hidden bg-background")}>
+            <main className={cn("flex-1 overflow-hidden bg-background")}>
               {children}
             </main>
           </div>

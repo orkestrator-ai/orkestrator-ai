@@ -9,7 +9,7 @@ import type { TabInfo, PaneLeaf } from "@/types/paneLayout";
 import {
   DEFAULT_TERMINAL_APPEARANCE,
   DEFAULT_TERMINAL_SCROLLBACK,
-  TERMINAL_BACKGROUND_COLOR,
+  resolveTerminalBackgroundColor,
 } from "@/constants/terminal";
 
 // Default fallback for environments not yet in the store
@@ -69,10 +69,12 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
   const terminalScrollback = useConfigStore(
     (state) => state.config.global.terminalScrollback
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
-  const terminalAppearanceWithBlackBackground = useMemo(
+  const terminalAppearanceResolved = useMemo(
     () => ({
       ...terminalAppearance,
-      backgroundColor: TERMINAL_BACKGROUND_COLOR,
+      backgroundColor: resolveTerminalBackgroundColor(
+        terminalAppearance.backgroundColor,
+      ),
     }),
     [terminalAppearance]
   );
@@ -123,7 +125,7 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
           tabId,
           containerId,
           environmentId,
-          appearance: terminalAppearanceWithBlackBackground,
+          appearance: terminalAppearanceResolved,
           scrollback: terminalScrollback,
         });
       }
@@ -149,7 +151,7 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     hasTerminal,
     createTerminal,
     disposeTerminal,
-    terminalAppearanceWithBlackBackground,
+    terminalAppearanceResolved,
     terminalScrollback,
   ]);
 

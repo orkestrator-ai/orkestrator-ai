@@ -18,7 +18,7 @@ import {
   DEFAULT_TERMINAL_APPEARANCE,
   DEFAULT_TERMINAL_SCROLLBACK,
   ROOT_TERMINAL_USER,
-  TERMINAL_BACKGROUND_COLOR,
+  resolveTerminalBackgroundColor,
 } from "@/constants/terminal";
 import { stripAnsi, tabTypeToSessionType, ENVIRONMENT_READY_MARKER, SHELL_PROMPT_PATTERNS } from "@/lib/terminal-utils";
 import {
@@ -70,6 +70,9 @@ export function TerminalTab({
   const terminalAppearance = useConfigStore(
     (state) => state.config.global.terminalAppearance
   ) || DEFAULT_TERMINAL_APPEARANCE;
+  const terminalBackgroundColor = resolveTerminalBackgroundColor(
+    terminalAppearance.backgroundColor,
+  );
   const terminalScrollback = useConfigStore(
     (state) => state.config.global.terminalScrollback
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
@@ -533,10 +536,10 @@ export function TerminalTab({
       lineHeight: 1.2,
       scrollback: terminalScrollback,
       theme: {
-        background: TERMINAL_BACKGROUND_COLOR,
+        background: terminalBackgroundColor,
         foreground: "#e4e4e7",
         cursor: "#e4e4e7",
-        cursorAccent: TERMINAL_BACKGROUND_COLOR,
+        cursorAccent: terminalBackgroundColor,
         selectionBackground: "#4b4b4b",
         black: "#1e1e1e",
         red: "#f87171",
@@ -689,8 +692,8 @@ export function TerminalTab({
     // Safely spread existing theme options (fallback to empty object if undefined)
     term.options.theme = {
       ...(term.options.theme || {}),
-      background: TERMINAL_BACKGROUND_COLOR,
-      cursorAccent: TERMINAL_BACKGROUND_COLOR,
+      background: terminalBackgroundColor,
+      cursorAccent: terminalBackgroundColor,
     };
     term.options.scrollback = terminalScrollback;
 
@@ -698,7 +701,7 @@ export function TerminalTab({
     if (fitAddonRef.current) {
       fitAddonRef.current.fit();
     }
-  }, [terminalAppearance.fontFamily, terminalAppearance.fontSize, terminalScrollback]);
+  }, [terminalAppearance.fontFamily, terminalAppearance.fontSize, terminalBackgroundColor, terminalScrollback]);
 
   // Handle resize
   useEffect(() => {
@@ -828,7 +831,7 @@ export function TerminalTab({
             "absolute inset-0",
             !isActive && "opacity-0 pointer-events-none"
           )}
-          style={{ backgroundColor: TERMINAL_BACKGROUND_COLOR }}
+          style={{ backgroundColor: terminalBackgroundColor }}
         />
       </ContextMenuTrigger>
       <ContextMenuContent>

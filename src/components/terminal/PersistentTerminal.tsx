@@ -15,7 +15,7 @@ import {
   DEFAULT_TERMINAL_APPEARANCE,
   DEFAULT_TERMINAL_SCROLLBACK,
   ROOT_TERMINAL_USER,
-  TERMINAL_BACKGROUND_COLOR,
+  resolveTerminalBackgroundColor,
 } from "@/constants/terminal";
 import {
   stripAnsi,
@@ -105,6 +105,9 @@ export function PersistentTerminal({
   const terminalAppearance = useConfigStore(
     (state) => state.config.global.terminalAppearance
   ) || DEFAULT_TERMINAL_APPEARANCE;
+  const terminalBackgroundColor = resolveTerminalBackgroundColor(
+    terminalAppearance.backgroundColor,
+  );
   const terminalScrollback = useConfigStore(
     (state) => state.config.global.terminalScrollback
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
@@ -889,13 +892,13 @@ export function PersistentTerminal({
     terminal.options.fontSize = terminalAppearance.fontSize;
     terminal.options.theme = {
       ...(terminal.options.theme || {}),
-      background: TERMINAL_BACKGROUND_COLOR,
-      cursorAccent: TERMINAL_BACKGROUND_COLOR,
+      background: terminalBackgroundColor,
+      cursorAccent: terminalBackgroundColor,
     };
     terminal.options.scrollback = terminalScrollback;
 
     fitAddon.fit();
-  }, [terminal, fitAddon, terminalAppearance?.fontFamily, terminalAppearance?.fontSize, terminalScrollback]);
+  }, [terminal, fitAddon, terminalAppearance?.fontFamily, terminalAppearance?.fontSize, terminalBackgroundColor, terminalScrollback]);
 
   // Handle resize
   useEffect(() => {
@@ -1010,7 +1013,7 @@ export function PersistentTerminal({
               "absolute inset-0",
               !isActive && "opacity-0 pointer-events-none"
             )}
-            style={{ backgroundColor: TERMINAL_BACKGROUND_COLOR }}
+            style={{ backgroundColor: terminalBackgroundColor }}
           />
         </ContextMenuTrigger>
         <ContextMenuContent>
