@@ -26,6 +26,7 @@
   --color-muted-foreground: #a1a1aa;
   --color-card: #27272a;
   --color-card-foreground: #e4e4e7;
+  --color-panel-surface: #27272a;
   --color-popover: #27272a;
   --color-popover-foreground: #e4e4e7;
   --color-border: #3f3f46;
@@ -87,7 +88,11 @@ body {
 }
 
 .sidebar-glass {
-  background-color: var(--color-card);
+  background-color: var(--color-panel-surface);
+}
+
+.panel-surface {
+  background-color: var(--color-panel-surface);
 }
 
 /* Prevent text selection during resize operations */

@@ -637,7 +637,7 @@ export function ActionBar() {
 
   return (
     <>
-      <div className="flex h-12 items-center border-b border-border bg-card">
+      <div className="panel-surface flex h-12 items-center border-b border-border">
         {/* Scrollable toolbar area */}
         <div
           ref={scrollContainerRef}
