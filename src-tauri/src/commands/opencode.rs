@@ -138,15 +138,31 @@ pub async fn start_opencode_server(
         }
     }
 
-    // Start the server in the background using docker exec
-    // Use setsid to create a new session so the process survives exec termination
-    // Use full path to opencode binary since setsid doesn't inherit PATH
+    // Start the server in the background using docker exec.
+    // Use setsid to create a new session so the process survives exec termination.
+    // Source shell profiles and extend PATH so user-installed Bun/OpenCode are available,
+    // mirroring the Claude bridge startup behavior.
     // --port 4096: listen on the mapped container port
     // --hostname 0.0.0.0: bind to all interfaces so it's accessible from host
     let command = r#"
         cd /workspace
         rm -f /tmp/opencode-serve.log
-        setsid /home/node/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0 > /tmp/opencode-serve.log 2>&1 &
+        source /etc/profile 2>/dev/null || true
+        source ~/.profile 2>/dev/null || true
+        source ~/.bashrc 2>/dev/null || true
+        source ~/.zshrc 2>/dev/null || true
+        [ -d ~/.bun/bin ] && export PATH="$HOME/.bun/bin:$PATH"
+        [ -d ~/.local/bin ] && export PATH="$HOME/.local/bin:$PATH"
+        [ -d ~/.opencode/bin ] && export PATH="$HOME/.opencode/bin:$PATH"
+        OPENCODE_BIN="$(command -v opencode 2>/dev/null || true)"
+        if [ -z "$OPENCODE_BIN" ] && [ -x /home/node/.opencode/bin/opencode ]; then
+            OPENCODE_BIN="/home/node/.opencode/bin/opencode"
+        fi
+        if [ -z "$OPENCODE_BIN" ]; then
+            echo "OpenCode binary not found. PATH=$PATH" > /tmp/opencode-serve.log
+            exit 1
+        fi
+        setsid "$OPENCODE_BIN" serve --port 4096 --hostname 0.0.0.0 > /tmp/opencode-serve.log 2>&1 &
         disown
         sleep 0.5
         echo "Started opencode serve"

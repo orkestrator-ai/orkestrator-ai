@@ -6,7 +6,11 @@ import { useConfigStore, useEnvironmentStore } from "@/stores";
 import { useTerminalPortalStore } from "@/stores/terminalPortalStore";
 import { PersistentTerminal } from "./PersistentTerminal";
 import type { TabInfo, PaneLeaf } from "@/types/paneLayout";
-import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK } from "@/constants/terminal";
+import {
+  DEFAULT_TERMINAL_APPEARANCE,
+  DEFAULT_TERMINAL_SCROLLBACK,
+  TERMINAL_BACKGROUND_COLOR,
+} from "@/constants/terminal";
 
 // Default fallback for environments not yet in the store
 const DEFAULT_ROOT: PaneLeaf = { kind: "leaf", id: "default", tabs: [], activeTabId: null };
@@ -65,6 +69,13 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
   const terminalScrollback = useConfigStore(
     (state) => state.config.global.terminalScrollback
   ) ?? DEFAULT_TERMINAL_SCROLLBACK;
+  const terminalAppearanceWithBlackBackground = useMemo(
+    () => ({
+      ...terminalAppearance,
+      backgroundColor: TERMINAL_BACKGROUND_COLOR,
+    }),
+    [terminalAppearance]
+  );
 
   // Handle workspace ready callback - fires when any terminal becomes ready
   // Always set the state to true - this ensures the state is updated even if it was
@@ -112,7 +123,7 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
           tabId,
           containerId,
           environmentId,
-          appearance: terminalAppearance,
+          appearance: terminalAppearanceWithBlackBackground,
           scrollback: terminalScrollback,
         });
       }
@@ -138,7 +149,7 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     hasTerminal,
     createTerminal,
     disposeTerminal,
-    terminalAppearance,
+    terminalAppearanceWithBlackBackground,
     terminalScrollback,
   ]);
 

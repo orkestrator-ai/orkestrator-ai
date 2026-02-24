@@ -44,7 +44,12 @@ import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment, type OpenCodeQueuedMessage } from "@/stores/openCodeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
-import type { OpenCodeModel, OpenCodeConversationMode } from "@/lib/opencode-client";
+import { OpenCodeSlashCommandMenu } from "./OpenCodeSlashCommandMenu";
+import type {
+  OpenCodeModel,
+  OpenCodeConversationMode,
+  OpenCodeSlashCommand,
+} from "@/lib/opencode-client";
 
 interface OpenCodeComposeBarProps {
   environmentId: string;
@@ -53,6 +58,7 @@ interface OpenCodeComposeBarProps {
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: OpenCodeModel[];
+  slashCommands?: OpenCodeSlashCommand[];
   favoriteModelIds?: string[];
   onSend: (text: string, attachments: OpenCodeAttachment[]) => void;
   disabled?: boolean;
@@ -90,6 +96,7 @@ export function OpenCodeComposeBar({
   tabId,
   containerId,
   models,
+  slashCommands = [],
   favoriteModelIds = [],
   onSend,
   disabled = false,
@@ -140,6 +147,10 @@ export function OpenCodeComposeBar({
   const selectedModel = getSelectedModel(environmentId);
   const selectedVariant = getSelectedVariant(environmentId);
   const selectedMode = getSelectedMode(sessionKey);
+
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashFilter, setSlashFilter] = useState("");
 
   // Get worktree path for local environments
   const worktreePath = useEnvironmentStore(
@@ -192,6 +203,41 @@ export function OpenCodeComposeBar({
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [showAttachmentMenu]);
+
+  useEffect(() => {
+    if (text.startsWith("/") && slashCommands.length > 0) {
+      const spaceIndex = text.indexOf(" ");
+      const currentCommand = spaceIndex === -1 ? text.slice(1) : "";
+
+      if (spaceIndex === -1) {
+        setSlashFilter(currentCommand);
+        setSlashMenuOpen(true);
+        setSlashSelectedIndex(0);
+      } else {
+        setSlashMenuOpen(false);
+      }
+    } else {
+      setSlashMenuOpen(false);
+      setSlashFilter("");
+    }
+  }, [text, slashCommands.length]);
+
+  const filteredSlashCommands = useMemo(
+    () =>
+      slashCommands.filter((command) =>
+        command.name.toLowerCase().includes(slashFilter.toLowerCase()),
+      ),
+    [slashCommands, slashFilter],
+  );
+
+  const handleSlashCommandSelect = useCallback(
+    (command: OpenCodeSlashCommand) => {
+      setDraftText(sessionKey, `${command.name} `);
+      setSlashMenuOpen(false);
+      textareaRef.current?.focus();
+    },
+    [sessionKey, setDraftText],
+  );
 
   // Handle paste for clipboard images
   const handlePaste = useCallback(
@@ -287,6 +333,33 @@ export function OpenCodeComposeBar({
   }, [handlePaste]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashMenuOpen && filteredSlashCommands.length > 0) {
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          setSlashSelectedIndex((prev) =>
+            prev < filteredSlashCommands.length - 1 ? prev + 1 : prev,
+          );
+          return;
+        case "ArrowUp":
+          event.preventDefault();
+          setSlashSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+          return;
+        case "Tab":
+        case "Enter":
+          if (filteredSlashCommands[slashSelectedIndex]) {
+            event.preventDefault();
+            handleSlashCommandSelect(filteredSlashCommands[slashSelectedIndex]);
+            return;
+          }
+          break;
+        case "Escape":
+          event.preventDefault();
+          setSlashMenuOpen(false);
+          return;
+      }
+    }
+
     if (event.key === "Tab" && event.shiftKey) {
       event.preventDefault();
       const nextMode: OpenCodeConversationMode = selectedMode === "plan" ? "build" : "plan";
@@ -440,25 +513,36 @@ export function OpenCodeComposeBar({
       )}
 
       {/* Text input area - on top */}
-      <textarea
-        ref={textareaRef}
-        value={text}
-        onChange={(e) => setDraftText(sessionKey, e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Ask anything (⌘L), @ to mention, / for workflows"
-        rows={1}
-        className={cn(
-          "w-full bg-transparent border-none px-1 py-1",
-          "text-sm text-foreground placeholder:text-muted-foreground",
-          "resize-none outline-none overflow-y-hidden",
-          "transition-colors"
+      <div className="relative">
+        {slashMenuOpen && filteredSlashCommands.length > 0 && (
+          <OpenCodeSlashCommandMenu
+            commands={filteredSlashCommands}
+            selectedIndex={slashSelectedIndex}
+            onSelect={handleSlashCommandSelect}
+            onClose={() => setSlashMenuOpen(false)}
+          />
         )}
-        style={{
-          minHeight: MIN_TEXTAREA_HEIGHT,
-          maxHeight: MAX_TEXTAREA_HEIGHT,
-        }}
-        disabled={disabled || isSending}
-      />
+
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setDraftText(sessionKey, e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask anything (⌘L), @ to mention, / for workflows"
+          rows={1}
+          className={cn(
+            "w-full bg-transparent border-none px-1 py-1",
+            "text-sm text-foreground placeholder:text-muted-foreground",
+            "resize-none outline-none overflow-y-hidden",
+            "transition-colors",
+          )}
+          style={{
+            minHeight: MIN_TEXTAREA_HEIGHT,
+            maxHeight: MAX_TEXTAREA_HEIGHT,
+          }}
+          disabled={disabled || isSending}
+        />
+      </div>
 
       {/* Bottom toolbar row */}
       <div className="flex items-center gap-1 pt-1">

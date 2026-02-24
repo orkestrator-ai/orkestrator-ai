@@ -29,6 +29,18 @@ export interface OpenCodeModelsResponse {
   defaults: OpenCodeModelDefaults;
 }
 
+export interface OpenCodeSlashCommand {
+  name: string;
+  description?: string;
+  hints?: string[];
+}
+
+function normalizeSlashCommandName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
 function resolveDefaultModelId(defaultConfig: unknown): string | undefined {
   if (!defaultConfig || typeof defaultConfig !== "object") return undefined;
 
@@ -486,6 +498,59 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
   } catch (error) {
     console.error("[opencode-client] Failed to get models:", error);
     return { models: [], defaults: {} };
+  }
+}
+
+/**
+ * Get available slash commands from the OpenCode server.
+ */
+export async function getAvailableSlashCommands(
+  client: OpencodeClient,
+  directory?: string,
+): Promise<OpenCodeSlashCommand[]> {
+  try {
+    const response = await client.command.list(
+      directory ? { directory } : undefined,
+    );
+
+    if (!response.data) {
+      return [];
+    }
+
+    const mapped: OpenCodeSlashCommand[] = [];
+    const seen = new Set<string>();
+
+    for (const command of response.data) {
+      const normalizedName = normalizeSlashCommandName(command.name || "");
+      if (!normalizedName || seen.has(normalizedName)) {
+        continue;
+      }
+
+      const hints = Array.isArray(command.hints)
+        ? command.hints.filter(
+            (hint): hint is string =>
+              typeof hint === "string" && hint.trim().length > 0,
+          )
+        : [];
+
+      const description =
+        typeof command.description === "string" && command.description.trim().length > 0
+          ? command.description.trim()
+          : hints[0];
+
+      mapped.push({
+        name: normalizedName,
+        description,
+        hints: hints.length > 0 ? hints : undefined,
+      });
+
+      seen.add(normalizedName);
+    }
+
+    return mapped.sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    console.error("[opencode-client] Failed to get slash commands:", error);
+    return [];
   }
 }
 

@@ -8,6 +8,7 @@ function resetOpenCodeStore() {
     sessions: new Map(),
     clients: new Map(),
     models: [],
+    slashCommands: new Map(),
     selectedModel: new Map(),
     selectedVariant: new Map(),
     selectedMode: new Map(),

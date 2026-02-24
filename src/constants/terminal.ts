@@ -8,10 +8,13 @@ import type { TerminalAppearance } from "@/types";
 export const ROOT_TERMINAL_USER = "orkroot";
 
 /** Default terminal appearance values - shared across all components */
+export const TERMINAL_BACKGROUND_COLOR = "#000000";
+
+/** Default terminal appearance values - shared across all components */
 export const DEFAULT_TERMINAL_APPEARANCE: TerminalAppearance = {
   fontFamily: "FiraCode Nerd Font",
   fontSize: 14,
-  backgroundColor: "#1e1e1e",
+  backgroundColor: TERMINAL_BACKGROUND_COLOR,
 };
 
 /** Default terminal scrollback buffer (lines) */

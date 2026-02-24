@@ -11,7 +11,12 @@ import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData 
 import { cn } from "@/lib/utils";
 import { loadSessionBuffer, setSessionHasLaunchedCommand } from "@/lib/tauri";
 import type { TabType } from "@/contexts";
-import { DEFAULT_TERMINAL_APPEARANCE, DEFAULT_TERMINAL_SCROLLBACK, ROOT_TERMINAL_USER } from "@/constants/terminal";
+import {
+  DEFAULT_TERMINAL_APPEARANCE,
+  DEFAULT_TERMINAL_SCROLLBACK,
+  ROOT_TERMINAL_USER,
+  TERMINAL_BACKGROUND_COLOR,
+} from "@/constants/terminal";
 import {
   stripAnsi,
   tabTypeToSessionType,
@@ -884,13 +889,13 @@ export function PersistentTerminal({
     terminal.options.fontSize = terminalAppearance.fontSize;
     terminal.options.theme = {
       ...(terminal.options.theme || {}),
-      background: terminalAppearance.backgroundColor,
-      cursorAccent: terminalAppearance.backgroundColor,
+      background: TERMINAL_BACKGROUND_COLOR,
+      cursorAccent: TERMINAL_BACKGROUND_COLOR,
     };
     terminal.options.scrollback = terminalScrollback;
 
     fitAddon.fit();
-  }, [terminal, fitAddon, terminalAppearance?.fontFamily, terminalAppearance?.fontSize, terminalAppearance?.backgroundColor, terminalScrollback]);
+  }, [terminal, fitAddon, terminalAppearance?.fontFamily, terminalAppearance?.fontSize, terminalScrollback]);
 
   // Handle resize
   useEffect(() => {
@@ -1005,7 +1010,7 @@ export function PersistentTerminal({
               "absolute inset-0",
               !isActive && "opacity-0 pointer-events-none"
             )}
-            style={{ backgroundColor: terminalAppearance?.backgroundColor }}
+            style={{ backgroundColor: TERMINAL_BACKGROUND_COLOR }}
           />
         </ContextMenuTrigger>
         <ContextMenuContent>

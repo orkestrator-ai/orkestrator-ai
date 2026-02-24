@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AppConfig, GlobalConfig, RepositoryConfig } from "@/types";
-import { DEFAULT_TERMINAL_SCROLLBACK } from "@/constants/terminal";
+import { DEFAULT_TERMINAL_SCROLLBACK, TERMINAL_BACKGROUND_COLOR } from "@/constants/terminal";
 
 const DEFAULT_CONFIG: AppConfig = {
   version: "1.0",
@@ -67,7 +67,7 @@ const DEFAULT_CONFIG: AppConfig = {
     terminalAppearance: {
       fontFamily: "FiraCode Nerd Font",
       fontSize: 14,
-      backgroundColor: "#1e1e1e",
+      backgroundColor: TERMINAL_BACKGROUND_COLOR,
     },
     terminalScrollback: DEFAULT_TERMINAL_SCROLLBACK,
   },

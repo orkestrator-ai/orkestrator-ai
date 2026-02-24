@@ -3,16 +3,16 @@
 
 /* FiraCode Nerd Font for terminal */
 @font-face {
-  font-family: 'FiraCode Nerd Font';
-  src: url('./assets/fonts/FiraCodeNerdFont-Regular.ttf') format('truetype');
+  font-family: "FiraCode Nerd Font";
+  src: url("./assets/fonts/FiraCodeNerdFont-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'FiraCode Nerd Font';
-  src: url('./assets/fonts/FiraCodeNerdFont-Bold.ttf') format('truetype');
+  font-family: "FiraCode Nerd Font";
+  src: url("./assets/fonts/FiraCodeNerdFont-Bold.ttf") format("truetype");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -65,7 +65,9 @@ html {
 
 body {
   @apply bg-background text-foreground;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   height: 100%;
@@ -75,6 +77,21 @@ body {
 #root {
   height: 100%;
   overflow: hidden;
+}
+
+/* Tauri draggable regions for custom title bars */
+*[data-tauri-drag-region] {
+  app-region: drag;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.sidebar-glass {
+  background-color: var(--color-card);
+}
+
+.main-content-area {
+  --color-background: #000000;
 }
 
 /* Prevent text selection during resize operations */
