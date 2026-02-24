@@ -138,27 +138,88 @@ pub async fn start_opencode_server(
         }
     }
 
-    // Start the server in the background using docker exec
-    // Use setsid to create a new session so the process survives exec termination
-    // Use full path to opencode binary since setsid doesn't inherit PATH
+    // Start the server in the background using docker exec.
+    // Use setsid to create a new session so the process survives exec termination.
+    // Source shell profiles and extend PATH so user-installed Bun/OpenCode are available,
+    // mirroring the Claude bridge startup behavior.
     // --port 4096: listen on the mapped container port
     // --hostname 0.0.0.0: bind to all interfaces so it's accessible from host
     let command = r#"
         cd /workspace
         rm -f /tmp/opencode-serve.log
-        setsid /home/node/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0 > /tmp/opencode-serve.log 2>&1 &
+        source /etc/profile 2>/dev/null || true
+        source ~/.profile 2>/dev/null || true
+        source ~/.bashrc 2>/dev/null || true
+        source ~/.zshrc 2>/dev/null || true
+        [ -d ~/.bun/bin ] && export PATH="$HOME/.bun/bin:$PATH"
+        [ -d ~/.local/bin ] && export PATH="$HOME/.local/bin:$PATH"
+        [ -d ~/.opencode/bin ] && export PATH="$HOME/.opencode/bin:$PATH"
+        OPENCODE_BIN="$(command -v opencode 2>/dev/null || true)"
+        if [ -z "$OPENCODE_BIN" ] && [ -x /home/node/.opencode/bin/opencode ]; then
+            OPENCODE_BIN="/home/node/.opencode/bin/opencode"
+        fi
+        if [ -z "$OPENCODE_BIN" ]; then
+            echo "OpenCode binary not found. PATH=$PATH" > /tmp/opencode-serve.log
+            exit 1
+        fi
+        setsid "$OPENCODE_BIN" serve --port 4096 --hostname 0.0.0.0 > /tmp/opencode-serve.log 2>&1 &
         disown
         sleep 0.5
         echo "Started opencode serve"
     "#;
 
     // Execute the command in the container
-    let exec_result = client
-        .exec_in_container(&container_id, vec!["bash", "-c", command], None)
+    let (exec_stdout, exec_stderr, exec_exit_code) = client
+        .exec_command_with_status(&container_id, vec!["bash", "-c", command])
         .await
         .map_err(|e| format!("Failed to start OpenCode server: {}", e))?;
 
-    debug!(container_id = %container_id, result = %exec_result, "Exec result from starting OpenCode server");
+    if exec_exit_code != 0 {
+        let startup_log = client
+            .exec_in_container(
+                &container_id,
+                vec![
+                    "bash",
+                    "-c",
+                    "cat /tmp/opencode-serve.log 2>/dev/null || true",
+                ],
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
+        let detail = if !startup_log.trim().is_empty() {
+            startup_log.trim().to_string()
+        } else if !exec_stderr.trim().is_empty() {
+            exec_stderr.trim().to_string()
+        } else if !exec_stdout.trim().is_empty() {
+            exec_stdout.trim().to_string()
+        } else {
+            "Unknown error while launching OpenCode server".to_string()
+        };
+
+        error!(
+            container_id = %container_id,
+            exit_code = exec_exit_code,
+            stdout = %exec_stdout,
+            stderr = %exec_stderr,
+            startup_log = %startup_log,
+            "OpenCode startup command failed"
+        );
+
+        return Err(format!(
+            "Failed to launch OpenCode server (exit code {}): {}",
+            exec_exit_code, detail
+        ));
+    }
+
+    debug!(
+        container_id = %container_id,
+        exit_code = exec_exit_code,
+        stdout = %exec_stdout,
+        stderr = %exec_stderr,
+        "Exec result from starting OpenCode server"
+    );
 
     // Wait for the server to start (poll health endpoint)
     // OpenCode server may need time to initialize, especially on first run

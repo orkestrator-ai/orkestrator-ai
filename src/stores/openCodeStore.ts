@@ -3,6 +3,7 @@ import {
   ERROR_MESSAGE_PREFIX,
   type OpenCodeMessage,
   type OpenCodeModel,
+  type OpenCodeSlashCommand,
   type OpenCodeConversationMode,
   type OpencodeClient,
   type QuestionRequest,
@@ -74,6 +75,8 @@ interface OpenCodeState {
   clients: Map<string, OpencodeClient>;
   /** Available models (shared across all environments) */
   models: OpenCodeModel[];
+  /** Available slash commands per environment */
+  slashCommands: Map<string, OpenCodeSlashCommand[]>;
   /** Currently selected model per environment */
   selectedModel: Map<string, string>;
   /** Currently selected variant per environment */
@@ -106,6 +109,8 @@ interface OpenCodeState {
   getClient: (environmentId: string) => OpencodeClient | undefined;
   /** Set available models */
   setModels: (models: OpenCodeModel[]) => void;
+  /** Set available slash commands for an environment */
+  setSlashCommands: (environmentId: string, commands: OpenCodeSlashCommand[]) => void;
   /** Set selected model for an environment */
   setSelectedModel: (environmentId: string, modelId: string) => void;
   /** Set selected variant for an environment (undefined = use model default) */
@@ -172,6 +177,8 @@ interface OpenCodeState {
   getSession: (environmentId: string) => OpenCodeSessionState | undefined;
   /** Get selected model for an environment */
   getSelectedModel: (environmentId: string) => string | undefined;
+  /** Get available slash commands for an environment */
+  getSlashCommands: (environmentId: string) => OpenCodeSlashCommand[];
   /** Get selected variant for an environment */
   getSelectedVariant: (environmentId: string) => string | undefined;
   /** Get selected mode for a tab session key */
@@ -200,6 +207,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   sessions: new Map(),
   clients: new Map(),
   models: [],
+  slashCommands: new Map(),
   selectedModel: new Map(),
   selectedVariant: new Map(),
   selectedMode: new Map(),
@@ -234,6 +242,13 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   getClient: (environmentId) => get().clients.get(environmentId),
 
   setModels: (models) => set({ models }),
+
+  setSlashCommands: (environmentId, commands) =>
+    set((state) => {
+      const newMap = new Map(state.slashCommands);
+      newMap.set(environmentId, commands);
+      return { slashCommands: newMap };
+    }),
 
   setSelectedModel: (environmentId, modelId) =>
     set((state) => {
@@ -495,6 +510,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newSessions = new Map(state.sessions);
       const newClients = new Map(state.clients);
       const newSelectedModel = new Map(state.selectedModel);
+      const newSlashCommands = new Map(state.slashCommands);
       const newSelectedVariant = new Map(state.selectedVariant);
       const newSelectedMode = new Map(state.selectedMode);
       const newAttachments = new Map(state.attachments);
@@ -518,6 +534,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       }
       newClients.delete(environmentId);
       newSelectedModel.delete(environmentId);
+      newSlashCommands.delete(environmentId);
       newSelectedVariant.delete(environmentId);
       // Remove legacy environment-scoped mode key (backward compatibility)
       newSelectedMode.delete(environmentId);
@@ -567,6 +584,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         sessions: newSessions,
         clients: newClients,
         selectedModel: newSelectedModel,
+        slashCommands: newSlashCommands,
         selectedVariant: newSelectedVariant,
         selectedMode: newSelectedMode,
         attachments: newAttachments,
@@ -696,6 +714,8 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   getSession: (environmentId) => get().sessions.get(environmentId),
 
   getSelectedModel: (environmentId) => get().selectedModel.get(environmentId),
+
+  getSlashCommands: (environmentId) => get().slashCommands.get(environmentId) || [],
 
   getSelectedVariant: (environmentId) => get().selectedVariant.get(environmentId),
 
