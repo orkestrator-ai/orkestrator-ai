@@ -45,6 +45,7 @@ import {
   FolderOpen,
   Puzzle,
   Server,
+  Bot,
 } from "lucide-react";
 import * as tauri from "@/lib/tauri";
 import { useConfigStore } from "@/stores";
@@ -57,7 +58,7 @@ import {
   type McpServerInfo,
   type PluginInfo,
 } from "@/lib/claude-client";
-import type { Environment, DomainTestResult, PortMapping, PortProtocol } from "@/types";
+import type { Environment, DomainTestResult, PortMapping, PortProtocol, DefaultAgent, ClaudeMode, OpenCodeMode } from "@/types";
 
 // Domain validation regex
 const DOMAIN_REGEX = /^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
@@ -140,6 +141,17 @@ export function EnvironmentSettingsDialog({
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
 
+  // Agent settings state
+  const [envDefaultAgent, setEnvDefaultAgent] = useState<string>(
+    environment.defaultAgent ?? "global"
+  );
+  const [envClaudeMode, setEnvClaudeMode] = useState<string>(
+    environment.claudeMode ?? "global"
+  );
+  const [envOpencodeMode, setEnvOpencodeMode] = useState<string>(
+    environment.opencodeMode ?? "global"
+  );
+
   // MCP servers and plugins state
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const [pluginsList, setPluginsList] = useState<PluginInfo[]>([]);
@@ -150,6 +162,11 @@ export function EnvironmentSettingsDialog({
 
   // Track if port mappings have changed
   const portMappingsChanged = JSON.stringify(portMappings) !== JSON.stringify(environment.portMappings || []);
+
+  const agentSettingsChanged =
+    (envDefaultAgent === "global" ? undefined : envDefaultAgent) !== (environment.defaultAgent ?? undefined) ||
+    (envClaudeMode === "global" ? undefined : envClaudeMode) !== (environment.claudeMode ?? undefined) ||
+    (envOpencodeMode === "global" ? undefined : envOpencodeMode) !== (environment.opencodeMode ?? undefined);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -175,8 +192,13 @@ export function EnvironmentSettingsDialog({
       setPortError(null);
       setShowRestartConfirm(false);
       setIsRestarting(false);
+
+      // Reset agent settings
+      setEnvDefaultAgent(environment.defaultAgent ?? "global");
+      setEnvClaudeMode(environment.claudeMode ?? "global");
+      setEnvOpencodeMode(environment.opencodeMode ?? "global");
     }
-  }, [open, environment.name, environment.allowedDomains, environment.portMappings, globalDomains]);
+  }, [open, environment.name, environment.allowedDomains, environment.portMappings, environment.defaultAgent, environment.claudeMode, environment.opencodeMode, globalDomains]);
 
   // Update custom domains when toggling to global
   useEffect(() => {
@@ -439,6 +461,16 @@ export function EnvironmentSettingsDialog({
         updated = await tauri.updatePortMappings(environment.id, portMappings);
       }
 
+      // Update agent settings if changed
+      if (agentSettingsChanged) {
+        updated = await tauri.updateEnvironmentAgentSettings(
+          environment.id,
+          envDefaultAgent === "global" ? null : envDefaultAgent as DefaultAgent,
+          envClaudeMode === "global" ? null : envClaudeMode as ClaudeMode,
+          envOpencodeMode === "global" ? null : envOpencodeMode as OpenCodeMode,
+        );
+      }
+
       onUpdate(updated);
       toast.success("Environment settings saved");
       onOpenChange(false);
@@ -522,6 +554,68 @@ export function EnvironmentSettingsDialog({
                 )}
               </div>
             )}
+
+            {/* Agent Settings */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 text-muted-foreground" />
+                <Label>Agent Settings</Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Override global defaults for this environment. "Use global default" inherits from app settings.
+              </p>
+
+              {/* Default Agent */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">Default Agent</Label>
+                <Select value={envDefaultAgent} onValueChange={setEnvDefaultAgent}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="global">
+                      Use global default ({config.global.defaultAgent === "claude" ? "Claude" : "OpenCode"})
+                    </SelectItem>
+                    <SelectItem value="claude">Claude</SelectItem>
+                    <SelectItem value="opencode">OpenCode</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Claude Mode */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">Claude Mode</Label>
+                <Select value={envClaudeMode} onValueChange={setEnvClaudeMode}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="global">
+                      Use global default ({config.global.claudeMode === "native" ? "Native" : "Terminal"})
+                    </SelectItem>
+                    <SelectItem value="terminal">Terminal</SelectItem>
+                    <SelectItem value="native">Native</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* OpenCode Mode */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">OpenCode Mode</Label>
+                <Select value={envOpencodeMode} onValueChange={setEnvOpencodeMode}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="global">
+                      Use global default ({(config.global.opencodeMode || "terminal") === "native" ? "Native" : "Terminal"})
+                    </SelectItem>
+                    <SelectItem value="terminal">Terminal</SelectItem>
+                    <SelectItem value="native">Native</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
             {/* Network Access - only for containerized environments */}
             {!isLocalEnvironment && (
