@@ -16,6 +16,9 @@ import type {
   SessionStatus,
   PrState,
   StartEnvironmentResult,
+  DefaultAgent,
+  ClaudeMode,
+  OpenCodeMode,
 } from "@/types";
 
 /** PR detection result containing URL, state, and merge conflict status */
@@ -749,6 +752,21 @@ export async function updatePortMappings(
   return invoke<Environment>("update_port_mappings", {
     environmentId,
     portMappings,
+  });
+}
+
+/** Update per-environment agent settings (pass null to use global defaults) */
+export async function updateEnvironmentAgentSettings(
+  environmentId: string,
+  defaultAgent: DefaultAgent | null,
+  claudeMode: ClaudeMode | null,
+  opencodeMode: OpenCodeMode | null,
+): Promise<Environment> {
+  return invoke<Environment>("update_environment_agent_settings", {
+    environmentId,
+    defaultAgent,
+    claudeMode,
+    opencodeMode,
   });
 }
 
