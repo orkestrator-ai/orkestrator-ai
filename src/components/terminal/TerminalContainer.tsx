@@ -107,10 +107,11 @@ export function TerminalContainer({
   const claudeOptions = getOptions(environmentId);
   const hasAppliedClaudeOptionsRef = useRef(false);
 
-  // Get config for opencode and claude modes - needed early for initial tab creation
+  // Get config for opencode and claude modes - per-environment overrides take precedence over global
   const { config } = useConfigStore();
-  const opencodeMode = config.global.opencodeMode || "terminal";
-  const claudeMode = config.global.claudeMode || "terminal";
+  const currentEnvironment = useEnvironmentStore((state) => state.environments.find(e => e.id === environmentId));
+  const opencodeMode = currentEnvironment?.opencodeMode || config.global.opencodeMode || "terminal";
+  const claudeMode = currentEnvironment?.claudeMode || config.global.claudeMode || "terminal";
 
   // Get workspace ready state - needed early for native OpenCode launch
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
