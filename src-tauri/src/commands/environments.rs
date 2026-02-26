@@ -14,7 +14,8 @@ use crate::local::{
     get_setup_local_commands, stop_all_local_servers,
 };
 use crate::models::{
-    Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState,
+    ClaudeMode, DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode,
+    OpenCodeMode, PortMapping, PrState,
 };
 use crate::storage::{get_config, get_storage, StorageError};
 use serde::{Deserialize, Serialize};
@@ -762,6 +763,28 @@ pub async fn set_environment_debug_mode(
     let storage = get_storage().map_err(storage_error_to_string)?;
     storage
         .update_environment(&environment_id, json!({ "debugMode": debug_mode }))
+        .map_err(storage_error_to_string)
+}
+
+/// Update per-environment agent settings (default agent, claude mode, opencode mode)
+/// Pass None for any field to use the global config default
+#[tauri::command]
+pub async fn update_environment_agent_settings(
+    environment_id: String,
+    default_agent: Option<DefaultAgent>,
+    claude_mode: Option<ClaudeMode>,
+    opencode_mode: Option<OpenCodeMode>,
+) -> Result<Environment, String> {
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    storage
+        .update_environment(
+            &environment_id,
+            json!({
+                "defaultAgent": default_agent,
+                "claudeMode": claude_mode,
+                "opencodeMode": opencode_mode,
+            }),
+        )
         .map_err(storage_error_to_string)
 }
 

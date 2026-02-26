@@ -152,6 +152,7 @@ pub fn run() {
             update_environment_allowed_domains,
             // Port mapping commands
             update_port_mappings,
+            update_environment_agent_settings,
             // Docker commands
             check_docker,
             docker_version,

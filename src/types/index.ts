@@ -71,6 +71,14 @@ export interface Environment {
   localOpencodePort?: number;
   /** Host port for claude-bridge server (local mode) */
   localClaudePort?: number;
+
+  // === Agent settings overrides ===
+  /** Per-environment default agent override (undefined = use global config) */
+  defaultAgent?: DefaultAgent;
+  /** Per-environment Claude mode override (undefined = use global config) */
+  claudeMode?: ClaudeMode;
+  /** Per-environment OpenCode mode override (undefined = use global config) */
+  opencodeMode?: OpenCodeMode;
 }
 
 /** Result of testing a domain for DNS resolution */

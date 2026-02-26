@@ -317,8 +317,8 @@ export function ActionBar() {
     }
   }, [selectedEnvironment?.containerId, selectedEnvironment?.worktreePath, isLocalEnvironment, config.global.preferredEditor]);
 
-  // Get the default agent from global config
-  const defaultAgent = config.global.defaultAgent || "claude";
+  // Get the default agent - per-environment override takes precedence over global config
+  const defaultAgent = selectedEnvironment?.defaultAgent || config.global.defaultAgent || "claude";
 
   // Handler for code review
   const handleReview = useCallback((agentOverride?: "claude" | "opencode") => {

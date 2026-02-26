@@ -492,6 +492,18 @@ impl Storage {
         if let Some(claude_port) = updates.get("localClaudePort") {
             environment.local_claude_port = claude_port.as_u64().map(|v| v as u16);
         }
+        if let Some(default_agent) = updates.get("defaultAgent") {
+            environment.default_agent =
+                serde_json::from_value(default_agent.clone()).ok().flatten();
+        }
+        if let Some(claude_mode) = updates.get("claudeMode") {
+            environment.claude_mode =
+                serde_json::from_value(claude_mode.clone()).ok().flatten();
+        }
+        if let Some(opencode_mode) = updates.get("opencodeMode") {
+            environment.opencode_mode =
+                serde_json::from_value(opencode_mode.clone()).ok().flatten();
+        }
 
         let updated = environment.clone();
         self.save_environments(&environments)?;
