@@ -14,7 +14,8 @@ use crate::local::{
     get_setup_local_commands, stop_all_local_servers,
 };
 use crate::models::{
-    Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, PortMapping, PrState,
+    ClaudeMode, DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode,
+    OpenCodeMode, PortMapping, PrState,
 };
 use crate::storage::{get_config, get_storage, StorageError};
 use serde::{Deserialize, Serialize};

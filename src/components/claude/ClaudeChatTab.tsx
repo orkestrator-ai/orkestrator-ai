@@ -64,6 +64,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const isInitializedRef = useRef(false);
   const initialPromptSentRef = useRef(false);
   const isProcessingQueueRef = useRef(false);
+  const slashCmdCleanupRef = useRef<(() => void) | null>(null);
   const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => Promise<void>) | null>(null);
 
   const {
@@ -288,18 +289,31 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         // Eagerly load slash commands from plugins (before first query)
         // The SDK only provides slash_commands in the session.init message after the
         // first query, so we discover them from plugin directories on the filesystem.
+        // Uses an AbortController tied to the mount lifecycle to cancel on unmount.
         if (mounted) {
-          getSlashCommands(bridgeClient).then((slashCommands) => {
+          const slashCmdController = new AbortController();
+          const cleanupSlashCmd = () => slashCmdController.abort();
+          // Store cleanup so the effect teardown can abort in-flight requests
+          slashCmdCleanupRef.current = cleanupSlashCmd;
+
+          getSlashCommands(bridgeClient, slashCmdController.signal).then((slashCommands) => {
             if (!mounted || slashCommands.length === 0) return;
             const existing = useClaudeStore.getState().sessionInitData.get(environmentId);
-            if (!existing?.slashCommands?.length) {
-              useClaudeStore.getState().setSessionInitData(environmentId, {
-                mcpServers: existing?.mcpServers || [],
-                plugins: existing?.plugins || [],
-                slashCommands,
-              });
-            }
+            // Merge with any existing commands (e.g., from SDK session.init)
+            const existingNames = new Set(
+              (existing?.slashCommands || []).map((c) => c.split(" - ")[0]!.trim().toLowerCase())
+            );
+            const newCommands = slashCommands.filter(
+              (c) => !existingNames.has(c.split(" - ")[0]!.trim().toLowerCase())
+            );
+            const merged = [...(existing?.slashCommands || []), ...newCommands];
+            useClaudeStore.getState().setSessionInitData(environmentId, {
+              mcpServers: existing?.mcpServers || [],
+              plugins: existing?.plugins || [],
+              slashCommands: merged,
+            });
           }).catch((err) => {
+            if (err instanceof DOMException && err.name === "AbortError") return;
             console.debug("[ClaudeChatTab] Failed to eagerly load slash commands:", err);
           });
         }
@@ -492,6 +506,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
     return () => {
       mounted = false;
+      slashCmdCleanupRef.current?.();
+      slashCmdCleanupRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [containerId, environmentId, tabId, isActive, isLocal]);

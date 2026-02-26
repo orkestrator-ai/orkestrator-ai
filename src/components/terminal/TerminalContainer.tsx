@@ -17,6 +17,7 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useTerminalContext, MAX_TABS, type TerminalTabType, type CreateTabOptions, type CreateFileTabOptions } from "@/contexts";
 import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useConfigStore, getAllLeaves } from "@/stores";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -109,9 +110,17 @@ export function TerminalContainer({
 
   // Get config for opencode and claude modes - per-environment overrides take precedence over global
   const { config } = useConfigStore();
-  const currentEnvironment = useEnvironmentStore((state) => state.environments.find(e => e.id === environmentId));
-  const opencodeMode = currentEnvironment?.opencodeMode || config.global.opencodeMode || "terminal";
-  const claudeMode = currentEnvironment?.claudeMode || config.global.claudeMode || "terminal";
+  const { envOpencodeMode, envClaudeMode } = useEnvironmentStore(
+    useShallow((state) => {
+      const env = state.environments.find(e => e.id === environmentId);
+      return {
+        envOpencodeMode: env?.opencodeMode,
+        envClaudeMode: env?.claudeMode,
+      };
+    })
+  );
+  const opencodeMode = envOpencodeMode || config.global.opencodeMode || "terminal";
+  const claudeMode = envClaudeMode || config.global.claudeMode || "terminal";
 
   // Get workspace ready state - needed early for native OpenCode launch
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
