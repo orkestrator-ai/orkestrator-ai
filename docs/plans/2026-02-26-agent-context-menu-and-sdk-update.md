@@ -25,13 +25,13 @@ In `docker/claude-bridge/package.json`, change line 13:
 
 **Step 2: Install updated dependency**
 
-Run: `cd /Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-uvr8if/docker/claude-bridge && bun install`
+Run: `cd docker/claude-bridge && bun install`
 
 Expected: Lockfile updated, no errors.
 
 **Step 3: Verify no type errors**
 
-Run: `cd /Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-uvr8if/docker/claude-bridge && bunx tsc --noEmit`
+Run: `cd docker/claude-bridge && bunx tsc --noEmit`
 
 Expected: No type errors (API is backward-compatible).
 
@@ -278,7 +278,7 @@ With:
 
 **Step 2: Verify the app compiles**
 
-Run: `cd /Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-uvr8if && bunx tsc --noEmit`
+Run: `bunx tsc --noEmit`
 
 Expected: No type errors.
 
@@ -530,7 +530,7 @@ With:
 
 **Step 2: Verify full build**
 
-Run: `cd /Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-uvr8if && bunx tsc --noEmit`
+Run: `bunx tsc --noEmit`
 
 Expected: No type errors.
 
@@ -802,7 +802,7 @@ import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type Que
 
 **Step 7: Verify build**
 
-Run: `cd /Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-uvr8if && bunx tsc --noEmit`
+Run: `bunx tsc --noEmit`
 
 Expected: No type errors.
 

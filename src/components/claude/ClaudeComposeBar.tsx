@@ -503,13 +503,18 @@ export function ClaudeComposeBar({
   const handleQueuedMessageClick = useCallback(
     (message: QueuedMessage) => {
       removeQueueItem(sessionKey, message.id);
+      clearAttachments(sessionKey);
+      for (const attachment of message.attachments) {
+        addAttachment(sessionKey, attachment);
+      }
       setDraftText(sessionKey, message.text);
+      setDraftMentions(sessionKey, []);
       setThinkingEnabled(sessionKey, message.thinkingEnabled);
       setPlanMode(sessionKey, message.planModeEnabled);
       setQueueDialogOpen(false);
       inputRef.current?.focus();
     },
-    [removeQueueItem, sessionKey, setDraftText, setThinkingEnabled, setPlanMode]
+    [removeQueueItem, sessionKey, clearAttachments, addAttachment, setDraftText, setDraftMentions, setThinkingEnabled, setPlanMode]
   );
 
   const handleRemoveAttachment = (id: string) => {
