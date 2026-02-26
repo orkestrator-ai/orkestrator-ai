@@ -15,6 +15,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle, FolderGit2 } from "lucide-react";
 import { ClaudeIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
 import { useUIStore, useEnvironmentStore, useProjectStore, useConfigStore, useFilesPanelStore } from "@/stores";
@@ -315,14 +321,14 @@ export function ActionBar() {
   const defaultAgent = config.global.defaultAgent || "claude";
 
   // Handler for code review
-  const handleReview = useCallback(() => {
+  const handleReview = useCallback((agentOverride?: "claude" | "opencode") => {
     if (!createTab || !selectedProjectId || !canCreateTab) return;
 
     const repoConfig = config.repositories[selectedProjectId];
     const targetBranch = repoConfig?.prBaseBranch || "main";
     const reviewPrompt = createReviewPrompt(targetBranch);
 
-    createTab(defaultAgent, { initialPrompt: reviewPrompt });
+    createTab(agentOverride || defaultAgent, { initialPrompt: reviewPrompt });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent]);
 
   // Load run commands from orkestrator-ai.json when workspace is ready
@@ -526,7 +532,7 @@ export function ActionBar() {
   ]);
 
   // Handler for PR creation - launches agent tab with PR workflow prompt
-  const handleCreatePR = useCallback(() => {
+  const handleCreatePR = useCallback((agentOverride?: "claude" | "opencode") => {
     if (!createTab || !selectedProjectId || !canCreateTab) return;
 
     const repoConfig = config.repositories[selectedProjectId];
@@ -536,26 +542,26 @@ export function ActionBar() {
     // Set monitoring mode to create-pending for faster PR detection (5s intervals)
     setModeCreatePending();
 
-    createTab(defaultAgent, { initialPrompt: prPrompt });
+    createTab(agentOverride || defaultAgent, { initialPrompt: prPrompt });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent, setModeCreatePending]);
 
   // Handler for pushing changes to an existing PR - launches agent tab with commit/push prompt
-  const handlePushChanges = useCallback(() => {
+  const handlePushChanges = useCallback((agentOverride?: "claude" | "opencode") => {
     if (!createTab || !canCreateTab) return;
 
     const pushPrompt = createPushChangesPrompt();
-    createTab(defaultAgent, { initialPrompt: pushPrompt });
+    createTab(agentOverride || defaultAgent, { initialPrompt: pushPrompt });
   }, [createTab, canCreateTab, defaultAgent]);
 
   // Handler for resolving merge conflicts - launches agent tab with conflict resolution prompt
-  const handleResolveConflicts = useCallback(() => {
+  const handleResolveConflicts = useCallback((agentOverride?: "claude" | "opencode") => {
     if (!createTab || !selectedProjectId || !canCreateTab) return;
 
     const repoConfig = config.repositories[selectedProjectId];
     const targetBranch = repoConfig?.prBaseBranch || "main";
     const resolvePrompt = createResolveConflictsPrompt(targetBranch);
 
-    createTab(defaultAgent, { initialPrompt: resolvePrompt });
+    createTab(agentOverride || defaultAgent, { initialPrompt: resolvePrompt });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent]);
 
   // Handler for cleaning up (deleting) an environment after PR is merged/closed
@@ -786,24 +792,38 @@ export function ActionBar() {
                 </TooltipContent>
               </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={handleReview}
-                    disabled={!canCreateTab}
-                  >
-                    <Eye className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Code Review</p>
-                  <p className="text-xs text-muted-foreground">Commit changes and review code</p>
-                  <p className="text-xs text-muted-foreground">⌘R</p>
-                </TooltipContent>
-              </Tooltip>
+              <ContextMenu>
+                <Tooltip>
+                  <ContextMenuTrigger asChild>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleReview()}
+                        disabled={!canCreateTab}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                  </ContextMenuTrigger>
+                  <TooltipContent>
+                    <p>Code Review</p>
+                    <p className="text-xs text-muted-foreground">Commit changes and review code</p>
+                    <p className="text-xs text-muted-foreground">⌘R · Right-click for agent</p>
+                  </TooltipContent>
+                </Tooltip>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => handleReview("claude")}>
+                    <ClaudeIcon className="mr-2 h-4 w-4" />
+                    Review with Claude
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleReview("opencode")}>
+                    <OpenCodeIcon className="mr-2 h-4 w-4" />
+                    Review with OpenCode
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
               {/* Play Button - Run Commands */}
               <Tooltip>
@@ -862,27 +882,41 @@ export function ActionBar() {
           )}
 
           {selectedEnvironment && !hasPR && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="gap-2"
-                  onClick={handleCreatePR}
-                  disabled={!isRunning || !canCreateTab}
-                >
-                  <GitPullRequest className="h-4 w-4" />
-                  Create PR
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {!isRunning
-                  ? "Container must be running"
-                  : !canCreateTab
-                    ? "Maximum tabs reached"
-                    : "Launch agent to create a pull request"}
-              </TooltipContent>
-            </Tooltip>
+            <ContextMenu>
+              <Tooltip>
+                <ContextMenuTrigger asChild>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => handleCreatePR()}
+                      disabled={!isRunning || !canCreateTab}
+                    >
+                      <GitPullRequest className="h-4 w-4" />
+                      Create PR
+                    </Button>
+                  </TooltipTrigger>
+                </ContextMenuTrigger>
+                <TooltipContent>
+                  {!isRunning
+                    ? "Container must be running"
+                    : !canCreateTab
+                      ? "Maximum tabs reached"
+                      : "Launch agent to create a pull request (right-click for agent)"}
+                </TooltipContent>
+              </Tooltip>
+              <ContextMenuContent>
+                <ContextMenuItem onClick={() => handleCreatePR("claude")}>
+                  <ClaudeIcon className="mr-2 h-4 w-4" />
+                  Create PR with Claude
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => handleCreatePR("opencode")}>
+                  <OpenCodeIcon className="mr-2 h-4 w-4" />
+                  Create PR with OpenCode
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           )}
 
           {selectedEnvironment && hasPR && (
@@ -948,27 +982,41 @@ export function ActionBar() {
               )}
 
               {!isPRFinished && hasMergeConflicts && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="gap-2"
-                      onClick={handleResolveConflicts}
-                      disabled={!isRunning || !canCreateTab}
-                    >
-                      <AlertTriangle className="h-4 w-4" />
-                      Resolve
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {!isRunning
-                      ? (isLocalEnvironment ? "Environment must be ready" : "Container must be running")
-                      : !canCreateTab
-                        ? "Maximum tabs reached"
-                        : "PR has merge conflicts - launch agent to resolve them"}
-                  </TooltipContent>
-                </Tooltip>
+                <ContextMenu>
+                  <Tooltip>
+                    <ContextMenuTrigger asChild>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => handleResolveConflicts()}
+                          disabled={!isRunning || !canCreateTab}
+                        >
+                          <AlertTriangle className="h-4 w-4" />
+                          Resolve
+                        </Button>
+                      </TooltipTrigger>
+                    </ContextMenuTrigger>
+                    <TooltipContent>
+                      {!isRunning
+                        ? (isLocalEnvironment ? "Environment must be ready" : "Container must be running")
+                        : !canCreateTab
+                          ? "Maximum tabs reached"
+                          : "PR has merge conflicts - launch agent to resolve them"}
+                    </TooltipContent>
+                  </Tooltip>
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => handleResolveConflicts("claude")}>
+                      <ClaudeIcon className="mr-2 h-4 w-4" />
+                      Resolve with Claude
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleResolveConflicts("opencode")}>
+                      <OpenCodeIcon className="mr-2 h-4 w-4" />
+                      Resolve with OpenCode
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               )}
 
               {isPRFinished && (
@@ -991,27 +1039,41 @@ export function ActionBar() {
               )}
 
               {!isPRFinished && changes.length > 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="gap-2"
-                      onClick={handlePushChanges}
-                      disabled={!isRunning || !canCreateTab}
-                    >
-                      <Upload className="h-4 w-4" />
-                      Push Changes
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {!isRunning
-                      ? "Container must be running"
-                      : !canCreateTab
-                        ? "Maximum tabs reached"
-                        : "Launch agent to commit and push changes"}
-                  </TooltipContent>
-                </Tooltip>
+                <ContextMenu>
+                  <Tooltip>
+                    <ContextMenuTrigger asChild>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => handlePushChanges()}
+                          disabled={!isRunning || !canCreateTab}
+                        >
+                          <Upload className="h-4 w-4" />
+                          Push Changes
+                        </Button>
+                      </TooltipTrigger>
+                    </ContextMenuTrigger>
+                    <TooltipContent>
+                      {!isRunning
+                        ? "Container must be running"
+                        : !canCreateTab
+                          ? "Maximum tabs reached"
+                          : "Launch agent to commit and push changes"}
+                    </TooltipContent>
+                  </Tooltip>
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => handlePushChanges("claude")}>
+                      <ClaudeIcon className="mr-2 h-4 w-4" />
+                      Push with Claude
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handlePushChanges("opencode")}>
+                      <OpenCodeIcon className="mr-2 h-4 w-4" />
+                      Push with OpenCode
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               )}
             </>
           )}
