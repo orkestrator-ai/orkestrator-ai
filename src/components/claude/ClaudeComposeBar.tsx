@@ -1,18 +1,26 @@
 import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ArrowUp, Brain, MapPlus, Check, Square } from "lucide-react";
+import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ChevronUp, ArrowUp, Brain, MapPlus, Check, Square } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment } from "@/stores/claudeStore";
+import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type QueuedMessage } from "@/stores/claudeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import type { ClaudeModel } from "@/lib/claude-client";
 import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
@@ -69,6 +77,7 @@ export function ClaudeComposeBar({
 }: ClaudeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+  const [queueDialogOpen, setQueueDialogOpen] = useState(false);
   const inputRef = useRef<MentionableInputRef>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
 
@@ -90,6 +99,9 @@ export function ClaudeComposeBar({
     setThinkingEnabled,
     isPlanMode,
     setPlanMode,
+    getQueuedMessages,
+    removeQueueItem,
+    moveQueueItem,
   } = useClaudeStore();
 
   // Use a selector for sessionInitData to ensure reactivity when SSE session.init event arrives
@@ -107,6 +119,7 @@ export function ClaudeComposeBar({
   const selectedModel = getSelectedModel(sessionKey);
   const thinkingEnabled = isThinkingEnabled(sessionKey);
   const planModeEnabled = isPlanMode(sessionKey);
+  const queuedMessages = getQueuedMessages(sessionKey);
 
   // Get worktree path for local environments
   const worktreePath = useEnvironmentStore(
@@ -473,6 +486,37 @@ export function ClaudeComposeBar({
     }
   };
 
+  const handleRemoveQueuedMessage = useCallback(
+    (messageId: string) => {
+      removeQueueItem(sessionKey, messageId);
+    },
+    [removeQueueItem, sessionKey]
+  );
+
+  const handleMoveQueuedMessage = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      moveQueueItem(sessionKey, fromIndex, toIndex);
+    },
+    [moveQueueItem, sessionKey]
+  );
+
+  const handleQueuedMessageClick = useCallback(
+    (message: QueuedMessage) => {
+      removeQueueItem(sessionKey, message.id);
+      clearAttachments(sessionKey);
+      for (const attachment of message.attachments) {
+        addAttachment(sessionKey, attachment);
+      }
+      setDraftText(sessionKey, message.text);
+      setDraftMentions(sessionKey, []);
+      setThinkingEnabled(sessionKey, message.thinkingEnabled);
+      setPlanMode(sessionKey, message.planModeEnabled);
+      setQueueDialogOpen(false);
+      inputRef.current?.focus();
+    },
+    [removeQueueItem, sessionKey, clearAttachments, addAttachment, setDraftText, setDraftMentions, setThinkingEnabled, setPlanMode]
+  );
+
   const handleRemoveAttachment = (id: string) => {
     removeAttachment(sessionKey, id);
   };
@@ -662,9 +706,14 @@ export function ClaudeComposeBar({
 
         {/* Queue indicator */}
         {queueLength > 0 && (
-          <div className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50">
+          <button
+            type="button"
+            onClick={() => setQueueDialogOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50 hover:bg-muted transition-colors"
+            title="View queued prompts"
+          >
             <span>+{queueLength} queued</span>
-          </div>
+          </button>
         )}
 
         {/* Send/Stop button - round grey style */}
@@ -700,6 +749,89 @@ export function ClaudeComposeBar({
           </button>
         )}
       </div>
+
+      <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Queued Prompts</DialogTitle>
+            <DialogDescription>
+              Review pending prompts. Click a message to edit it, or reorder and remove items.
+            </DialogDescription>
+          </DialogHeader>
+
+          {queuedMessages.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Queue is empty.
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[380px] pr-3">
+              <div className="space-y-2">
+                {queuedMessages.map((message, index) => (
+                  <div
+                    key={message.id}
+                    className="rounded-md border border-border bg-muted/20 p-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 shrink-0 text-xs font-medium text-muted-foreground">
+                        #{index + 1}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="cursor-pointer rounded px-1 -mx-1 text-sm whitespace-pre-wrap break-words line-clamp-4 hover:bg-muted/50 transition-colors"
+                          onClick={() => handleQueuedMessageClick(message)}
+                          title="Click to edit this message"
+                        >
+                          {message.text}
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          {message.thinkingEnabled && <span>Thinking</span>}
+                          {message.planModeEnabled && <span>Plan mode</span>}
+                          {message.attachments.length > 0 && (
+                            <span>
+                              {message.attachments.length} attachment
+                              {message.attachments.length === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveQueuedMessage(index, index - 1)}
+                          disabled={index === 0}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Move up"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveQueuedMessage(index, index + 1)}
+                          disabled={index === queuedMessages.length - 1}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Move down"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveQueuedMessage(message.id)}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                          title="Remove queued prompt"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

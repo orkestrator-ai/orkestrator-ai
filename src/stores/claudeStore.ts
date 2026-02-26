@@ -121,8 +121,11 @@ interface ClaudeState {
   // Queue actions - keyed by sessionKey
   addToQueue: (sessionKey: ClaudeSessionKey, message: QueuedMessage) => void;
   removeFromQueue: (sessionKey: ClaudeSessionKey) => QueuedMessage | undefined;
+  removeQueueItem: (sessionKey: ClaudeSessionKey, messageId: string) => void;
+  moveQueueItem: (sessionKey: ClaudeSessionKey, fromIndex: number, toIndex: number) => void;
   clearQueue: (sessionKey: ClaudeSessionKey) => void;
   getQueueLength: (sessionKey: ClaudeSessionKey) => number;
+  getQueuedMessages: (sessionKey: ClaudeSessionKey) => QueuedMessage[];
 
   addPendingQuestion: (question: ClaudeQuestionRequest) => void;
   removePendingQuestion: (requestId: string) => void;
@@ -566,6 +569,29 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   getQueueLength: (sessionKey) => {
     const queue = get().messageQueue.get(sessionKey);
     return queue?.length || 0;
+  },
+
+  removeQueueItem: (sessionKey, messageId) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) || [];
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, current.filter((m) => m.id !== messageId));
+      return { messageQueue: newMap };
+    }),
+
+  moveQueueItem: (sessionKey, fromIndex, toIndex) =>
+    set((state) => {
+      const current = [...(state.messageQueue.get(sessionKey) || [])];
+      if (fromIndex < 0 || fromIndex >= current.length || toIndex < 0 || toIndex >= current.length) return {};
+      const [item] = current.splice(fromIndex, 1);
+      current.splice(toIndex, 0, item);
+      const newMap = new Map(state.messageQueue);
+      newMap.set(sessionKey, current);
+      return { messageQueue: newMap };
+    }),
+
+  getQueuedMessages: (sessionKey) => {
+    return get().messageQueue.get(sessionKey) || [];
   },
 
   addPendingQuestion: (question) =>
