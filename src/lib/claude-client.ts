@@ -564,6 +564,25 @@ export async function getSessionInitData(
 }
 
 /**
+ * Get discovered slash commands from plugins and project .claude/commands/.
+ * This can be called before any session query, unlike getSessionInitData which
+ * only has slash commands after the first SDK query.
+ */
+export async function getSlashCommands(
+  client: ClaudeClient
+): Promise<string[]> {
+  try {
+    const response = await fetchWithTimeout(`${client.baseUrl}/plugins/commands`);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.commands || [];
+  } catch (error) {
+    console.debug("[claude-client] Failed to get slash commands:", error);
+    return [];
+  }
+}
+
+/**
  * Subscribe to SSE events from the server
  * Returns an async iterator for events
  */

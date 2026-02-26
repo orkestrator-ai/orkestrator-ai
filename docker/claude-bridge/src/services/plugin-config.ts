@@ -198,7 +198,7 @@ export async function loadProjectOverridesFromGlobal(
 /**
  * Read plugin manifest to get name and metadata
  */
-async function readPluginManifest(
+export async function readPluginManifest(
   pluginPath: string
 ): Promise<{ name: string; description?: string } | null> {
   const manifestPath = join(pluginPath, ".claude-plugin", "plugin.json");

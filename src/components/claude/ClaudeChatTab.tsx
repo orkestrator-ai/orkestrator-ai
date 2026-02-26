@@ -15,6 +15,7 @@ import {
   abortSession,
   subscribeToEvents,
   checkHealth,
+  getSlashCommands,
   ERROR_MESSAGE_PREFIX,
   SYSTEM_MESSAGE_PREFIX,
   SessionNotFoundError,
@@ -282,6 +283,25 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         const firstModel = availableModels[0];
         if (!currentSelectedModel && firstModel) {
           setSelectedModel(sessionKey, firstModel.id);
+        }
+
+        // Eagerly load slash commands from plugins (before first query)
+        // The SDK only provides slash_commands in the session.init message after the
+        // first query, so we discover them from plugin directories on the filesystem.
+        if (mounted) {
+          getSlashCommands(bridgeClient).then((slashCommands) => {
+            if (!mounted || slashCommands.length === 0) return;
+            const existing = useClaudeStore.getState().sessionInitData.get(environmentId);
+            if (!existing?.slashCommands?.length) {
+              useClaudeStore.getState().setSessionInitData(environmentId, {
+                mcpServers: existing?.mcpServers || [],
+                plugins: existing?.plugins || [],
+                slashCommands,
+              });
+            }
+          }).catch((err) => {
+            console.debug("[ClaudeChatTab] Failed to eagerly load slash commands:", err);
+          });
         }
 
         // Check for existing session - first from component ref, then from Zustand store
