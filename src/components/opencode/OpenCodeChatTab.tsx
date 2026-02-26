@@ -50,6 +50,10 @@ import { OpenCodeComposeBar } from "./OpenCodeComposeBar";
 import { OpenCodePermissionCard } from "./OpenCodePermissionCard";
 import { OpenCodeQuestionCard } from "./OpenCodeQuestionCard";
 import { OpenCodeResumeSessionDialog } from "./OpenCodeResumeSessionDialog";
+import {
+  resolveSlashCommandDirectory,
+  shouldLoadSlashCommands,
+} from "./slash-command-directory";
 import type { OpenCodeNativeData } from "@/types/paneLayout";
 import type { OpenCodeAttachment } from "@/stores/openCodeStore";
 
@@ -229,7 +233,10 @@ export function OpenCodeChatTab({
     ),
   );
 
-  const slashCommandDirectory = isLocal ? worktreePath : "/workspace";
+  const slashCommandDirectory = resolveSlashCommandDirectory(
+    isLocal,
+    worktreePath,
+  );
 
   // Queue length for this tab session - subscribe narrowly for fewer re-renders
   const queueLength = useOpenCodeStore(
@@ -429,7 +436,7 @@ export function OpenCodeChatTab({
         setClient(environmentId, sdkClient);
 
         // Fetch available models, server defaults, and model preferences
-        const [{ models: availableModels, defaults }, preferences, availableSlashCommands] =
+        const [{ models: availableModels, defaults }, preferences] =
           await Promise.all([
             getModelsWithDefaults(sdkClient),
             getOpencodeModelPreferences().catch((error) => {
@@ -439,18 +446,10 @@ export function OpenCodeChatTab({
               );
               return EMPTY_MODEL_PREFERENCES;
             }),
-            getAvailableSlashCommands(sdkClient, slashCommandDirectory).catch((error) => {
-              console.warn(
-                "[OpenCodeChatTab] Failed to load slash commands:",
-                error,
-              );
-              return EMPTY_SLASH_COMMANDS;
-            }),
           ]);
         if (!mounted) return;
 
         setModels(availableModels);
-        setSlashCommands(environmentId, availableSlashCommands);
         setModelPreferences(preferences);
 
         // Initialize selected model/variant while preserving valid user-selected values.
@@ -639,6 +638,39 @@ export function OpenCodeChatTab({
     getSelectedVariant,
     setSelectedModel,
     setSelectedVariant,
+  ]);
+
+  useEffect(() => {
+    if (!isActive || connectionState !== "connected" || !client) {
+      return;
+    }
+
+    if (!shouldLoadSlashCommands(isLocal, slashCommandDirectory)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    getAvailableSlashCommands(client, slashCommandDirectory)
+      .then((availableSlashCommands) => {
+        if (cancelled) return;
+        setSlashCommands(environmentId, availableSlashCommands);
+      })
+      .catch((error) => {
+        console.warn("[OpenCodeChatTab] Failed to load slash commands:", error);
+        if (cancelled) return;
+        setSlashCommands(environmentId, EMPTY_SLASH_COMMANDS);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    client,
+    connectionState,
+    environmentId,
+    isActive,
+    isLocal,
     setSlashCommands,
     slashCommandDirectory,
   ]);
