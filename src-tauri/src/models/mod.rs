@@ -208,6 +208,17 @@ pub struct Environment {
     /// Host port for claude-bridge server (local mode - static allocation)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_claude_port: Option<u16>,
+
+    // === Agent settings overrides ===
+    /// Per-environment default agent override (None = use global config)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_agent: Option<DefaultAgent>,
+    /// Per-environment Claude mode override (None = use global config)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_mode: Option<ClaudeMode>,
+    /// Per-environment OpenCode mode override (None = use global config)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_mode: Option<OpenCodeMode>,
 }
 
 /// Default branch for backward compatibility with existing environments
@@ -285,6 +296,9 @@ impl Environment {
             claude_bridge_pid: None,
             local_opencode_port: None,
             local_claude_port: None,
+            default_agent: None,
+            claude_mode: None,
+            opencode_mode: None,
         }
     }
 
@@ -315,6 +329,9 @@ impl Environment {
             claude_bridge_pid: None,
             local_opencode_port: None,
             local_claude_port: None,
+            default_agent: None,
+            claude_mode: None,
+            opencode_mode: None,
         }
     }
 
@@ -345,6 +362,9 @@ impl Environment {
             claude_bridge_pid: None,
             local_opencode_port: None,
             local_claude_port: None,
+            default_agent: None,
+            claude_mode: None,
+            opencode_mode: None,
         }
     }
 
