@@ -47,7 +47,7 @@ export function OpenCodeSlashCommandMenu({
     <div
       ref={menuRef}
       className={cn(
-        "absolute z-50 w-[36rem] max-h-64 overflow-y-auto",
+        "absolute z-50 max-h-64 w-full max-w-[36rem] overflow-y-auto",
         "animate-in fade-in-0 zoom-in-95 rounded-md border border-border bg-popover shadow-lg",
       )}
       style={{ bottom: "100%", left: 0, marginBottom: "4px" }}

@@ -509,32 +509,71 @@ export async function getAvailableSlashCommands(
   directory?: string,
 ): Promise<OpenCodeSlashCommand[]> {
   try {
+    type CommandListResponse = {
+      data?: Array<{
+        name: string;
+        description?: string;
+        subtask?: boolean;
+        hints: Array<string>;
+      }>;
+    };
+
     // Make two calls: one without directory (server uses its own CWD for full
     // discovery) and one with directory (for project-specific commands).
-    // Merge results so we don't miss commands from either source.
-    const calls: Promise<{ data?: Array<{
-      name: string;
-      description?: string;
-      subtask?: boolean;
-      hints: Array<string>;
-    }> }>[] = [
-      client.command.list(),
+    const requests: Array<{
+      source: "global" | "directory";
+      promise: Promise<CommandListResponse>;
+    }> = [
+      {
+        source: "global",
+        promise: client.command.list(),
+      },
     ];
+
     if (directory) {
-      calls.push(client.command.list({ directory }));
+      requests.push({
+        source: "directory",
+        promise: client.command.list({ directory }),
+      });
     }
 
-    const responses = await Promise.all(calls);
+    const settled = await Promise.allSettled(
+      requests.map((request) => request.promise),
+    );
 
-    const mapped: OpenCodeSlashCommand[] = [];
-    const seen = new Set<string>();
+    const responsesBySource = new Map<"global" | "directory", CommandListResponse>();
 
-    for (const response of responses) {
-      if (!response.data) continue;
+    for (let index = 0; index < settled.length; index += 1) {
+      const source = requests[index]?.source;
+      const result = settled[index];
+
+      if (!source || !result) continue;
+
+      if (result.status === "fulfilled") {
+        responsesBySource.set(source, result.value);
+      } else {
+        console.warn("[opencode-client] Failed to get slash commands from source:", {
+          source,
+          error: result.reason,
+        });
+      }
+    }
+
+    // Prefer directory metadata for duplicate command names when available,
+    // while still using global metadata to fill missing fields.
+    const sourcePriority: Array<"global" | "directory"> = directory
+      ? ["directory", "global"]
+      : ["global"];
+
+    const commandMap = new Map<string, OpenCodeSlashCommand>();
+
+    for (const source of sourcePriority) {
+      const response = responsesBySource.get(source);
+      if (!response?.data) continue;
 
       for (const command of response.data) {
         const normalizedName = normalizeSlashCommandName(command.name || "");
-        if (!normalizedName || seen.has(normalizedName)) {
+        if (!normalizedName) {
           continue;
         }
 
@@ -550,17 +589,27 @@ export async function getAvailableSlashCommands(
             ? command.description.trim()
             : hints[0];
 
-        mapped.push({
+        const mappedCommand: OpenCodeSlashCommand = {
           name: normalizedName,
           description,
           hints: hints.length > 0 ? hints : undefined,
-        });
+        };
 
-        seen.add(normalizedName);
+        const existing = commandMap.get(normalizedName);
+        if (!existing) {
+          commandMap.set(normalizedName, mappedCommand);
+          continue;
+        }
+
+        commandMap.set(normalizedName, {
+          ...existing,
+          description: existing.description ?? mappedCommand.description,
+          hints: existing.hints ?? mappedCommand.hints,
+        });
       }
     }
 
-    return mapped.sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
     console.error("[opencode-client] Failed to get slash commands:", error);
     return [];

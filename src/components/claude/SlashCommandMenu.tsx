@@ -63,7 +63,7 @@ export function SlashCommandMenu({
     <div
       ref={menuRef}
       className={cn(
-        "absolute z-50 w-[36rem] max-h-64 overflow-y-auto",
+        "absolute z-50 max-h-64 w-full max-w-[36rem] overflow-y-auto",
         "rounded-md border border-border bg-popover shadow-lg",
         "animate-in fade-in-0 zoom-in-95"
       )}
