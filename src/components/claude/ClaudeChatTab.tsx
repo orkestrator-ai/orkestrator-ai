@@ -652,10 +652,18 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const initData = event.data as any;
             if (initData) {
+              // The SDK's slash_commands includes both real commands AND skill
+              // definitions. Our eagerly-loaded list (from discoverSlashCommands)
+              // correctly includes only actual commands from commands/ directories.
+              // Prefer our eagerly-loaded list when available; fall back to SDK's list.
+              const existing = useClaudeStore.getState().sessionInitData.get(environmentId);
+              const slashCommands = existing?.slashCommands?.length
+                ? existing.slashCommands
+                : initData.slashCommands || [];
               useClaudeStore.getState().setSessionInitData(environmentId, {
                 mcpServers: initData.mcpServers || [],
                 plugins: initData.plugins || [],
-                slashCommands: initData.slashCommands || [],
+                slashCommands,
               });
             }
           }

@@ -509,42 +509,55 @@ export async function getAvailableSlashCommands(
   directory?: string,
 ): Promise<OpenCodeSlashCommand[]> {
   try {
-    const response = await client.command.list(
-      directory ? { directory } : undefined,
-    );
-
-    if (!response.data) {
-      return [];
+    // Make two calls: one without directory (server uses its own CWD for full
+    // discovery) and one with directory (for project-specific commands).
+    // Merge results so we don't miss commands from either source.
+    const calls: Promise<{ data?: Array<{
+      name: string;
+      description?: string;
+      subtask?: boolean;
+      hints: Array<string>;
+    }> }>[] = [
+      client.command.list(),
+    ];
+    if (directory) {
+      calls.push(client.command.list({ directory }));
     }
+
+    const responses = await Promise.all(calls);
 
     const mapped: OpenCodeSlashCommand[] = [];
     const seen = new Set<string>();
 
-    for (const command of response.data) {
-      const normalizedName = normalizeSlashCommandName(command.name || "");
-      if (!normalizedName || seen.has(normalizedName)) {
-        continue;
+    for (const response of responses) {
+      if (!response.data) continue;
+
+      for (const command of response.data) {
+        const normalizedName = normalizeSlashCommandName(command.name || "");
+        if (!normalizedName || seen.has(normalizedName)) {
+          continue;
+        }
+
+        const hints = Array.isArray(command.hints)
+          ? command.hints.filter(
+              (hint): hint is string =>
+                typeof hint === "string" && hint.trim().length > 0,
+            )
+          : [];
+
+        const description =
+          typeof command.description === "string" && command.description.trim().length > 0
+            ? command.description.trim()
+            : hints[0];
+
+        mapped.push({
+          name: normalizedName,
+          description,
+          hints: hints.length > 0 ? hints : undefined,
+        });
+
+        seen.add(normalizedName);
       }
-
-      const hints = Array.isArray(command.hints)
-        ? command.hints.filter(
-            (hint): hint is string =>
-              typeof hint === "string" && hint.trim().length > 0,
-          )
-        : [];
-
-      const description =
-        typeof command.description === "string" && command.description.trim().length > 0
-          ? command.description.trim()
-          : hints[0];
-
-      mapped.push({
-        name: normalizedName,
-        description,
-        hints: hints.length > 0 ? hints : undefined,
-      });
-
-      seen.add(normalizedName);
     }
 
     return mapped.sort((a, b) => a.name.localeCompare(b.name));
