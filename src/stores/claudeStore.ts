@@ -584,7 +584,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const current = [...(state.messageQueue.get(sessionKey) || [])];
       if (fromIndex < 0 || fromIndex >= current.length || toIndex < 0 || toIndex >= current.length) return {};
       const [item] = current.splice(fromIndex, 1);
-      current.splice(toIndex, 0, item);
+      if (item) current.splice(toIndex, 0, item);
       const newMap = new Map(state.messageQueue);
       newMap.set(sessionKey, current);
       return { messageQueue: newMap };

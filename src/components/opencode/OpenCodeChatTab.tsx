@@ -234,7 +234,7 @@ export function OpenCodeChatTab({
   );
 
   const slashCommandDirectory = resolveSlashCommandDirectory(
-    isLocal,
+    isLocal ?? false,
     worktreePath,
   );
 
@@ -645,7 +645,7 @@ export function OpenCodeChatTab({
       return;
     }
 
-    if (!shouldLoadSlashCommands(isLocal, slashCommandDirectory)) {
+    if (!shouldLoadSlashCommands(isLocal ?? false, slashCommandDirectory)) {
       return;
     }
 
