@@ -148,6 +148,12 @@ describe("opencode-client getAvailableSlashCommands", () => {
               hints: ["Build project"],
             },
             {
+              name: "agent-helper",
+              description: "Agent helper command",
+              subtask: true,
+              hints: [],
+            },
+            {
               name: "/fix",
               description: "Duplicate should be ignored",
             },
@@ -164,6 +170,10 @@ describe("opencode-client getAvailableSlashCommands", () => {
 
     expect(commands).toEqual([
       {
+        name: "/agent-helper",
+        description: "Agent helper command",
+      },
+      {
         name: "/build",
         description: "Build project",
         hints: ["Build project"],
@@ -176,13 +186,13 @@ describe("opencode-client getAvailableSlashCommands", () => {
     ]);
   });
 
-  test("passes directory when provided", async () => {
-    let capturedDirectory: unknown;
+  test("passes directory when provided (two calls: global + directory)", async () => {
+    const capturedCalls: unknown[] = [];
 
     const client = {
       command: {
         list: async (request?: { directory?: string }) => {
-          capturedDirectory = request;
+          capturedCalls.push(request);
           return { data: [] };
         },
       },
@@ -190,7 +200,93 @@ describe("opencode-client getAvailableSlashCommands", () => {
 
     await getAvailableSlashCommands(client, "/workspace");
 
-    expect(capturedDirectory).toEqual({ directory: "/workspace" });
+    // Should make two calls: one without directory, one with
+    expect(capturedCalls).toEqual([undefined, { directory: "/workspace" }]);
+  });
+
+  test("keeps successful command source when one source fails", async () => {
+    const client = {
+      command: {
+        list: async (request?: { directory?: string }) => {
+          if (request?.directory) {
+            throw new Error("directory unavailable");
+          }
+
+          return {
+            data: [
+              {
+                name: "global-only",
+                description: "Global command",
+                hints: [],
+              },
+            ],
+          };
+        },
+      },
+    } as unknown as OpencodeClient;
+
+    const commands = await getAvailableSlashCommands(client, "/workspace");
+
+    expect(commands).toEqual([
+      {
+        name: "/global-only",
+        description: "Global command",
+      },
+    ]);
+  });
+
+  test("prefers directory metadata and backfills missing fields from global", async () => {
+    const client = {
+      command: {
+        list: async (request?: { directory?: string }) => {
+          if (request?.directory) {
+            return {
+              data: [
+                {
+                  name: "fix",
+                  description: "Project fix",
+                  hints: ["project hint"],
+                },
+                {
+                  name: "build",
+                  hints: [],
+                },
+              ],
+            };
+          }
+
+          return {
+            data: [
+              {
+                name: "fix",
+                description: "Global fix",
+                hints: ["global hint"],
+              },
+              {
+                name: "build",
+                description: "Global build",
+                hints: ["build hint"],
+              },
+            ],
+          };
+        },
+      },
+    } as unknown as OpencodeClient;
+
+    const commands = await getAvailableSlashCommands(client, "/workspace");
+
+    expect(commands).toEqual([
+      {
+        name: "/build",
+        description: "Global build",
+        hints: ["build hint"],
+      },
+      {
+        name: "/fix",
+        description: "Project fix",
+        hints: ["project hint"],
+      },
+    ]);
   });
 
   test("returns empty array when command list fails", async () => {

@@ -63,7 +63,7 @@ export function SlashCommandMenu({
     <div
       ref={menuRef}
       className={cn(
-        "absolute z-50 w-64 max-h-48 overflow-y-auto",
+        "absolute z-50 max-h-64 w-full max-w-[36rem] overflow-y-auto",
         "rounded-md border border-border bg-popover shadow-lg",
         "animate-in fade-in-0 zoom-in-95"
       )}
@@ -80,18 +80,19 @@ export function SlashCommandMenu({
               key={command.name}
               ref={isSelected ? selectedRef : undefined}
               onClick={() => onSelect(command)}
+              title={command.description || command.name}
               className={cn(
-                "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+                "flex w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
                 "transition-colors",
                 isSelected
                   ? "bg-accent text-accent-foreground"
                   : "hover:bg-accent/50 hover:text-accent-foreground"
               )}
             >
-              <Command className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{command.name}</span>
+              <Command className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="shrink-0 font-medium whitespace-nowrap">{command.name}</span>
               {command.description && (
-                <span className="ml-auto text-xs text-muted-foreground truncate max-w-[120px]">
+                <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
                   {command.description}
                 </span>
               )}
@@ -123,7 +124,8 @@ export function parseSlashCommands(
     return [];
   }
 
-  const result: SlashCommand[] = [];
+  // Use a Map to deduplicate by name, preferring entries with descriptions
+  const commandMap = new Map<string, SlashCommand>();
 
   for (const cmd of commandStrings) {
     // Handle format "/name - description" or just "/name"
@@ -138,9 +140,13 @@ export function parseSlashCommands(
       name = normalizeCommandName(cmd);
     }
 
-    result.push({ name, description });
+    const existing = commandMap.get(name);
+    // Keep the entry with a description, or the first one seen
+    if (!existing || (description && !existing.description)) {
+      commandMap.set(name, { name, description });
+    }
   }
 
   // Sort alphabetically by name
-  return result.sort((a, b) => a.name.localeCompare(b.name));
+  return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 }

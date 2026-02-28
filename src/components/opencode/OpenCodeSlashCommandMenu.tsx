@@ -47,7 +47,7 @@ export function OpenCodeSlashCommandMenu({
     <div
       ref={menuRef}
       className={cn(
-        "absolute z-50 max-h-48 w-64 overflow-y-auto",
+        "absolute z-50 max-h-64 w-full max-w-[36rem] overflow-y-auto",
         "animate-in fade-in-0 zoom-in-95 rounded-md border border-border bg-popover shadow-lg",
       )}
       style={{ bottom: "100%", left: 0, marginBottom: "4px" }}
@@ -63,17 +63,18 @@ export function OpenCodeSlashCommandMenu({
               key={command.name}
               ref={isSelected ? selectedRef : undefined}
               onClick={() => onSelect(command)}
+              title={command.description || command.name}
               className={cn(
-                "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
+                "flex w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
                 isSelected
                   ? "bg-accent text-accent-foreground"
                   : "hover:bg-accent/50 hover:text-accent-foreground",
               )}
             >
-              <Command className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{command.name}</span>
+              <Command className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="shrink-0 font-medium whitespace-nowrap">{command.name}</span>
               {command.description && (
-                <span className="ml-auto max-w-[120px] truncate text-xs text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
                   {command.description}
                 </span>
               )}
