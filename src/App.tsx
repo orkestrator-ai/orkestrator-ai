@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
 import { AppShell } from "@/components/layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TerminalContainer } from "@/components/terminal";
 import { TerminalProvider } from "@/contexts";
-import { useUIStore, useEnvironmentStore, useConfigStore } from "@/stores";
+import { useUIStore, useEnvironmentStore, useConfigStore, useClaudeOptionsStore } from "@/stores";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
 import { checkDocker, checkClaudeCli, checkClaudeConfig, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
 import { usePrMonitorService } from "@/hooks/usePrMonitorService";
+import { useEnvironments } from "@/hooks";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,8 +26,15 @@ import { Loader2 } from "lucide-react";
 
 function App() {
   const { selectedEnvironmentId, selectedProjectId, zoomLevel, zoomIn, zoomOut, resetZoom } = useUIStore();
-  const { environments } = useEnvironmentStore();
-  const { setConfig } = useConfigStore();
+  const environments = useEnvironmentStore((state) => state.environments);
+  const getEnvironmentById = useEnvironmentStore((state) => state.getEnvironmentById);
+  const setPendingSetupCommands = useEnvironmentStore((state) => state.setPendingSetupCommands);
+  const setSetupCommandsResolved = useEnvironmentStore((state) => state.setSetupCommandsResolved);
+  const setConfig = useConfigStore((state) => state.setConfig);
+  const config = useConfigStore((state) => state.config);
+  const setClaudeOptions = useClaudeOptionsStore((state) => state.setOptions);
+  const clearClaudeOptions = useClaudeOptionsStore((state) => state.clearOptions);
+  const { startEnvironment } = useEnvironments(null);
   const [dockerAvailable, setDockerAvailable] = useState<boolean | null>(null);
   const [isCheckingDocker, setIsCheckingDocker] = useState(false);
 
@@ -264,6 +272,62 @@ function App() {
     githubCliAvailable === false &&
     !githubCliWarningDismissed;
 
+  const handleStartEnvironmentFromOverlay = useCallback(
+    async (environmentId: string, initialPrompt?: string): Promise<boolean> => {
+      const environment = getEnvironmentById(environmentId);
+      const isLocalEnvironment = environment?.environmentType === "local";
+
+      // Clear any stale queued agent launch for normal starts.
+      if (!initialPrompt) {
+        clearClaudeOptions(environmentId);
+      }
+
+      // For local environments, block terminal initialization until setup commands are resolved.
+      if (isLocalEnvironment) {
+        setSetupCommandsResolved(environmentId, false);
+      }
+
+      try {
+        const setupCommands = await startEnvironment(environmentId, initialPrompt);
+
+        if (isLocalEnvironment) {
+          if (setupCommands && setupCommands.length > 0) {
+            setPendingSetupCommands(environmentId, setupCommands);
+          }
+          setSetupCommandsResolved(environmentId, true);
+        }
+
+        return true;
+      } catch (error) {
+        if (isLocalEnvironment) {
+          setSetupCommandsResolved(environmentId, true);
+        }
+        console.error("[App] Failed to start environment from terminal overlay:", error);
+        return false;
+      }
+    },
+    [clearClaudeOptions, getEnvironmentById, setPendingSetupCommands, setSetupCommandsResolved, startEnvironment]
+  );
+
+  const handleCreateScriptFromOverlay = useCallback(
+    async (environmentId: string, initialPrompt: string) => {
+      const environment = getEnvironmentById(environmentId);
+      const agentType = environment?.defaultAgent || config.global.defaultAgent || "claude";
+
+      setClaudeOptions(environmentId, {
+        launchAgent: true,
+        agentType,
+        initialPrompt,
+      });
+
+      const started = await handleStartEnvironmentFromOverlay(environmentId, initialPrompt);
+      if (!started) {
+        clearClaudeOptions(environmentId);
+      }
+    },
+    [clearClaudeOptions, config.global.defaultAgent, getEnvironmentById, handleStartEnvironmentFromOverlay, setClaudeOptions]
+  );
+
   return (
     <TooltipProvider>
       <TerminalProvider>
@@ -290,6 +354,12 @@ function App() {
                       isContainerCreating={environment.status === "creating"}
                       isActive={isActive}
                       className="h-full"
+                      onStartContainer={(initialPrompt) => {
+                        void handleStartEnvironmentFromOverlay(environment.id, initialPrompt);
+                      }}
+                      onCreateScript={(initialPrompt) => {
+                        void handleCreateScriptFromOverlay(environment.id, initialPrompt);
+                      }}
                     />
                   </div>
                 );
