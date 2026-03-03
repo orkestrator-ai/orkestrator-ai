@@ -141,19 +141,18 @@ export function FileViewerTab({
           if (!mimeType) {
             throw new Error(`Unsupported image format: ${getFileExtension(filePath)}`);
           }
-          // Image viewing requires container environment (base64 transfer via Docker API)
-          if (isLocalEnvironment) {
-            // Set a friendly error message instead of throwing
-            if (!cancelled) {
-              setError("Image preview is not yet available for local environments. You can open this file in your system image viewer.");
-              setIsLoading(false);
-            }
-            return;
+          let base64Content: string;
+          if (isLocalEnvironment && worktreePath) {
+            // Build full path for local filesystem read
+            const fullPath = filePath.startsWith("/")
+              ? filePath
+              : `${worktreePath}/${filePath}`;
+            base64Content = await tauri.readFileBase64(fullPath);
+          } else if (containerId) {
+            base64Content = await tauri.readContainerFileBase64(containerId, filePath);
+          } else {
+            throw new Error("No container ID or worktree path available for image viewing");
           }
-          if (!containerId) {
-            throw new Error("Container ID required for image viewing");
-          }
-          const base64Content = await tauri.readContainerFileBase64(containerId, filePath);
           if (!cancelled) {
             setImageDataUrl(`data:${mimeType};base64,${base64Content}`);
           }
