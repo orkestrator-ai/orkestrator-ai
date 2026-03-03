@@ -2,6 +2,7 @@
 // Provides typed functions for interacting with the OpenCode server
 
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { isEditTool } from "./tool-names";
 
 export { type OpencodeClient };
 
@@ -740,12 +741,10 @@ export async function getSessionMessages(
               }
             }
 
-            // Extract diff metadata for edit tools
+            // Extract diff metadata for edit/write/patch tools
             // The metadata may contain file info and diff stats
             let toolDiff: import("./opencode-client").ToolDiffMetadata | undefined;
-            const isEditTool = toolName === "edit" || toolName === "Edit" || toolName === "write" || toolName === "Write";
-
-            if (isEditTool) {
+            if (isEditTool(toolName)) {
               const input = p.state?.input || {};
               const meta = p.state?.metadata || {};
 
@@ -753,20 +752,30 @@ export async function getSessionMessages(
               // Get filediff metadata if available
               const filediff = meta.filediff as FileDiffMetadata | undefined;
 
-              // Get file path - check camelCase first (SDK standard), then snake_case fallback
+              // Get file path - check multiple possible field names across different tools
               const filePath = (input.filePath || input.file_path || input.path || input.file ||
-                meta.file || meta.filePath || filediff?.file) as string | undefined;
+                meta.file || meta.filePath || meta.path || filediff?.file) as string | undefined;
 
-              // Get oldString and newString from input (SDK uses camelCase)
+              // Get old/new content from input - different tools use different field names:
+              // Edit: oldString/old_string, newString/new_string
+              // Write/create_file: content (new content only)
+              // apply_patch/patch: patch/diff (unified diff format)
               const oldString = typeof input.oldString === "string" ? input.oldString :
                 typeof input.old_string === "string" ? input.old_string : undefined;
+              // For write/create_file tools, input.content is the new file content (no oldString)
               const newString = typeof input.newString === "string" ? input.newString :
-                typeof input.new_string === "string" ? input.new_string : undefined;
-              const metaBefore = typeof filediff?.before === "string" ? filediff.before : undefined;
-              const metaAfter = typeof filediff?.after === "string" ? filediff.after : undefined;
+                typeof input.new_string === "string" ? input.new_string :
+                typeof input.content === "string" ? input.content : undefined;
+              const metaBefore = typeof filediff?.before === "string" ? filediff.before :
+                typeof meta.before === "string" ? meta.before : undefined;
+              const metaAfter = typeof filediff?.after === "string" ? filediff.after :
+                typeof meta.after === "string" ? meta.after : undefined;
 
               // The metadata.diff contains the full unified diff string
-              const unifiedDiff = typeof meta.diff === "string" ? meta.diff : undefined;
+              // Also check input.patch/input.diff for apply_patch/patch tools
+              const unifiedDiff = typeof meta.diff === "string" ? meta.diff :
+                typeof input.patch === "string" ? input.patch :
+                typeof input.diff === "string" ? input.diff : undefined;
 
               // Use oldString/newString first, fall back to filediff before/after
               const beforeValue = oldString ?? metaBefore;
@@ -776,8 +785,13 @@ export async function getSessionMessages(
               let additions: number | undefined;
               let deletions: number | undefined;
 
-              // Try to count from unified diff first (most accurate)
-              if (unifiedDiff) {
+              // Check for pre-calculated stats in metadata (SDK FileDiff type has these)
+              if (typeof meta.additions === "number" && typeof meta.deletions === "number") {
+                additions = meta.additions as number;
+                deletions = meta.deletions as number;
+              }
+              // Try to count from unified diff (most accurate after pre-calculated)
+              else if (unifiedDiff) {
                 let addCount = 0;
                 let delCount = 0;
                 const lines = unifiedDiff.split("\n");
@@ -787,8 +801,24 @@ export async function getSessionMessages(
                 }
                 additions = addCount;
                 deletions = delCount;
-              } else if (beforeValue !== undefined || afterValue !== undefined) {
-                // Fall back to counting from before/after
+              }
+              // Try to count from the tool output if it looks like a unified diff
+              // Require @@ hunk headers to avoid false positives from non-diff output
+              else if (toolOutput && toolOutput.includes("@@") && (toolOutput.includes("\n+") || toolOutput.includes("\n-"))) {
+                let addCount = 0;
+                let delCount = 0;
+                const lines = toolOutput.split("\n");
+                for (const line of lines) {
+                  if (line.startsWith("+") && !line.startsWith("+++")) addCount++;
+                  else if (line.startsWith("-") && !line.startsWith("---")) delCount++;
+                }
+                if (addCount > 0 || delCount > 0) {
+                  additions = addCount;
+                  deletions = delCount;
+                }
+              }
+              // Fall back to counting from before/after
+              else if (beforeValue !== undefined || afterValue !== undefined) {
                 const oldLines = beforeValue ? beforeValue.split("\n").length : 0;
                 const newLines = afterValue ? afterValue.split("\n").length : 0;
                 if (beforeValue && afterValue) {
