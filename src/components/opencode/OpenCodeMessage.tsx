@@ -920,11 +920,24 @@ function TextPart({ content }: { content: string }) {
   );
 }
 
+/** Tool names that represent file-editing operations */
+const EDIT_TOOL_NAMES = new Set([
+  "edit",
+  "write",
+  "patch",
+  "apply_patch",
+  "file_edit",
+  "notebookedit",
+  "str_replace_editor",
+  "create_file",
+  "insert",
+  "replace",
+]);
+
 /** Check if a tool name is an edit tool */
 function isEditTool(toolName?: string): boolean {
   if (!toolName) return false;
-  const name = toolName.toLowerCase();
-  return name === "edit" || name === "write";
+  return EDIT_TOOL_NAMES.has(toolName.toLowerCase());
 }
 
 /** Check if a tool name is a TodoWrite tool */
