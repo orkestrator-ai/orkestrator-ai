@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, type MouseEvent } from "react";
 import {
   DndContext,
   pointerWithin,
@@ -19,9 +19,16 @@ import { useTerminalContext, MAX_TABS, type TerminalTabType, type CreateTabOptio
 import { useClaudeOptionsStore, usePaneLayoutStore, useEnvironmentStore, useConfigStore, getAllLeaves } from "@/stores";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
-import { Play, Terminal as TerminalIcon } from "lucide-react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { FilePlus2, Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { shouldAutoResolveSetupCommands } from "@/lib/setup-commands";
+import { createOrkestratorScriptPrompt } from "@/lib/orkestrator-script-prompt";
 import { PaneTree } from "@/components/pane-layout";
 import { TerminalPortalHost } from "./TerminalPortalHost";
 import { InitializationLogs } from "./InitializationLogs";
@@ -40,7 +47,8 @@ interface TerminalContainerProps {
   isContainerCreating?: boolean;
   isActive?: boolean;
   className?: string;
-  onStartContainer?: () => void;
+  onStartContainer?: (initialPrompt?: string) => void;
+  onCreateScript?: (initialPrompt: string) => void;
 }
 
 /**
@@ -96,6 +104,7 @@ export function TerminalContainer({
   isActive = true,
   className,
   onStartContainer,
+  onCreateScript,
 }: TerminalContainerProps) {
   const activeWriteRef = useRef<((data: string) => Promise<void>) | null>(null);
 
@@ -136,6 +145,7 @@ export function TerminalContainer({
   // Check if this is a local environment (no container)
   const environment = getEnvironmentById(environmentId);
   const isLocalEnvironment = environment?.environmentType === "local";
+  const createScriptPrompt = createOrkestratorScriptPrompt(isLocalEnvironment);
   // For local environments, worktreePath must be set before terminal can work
   const worktreePath = environment?.worktreePath;
   // Local environment is ready when it has a worktree path (created during start_environment)
@@ -814,6 +824,19 @@ export function TerminalContainer({
     [dragOverPaneId, getPane, moveTab, reorderTabs, splitPaneAtEdge]
   );
 
+  const handleStartOverlayClick = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      // Allow context-menu gestures (for example Ctrl+Click on macOS)
+      // without triggering a normal start action.
+      if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+        return;
+      }
+
+      onStartContainer?.();
+    },
+    [onStartContainer]
+  );
+
   // Determine what overlay to show (if any)
   // For local environments, we don't have a containerId but can still show terminal
   const showNoEnvironmentOverlay = !containerId && !isLocalEnvironment;
@@ -907,10 +930,29 @@ export function TerminalContainer({
               {isLocalEnvironment ? "Environment not started" : "Container is not running"}
             </p>
             {onStartContainer && (
-              <Button onClick={onStartContainer} variant="outline">
-                <Play className="mr-2 h-4 w-4" />
-                {isLocalEnvironment ? "Start Environment" : "Start Container"}
-              </Button>
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
+                  <span className="inline-flex">
+                    <Button onClick={handleStartOverlayClick} variant="outline">
+                      <Play className="mr-2 h-4 w-4" />
+                      {isLocalEnvironment ? "Start Environment" : "Start Container"}
+                    </Button>
+                  </span>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => onStartContainer()}>
+                    <Play className="mr-2 h-4 w-4" />
+                    Start
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => onCreateScript?.(createScriptPrompt)}
+                    disabled={!onCreateScript}
+                  >
+                    <FilePlus2 className="mr-2 h-4 w-4" />
+                    Create Script
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             )}
           </div>
         </div>

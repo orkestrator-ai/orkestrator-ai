@@ -54,6 +54,7 @@ import {
   resolveSlashCommandDirectory,
   shouldLoadSlashCommands,
 } from "./slash-command-directory";
+import { getNativeSlashCommands } from "./slash-command-registry";
 import type { OpenCodeNativeData } from "@/types/paneLayout";
 import type { OpenCodeAttachment } from "@/stores/openCodeStore";
 
@@ -654,12 +655,18 @@ export function OpenCodeChatTab({
     getAvailableSlashCommands(client, slashCommandDirectory)
       .then((availableSlashCommands) => {
         if (cancelled) return;
-        setSlashCommands(environmentId, availableSlashCommands);
+        setSlashCommands(
+          environmentId,
+          getNativeSlashCommands(availableSlashCommands),
+        );
       })
       .catch((error) => {
         console.warn("[OpenCodeChatTab] Failed to load slash commands:", error);
         if (cancelled) return;
-        setSlashCommands(environmentId, EMPTY_SLASH_COMMANDS);
+        setSlashCommands(
+          environmentId,
+          getNativeSlashCommands(EMPTY_SLASH_COMMANDS),
+        );
       });
 
     return () => {
