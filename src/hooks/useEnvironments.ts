@@ -39,7 +39,16 @@ interface EnvironmentRenamedPayload {
   new_branch: string;
 }
 
-export function useEnvironments(projectId: string | null) {
+interface UseEnvironmentsOptions {
+  listenForRenameEvents?: boolean;
+}
+
+export function useEnvironments(
+  projectId: string | null,
+  options: UseEnvironmentsOptions = {}
+) {
+  const { listenForRenameEvents = true } = options;
+
   const {
     environments,
     isLoading,
@@ -73,6 +82,10 @@ export function useEnvironments(projectId: string | null) {
 
   // Listen for background environment rename events
   useEffect(() => {
+    if (!listenForRenameEvents) {
+      return;
+    }
+
     let unlisten: UnlistenFn | null = null;
 
     const setupListener = async () => {
@@ -95,7 +108,7 @@ export function useEnvironments(projectId: string | null) {
         unlisten();
       }
     };
-  }, [updateEnvironmentInStore]);
+  }, [listenForRenameEvents, updateEnvironmentInStore]);
 
   const loadEnvironments = useCallback(
     async (pid: string) => {

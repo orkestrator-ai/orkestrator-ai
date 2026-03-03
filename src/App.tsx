@@ -34,7 +34,7 @@ function App() {
   const config = useConfigStore((state) => state.config);
   const setClaudeOptions = useClaudeOptionsStore((state) => state.setOptions);
   const clearClaudeOptions = useClaudeOptionsStore((state) => state.clearOptions);
-  const { startEnvironment } = useEnvironments(null);
+  const { startEnvironment } = useEnvironments(null, { listenForRenameEvents: false });
   const [dockerAvailable, setDockerAvailable] = useState<boolean | null>(null);
   const [isCheckingDocker, setIsCheckingDocker] = useState(false);
 

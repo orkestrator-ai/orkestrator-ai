@@ -21,7 +21,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle, FolderGit2 } from "lucide-react";
+import { GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle, FolderGit2, FilePlus2 } from "lucide-react";
 import { ClaudeIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
 import { useUIStore, useEnvironmentStore, useProjectStore, useConfigStore, useFilesPanelStore } from "@/stores";
 import { useShallow } from "zustand/react/shallow";
@@ -31,6 +31,7 @@ import { RepositorySettings, SettingsPage } from "@/components/settings";
 import { EnvironmentSettingsDialog } from "@/components/environments/EnvironmentSettingsDialog";
 import { DockerStatsDialog } from "@/components/docker";
 import * as tauri from "@/lib/tauri";
+import { createOrkestratorScriptPrompt } from "@/lib/orkestrator-script-prompt";
 
 /**
  * Generates the prompt for the code review workflow.
@@ -276,7 +277,9 @@ export function ActionBar() {
     environmentId: selectedEnvironmentId,
   });
 
-  const { deleteEnvironment } = useEnvironments(selectedProjectId);
+  const { deleteEnvironment } = useEnvironments(selectedProjectId, {
+    listenForRenameEvents: false,
+  });
 
   const hasPR = !!prUrl;
   const isPRMerged = prState === "merged";
@@ -399,7 +402,22 @@ export function ActionBar() {
     createTab("plain", { initialCommands: runCommands });
   }, [createTab, canCreateTab, runCommands]);
 
+  const handleCreateScript = useCallback((agentOverride?: "claude" | "opencode") => {
+    if (!createTab || !canCreateTab || !isRunning) return;
+
+    const initialPrompt = createOrkestratorScriptPrompt(isLocalEnvironment);
+    createTab(agentOverride || defaultAgent, { initialPrompt });
+  }, [createTab, canCreateTab, isRunning, isLocalEnvironment, defaultAgent]);
+
   const hasRunCommands = runCommands && runCommands.length > 0;
+  const canRunCommands = canCreateTab && !isLoadingRunCommands && !!hasRunCommands;
+
+  const handleRunButtonClick = useCallback(() => {
+    if (!canRunCommands) {
+      return;
+    }
+    handleRun();
+  }, [canRunCommands, handleRun]);
 
   // Drag-to-scroll handlers for toolbar
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -428,6 +446,33 @@ export function ActionBar() {
 
   const handleMouseLeave = useCallback(() => {
     setIsDragging(false);
+  }, []);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const suppressNativeContextMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      // Keep custom Radix menus enabled for explicitly marked triggers.
+      if (target.closest("[data-toolbar-custom-context-menu='true']")) {
+        return;
+      }
+
+      event.preventDefault();
+    };
+
+    container.addEventListener("contextmenu", suppressNativeContextMenu, true);
+
+    return () => {
+      container.removeEventListener("contextmenu", suppressNativeContextMenu, true);
+    };
   }, []);
 
   // Keyboard shortcuts for terminal tabs
@@ -796,15 +841,17 @@ export function ActionBar() {
                 <Tooltip>
                   <ContextMenuTrigger asChild>
                     <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleReview()}
-                        disabled={!canCreateTab}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
+                      <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleReview()}
+                          disabled={!canCreateTab}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      </span>
                     </TooltipTrigger>
                   </ContextMenuTrigger>
                   <TooltipContent>
@@ -826,32 +873,61 @@ export function ActionBar() {
               </ContextMenu>
 
               {/* Play Button - Run Commands */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
+              <ContextMenu>
+                <Tooltip>
+                  <ContextMenuTrigger asChild>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-8 w-8 ${!canRunCommands ? "opacity-50 cursor-not-allowed" : ""}`}
+                          onClick={handleRunButtonClick}
+                          aria-disabled={!canRunCommands}
+                        >
+                          {isLoadingRunCommands ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                  </ContextMenuTrigger>
+                  <TooltipContent>
+                    <p>Run Commands</p>
+                    <p className="text-xs text-muted-foreground">
+                      {hasRunCommands
+                        ? "Execute run commands from orkestrator-ai.json"
+                        : "Add 'run' array to orkestrator-ai.json to enable"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">⌘P · Right-click for script menu</p>
+                  </TooltipContent>
+                </Tooltip>
+                <ContextMenuContent>
+                  <ContextMenuItem
                     onClick={handleRun}
-                    disabled={!canCreateTab || isLoadingRunCommands || !hasRunCommands}
+                    disabled={!canRunCommands}
                   >
-                    {isLoadingRunCommands ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Run Commands</p>
-                  <p className="text-xs text-muted-foreground">
-                    {hasRunCommands
-                      ? "Execute run commands from orkestrator-ai.json"
-                      : "Add 'run' array to orkestrator-ai.json to enable"}
-                  </p>
-                  <p className="text-xs text-muted-foreground">⌘P</p>
-                </TooltipContent>
-              </Tooltip>
+                    <Play className="mr-2 h-4 w-4" />
+                    Run Commands
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => handleCreateScript("claude")}
+                    disabled={!canCreateTab || !isRunning}
+                  >
+                    <FilePlus2 className="mr-2 h-4 w-4" />
+                    Create Script with Claude
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => handleCreateScript("opencode")}
+                    disabled={!canCreateTab || !isRunning}
+                  >
+                    <FilePlus2 className="mr-2 h-4 w-4" />
+                    Create Script with OpenCode
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
               <div className="mx-2 h-4 w-px bg-border" />
 
@@ -886,16 +962,18 @@ export function ActionBar() {
               <Tooltip>
                 <ContextMenuTrigger asChild>
                   <TooltipTrigger asChild>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="gap-2"
-                      onClick={() => handleCreatePR()}
-                      disabled={!isRunning || !canCreateTab}
-                    >
-                      <GitPullRequest className="h-4 w-4" />
-                      Create PR
-                    </Button>
+                    <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => handleCreatePR()}
+                        disabled={!isRunning || !canCreateTab}
+                      >
+                        <GitPullRequest className="h-4 w-4" />
+                        Create PR
+                      </Button>
+                    </span>
                   </TooltipTrigger>
                 </ContextMenuTrigger>
                 <TooltipContent>
@@ -986,16 +1064,18 @@ export function ActionBar() {
                   <Tooltip>
                     <ContextMenuTrigger asChild>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() => handleResolveConflicts()}
-                          disabled={!isRunning || !canCreateTab}
-                        >
-                          <AlertTriangle className="h-4 w-4" />
-                          Resolve
-                        </Button>
+                        <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => handleResolveConflicts()}
+                            disabled={!isRunning || !canCreateTab}
+                          >
+                            <AlertTriangle className="h-4 w-4" />
+                            Resolve
+                          </Button>
+                        </span>
                       </TooltipTrigger>
                     </ContextMenuTrigger>
                     <TooltipContent>
@@ -1043,16 +1123,18 @@ export function ActionBar() {
                   <Tooltip>
                     <ContextMenuTrigger asChild>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() => handlePushChanges()}
-                          disabled={!isRunning || !canCreateTab}
-                        >
-                          <Upload className="h-4 w-4" />
-                          Push Changes
-                        </Button>
+                        <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="gap-2"
+                            onClick={() => handlePushChanges()}
+                            disabled={!isRunning || !canCreateTab}
+                          >
+                            <Upload className="h-4 w-4" />
+                            Push Changes
+                          </Button>
+                        </span>
                       </TooltipTrigger>
                     </ContextMenuTrigger>
                     <TooltipContent>
