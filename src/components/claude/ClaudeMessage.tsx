@@ -12,6 +12,7 @@ import { useFilesPanelStore } from "@/stores";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type ClaudeMessagePart, type ToolDiffMetadata } from "@/lib/claude-client";
 import { toast } from "sonner";
 import { processPartsInOrder } from "@/lib/claude-task-utils";
+import { isEditTool } from "@/lib/tool-names";
 
 /** Parsed attachment from XML tags */
 interface ParsedAttachment {
@@ -1215,12 +1216,7 @@ function TextPart({ content }: { content: string }) {
   );
 }
 
-/** Check if a tool name is an edit tool */
-function isEditTool(toolName?: string): boolean {
-  if (!toolName) return false;
-  const name = toolName.toLowerCase();
-  return name === "edit" || name === "write";
-}
+// isEditTool imported from @/lib/tool-names
 
 
 /** Check if a tool name is a TodoWrite tool */

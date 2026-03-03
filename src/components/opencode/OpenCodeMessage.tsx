@@ -40,6 +40,7 @@ import {
   type ToolDiffMetadata,
 } from "@/lib/opencode-client";
 import { getTodoItems } from "@/lib/todo-tool";
+import { isEditTool } from "@/lib/tool-names";
 
 /** Custom link component that opens URLs in the system browser */
 function ExternalLink({
@@ -920,25 +921,7 @@ function TextPart({ content }: { content: string }) {
   );
 }
 
-/** Tool names that represent file-editing operations */
-const EDIT_TOOL_NAMES = new Set([
-  "edit",
-  "write",
-  "patch",
-  "apply_patch",
-  "file_edit",
-  "notebookedit",
-  "str_replace_editor",
-  "create_file",
-  "insert",
-  "replace",
-]);
-
-/** Check if a tool name is an edit tool */
-function isEditTool(toolName?: string): boolean {
-  if (!toolName) return false;
-  return EDIT_TOOL_NAMES.has(toolName.toLowerCase());
-}
+// isEditTool imported from @/lib/tool-names
 
 /** Check if a tool name is a TodoWrite tool */
 function isTodoTool(toolName?: string): boolean {

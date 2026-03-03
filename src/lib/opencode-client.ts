@@ -2,6 +2,7 @@
 // Provides typed functions for interacting with the OpenCode server
 
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { isEditTool } from "./tool-names";
 
 export { type OpencodeClient };
 
@@ -743,14 +744,7 @@ export async function getSessionMessages(
             // Extract diff metadata for edit/write/patch tools
             // The metadata may contain file info and diff stats
             let toolDiff: import("./opencode-client").ToolDiffMetadata | undefined;
-            const editToolNames = new Set([
-              "edit", "write", "patch", "apply_patch", "file_edit",
-              "notebookedit", "str_replace_editor", "create_file",
-              "insert", "replace",
-            ]);
-            const isEditTool = editToolNames.has(toolName.toLowerCase());
-
-            if (isEditTool) {
+            if (isEditTool(toolName)) {
               const input = p.state?.input || {};
               const meta = p.state?.metadata || {};
 
@@ -768,6 +762,7 @@ export async function getSessionMessages(
               // apply_patch/patch: patch/diff (unified diff format)
               const oldString = typeof input.oldString === "string" ? input.oldString :
                 typeof input.old_string === "string" ? input.old_string : undefined;
+              // For write/create_file tools, input.content is the new file content (no oldString)
               const newString = typeof input.newString === "string" ? input.newString :
                 typeof input.new_string === "string" ? input.new_string :
                 typeof input.content === "string" ? input.content : undefined;
@@ -807,8 +802,9 @@ export async function getSessionMessages(
                 additions = addCount;
                 deletions = delCount;
               }
-              // Try to count from the tool output if it looks like a diff
-              else if (toolOutput && (toolOutput.includes("\n+") || toolOutput.includes("\n-"))) {
+              // Try to count from the tool output if it looks like a unified diff
+              // Require @@ hunk headers to avoid false positives from non-diff output
+              else if (toolOutput && toolOutput.includes("@@") && (toolOutput.includes("\n+") || toolOutput.includes("\n-"))) {
                 let addCount = 0;
                 let delCount = 0;
                 const lines = toolOutput.split("\n");
