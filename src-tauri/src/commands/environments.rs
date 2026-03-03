@@ -11,7 +11,7 @@ use crate::docker::{
 };
 use crate::local::{
     add_to_git_exclude, allocate_ports, copy_env_files, create_worktree, delete_worktree,
-    get_setup_local_commands, stop_all_local_servers,
+    get_setup_local_commands, isolated_opencode_data_home, stop_all_local_servers,
 };
 use crate::models::{
     ClaudeMode, DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode,
@@ -546,6 +546,17 @@ pub async fn delete_environment(environment_id: String) -> Result<(), String> {
                 debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Deleting worktree");
                 if let Err(e) = delete_worktree(&local_path, worktree_path).await {
                     warn!(environment_id = %environment_id, error = %e, "Failed to delete worktree during deletion");
+                }
+            }
+
+            // Remove the isolated OpenCode data directory (SQLite database etc.)
+            if let Some(data_home) = isolated_opencode_data_home(&environment_id) {
+                let data_path = std::path::Path::new(&data_home);
+                if data_path.exists() {
+                    debug!(environment_id = %environment_id, path = %data_home, "Removing isolated OpenCode data directory");
+                    if let Err(e) = std::fs::remove_dir_all(data_path) {
+                        warn!(environment_id = %environment_id, error = %e, "Failed to remove isolated OpenCode data directory");
+                    }
                 }
             }
         } else {
