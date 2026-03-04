@@ -125,6 +125,29 @@ pub async fn start_local_opencode_server(
     let path = build_comprehensive_path(None);
     env_vars.insert("PATH".to_string(), path.clone());
 
+    // Isolate each OpenCode instance's SQLite database by giving it a unique
+    // XDG_DATA_HOME.  OpenCode stores its database at
+    // $XDG_DATA_HOME/opencode/opencode.db and uses SQLite locking that does
+    // not support concurrent writers, so multiple `opencode serve` processes
+    // sharing the default ~/.local/share will conflict.
+    if let Some(data_home) = isolated_opencode_data_home(environment_id) {
+        if let Err(e) = std::fs::create_dir_all(&data_home) {
+            warn!(
+                environment_id = %environment_id,
+                path = %data_home,
+                error = %e,
+                "Failed to create isolated XDG_DATA_HOME; falling back to shared default"
+            );
+        } else {
+            debug!(
+                environment_id = %environment_id,
+                path = %data_home,
+                "Using isolated XDG_DATA_HOME for OpenCode server"
+            );
+            env_vars.insert("XDG_DATA_HOME".to_string(), data_home);
+        }
+    }
+
     let opencode_cmd = find_opencode_binary().unwrap_or_else(|| "opencode".to_string());
     if opencode_cmd == "opencode" {
         warn!(
@@ -804,6 +827,26 @@ fn resolve_node_binary() -> Option<String> {
     None
 }
 
+/// Return an isolated XDG_DATA_HOME directory for an OpenCode environment.
+///
+/// OpenCode stores its SQLite database at `$XDG_DATA_HOME/opencode/opencode.db`.
+/// The default `~/.local/share` is shared by all instances, and SQLite's locking
+/// protocol does not support concurrent writers.  By giving each `opencode serve`
+/// process its own data home we avoid "database is locked" errors when multiple
+/// local environments are active simultaneously.
+pub fn isolated_opencode_data_home(environment_id: &str) -> Option<String> {
+    let xdg_base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| get_home_dir().map(|h| h.join(".local").join("share")))?;
+    let isolated = xdg_base
+        .join("orkestrator-ai")
+        .join("opencode-data")
+        .join(environment_id);
+    Some(isolated.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,5 +856,13 @@ mod tests {
         // This should return false since no server is running
         let result = check_server_health(59999).await;
         assert!(!result);
+    }
+
+    #[test]
+    fn test_isolated_opencode_data_home() {
+        let result = isolated_opencode_data_home("test-env-123");
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.contains("orkestrator-ai/opencode-data/test-env-123"));
     }
 }
