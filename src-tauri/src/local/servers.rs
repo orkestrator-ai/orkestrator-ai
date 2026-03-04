@@ -835,10 +835,12 @@ fn resolve_node_binary() -> Option<String> {
 /// process its own data home we avoid "database is locked" errors when multiple
 /// local environments are active simultaneously.
 pub fn isolated_opencode_data_home(environment_id: &str) -> Option<String> {
-    let base = get_home_dir()?;
-    let isolated = base
-        .join(".local")
-        .join("share")
+    let xdg_base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| get_home_dir().map(|h| h.join(".local").join("share")))?;
+    let isolated = xdg_base
         .join("orkestrator-ai")
         .join("opencode-data")
         .join(environment_id);

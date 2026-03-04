@@ -552,11 +552,9 @@ pub async fn delete_environment(environment_id: String) -> Result<(), String> {
             // Remove the isolated OpenCode data directory (SQLite database etc.)
             if let Some(data_home) = isolated_opencode_data_home(&environment_id) {
                 let data_path = std::path::Path::new(&data_home);
-                if data_path.exists() {
-                    debug!(environment_id = %environment_id, path = %data_home, "Removing isolated OpenCode data directory");
-                    if let Err(e) = std::fs::remove_dir_all(data_path) {
-                        warn!(environment_id = %environment_id, error = %e, "Failed to remove isolated OpenCode data directory");
-                    }
+                debug!(environment_id = %environment_id, path = %data_home, "Removing isolated OpenCode data directory");
+                if let Err(e) = std::fs::remove_dir_all(data_path) {
+                    debug!(environment_id = %environment_id, error = %e, "Could not remove isolated OpenCode data directory (may not exist)");
                 }
             }
         } else {
