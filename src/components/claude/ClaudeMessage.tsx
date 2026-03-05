@@ -180,6 +180,8 @@ const markdownComponents: Components = {
 
 interface ClaudeMessageProps {
   message: ClaudeMessageType;
+  /** Whether the session is still actively streaming (turn in progress) */
+  isStreaming?: boolean;
 }
 
 /** Render a thinking/reasoning part - collapsible after response completes */
@@ -1228,6 +1230,7 @@ function isTodoTool(toolName?: string): boolean {
 
 export const ClaudeMessage = memo(function ClaudeMessage({
   message,
+  isStreaming = false,
 }: ClaudeMessageProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -1247,8 +1250,10 @@ export const ClaudeMessage = memo(function ClaudeMessage({
     [message.parts]
   );
 
-  // Check if we have any text parts (for determining if thinking is complete)
+  // Thinking is "complete" only when the turn has finished streaming AND text has appeared.
+  // During active streaming, keep thinking blocks expanded so they don't flash/disappear.
   const hasTextParts = message.parts.some((p) => p.type === "text");
+  const thinkingComplete = hasTextParts && !isStreaming;
 
   // Render error messages with special styling
   if (isError) {
@@ -1321,7 +1326,7 @@ export const ClaudeMessage = memo(function ClaudeMessage({
                       <ThinkingPart
                         key={`thinking-${i}`}
                         content={processed.part?.content || ""}
-                        isComplete={hasTextParts}
+                        isComplete={thinkingComplete}
                       />
                     );
                   case "text":

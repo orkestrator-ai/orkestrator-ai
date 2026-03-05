@@ -1079,6 +1079,9 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     const toolTracker = new ToolTracker();
 
     // Track accumulated text parts and ordered non-text parts (thinking + tools in chronological order)
+    // Text parts are tracked per message UUID to preserve text from previous messages
+    // when a new assistant message starts streaming (prevents text loss during think→tool→think sequences)
+    const textPartsByMessageUuid = new Map<string, NormalizedPart[]>();
     let accumulatedTextParts: NormalizedPart[] = [];
     let accumulatedOrderedParts: OrderedPartEntry[] = [];
 
@@ -1237,8 +1240,15 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         const messageUuid = message.uuid as string | undefined;
 
         // Update accumulated parts
-        // For text: always replace (SDK sends full text content each time)
-        accumulatedTextParts = textParts;
+        // For text: track per message UUID so text from previous messages is preserved
+        // when a new assistant message starts streaming (prevents text loss during think→tool→think)
+        if (messageUuid) {
+          textPartsByMessageUuid.set(messageUuid, textParts);
+          accumulatedTextParts = Array.from(textPartsByMessageUuid.values()).flat();
+        } else {
+          // No UUID (shouldn't normally happen) - fall back to direct replacement
+          accumulatedTextParts = textParts;
+        }
 
         // For ordered parts (thinking + tools): we need to handle two cases:
         // 1. Streaming update to same message (same UUID): replace parts from this message
