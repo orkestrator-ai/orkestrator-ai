@@ -57,6 +57,7 @@ interface SessionState {
   currentItems: Map<string, ThreadItem>;
   currentItemOrder: string[];
   pendingAttachments: PromptAttachmentInput[];
+  lastAccessed: number;
 }
 
 interface SseEvent {
@@ -158,6 +159,37 @@ const codex = new Codex({
 const execFile = promisify(execFileCallback);
 const sessions = new Map<string, SessionState>();
 const subscribers = new Set<(event: SseEvent) => void>();
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+
+function updateSessionAccess(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.lastAccessed = Date.now();
+  }
+}
+
+function cleanupIdleSessions(): void {
+  const now = Date.now();
+  for (const [sessionId, session] of sessions) {
+    if (
+      session.status === "idle"
+      && now - session.lastAccessed > SESSION_TIMEOUT_MS
+    ) {
+      sessions.delete(sessionId);
+    }
+  }
+}
+
+const cleanupTimer = setInterval(cleanupIdleSessions, CLEANUP_INTERVAL_MS);
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    clearInterval(cleanupTimer);
+    process.exit(0);
+  });
+}
+
 const MODEL_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
   "minimal",
   "low",
@@ -1484,6 +1516,7 @@ app.post("/session/create", async (c) => {
     currentItems: new Map(),
     currentItemOrder: [],
     pendingAttachments: [],
+    lastAccessed: Date.now(),
   });
 
   return c.json({ sessionId, title }, 201);
@@ -1516,6 +1549,7 @@ app.post("/session/resume", async (c) => {
     currentItems: new Map(),
     currentItemOrder: [],
     pendingAttachments: [],
+    lastAccessed: Date.now(),
   });
 
   return c.json(
@@ -1530,10 +1564,12 @@ app.post("/session/resume", async (c) => {
 });
 
 app.post("/session/:id/config", async (c) => {
-  const session = sessions.get(c.req.param("id"));
+  const sessionId = c.req.param("id");
+  const session = sessions.get(sessionId);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);
   }
+  updateSessionAccess(sessionId);
 
   if (session.status === "running") {
     return c.json({ error: "Cannot update settings while session is running" }, 409);
@@ -1552,19 +1588,23 @@ app.post("/session/:id/config", async (c) => {
 });
 
 app.get("/session/:id/messages", (c) => {
-  const session = sessions.get(c.req.param("id"));
+  const sessionId = c.req.param("id");
+  const session = sessions.get(sessionId);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);
   }
+  updateSessionAccess(sessionId);
 
   return c.json({ messages: session.messages });
 });
 
 app.post("/session/:id/prompt", async (c) => {
-  const session = sessions.get(c.req.param("id"));
+  const sessionId = c.req.param("id");
+  const session = sessions.get(sessionId);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);
   }
+  updateSessionAccess(sessionId);
 
   const body = await c.req.json().catch(() => ({}));
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
@@ -1610,10 +1650,12 @@ app.post("/session/:id/prompt", async (c) => {
 });
 
 app.post("/session/:id/abort", (c) => {
-  const session = sessions.get(c.req.param("id"));
+  const sessionId = c.req.param("id");
+  const session = sessions.get(sessionId);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);
   }
+  updateSessionAccess(sessionId);
 
   session.abortController?.abort();
   session.status = "idle";

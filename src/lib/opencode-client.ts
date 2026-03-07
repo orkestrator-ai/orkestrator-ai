@@ -411,10 +411,53 @@ interface FileDiffMetadata {
 /**
  * Create an OpenCode SDK client connected to a server
  */
-export function createClient(baseUrl: string): OpencodeClient {
+export function createClient(baseUrl: string, directory?: string): OpencodeClient {
   return createOpencodeClient({
     baseUrl,
+    directory,
   });
+}
+
+type ProviderLike = {
+  id?: string;
+  models?: unknown;
+};
+
+function normalizeProviders(value: unknown): ProviderLike[] {
+  if (Array.isArray(value)) {
+    return value.filter((provider): provider is ProviderLike => {
+      return !!provider && typeof provider === "object";
+    });
+  }
+
+  // Handle object-map format: { anthropic: {...}, openai: {...} }
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, v]) => !!v && typeof v === "object")
+      .map(([key, v]) => {
+        const provider = v as ProviderLike;
+        // If the provider doesn't have an id, use the object key
+        return provider.id ? provider : { ...provider, id: key };
+      });
+  }
+
+  return [];
+}
+
+function normalizeProviderModels(models: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(models)) {
+    return models.filter((model): model is Record<string, unknown> => {
+      return !!model && typeof model === "object";
+    });
+  }
+
+  if (models && typeof models === "object") {
+    return Object.values(models).filter((model): model is Record<string, unknown> => {
+      return !!model && typeof model === "object";
+    });
+  }
+
+  return [];
 }
 
 /**
@@ -442,13 +485,19 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
     // Response structure: { providers: Provider[], default: {...} }
     // Each Provider has: { id, name, models: { [modelId]: Model } }
     // Each Model has: { id, name, providerID, ... }
-    const providers = response.data.providers || [];
+    const providers = normalizeProviders(response.data.providers);
     for (const provider of providers) {
       if (provider && provider.id && provider.models) {
-        // models is an object map, not an array
-        for (const model of Object.values(provider.models)) {
+        for (const model of normalizeProviderModels(provider.models)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const m = model as any;
+          const modelId = typeof m.id === "string" ? m.id : undefined;
+          const modelName = typeof m.name === "string" ? m.name : modelId;
+
+          if (!modelId) {
+            continue;
+          }
+
           // Cost fields may be in cost.input/cost.output or directly as inputCost/outputCost
           const inputCost = m.cost?.input ?? m.inputCost ?? m.input_cost;
           const outputCost = m.cost?.output ?? m.outputCost ?? m.output_cost;
@@ -477,8 +526,8 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
             });
 
           models.push({
-            id: `${provider.id}/${model.id}`,
-            name: model.name || model.id,
+            id: `${provider.id}/${modelId}`,
+            name: modelName || modelId,
             provider: provider.id,
             variants: variants.length > 0 ? variants : undefined,
             inputCost: typeof inputCost === "number" ? inputCost : undefined,

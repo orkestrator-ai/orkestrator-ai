@@ -7,7 +7,7 @@ function resetOpenCodeStore() {
     serverStatus: new Map(),
     sessions: new Map(),
     clients: new Map(),
-    models: [],
+    models: new Map(),
     slashCommands: new Map(),
     selectedModel: new Map(),
     selectedVariant: new Map(),
@@ -219,6 +219,48 @@ describe("openCodeStore slash commands", () => {
     expect(store.getSlashCommands("env-123")).toEqual([]);
     expect(store.getSlashCommands("env-999")).toEqual([
       { name: "/test", description: "Test" },
+    ]);
+  });
+});
+
+describe("openCodeStore models", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("stores models per environment", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setModels("env-123", [
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", provider: "anthropic" },
+    ]);
+    store.setModels("env-999", [
+      { id: "openai/gpt-5", name: "GPT-5", provider: "openai" },
+    ]);
+
+    expect(store.getModels("env-123")).toEqual([
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", provider: "anthropic" },
+    ]);
+    expect(store.getModels("env-999")).toEqual([
+      { id: "openai/gpt-5", name: "GPT-5", provider: "openai" },
+    ]);
+  });
+
+  test("clearEnvironment removes models only for that environment", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.setModels("env-123", [
+      { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", provider: "anthropic" },
+    ]);
+    store.setModels("env-999", [
+      { id: "openai/gpt-5", name: "GPT-5", provider: "openai" },
+    ]);
+
+    store.clearEnvironment("env-123");
+
+    expect(store.getModels("env-123")).toEqual([]);
+    expect(store.getModels("env-999")).toEqual([
+      { id: "openai/gpt-5", name: "GPT-5", provider: "openai" },
     ]);
   });
 });
