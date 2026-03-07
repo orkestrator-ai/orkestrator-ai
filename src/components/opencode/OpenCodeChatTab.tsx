@@ -124,7 +124,6 @@ export function OpenCodeChatTab({
 
   const {
     setClient,
-    models,
     setModels,
     getSession,
     setSession,
@@ -250,6 +249,13 @@ export function OpenCodeChatTab({
   const slashCommands = useOpenCodeStore(
     useCallback(
       (state) => state.slashCommands.get(environmentId) ?? EMPTY_SLASH_COMMANDS,
+      [environmentId],
+    ),
+  );
+
+  const models = useOpenCodeStore(
+    useCallback(
+      (state) => state.getModels(environmentId),
       [environmentId],
     ),
   );
@@ -433,7 +439,10 @@ export function OpenCodeChatTab({
         // Create SDK client (shared per environment)
         const baseUrl = `http://127.0.0.1:${hostPort}`;
         console.debug("[OpenCodeChatTab] OpenCode server running at:", baseUrl);
-        const sdkClient = createClient(baseUrl);
+        const sdkClient = createClient(
+          baseUrl,
+          isLocal ? worktreePath ?? undefined : undefined,
+        );
         setClient(environmentId, sdkClient);
 
         // Fetch available models, server defaults, and model preferences
@@ -450,7 +459,7 @@ export function OpenCodeChatTab({
           ]);
         if (!mounted) return;
 
-        setModels(availableModels);
+        setModels(environmentId, availableModels);
         setModelPreferences(preferences);
 
         // Initialize selected model/variant while preserving valid user-selected values.

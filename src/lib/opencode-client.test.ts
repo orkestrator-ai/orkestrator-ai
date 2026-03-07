@@ -130,6 +130,47 @@ describe("opencode-client getModelsWithDefaults", () => {
       variant: "medium",
     });
   });
+
+  test("accepts provider models returned as an array", async () => {
+    const client = {
+      config: {
+        providers: async () => ({
+          data: {
+            providers: [
+              {
+                id: "openai",
+                models: [
+                  {
+                    id: "gpt-5",
+                    name: "GPT-5",
+                    variants: {
+                      high: {},
+                    },
+                  },
+                ],
+              },
+            ],
+            default: {
+              providerID: "openai",
+              modelID: "gpt-5",
+            },
+          },
+        }),
+      },
+    } as unknown as OpencodeClient;
+
+    const result = await getModelsWithDefaults(client);
+
+    expect(result.models).toEqual([
+      {
+        id: "openai/gpt-5",
+        name: "GPT-5",
+        provider: "openai",
+        variants: ["high"],
+      },
+    ]);
+    expect(result.defaults.modelId).toBe("openai/gpt-5");
+  });
 });
 
 describe("opencode-client getAvailableSlashCommands", () => {

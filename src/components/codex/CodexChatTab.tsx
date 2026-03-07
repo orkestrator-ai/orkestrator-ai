@@ -523,6 +523,11 @@ export function CodexChatTab({
     (async () => {
       try {
         for await (const event of subscribeToEvents(client, abortController.signal)) {
+          if (!event || typeof event.type !== "string") {
+            console.warn("[CodexChatTab] Received malformed event, skipping");
+            continue;
+          }
+
           if (event.sessionId && event.sessionId !== session.sessionId) {
             continue;
           }

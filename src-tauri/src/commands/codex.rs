@@ -34,7 +34,7 @@ pub struct CodexServerStatus {
     pub host_port: Option<u16>,
 }
 
-fn resolve_codex_bridge_path(app_handle: &tauri::AppHandle) -> PathBuf {
+fn resolve_codex_bridge_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> PathBuf {
     #[cfg(debug_assertions)]
     {
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
@@ -197,7 +197,11 @@ pub async fn start_codex_server(
         .ok_or_else(|| "Codex bridge server port (4098) is not mapped".to_string())?;
 
     let health_url = format!("http://127.0.0.1:{}/global/health", host_port);
-    if let Ok(response) = reqwest::get(&health_url).await {
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| e.to_string())?;
+    if let Ok(response) = http_client.get(&health_url).send().await {
         if response.status().is_success() {
             return Ok(CodexServerStartResult {
                 host_port,
@@ -368,7 +372,11 @@ pub async fn get_codex_server_status(container_id: String) -> Result<CodexServer
     };
 
     let health_url = format!("http://127.0.0.1:{}/global/health", host_port);
-    let running = match reqwest::get(&health_url).await {
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let running = match http_client.get(&health_url).send().await {
         Ok(response) => response.status().is_success(),
         Err(_) => false,
     };

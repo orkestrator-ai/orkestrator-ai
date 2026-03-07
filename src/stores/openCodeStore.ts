@@ -73,8 +73,8 @@ interface OpenCodeState {
   sessions: Map<string, OpenCodeSessionState>;
   /** SDK client per environment (keyed by environmentId) */
   clients: Map<string, OpencodeClient>;
-  /** Available models (shared across all environments) */
-  models: OpenCodeModel[];
+  /** Available models per environment */
+  models: Map<string, OpenCodeModel[]>;
   /** Available slash commands per environment */
   slashCommands: Map<string, OpenCodeSlashCommand[]>;
   /** Currently selected model per environment */
@@ -107,8 +107,8 @@ interface OpenCodeState {
   setClient: (environmentId: string, client: OpencodeClient | null) => void;
   /** Get the SDK client for an environment */
   getClient: (environmentId: string) => OpencodeClient | undefined;
-  /** Set available models */
-  setModels: (models: OpenCodeModel[]) => void;
+  /** Set available models for an environment */
+  setModels: (environmentId: string, models: OpenCodeModel[]) => void;
   /** Set available slash commands for an environment */
   setSlashCommands: (environmentId: string, commands: OpenCodeSlashCommand[]) => void;
   /** Set selected model for an environment */
@@ -177,6 +177,8 @@ interface OpenCodeState {
   getSession: (environmentId: string) => OpenCodeSessionState | undefined;
   /** Get selected model for an environment */
   getSelectedModel: (environmentId: string) => string | undefined;
+  /** Get available models for an environment */
+  getModels: (environmentId: string) => OpenCodeModel[];
   /** Get available slash commands for an environment */
   getSlashCommands: (environmentId: string) => OpenCodeSlashCommand[];
   /** Get selected variant for an environment */
@@ -206,7 +208,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   serverStatus: new Map(),
   sessions: new Map(),
   clients: new Map(),
-  models: [],
+  models: new Map(),
   slashCommands: new Map(),
   selectedModel: new Map(),
   selectedVariant: new Map(),
@@ -241,7 +243,12 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
 
   getClient: (environmentId) => get().clients.get(environmentId),
 
-  setModels: (models) => set({ models }),
+  setModels: (environmentId, models) =>
+    set((state) => {
+      const newMap = new Map(state.models);
+      newMap.set(environmentId, models);
+      return { models: newMap };
+    }),
 
   setSlashCommands: (environmentId, commands) =>
     set((state) => {
@@ -509,6 +516,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newServerStatus = new Map(state.serverStatus);
       const newSessions = new Map(state.sessions);
       const newClients = new Map(state.clients);
+      const newModels = new Map(state.models);
       const newSelectedModel = new Map(state.selectedModel);
       const newSlashCommands = new Map(state.slashCommands);
       const newSelectedVariant = new Map(state.selectedVariant);
@@ -533,6 +541,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         }
       }
       newClients.delete(environmentId);
+      newModels.delete(environmentId);
       newSelectedModel.delete(environmentId);
       newSlashCommands.delete(environmentId);
       newSelectedVariant.delete(environmentId);
@@ -583,6 +592,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         serverStatus: newServerStatus,
         sessions: newSessions,
         clients: newClients,
+        models: newModels,
         selectedModel: newSelectedModel,
         slashCommands: newSlashCommands,
         selectedVariant: newSelectedVariant,
@@ -714,6 +724,8 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   getSession: (environmentId) => get().sessions.get(environmentId),
 
   getSelectedModel: (environmentId) => get().selectedModel.get(environmentId),
+
+  getModels: (environmentId) => get().models.get(environmentId) ?? [],
 
   getSlashCommands: (environmentId) => get().slashCommands.get(environmentId) || [],
 
