@@ -19,10 +19,19 @@ Key decisions:
 
 State:
 - Done: implemented Codex slash-command discovery/execution, fixed container Codex startup regressions, fixed Codex file-edit diff rendering, added pasted image attachments to Codex native, and added persisted Codex session resume.
-- Now: packaging the accumulated Codex native work into a git commit and PR for review.
-- Next: create a `codex/*` branch if needed, commit the current changes, push them, and open a PR that summarizes the Codex native integration plus follow-up fixes.
+- Now: the Codex native change set is committed on `codex/codex-native-tab` and pushed to origin; PR creation is in progress.
+- Next: open the PR against `main` with the Codex native summary and validation results, then continue any remaining in-app verification as follow-up work.
 
 Done:
+- Created branch `codex/codex-native-tab` from detached `HEAD`.
+- Revalidated the current tree before packaging:
+  - `bunx tsc --noEmit`
+  - `cd src-tauri && cargo check`
+  - `cd docker/codex-bridge && bun run build`
+- Committed the current Codex native work as:
+  - `bc36a8f feat: add Codex native mode`
+- Pushed branch to:
+  - `origin/codex/codex-native-tab`
 - Codex Native tab implementation and follow-up UI consistency tweaks were completed in prior turns.
 - Confirmed current Codex native tab has no slash-command discovery or compose-bar slash menu.
 - Confirmed sending `/help` through `codex exec --json` is treated as ordinary agent input rather than a native slash command.
@@ -143,12 +152,10 @@ Done:
   - `cd docker/codex-bridge && bun run build`
 
 Now:
-- Preparing the current Codex native change set for commit and PR creation.
+- Creating the GitHub PR for `codex/codex-native-tab`.
 
 Next:
-- Create or confirm a `codex/*` branch for the current work.
-- Commit the current Codex native change set with a summary message.
-- Push the branch and open a PR with a concise validation and change summary.
+- Open the PR with a concise change summary and validation notes.
 - After PR creation, continue in-app verification for container startup, resume, slash commands, diff rendering, and image attachments as needed.
 
 Open questions (UNCONFIRMED if needed):
@@ -161,6 +168,8 @@ Open questions (UNCONFIRMED if needed):
 
 Working set (files/ids/commands):
 - `/Users/arkaydeus/.codex/worktrees/e6cd/orkestrator-ai/CONTINUITY.md`
+- Branch: `codex/codex-native-tab`
+- Commit: `bc36a8f feat: add Codex native mode`
 - `/Users/arkaydeus/.codex/worktrees/e6cd/orkestrator-ai/src/components/codex/CodexChatTab.tsx`
 - `/Users/arkaydeus/.codex/worktrees/e6cd/orkestrator-ai/src/components/codex/CodexComposeBar.tsx`
 - `/Users/arkaydeus/.codex/worktrees/e6cd/orkestrator-ai/src/lib/codex-client.ts`
