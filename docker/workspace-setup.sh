@@ -222,6 +222,7 @@ clone_repository() {
     fi
 
     echo -e "${YELLOW}Partial clone failed, retrying full clone...${NC}"
+    rm -rf "$clone_dest"/* "$clone_dest"/.[!.]* 2>/dev/null || true
     git clone "$clone_url" "$clone_dest"
 }
 

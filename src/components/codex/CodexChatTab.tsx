@@ -225,7 +225,9 @@ export function CodexChatTab({
     ],
   );
 
-  handleSendRef.current = handleSend;
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
 
   const handleQueue = useCallback(
     (text: string, attachments: CodexAttachment[]) => {
@@ -273,9 +275,8 @@ export function CodexChatTab({
       })
       .finally(() => {
         isProcessingQueueRef.current = false;
-        queueMicrotask(() => {
-          processQueue();
-        });
+        // Don't recurse here — the useEffect watching isLoading/queueLength
+        // will call processQueue again when the session becomes idle.
       });
   }, [
     client,
