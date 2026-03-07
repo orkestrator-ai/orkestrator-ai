@@ -1530,6 +1530,7 @@ export async function getAvailableModels(): Promise<Array<{
   id: string;
   name: string;
   description?: string;
+  supportsFastMode?: boolean;
 }>> {
   try {
     const cwd = process.env.CWD || process.cwd();
@@ -1553,19 +1554,21 @@ export async function getAvailableModels(): Promise<Array<{
       await q.return();
     }
 
-    return models.map((model: { value: string; displayName: string; description?: string }) => ({
+    return models.map((model: { value: string; displayName: string; description?: string; supportsFastMode?: boolean }) => ({
       id: model.value,
       name: model.displayName,
       description: model.description,
+      supportsFastMode: model.supportsFastMode,
     }));
   } catch (error) {
     console.error("[session-manager] Error fetching supported models:", error);
     // Return fallback models if SDK call fails
     return [
       {
-        id: "claude-sonnet-4-5-20250514",
-        name: "Claude Sonnet 4.5",
+        id: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
         description: "Latest and most capable model",
+        supportsFastMode: true,
       },
     ];
   }

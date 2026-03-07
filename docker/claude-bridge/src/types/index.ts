@@ -124,6 +124,7 @@ export interface ModelInfo {
   id: string;
   name: string;
   description?: string;
+  supportsFastMode?: boolean;
 }
 
 /** Question option for AskUserQuestion tool */
