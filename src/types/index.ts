@@ -67,10 +67,14 @@ export interface Environment {
   opencodePid?: number;
   /** PID of the claude-bridge process (only for local environments) */
   claudeBridgePid?: number;
+  /** PID of the codex-bridge process (only for local environments) */
+  codexBridgePid?: number;
   /** Host port for opencode server (local mode) */
   localOpencodePort?: number;
   /** Host port for claude-bridge server (local mode) */
   localClaudePort?: number;
+  /** Host port for codex-bridge server (local mode) */
+  localCodexPort?: number;
 
   // === Agent settings overrides ===
   /** Per-environment default agent override (undefined = use global config) */
@@ -140,7 +144,7 @@ export interface ContainerResources {
 export type PreferredEditor = "vscode" | "cursor";
 
 /** Default agent for new environments */
-export type DefaultAgent = "claude" | "opencode";
+export type DefaultAgent = "claude" | "opencode" | "codex";
 
 /** OpenCode mode - terminal CLI or native chat interface */
 export type OpenCodeMode = "terminal" | "native";

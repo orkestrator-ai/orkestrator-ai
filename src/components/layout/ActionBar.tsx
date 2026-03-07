@@ -22,7 +22,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { GitPullRequest, GitMerge, GitPullRequestClosed, ExternalLink, Loader2, SlidersHorizontal, Plus, Shield, Code2, FolderTree, Container, Eye, Upload, Play, Trash2, AlertTriangle, FolderGit2, FilePlus2 } from "lucide-react";
-import { ClaudeIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
 import { useUIStore, useEnvironmentStore, useProjectStore, useConfigStore, useFilesPanelStore } from "@/stores";
 import { useShallow } from "zustand/react/shallow";
 import { useTerminalContext, MAX_TABS } from "@/contexts";
@@ -324,7 +324,7 @@ export function ActionBar() {
   const defaultAgent = selectedEnvironment?.defaultAgent || config.global.defaultAgent || "claude";
 
   // Handler for code review
-  const handleReview = useCallback((agentOverride?: "claude" | "opencode") => {
+  const handleReview = useCallback((agentOverride?: "claude" | "opencode" | "codex") => {
     if (!createTab || !selectedProjectId || !canCreateTab) return;
 
     const repoConfig = config.repositories[selectedProjectId];
@@ -402,7 +402,7 @@ export function ActionBar() {
     createTab("plain", { initialCommands: runCommands });
   }, [createTab, canCreateTab, runCommands]);
 
-  const handleCreateScript = useCallback((agentOverride?: "claude" | "opencode") => {
+  const handleCreateScript = useCallback((agentOverride?: "claude" | "opencode" | "codex") => {
     if (!createTab || !canCreateTab || !isRunning) return;
 
     const initialPrompt = createOrkestratorScriptPrompt(isLocalEnvironment);
@@ -577,7 +577,7 @@ export function ActionBar() {
   ]);
 
   // Handler for PR creation - launches agent tab with PR workflow prompt
-  const handleCreatePR = useCallback((agentOverride?: "claude" | "opencode") => {
+  const handleCreatePR = useCallback((agentOverride?: "claude" | "opencode" | "codex") => {
     if (!createTab || !selectedProjectId || !canCreateTab) return;
 
     const repoConfig = config.repositories[selectedProjectId];
@@ -591,7 +591,7 @@ export function ActionBar() {
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent, setModeCreatePending]);
 
   // Handler for pushing changes to an existing PR - launches agent tab with commit/push prompt
-  const handlePushChanges = useCallback((agentOverride?: "claude" | "opencode") => {
+  const handlePushChanges = useCallback((agentOverride?: "claude" | "opencode" | "codex") => {
     if (!createTab || !canCreateTab) return;
 
     const pushPrompt = createPushChangesPrompt();
@@ -599,7 +599,7 @@ export function ActionBar() {
   }, [createTab, canCreateTab, defaultAgent]);
 
   // Handler for resolving merge conflicts - launches agent tab with conflict resolution prompt
-  const handleResolveConflicts = useCallback((agentOverride?: "claude" | "opencode") => {
+  const handleResolveConflicts = useCallback((agentOverride?: "claude" | "opencode" | "codex") => {
     if (!createTab || !selectedProjectId || !canCreateTab) return;
 
     const repoConfig = config.repositories[selectedProjectId];
@@ -837,6 +837,23 @@ export function ActionBar() {
                 </TooltipContent>
               </Tooltip>
 
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => createTab?.("codex")}
+                    disabled={!canCreateTab}
+                  >
+                    <CodexIcon className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>New Tab with Codex</p>
+                </TooltipContent>
+              </Tooltip>
+
               <ContextMenu>
                 <Tooltip>
                   <ContextMenuTrigger asChild>
@@ -868,6 +885,10 @@ export function ActionBar() {
                   <ContextMenuItem onClick={() => handleReview("opencode")}>
                     <OpenCodeIcon className="mr-2 h-4 w-4" />
                     Review with OpenCode
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleReview("codex")}>
+                    <CodexIcon className="mr-2 h-4 w-4" />
+                    Review with Codex
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -925,6 +946,13 @@ export function ActionBar() {
                   >
                     <FilePlus2 className="mr-2 h-4 w-4" />
                     Create Script with OpenCode
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => handleCreateScript("codex")}
+                    disabled={!canCreateTab || !isRunning}
+                  >
+                    <FilePlus2 className="mr-2 h-4 w-4" />
+                    Create Script with Codex
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -992,6 +1020,10 @@ export function ActionBar() {
                 <ContextMenuItem onClick={() => handleCreatePR("opencode")}>
                   <OpenCodeIcon className="mr-2 h-4 w-4" />
                   Create PR with OpenCode
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => handleCreatePR("codex")}>
+                  <CodexIcon className="mr-2 h-4 w-4" />
+                  Create PR with Codex
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
@@ -1095,6 +1127,10 @@ export function ActionBar() {
                       <OpenCodeIcon className="mr-2 h-4 w-4" />
                       Resolve with OpenCode
                     </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleResolveConflicts("codex")}>
+                      <CodexIcon className="mr-2 h-4 w-4" />
+                      Resolve with Codex
+                    </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
               )}
@@ -1153,6 +1189,10 @@ export function ActionBar() {
                     <ContextMenuItem onClick={() => handlePushChanges("opencode")}>
                       <OpenCodeIcon className="mr-2 h-4 w-4" />
                       Push with OpenCode
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handlePushChanges("codex")}>
+                      <CodexIcon className="mr-2 h-4 w-4" />
+                      Push with Codex
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>

@@ -24,10 +24,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Shield, Globe, Network, Plus, Trash2, ChevronDown, Container, Laptop } from "lucide-react";
-import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
+import { Loader2, Shield, Globe, Network, Plus, Trash2, ChevronDown, Container, Laptop, Terminal, Bot } from "lucide-react";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import { cn } from "@/lib/utils";
-import type { EnvironmentType, NetworkAccessMode, PortMapping, PortProtocol } from "@/types";
+import type {
+  ClaudeMode,
+  EnvironmentType,
+  NetworkAccessMode,
+  OpenCodeMode,
+  PortMapping,
+  PortProtocol,
+} from "@/types";
 import type { AgentType } from "@/stores";
 import { useConfigStore } from "@/stores";
 
@@ -39,6 +46,8 @@ export interface ClaudeOptions {
   environmentName: string;
   launchAgent: boolean;
   agentType: AgentType;
+  claudeMode: ClaudeMode;
+  opencodeMode: OpenCodeMode;
   initialPrompt: string;
   networkAccessMode: NetworkAccessMode;
   portMappings: PortMapping[];
@@ -67,6 +76,12 @@ export function CreateEnvironmentDialog({
   const [environmentName, setEnvironmentName] = useState("");
   const [launchAgent, setLaunchAgent] = useState(true);
   const [agentType, setAgentType] = useState<AgentType>(configDefaultAgent);
+  const [claudeMode, setClaudeMode] = useState<ClaudeMode>(
+    config.global.claudeMode || "terminal",
+  );
+  const [opencodeMode, setOpencodeMode] = useState<OpenCodeMode>(
+    config.global.opencodeMode || "terminal",
+  );
   const [initialPrompt, setInitialPrompt] = useState("");
   const [networkAccessMode, setNetworkAccessMode] = useState<NetworkAccessMode>("full");
   const [portMappings, setPortMappings] = useState<PortMapping[]>(defaultPortMappings);
@@ -90,6 +105,8 @@ export function CreateEnvironmentDialog({
     setEnvironmentName("");
     setLaunchAgent(true);
     setAgentType(configDefaultAgent);
+    setClaudeMode(config.global.claudeMode || "terminal");
+    setOpencodeMode(config.global.opencodeMode || "terminal");
     setInitialPrompt("");
     setNetworkAccessMode("full");
     setPortMappings(defaultPortMappings);
@@ -104,6 +121,8 @@ export function CreateEnvironmentDialog({
       setPortMappings(defaultPortMappings);
       setShowPortConfig(defaultPortMappings.length > 0);
       setAgentType(configDefaultAgent);
+      setClaudeMode(config.global.claudeMode || "terminal");
+      setOpencodeMode(config.global.opencodeMode || "terminal");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally omit defaultPortMappings and configDefaultAgent:
     // we read the current value at dialog-open time, not re-sync when defaults change mid-dialog
@@ -168,6 +187,8 @@ export function CreateEnvironmentDialog({
           environmentName: environmentName.trim(),
           launchAgent,
           agentType,
+          claudeMode,
+          opencodeMode,
           initialPrompt: initialPrompt.trim(),
           networkAccessMode,
           portMappings,
@@ -177,7 +198,7 @@ export function CreateEnvironmentDialog({
         console.error("Failed to create environment:", err);
       }
     },
-    [environmentType, environmentName, launchAgent, agentType, initialPrompt, networkAccessMode, portMappings, onCreate, handleOpenChange, validatePortMappings]
+    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, initialPrompt, networkAccessMode, portMappings, onCreate, handleOpenChange, validatePortMappings]
   );
 
   const handlePromptKeyDown = useCallback(
@@ -334,7 +355,7 @@ export function CreateEnvironmentDialog({
             )}
           </div>
 
-          {/* Toggle switches row */}
+          {/* Startup + mode row */}
           <div className="grid grid-cols-2 gap-4">
             {/* Launch Agent Toggle */}
             <div className="space-y-2">
@@ -355,49 +376,138 @@ export function CreateEnvironmentDialog({
               </div>
             </div>
 
-            {/* Agent Type Selector */}
+            {/* Agent Mode Selector */}
             <div className={cn(
               "space-y-2",
               !launchAgent && "opacity-50"
             )}>
-              <Label className="text-sm">Default Agent</Label>
+              <Label className="text-sm">
+                {agentType === "claude"
+                  ? "Claude Mode"
+                  : agentType === "opencode"
+                    ? "OpenCode Mode"
+                    : "Codex Mode"}
+              </Label>
               <div className="grid grid-cols-2 gap-2 w-full">
-                <button
-                  type="button"
-                  onClick={() => setAgentType("claude")}
-                  disabled={isLoading || !launchAgent}
-                  className={cn(
-                    "p-2 rounded-lg border-2 text-left transition-colors",
-                    agentType === "claude"
-                      ? "border-primary bg-primary/5"
-                      : "border-muted hover:border-muted-foreground/50",
-                    (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
-                  )}
-                >
-                  <div className="flex items-center gap-1.5 font-medium text-sm">
-                    <ClaudeIcon className="h-3.5 w-3.5" />
-                    Claude
+                {agentType === "codex" ? (
+                  <div className="col-span-2 rounded-lg border border-muted px-3 py-2 text-sm text-muted-foreground">
+                    Codex runs in native mode.
                   </div>
-                </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (agentType === "claude") {
+                          setClaudeMode("terminal");
+                        } else {
+                          setOpencodeMode("terminal");
+                        }
+                      }}
+                      disabled={isLoading || !launchAgent}
+                      className={cn(
+                        "p-2 rounded-lg border-2 text-left transition-colors",
+                        (agentType === "claude" ? claudeMode : opencodeMode) === "terminal"
+                          ? "border-primary bg-primary/5"
+                          : "border-muted hover:border-muted-foreground/50",
+                        (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Terminal className="h-3.5 w-3.5" />
+                        Terminal
+                      </div>
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => setAgentType("opencode")}
-                  disabled={isLoading || !launchAgent}
-                  className={cn(
-                    "p-2 rounded-lg border-2 text-left transition-colors",
-                    agentType === "opencode"
-                      ? "border-primary bg-primary/5"
-                      : "border-muted hover:border-muted-foreground/50",
-                    (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
-                  )}
-                >
-                  <div className="flex items-center gap-1.5 font-medium text-sm">
-                    <OpenCodeIcon className="h-3.5 w-3.5" />
-                    OpenCode
-                  </div>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (agentType === "claude") {
+                          setClaudeMode("native");
+                        } else {
+                          setOpencodeMode("native");
+                        }
+                      }}
+                      disabled={isLoading || !launchAgent}
+                      className={cn(
+                        "p-2 rounded-lg border-2 text-left transition-colors",
+                        (agentType === "claude" ? claudeMode : opencodeMode) === "native"
+                          ? "border-primary bg-primary/5"
+                          : "border-muted hover:border-muted-foreground/50",
+                        (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Bot className="h-3.5 w-3.5" />
+                        Native
+                      </div>
+                    </button>
+                  </>
+                )}
               </div>
+            </div>
+          </div>
+
+          {/* Full-width Default Agent Selector */}
+          <div className={cn(
+            "space-y-2",
+            !launchAgent && "opacity-50"
+          )}>
+            <Label className="text-sm">Default Agent</Label>
+            <div className="grid grid-cols-3 gap-2 w-full">
+              <button
+                type="button"
+                onClick={() => setAgentType("claude")}
+                disabled={isLoading || !launchAgent}
+                className={cn(
+                  "p-3 rounded-lg border-2 text-left transition-colors",
+                  agentType === "claude"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50",
+                  (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <div className="flex items-center gap-2 font-medium text-sm">
+                  <ClaudeIcon className="h-4 w-4" />
+                  Claude
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAgentType("opencode")}
+                disabled={isLoading || !launchAgent}
+                className={cn(
+                  "p-3 rounded-lg border-2 text-left transition-colors",
+                  agentType === "opencode"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50",
+                  (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <div className="flex items-center gap-2 font-medium text-sm">
+                  <OpenCodeIcon className="h-4 w-4 shrink-0" />
+                  OpenCode
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAgentType("codex")}
+                disabled={isLoading || !launchAgent}
+                className={cn(
+                  "p-3 rounded-lg border-2 text-left transition-colors",
+                  agentType === "codex"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50",
+                  (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <div className="flex items-center gap-2 font-medium text-sm">
+                  <CodexIcon className="h-4 w-4 text-foreground" />
+                  Codex
+                </div>
+              </button>
             </div>
           </div>
 
@@ -527,7 +637,13 @@ export function CreateEnvironmentDialog({
               <Textarea
                 ref={promptRef}
                 id="initial-prompt"
-                placeholder={agentType === "claude" ? "Enter a task for Claude to work on..." : "Enter a task for OpenCode to work on..."}
+                placeholder={
+                  agentType === "claude"
+                    ? "Enter a task for Claude to work on..."
+                    : agentType === "codex"
+                      ? "Enter a task for Codex to work on..."
+                      : "Enter a task for OpenCode to work on..."
+                }
                 value={initialPrompt}
                 onChange={(e) => setInitialPrompt(e.target.value)}
                 onKeyDown={handlePromptKeyDown}

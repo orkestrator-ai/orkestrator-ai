@@ -1,13 +1,14 @@
 //! Tauri commands for local server management
 //!
-//! These commands manage OpenCode and Claude-bridge servers
+//! These commands manage OpenCode, Claude-bridge, and Codex-bridge servers
 //! for local (non-Docker) environments.
 
 use crate::local::ports::{allocate_ports, is_port_available};
 use crate::local::process::{get_process_manager, is_process_alive, ProcessType};
 use crate::local::{
-    get_local_claude_status, get_local_opencode_status, start_local_claude_bridge,
-    start_local_opencode_server, stop_local_claude_bridge, stop_local_opencode_server,
+    get_local_claude_status, get_local_codex_status, get_local_opencode_status,
+    start_local_claude_bridge, start_local_codex_bridge, start_local_opencode_server,
+    stop_local_claude_bridge, stop_local_codex_bridge, stop_local_opencode_server,
     LocalServerStartResult, LocalServerStatus,
 };
 use crate::storage::get_storage;
@@ -35,6 +36,17 @@ static CLAUDE_START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mu
 
 fn get_claude_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     let locks = CLAUDE_START_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut map = locks.lock().unwrap();
+    map.entry(environment_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
+static CODEX_START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
+
+fn get_codex_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let locks = CODEX_START_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
     let mut map = locks.lock().unwrap();
     map.entry(environment_id.to_string())
         .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
@@ -561,6 +573,58 @@ fn resolve_claude_bridge_path(app_handle: &tauri::AppHandle) -> String {
     "docker/claude-bridge".to_string()
 }
 
+fn dev_codex_bridge_path() -> Option<String> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let manifest_path = PathBuf::from(manifest_dir);
+    let workspace_root = manifest_path.parent()?;
+    let bridge_path = workspace_root.join("docker").join("codex-bridge");
+    Some(bridge_path.to_string_lossy().to_string())
+}
+
+fn resolve_codex_bridge_path(app_handle: &tauri::AppHandle) -> String {
+    #[cfg(debug_assertions)]
+    {
+        if let Some(dev_path) = dev_codex_bridge_path() {
+            let dev_pathbuf = PathBuf::from(&dev_path);
+            if dev_pathbuf.exists() && dev_pathbuf.join("node_modules").exists() {
+                debug!(path = %dev_path, "Using dev codex-bridge path (debug mode)");
+                return dev_path;
+            }
+        }
+    }
+
+    if let Ok(bundled) = app_handle
+        .path()
+        .resolve("codex-bridge", tauri::path::BaseDirectory::Resource)
+    {
+        debug!(path = %bundled.display(), "Checking bundled codex-bridge path");
+        if bundled.exists() {
+            debug!(path = %bundled.display(), "Found bundled codex-bridge");
+            return bundled.to_string_lossy().to_string();
+        }
+    }
+
+    if let Ok(res_dir) = app_handle.path().resource_dir() {
+        let bundled = res_dir.join("codex-bridge");
+        debug!(resource_dir = %res_dir.display(), path = %bundled.display(), "Checking resource_dir codex-bridge path");
+        if bundled.exists() {
+            debug!(path = %bundled.display(), "Found codex-bridge via resource_dir");
+            return bundled.to_string_lossy().to_string();
+        }
+    }
+
+    if let Some(dev_path) = dev_codex_bridge_path() {
+        let dev_pathbuf = PathBuf::from(&dev_path);
+        if dev_pathbuf.exists() {
+            debug!(path = %dev_path, "Found dev codex-bridge path");
+            return dev_path;
+        }
+    }
+
+    warn!("Could not resolve codex-bridge path, using fallback");
+    "docker/codex-bridge".to_string()
+}
+
 /// Resolve the bundled bun binary path for packaged apps
 fn resolve_bundled_bun_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> Option<String> {
     // In debug mode, skip bundled bun - it may have code signing issues on macOS
@@ -641,6 +705,219 @@ pub async fn get_local_claude_server_status(
         &environment_id,
         environment.local_claude_port,
         environment.claude_bridge_pid,
+    )
+    .await;
+
+    Ok(status.into())
+}
+
+/// Start the Codex bridge server for a local environment
+#[tauri::command]
+pub async fn start_local_codex_server_cmd(
+    app_handle: tauri::AppHandle,
+    environment_id: String,
+) -> Result<LocalServerResult, String> {
+    debug!(environment_id = %environment_id, "Starting local Codex bridge server");
+
+    let start_lock = get_codex_start_lock(&environment_id);
+    let _guard = start_lock.lock().await;
+
+    let storage = get_storage().map_err(|e| e.to_string())?;
+    let environment = storage
+        .get_environment(&environment_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    if environment.is_containerized() {
+        return Err("Cannot start local server for containerized environment".to_string());
+    }
+
+    let worktree_path = environment
+        .worktree_path
+        .as_ref()
+        .ok_or("Local environment missing worktree path")?;
+
+    let manager = get_process_manager();
+    let mut port = environment
+        .local_codex_port
+        .ok_or("Local environment missing Codex bridge port")?;
+
+    if let Some(pid) = environment.codex_bridge_pid {
+        if is_process_alive(pid) {
+            let stored_status =
+                get_local_codex_status(&environment_id, Some(port), Some(pid)).await;
+            if stored_status.running {
+                manager
+                    .recover_from_pid(&environment_id, ProcessType::CodexBridge, pid)
+                    .await;
+                debug!(
+                    environment_id = %environment_id,
+                    port = port,
+                    pid = pid,
+                    "Reusing existing healthy Codex bridge server"
+                );
+                return Ok(LocalServerResult {
+                    port,
+                    pid,
+                    was_running: true,
+                });
+            }
+
+            warn!(
+                environment_id = %environment_id,
+                pid = pid,
+                port = port,
+                "Stored Codex bridge PID is alive but unhealthy; clearing stale PID"
+            );
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "codexBridgePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        } else {
+            debug!(
+                environment_id = %environment_id,
+                pid = pid,
+                "Stored Codex bridge PID is no longer alive; clearing"
+            );
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "codexBridgePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        }
+    }
+
+    if !is_port_available(port) {
+        warn!(
+            environment_id = %environment_id,
+            port = port,
+            "Codex bridge port already in use; attempting to recover"
+        );
+
+        if manager
+            .is_running(&environment_id, ProcessType::CodexBridge)
+            .await
+        {
+            if let Err(err) = manager.kill(&environment_id, ProcessType::CodexBridge).await {
+                warn!(
+                    environment_id = %environment_id,
+                    port = port,
+                    error = %err,
+                    "Failed to kill existing Codex bridge process"
+                );
+            }
+        }
+
+        if !is_port_available(port) {
+            let all_envs = storage.get_all_environments().map_err(|e| e.to_string())?;
+            let allocation = allocate_ports(&all_envs)?;
+            let new_port = allocation.codex_port;
+            warn!(
+                environment_id = %environment_id,
+                old_port = port,
+                new_port = new_port,
+                "Reassigning Codex bridge port"
+            );
+            port = new_port;
+            storage
+                .update_environment(
+                    &environment_id,
+                    json!({
+                        "localCodexPort": new_port,
+                        "codexBridgePid": null
+                    }),
+                )
+                .map_err(|e| format!("Failed to update environment: {}", e))?;
+        }
+    }
+
+    let bridge_path = resolve_codex_bridge_path(&app_handle);
+    debug!(environment_id = %environment_id, bridge_path = %bridge_path, "Resolved codex-bridge path");
+
+    let bundled_bun_path = resolve_bundled_bun_path(&app_handle);
+    if let Some(ref bun_path) = bundled_bun_path {
+        debug!(environment_id = %environment_id, bun_path = %bun_path, "Resolved bundled bun path");
+    }
+
+    let result = start_local_codex_bridge(
+        &environment_id,
+        worktree_path,
+        port,
+        &bridge_path,
+        bundled_bun_path.as_deref(),
+    )
+    .await?;
+
+    if environment.codex_bridge_pid != Some(result.pid)
+        || environment.local_codex_port != Some(result.port)
+    {
+        storage
+            .update_environment(
+                &environment_id,
+                json!({
+                    "codexBridgePid": result.pid,
+                    "localCodexPort": result.port
+                }),
+            )
+            .map_err(|e| format!("Failed to update environment: {}", e))?;
+    }
+
+    info!(
+        environment_id = %environment_id,
+        port = result.port,
+        pid = result.pid,
+        "Local Codex bridge server started"
+    );
+
+    Ok(result.into())
+}
+
+/// Stop the Codex bridge server for a local environment
+#[tauri::command]
+pub async fn stop_local_codex_server_cmd(environment_id: String) -> Result<(), String> {
+    debug!(environment_id = %environment_id, "Stopping local Codex bridge server");
+
+    stop_local_codex_bridge(&environment_id).await?;
+
+    let storage = get_storage().map_err(|e| e.to_string())?;
+    storage
+        .update_environment(
+            &environment_id,
+            json!({
+                "codexBridgePid": null
+            }),
+        )
+        .map_err(|e| format!("Failed to update environment: {}", e))?;
+
+    info!(environment_id = %environment_id, "Local Codex bridge server stopped");
+
+    Ok(())
+}
+
+/// Get the status of the Codex bridge server for a local environment
+#[tauri::command]
+pub async fn get_local_codex_server_status(
+    environment_id: String,
+) -> Result<LocalServerStatusResult, String> {
+    debug!(environment_id = %environment_id, "Getting local Codex bridge server status");
+
+    let storage = get_storage().map_err(|e| e.to_string())?;
+    let environment = storage
+        .get_environment(&environment_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    let status = get_local_codex_status(
+        &environment_id,
+        environment.local_codex_port,
+        environment.codex_bridge_pid,
     )
     .await;
 

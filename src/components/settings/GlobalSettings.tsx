@@ -15,7 +15,7 @@ import {
 import { useConfigStore } from "@/stores";
 import * as tauri from "@/lib/tauri";
 import { Loader2, Eye, EyeOff, Key, Github, Shield, CheckCircle2, XCircle, AlertCircle, Code2, Check, Terminal, Bot } from "lucide-react";
-import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { DomainTestResult, PreferredEditor, TerminalAppearance, DefaultAgent, OpenCodeMode, ClaudeMode } from "@/types";
@@ -343,7 +343,7 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setPreferredEditor("vscode")}
@@ -420,8 +420,23 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                 )}
               >
                 <div className="flex items-center gap-2 font-medium">
-                  <OpenCodeIcon />
+                  <OpenCodeIcon className="h-4.5 w-4.5" />
                   OpenCode
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDefaultAgent("codex")}
+                className={cn(
+                  "p-3 rounded-lg border-2 text-left transition-colors",
+                  defaultAgent === "codex"
+                    ? "border-primary bg-primary/5"
+                    : "border-muted hover:border-muted-foreground/50"
+                )}
+              >
+                <div className="flex items-center gap-2 font-medium">
+                  <CodexIcon className="text-emerald-400" />
+                  Codex
                 </div>
               </button>
             </div>

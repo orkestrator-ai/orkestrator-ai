@@ -43,8 +43,8 @@ RUN SNIPPET="export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhisto
 ENV DEVCONTAINER=true
 
 # Create workspace and config directories and set permissions
-RUN mkdir -p /workspace /home/node/.claude /home/node/.config/opencode /home/node/.local/share/opencode /home/node/.local/state/opencode && \
-  chown -R node:node /workspace /home/node/.claude /home/node/.config /home/node/.local
+RUN mkdir -p /workspace /home/node/.claude /home/node/.codex /home/node/.config/opencode /home/node/.local/share/opencode /home/node/.local/state/opencode && \
+  chown -R node:node /workspace /home/node/.claude /home/node/.codex /home/node/.config /home/node/.local
 
 WORKDIR /workspace
 
@@ -86,9 +86,17 @@ RUN claude install
 # Install OpenCode
 RUN curl -fsSL https://opencode.ai/install | bash
 
+# Install Codex CLI
+RUN npm install -g @openai/codex
+
 # Copy and build Claude Bridge Server
 COPY --chown=node:node claude-bridge /opt/claude-bridge
 WORKDIR /opt/claude-bridge
+RUN npm install && npm run build && npm prune --production
+
+# Copy and build Codex Bridge Server
+COPY --chown=node:node codex-bridge /opt/codex-bridge
+WORKDIR /opt/codex-bridge
 RUN npm install && npm run build && npm prune --production
 WORKDIR /workspace
 

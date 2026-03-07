@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type AgentType = "claude" | "opencode";
+export type AgentType = "claude" | "opencode" | "codex";
 
 export interface ClaudeOptions {
   launchAgent: boolean;
