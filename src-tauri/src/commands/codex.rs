@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use tauri::Manager;
 use tracing::{debug, error, info, warn};
 
+use std::sync::LazyLock;
+
 /// Codex bridge server port inside the container
 const CODEX_BRIDGE_PORT: u16 = 4098;
 
@@ -17,6 +19,14 @@ const SERVER_STARTUP_MAX_ATTEMPTS: u32 = 75;
 
 /// Delay between health check attempts in milliseconds
 const SERVER_STARTUP_POLL_INTERVAL_MS: u64 = 200;
+
+/// Shared HTTP client with a 2-second timeout for health checks
+static HEALTH_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .expect("Failed to build HTTP client")
+});
 
 /// Result of starting the Codex bridge server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,11 +207,7 @@ pub async fn start_codex_server(
         .ok_or_else(|| "Codex bridge server port (4098) is not mapped".to_string())?;
 
     let health_url = format!("http://127.0.0.1:{}/global/health", host_port);
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .map_err(|e| e.to_string())?;
-    if let Ok(response) = http_client.get(&health_url).send().await {
+    if let Ok(response) = HEALTH_CLIENT.get(&health_url).send().await {
         if response.status().is_success() {
             return Ok(CodexServerStartResult {
                 host_port,
@@ -247,7 +253,7 @@ pub async fn start_codex_server(
         ))
         .await;
 
-        match reqwest::get(&health_url).await {
+        match HEALTH_CLIENT.get(&health_url).send().await {
             Ok(response) => {
                 if response.status().is_success() {
                     info!(container_id = %container_id, host_port = host_port, attempts = attempts, "Codex bridge server started successfully");
@@ -372,11 +378,7 @@ pub async fn get_codex_server_status(container_id: String) -> Result<CodexServer
     };
 
     let health_url = format!("http://127.0.0.1:{}/global/health", host_port);
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let running = match http_client.get(&health_url).send().await {
+    let running = match HEALTH_CLIENT.get(&health_url).send().await {
         Ok(response) => response.status().is_success(),
         Err(_) => false,
     };

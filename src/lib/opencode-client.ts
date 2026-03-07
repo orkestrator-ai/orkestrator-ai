@@ -424,13 +424,24 @@ type ProviderLike = {
 };
 
 function normalizeProviders(value: unknown): ProviderLike[] {
-  if (!Array.isArray(value)) {
-    return [];
+  if (Array.isArray(value)) {
+    return value.filter((provider): provider is ProviderLike => {
+      return !!provider && typeof provider === "object";
+    });
   }
 
-  return value.filter((provider): provider is ProviderLike => {
-    return !!provider && typeof provider === "object";
-  });
+  // Handle object-map format: { anthropic: {...}, openai: {...} }
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, v]) => !!v && typeof v === "object")
+      .map(([key, v]) => {
+        const provider = v as ProviderLike;
+        // If the provider doesn't have an id, use the object key
+        return provider.id ? provider : { ...provider, id: key };
+      });
+  }
+
+  return [];
 }
 
 function normalizeProviderModels(models: unknown): Array<Record<string, unknown>> {

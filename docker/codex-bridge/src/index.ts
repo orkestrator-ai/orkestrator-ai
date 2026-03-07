@@ -181,7 +181,14 @@ function cleanupIdleSessions(): void {
   }
 }
 
-setInterval(cleanupIdleSessions, CLEANUP_INTERVAL_MS);
+const cleanupTimer = setInterval(cleanupIdleSessions, CLEANUP_INTERVAL_MS);
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    clearInterval(cleanupTimer);
+    process.exit(0);
+  });
+}
 
 const MODEL_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
   "minimal",

@@ -171,6 +171,43 @@ describe("opencode-client getModelsWithDefaults", () => {
     ]);
     expect(result.defaults.modelId).toBe("openai/gpt-5");
   });
+
+  test("accepts providers returned as an object map", async () => {
+    const client = {
+      config: {
+        providers: async () => ({
+          data: {
+            providers: {
+              anthropic: {
+                id: "anthropic",
+                models: {
+                  "claude-sonnet-4": {
+                    id: "claude-sonnet-4",
+                    name: "Claude Sonnet 4",
+                  },
+                },
+              },
+            },
+            default: {
+              providerID: "anthropic",
+              modelID: "claude-sonnet-4",
+            },
+          },
+        }),
+      },
+    } as unknown as OpencodeClient;
+
+    const result = await getModelsWithDefaults(client);
+
+    expect(result.models).toEqual([
+      {
+        id: "anthropic/claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        provider: "anthropic",
+      },
+    ]);
+    expect(result.defaults.modelId).toBe("anthropic/claude-sonnet-4");
+  });
 });
 
 describe("opencode-client getAvailableSlashCommands", () => {
