@@ -34,7 +34,7 @@ pub struct CodexServerStatus {
     pub host_port: Option<u16>,
 }
 
-fn resolve_codex_bridge_path(_app_handle: &tauri::AppHandle) -> PathBuf {
+fn resolve_codex_bridge_path(app_handle: &tauri::AppHandle) -> PathBuf {
     #[cfg(debug_assertions)]
     {
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
