@@ -1000,14 +1000,7 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
     !previousMessage.id.startsWith(ERROR_MESSAGE_PREFIX) &&
     isSameMinute(previousMessage.createdAt, message.createdAt);
 
-  // Group parts by type for better rendering order
-  const thinkingParts = message.parts.filter((p) => p.type === "thinking");
-  const toolParts = message.parts.filter((p) => p.type === "tool-invocation");
-  const textParts = message.parts.filter((p) => p.type === "text");
-  const fileParts = message.parts.filter((p) => p.type === "file");
-
-  // Check if we have any text parts to show
-  const hasTextParts = textParts.length > 0;
+  const hasTextParts = message.parts.some((part) => part.type === "text");
 
   // Render error messages with special styling
   if (isError) {
@@ -1056,34 +1049,13 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
           </div>
         )}
 
-        {/* Message content - render parts in order: thinking, tools, text */}
+        {/* Message content - preserve the source order of structured parts */}
         <div className="space-y-2">
-          {/* Thinking parts first (inline status line) */}
-          {thinkingParts.map((part, i) => (
-            <ThinkingPart key={`thinking-${i}`} content={part.content} />
-          ))}
-
-          {/* Tool invocations */}
-          {toolParts.length > 0 && (
-            <div className="space-y-1">
-              {toolParts.map((part, i) => (
-                <MessagePart key={`tool-${i}`} part={part} />
-              ))}
-            </div>
-          )}
-
-          {/* File attachments */}
-          {fileParts.length > 0 && (
-            <div className="space-y-1">
-              {fileParts.map((part, i) => (
-                <MessagePart key={`file-${i}`} part={part} />
-              ))}
-            </div>
-          )}
-
-          {/* Text content - the main response */}
-          {textParts.map((part, i) => (
-            <MessagePart key={`text-${i}`} part={part} />
+          {message.parts.map((part, index) => (
+            <MessagePart
+              key={`${message.id}-part-${index}-${part.type}`}
+              part={part}
+            />
           ))}
 
           {/* Fallback to raw content if no text parts were parsed */}

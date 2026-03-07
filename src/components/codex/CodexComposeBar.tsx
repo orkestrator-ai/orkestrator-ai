@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, FileText, Image as ImageIcon, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Plus, Square, X } from "lucide-react";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useCodexStore } from "@/stores";
 import { OpenCodeSlashCommandMenu } from "@/components/opencode/OpenCodeSlashCommandMenu";
@@ -23,13 +31,14 @@ import type {
   CodexReasoningEffort,
   CodexSlashCommand,
 } from "@/lib/codex-client";
-import type { CodexAttachment } from "@/stores/codexStore";
+import type { CodexAttachment, CodexQueuedMessage } from "@/stores/codexStore";
 
 const MIN_HEIGHT_PX = 28;
 const MAX_HEIGHT_PX = 160;
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 const MAX_RGBA_SIZE = 32 * 1024 * 1024;
 const EMPTY_ATTACHMENTS: CodexAttachment[] = [];
+const EMPTY_QUEUE: CodexQueuedMessage[] = [];
 
 const REASONING_LABELS: Record<CodexReasoningEffort, string> = {
   minimal: "Minimal",
@@ -67,7 +76,9 @@ interface CodexComposeBarProps {
   settingsLocked?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
+  queueLength?: number;
   onSend: (text: string, attachments: CodexAttachment[]) => Promise<void>;
+  onQueue?: (text: string, attachments: CodexAttachment[]) => void;
   onStop?: () => Promise<void>;
   onModeChange: (mode: CodexConversationMode) => Promise<void> | void;
   onModelChange: (modelId: string) => Promise<void> | void;
@@ -86,22 +97,34 @@ export function CodexComposeBar({
   settingsLocked = false,
   disabled = false,
   isLoading = false,
+  queueLength = 0,
   onSend,
+  onQueue,
   onStop,
   onModeChange,
   onModelChange,
   onReasoningEffortChange,
 }: CodexComposeBarProps) {
+  const [isSending, setIsSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const [queueDialogOpen, setQueueDialogOpen] = useState(false);
   const text = useCodexStore((state) => state.draftText.get(sessionKey) ?? "");
   const attachments = useCodexStore(
     (state) => state.attachments.get(sessionKey) ?? EMPTY_ATTACHMENTS,
+  );
+  const queuedMessages = useCodexStore(
+    useCallback(
+      (state) => state.messageQueue.get(sessionKey) ?? EMPTY_QUEUE,
+      [sessionKey],
+    ),
   );
   const setDraftText = useCodexStore((state) => state.setDraftText);
   const addAttachment = useCodexStore((state) => state.addAttachment);
   const removeAttachment = useCodexStore((state) => state.removeAttachment);
   const clearAttachments = useCodexStore((state) => state.clearAttachments);
+  const removeQueueItem = useCodexStore((state) => state.removeQueueItem);
+  const moveQueueItem = useCodexStore((state) => state.moveQueueItem);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashFilter, setSlashFilter] = useState("");
@@ -150,13 +173,36 @@ export function CodexComposeBar({
 
   const handleSubmit = useCallback(async () => {
     const trimmed = text.trim();
-    if ((trimmed.length === 0 && attachments.length === 0) || disabled || isLoading) {
+    if ((trimmed.length === 0 && attachments.length === 0) || disabled) {
       return;
     }
+
+    if (isLoading) {
+      onQueue?.(trimmed, attachments);
+      setDraftText(sessionKey, "");
+      clearAttachments(sessionKey);
+      return;
+    }
+
+    setIsSending(true);
     setDraftText(sessionKey, "");
     clearAttachments(sessionKey);
-    await onSend(trimmed, attachments);
-  }, [attachments, clearAttachments, disabled, isLoading, onSend, sessionKey, setDraftText, text]);
+    try {
+      await onSend(trimmed, attachments);
+    } finally {
+      setIsSending(false);
+    }
+  }, [
+    attachments,
+    clearAttachments,
+    disabled,
+    isLoading,
+    onQueue,
+    onSend,
+    sessionKey,
+    setDraftText,
+    text,
+  ]);
 
   const selectedModelObj = useMemo(
     () => models.find((model) => model.id === selectedModel),
@@ -312,6 +358,34 @@ export function CodexComposeBar({
       document.removeEventListener("paste", handlePaste, { capture: true });
     };
   }, [handlePaste]);
+
+  const handleQueuedMessageClick = useCallback(
+    (message: CodexQueuedMessage) => {
+      setDraftText(sessionKey, message.text);
+      clearAttachments(sessionKey);
+      for (const attachment of message.attachments) {
+        addAttachment(sessionKey, attachment);
+      }
+      removeQueueItem(sessionKey, message.id);
+      setQueueDialogOpen(false);
+      textareaRef.current?.focus();
+    },
+    [addAttachment, clearAttachments, removeQueueItem, sessionKey, setDraftText],
+  );
+
+  const handleMoveQueuedMessage = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      moveQueueItem(sessionKey, fromIndex, toIndex);
+    },
+    [moveQueueItem, sessionKey],
+  );
+
+  const handleRemoveQueuedMessage = useCallback(
+    (messageId: string) => {
+      removeQueueItem(sessionKey, messageId);
+    },
+    [removeQueueItem, sessionKey],
+  );
 
   return (
     <div className="border-t border-border bg-background p-3">
@@ -561,7 +635,18 @@ export function CodexComposeBar({
 
         <div className="flex-1" />
 
-        {isLoading && !text.trim() ? (
+        {queueLength > 0 && (
+          <button
+            type="button"
+            onClick={() => setQueueDialogOpen(true)}
+            className="flex items-center gap-1 rounded bg-muted/50 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
+            title="View queued prompts"
+          >
+            <span>+{queueLength} queued</span>
+          </button>
+        )}
+
+        {isLoading && !text.trim() && attachments.length === 0 ? (
           <button
             type="button"
             onClick={() => {
@@ -580,17 +665,106 @@ export function CodexComposeBar({
           <Button
             type="button"
             size="icon"
-            className="h-8 w-8 rounded-full bg-muted text-foreground transition-colors hover:bg-muted/80"
-            disabled={disabled || (text.trim().length === 0 && attachments.length === 0)}
+            className={cn(
+              "h-8 w-8 rounded-full text-foreground transition-colors",
+              isLoading
+                ? "bg-primary/20 text-primary hover:bg-primary/30"
+                : "bg-muted hover:bg-muted/80",
+            )}
+            disabled={disabled || isSending || (text.trim().length === 0 && attachments.length === 0)}
             onClick={() => {
               void handleSubmit();
             }}
-            title="Send message"
+            title={isLoading ? "Add to queue" : "Send message"}
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
         )}
       </div>
+
+      <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Queued Prompts</DialogTitle>
+            <DialogDescription>
+              Review pending prompts. Click one to edit it, or reorder and remove items.
+            </DialogDescription>
+          </DialogHeader>
+
+          {queuedMessages.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Queue is empty.
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[380px] pr-3">
+              <div className="space-y-2">
+                {queuedMessages.map((message, index) => (
+                  <div
+                    key={message.id}
+                    className="rounded-md border border-border bg-muted/20 p-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 shrink-0 text-xs font-medium text-muted-foreground">
+                        #{index + 1}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="-mx-1 cursor-pointer rounded px-1 text-sm whitespace-pre-wrap break-words line-clamp-4 transition-colors hover:bg-muted/50"
+                          onClick={() => handleQueuedMessageClick(message)}
+                          title="Click to edit this message"
+                        >
+                          {message.text}
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          <span>{message.mode === "plan" ? "Plan" : "Build"}</span>
+                          <span>{message.model}</span>
+                          <span>{REASONING_LABELS[message.reasoningEffort]}</span>
+                          {message.attachments.length > 0 && (
+                            <span>
+                              {message.attachments.length} attachment
+                              {message.attachments.length === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveQueuedMessage(index, index - 1)}
+                          disabled={index === 0}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                          title="Move up"
+                        >
+                          <ChevronUp className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveQueuedMessage(index, index + 1)}
+                          disabled={index === queuedMessages.length - 1}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                          title="Move down"
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveQueuedMessage(message.id)}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                          title="Remove queued prompt"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

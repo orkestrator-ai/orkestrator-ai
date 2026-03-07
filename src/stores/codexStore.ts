@@ -34,6 +34,15 @@ export interface CodexAttachment {
   name: string;
 }
 
+export interface CodexQueuedMessage {
+  id: string;
+  text: string;
+  attachments: CodexAttachment[];
+  model: string;
+  mode: CodexConversationMode;
+  reasoningEffort: CodexReasoningEffort;
+}
+
 interface CodexState {
   models: CodexModel[];
   serverStatus: Map<string, CodexServerStatus>;
@@ -42,6 +51,7 @@ interface CodexState {
   slashCommands: Map<string, CodexSlashCommand[]>;
   attachments: Map<string, CodexAttachment[]>;
   draftText: Map<string, string>;
+  messageQueue: Map<string, CodexQueuedMessage[]>;
   selectedModel: Map<string, string>;
   selectedMode: Map<string, CodexConversationMode>;
   selectedReasoningEffort: Map<string, CodexReasoningEffort>;
@@ -58,6 +68,13 @@ interface CodexState {
   removeAttachment: (sessionKey: string, attachmentId: string) => void;
   clearAttachments: (sessionKey: string) => void;
   setDraftText: (sessionKey: string, text: string) => void;
+  addToQueue: (sessionKey: string, message: CodexQueuedMessage) => void;
+  removeFromQueue: (sessionKey: string) => CodexQueuedMessage | undefined;
+  removeQueueItem: (sessionKey: string, messageId: string) => void;
+  moveQueueItem: (sessionKey: string, fromIndex: number, toIndex: number) => void;
+  clearQueue: (sessionKey: string) => void;
+  getQueueLength: (sessionKey: string) => number;
+  getQueuedMessages: (sessionKey: string) => CodexQueuedMessage[];
   setSelectedModel: (sessionKey: string, model: string) => void;
   setSelectedMode: (sessionKey: string, mode: CodexConversationMode) => void;
   setSelectedReasoningEffort: (
@@ -67,7 +84,7 @@ interface CodexState {
   clearEnvironment: (environmentId: string) => void;
 }
 
-export const useCodexStore = create<CodexState>()((set) => ({
+export const useCodexStore = create<CodexState>()((set, get) => ({
   models: CODEX_MODELS,
   serverStatus: new Map(),
   clients: new Map(),
@@ -75,6 +92,7 @@ export const useCodexStore = create<CodexState>()((set) => ({
   slashCommands: new Map(),
   attachments: new Map(),
   draftText: new Map(),
+  messageQueue: new Map(),
   selectedModel: new Map(),
   selectedMode: new Map(),
   selectedReasoningEffort: new Map(),
@@ -196,6 +214,87 @@ export const useCodexStore = create<CodexState>()((set) => ({
       return { draftText: next };
     }),
 
+  addToQueue: (sessionKey, message) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) ?? [];
+      const next = new Map(state.messageQueue);
+      next.set(sessionKey, [...current, message]);
+      return { messageQueue: next };
+    }),
+
+  removeFromQueue: (sessionKey) => {
+    let removed: CodexQueuedMessage | undefined;
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) ?? [];
+      if (current.length === 0) {
+        return state;
+      }
+      const next = new Map(state.messageQueue);
+      removed = current[0];
+      if (current.length === 1) {
+        next.delete(sessionKey);
+      } else {
+        next.set(sessionKey, current.slice(1));
+      }
+      return { messageQueue: next };
+    });
+    return removed;
+  },
+
+  removeQueueItem: (sessionKey, messageId) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) ?? [];
+      const filtered = current.filter((message) => message.id !== messageId);
+      if (filtered.length === current.length) {
+        return state;
+      }
+      const next = new Map(state.messageQueue);
+      if (filtered.length === 0) {
+        next.delete(sessionKey);
+      } else {
+        next.set(sessionKey, filtered);
+      }
+      return { messageQueue: next };
+    }),
+
+  moveQueueItem: (sessionKey, fromIndex, toIndex) =>
+    set((state) => {
+      const current = state.messageQueue.get(sessionKey) ?? [];
+      if (
+        fromIndex < 0
+        || toIndex < 0
+        || fromIndex >= current.length
+        || toIndex >= current.length
+        || fromIndex === toIndex
+      ) {
+        return state;
+      }
+      const reordered = [...current];
+      const [moved] = reordered.splice(fromIndex, 1);
+      if (!moved) {
+        return state;
+      }
+      reordered.splice(toIndex, 0, moved);
+      const next = new Map(state.messageQueue);
+      next.set(sessionKey, reordered);
+      return { messageQueue: next };
+    }),
+
+  clearQueue: (sessionKey) =>
+    set((state) => {
+      const next = new Map(state.messageQueue);
+      next.delete(sessionKey);
+      return { messageQueue: next };
+    }),
+
+  getQueueLength: (sessionKey) => {
+    return get().messageQueue.get(sessionKey)?.length ?? 0;
+  },
+
+  getQueuedMessages: (sessionKey) => {
+    return get().messageQueue.get(sessionKey) ?? [];
+  },
+
   setSelectedModel: (sessionKey, model) =>
     set((state) => {
       const next = new Map(state.selectedModel);
@@ -231,6 +330,7 @@ export const useCodexStore = create<CodexState>()((set) => ({
       const nextSessions = new Map(state.sessions);
       const nextAttachments = new Map(state.attachments);
       const nextDraftText = new Map(state.draftText);
+      const nextMessageQueue = new Map(state.messageQueue);
       const nextSelectedModel = new Map(state.selectedModel);
       const nextSelectedMode = new Map(state.selectedMode);
       const nextSelectedReasoningEffort = new Map(state.selectedReasoningEffort);
@@ -251,6 +351,12 @@ export const useCodexStore = create<CodexState>()((set) => ({
       for (const key of nextDraftText.keys()) {
         if (key.startsWith(prefix)) {
           nextDraftText.delete(key);
+        }
+      }
+
+      for (const key of nextMessageQueue.keys()) {
+        if (key.startsWith(prefix)) {
+          nextMessageQueue.delete(key);
         }
       }
 
@@ -280,6 +386,7 @@ export const useCodexStore = create<CodexState>()((set) => ({
         sessions: nextSessions,
         attachments: nextAttachments,
         draftText: nextDraftText,
+        messageQueue: nextMessageQueue,
         selectedModel: nextSelectedModel,
         selectedMode: nextSelectedMode,
         selectedReasoningEffort: nextSelectedReasoningEffort,
