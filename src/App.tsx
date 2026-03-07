@@ -9,7 +9,7 @@ import { useUIStore, useEnvironmentStore, useConfigStore, useClaudeOptionsStore 
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
-import { checkDocker, checkClaudeCli, checkClaudeConfig, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
+import { checkDocker, checkClaudeCli, checkClaudeConfig, checkCodexCli, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
 import { usePrMonitorService } from "@/hooks/usePrMonitorService";
 import { useEnvironments } from "@/hooks";
 import {
@@ -43,6 +43,7 @@ function App() {
   const [claudeCliAvailable, setClaudeCliAvailable] = useState<boolean | null>(null);
   const [claudeConfigAvailable, setClaudeConfigAvailable] = useState<boolean | null>(null);
   const [opencodeCliAvailable, setOpencodeCliAvailable] = useState<boolean | null>(null);
+  const [codexCliAvailable, setCodexCliAvailable] = useState<boolean | null>(null);
   const [githubCliAvailable, setGithubCliAvailable] = useState<boolean | null>(null);
   const [availableAiCli, setAvailableAiCli] = useState<string | null>(null);
   const [isCheckingClaude, setIsCheckingClaude] = useState(false);
@@ -95,18 +96,21 @@ function App() {
       checkClaudeCli(),
       checkClaudeConfig(),
       checkOpencodeCli(),
+      checkCodexCli(),
       checkGithubCli(),
       getAvailableAiCli(),
     ])
-      .then(([claudeCli, claudeConfig, opencodeCli, githubCli, aiCli]) => {
+      .then(([claudeCli, claudeConfig, opencodeCli, codexCli, githubCli, aiCli]) => {
         console.log("[App] Claude CLI available:", claudeCli);
         console.log("[App] Claude config available:", claudeConfig);
         console.log("[App] OpenCode CLI available:", opencodeCli);
+        console.log("[App] Codex CLI available:", codexCli);
         console.log("[App] GitHub CLI available:", githubCli);
         console.log("[App] Available AI CLI:", aiCli);
         setClaudeCliAvailable(claudeCli);
         setClaudeConfigAvailable(claudeConfig);
         setOpencodeCliAvailable(opencodeCli);
+        setCodexCliAvailable(codexCli);
         setGithubCliAvailable(githubCli);
         setAvailableAiCli(aiCli);
       })
@@ -115,6 +119,7 @@ function App() {
         setClaudeCliAvailable(false);
         setClaudeConfigAvailable(false);
         setOpencodeCliAvailable(false);
+        setCodexCliAvailable(false);
         setGithubCliAvailable(false);
         setAvailableAiCli(null);
       });
@@ -163,17 +168,19 @@ function App() {
   const handleRetryClaudeCheck = async () => {
     setIsCheckingClaude(true);
     try {
-      const [claudeCli, claudeConfig, opencodeCli, githubCli, aiCli] = await Promise.all([
+      const [claudeCli, claudeConfig, opencodeCli, codexCli, githubCli, aiCli] = await Promise.all([
         checkClaudeCli(),
         checkClaudeConfig(),
         checkOpencodeCli(),
+        checkCodexCli(),
         checkGithubCli(),
         getAvailableAiCli(),
       ]);
-      console.log("[App] CLI retry check - Claude:", claudeCli, "OpenCode:", opencodeCli, "GitHub:", githubCli, "Available AI:", aiCli);
+      console.log("[App] CLI retry check - Claude:", claudeCli, "OpenCode:", opencodeCli, "Codex:", codexCli, "GitHub:", githubCli, "Available AI:", aiCli);
       setClaudeCliAvailable(claudeCli);
       setClaudeConfigAvailable(claudeConfig);
       setOpencodeCliAvailable(opencodeCli);
+      setCodexCliAvailable(codexCli);
       setGithubCliAvailable(githubCli);
       setAvailableAiCli(aiCli);
     } catch (error) {
@@ -181,6 +188,7 @@ function App() {
       setClaudeCliAvailable(false);
       setClaudeConfigAvailable(false);
       setOpencodeCliAvailable(false);
+      setCodexCliAvailable(false);
       setGithubCliAvailable(false);
       setAvailableAiCli(null);
     } finally {
@@ -258,7 +266,8 @@ function App() {
   const noAiCliAvailable =
     dockerAvailable === true &&
     claudeCliAvailable === false &&
-    opencodeCliAvailable === false;
+    opencodeCliAvailable === false &&
+    codexCliAvailable === false;
 
   const claudeNeedsLogin =
     dockerAvailable === true &&
@@ -441,13 +450,13 @@ function App() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* AI CLI not installed dialog - shows when neither Claude nor OpenCode is available */}
+        {/* AI CLI not installed dialog - shows when Claude, OpenCode, and Codex are unavailable */}
         <AlertDialog open={noAiCliAvailable}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>AI CLI Required</AlertDialogTitle>
               <AlertDialogDescription>
-                No compatible AI CLI is installed on your system. Orkestrator AI requires Claude Code or OpenCode to create and manage AI-powered development environments.
+                No compatible AI CLI is installed on your system. Orkestrator AI requires Claude Code, OpenCode, or Codex to create and manage AI-powered development environments.
                 <br /><br />
                 <strong>Option 1: Install Claude Code (recommended)</strong>
                 <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">curl -fsSL https://claude.ai/install.sh | bash</pre>
@@ -455,6 +464,9 @@ function App() {
                 <br /><br />
                 <strong>Option 2: Install OpenCode</strong>
                 <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">curl -fsSL https://opencode.ai/install | bash</pre>
+                <br /><br />
+                <strong>Option 3: Install Codex</strong>
+                <pre className="my-2 rounded bg-muted p-2 text-sm font-mono">npm install -g @openai/codex</pre>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

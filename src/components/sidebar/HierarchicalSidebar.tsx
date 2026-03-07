@@ -37,6 +37,7 @@ import { useEnvironments } from "@/hooks/useEnvironments";
 import { useUIStore, useClaudeOptionsStore, useConfigStore, useEnvironmentStore } from "@/stores";
 import { RepositorySettings } from "@/components/settings/RepositorySettings";
 import { shouldResolveSetupCommandsOnSelection } from "@/lib/setup-commands";
+import { updateEnvironmentAgentSettings } from "@/lib/tauri";
 import type { Environment, Project } from "@/types";
 
 export function HierarchicalSidebar() {
@@ -276,37 +277,45 @@ export function HierarchicalSidebar() {
         options.environmentType
       );
 
+      const configuredEnvironment = await updateEnvironmentAgentSettings(
+        environment.id,
+        options.agentType,
+        options.agentType === "claude" ? options.claudeMode : null,
+        options.agentType === "opencode" ? options.opencodeMode : null,
+      );
+      updateEnvironment(environment.id, configuredEnvironment);
+
       // Store agent options for this environment (needed for terminal to know tab type)
-      setOptions(environment.id, {
+      setOptions(configuredEnvironment.id, {
         launchAgent: options.launchAgent,
         agentType: options.agentType,
         initialPrompt: options.initialPrompt,
       });
 
       // Always select the newly created environment
-      selectProjectAndEnvironment(createEnvProjectId, environment.id);
+      selectProjectAndEnvironment(createEnvProjectId, configuredEnvironment.id);
 
       // Always auto-start the environment after creation
       // The tab type (plain terminal vs agent) is determined by agentOptions.launchAgent
       try {
-        const setupCommands = await startEnvironment(environment.id, options.initialPrompt);
+        const setupCommands = await startEnvironment(configuredEnvironment.id, options.initialPrompt);
         // If setup commands were returned (local env with orkestrator-ai.json), store them
         // IMPORTANT: Store commands BEFORE marking as resolved to avoid race condition
         if (setupCommands && setupCommands.length > 0) {
           console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
-            environmentId: environment.id,
+            environmentId: configuredEnvironment.id,
             commandCount: setupCommands.length,
           });
-          setPendingSetupCommands(environment.id, setupCommands);
+          setPendingSetupCommands(configuredEnvironment.id, setupCommands);
         }
         // Mark setup commands as resolved (whether or not there are any)
         // This tells TerminalContainer it can proceed with tab creation
-        setSetupCommandsResolved(environment.id, true);
+        setSetupCommandsResolved(configuredEnvironment.id, true);
       } catch (startErr) {
         console.error("Failed to auto-start environment:", startErr);
         // Environment was created successfully, user can manually start it
         // Mark as resolved even on error so TerminalContainer can proceed
-        setSetupCommandsResolved(environment.id, true);
+        setSetupCommandsResolved(configuredEnvironment.id, true);
       }
 
       setShowCreateEnvDialog(false);

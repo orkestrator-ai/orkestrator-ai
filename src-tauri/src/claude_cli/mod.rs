@@ -1,7 +1,7 @@
 //! CLI integration for auto-generating environment names and onboarding checks.
 //!
 //! This module provides functionality to detect and invoke local AI CLIs
-//! (Claude CLI or OpenCode CLI) to generate concise environment names based
+//! (Claude CLI, OpenCode CLI, or Codex CLI) to generate concise environment names based
 //! on user prompts, and to verify that required CLI tools are properly installed.
 //!
 //! Priority for environment name generation:
@@ -177,6 +177,46 @@ pub fn is_opencode_cli_available() -> bool {
 }
 
 // =============================================================================
+// Codex CLI Detection
+// =============================================================================
+
+/// Environment variable to override Codex CLI path detection.
+const CODEX_CLI_PATH_ENV: &str = "CODEX_CLI_PATH";
+
+/// Attempts to find the Codex CLI executable on the system.
+pub fn find_codex_cli() -> Option<PathBuf> {
+    if let Ok(env_path) = std::env::var(CODEX_CLI_PATH_ENV) {
+        let path = PathBuf::from(&env_path);
+        if path.exists() {
+            info!(path = %env_path, "Using Codex CLI path from environment variable");
+            return Some(path);
+        } else {
+            warn!(path = %env_path, "CODEX_CLI_PATH set but path does not exist");
+        }
+    }
+
+    let common_paths = [
+        Some(PathBuf::from("/opt/homebrew/bin/codex")),
+        Some(PathBuf::from("/usr/local/bin/codex")),
+        Some(PathBuf::from("/usr/bin/codex")),
+        dirs::home_dir().map(|h| h.join(".local").join("bin").join("codex")),
+    ];
+
+    for path in common_paths.into_iter().flatten() {
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    find_cli_in_path("codex")
+}
+
+/// Checks if the Codex CLI is installed and available on the system.
+pub fn is_codex_cli_available() -> bool {
+    find_codex_cli().is_some()
+}
+
+// =============================================================================
 // GitHub CLI Detection
 // =============================================================================
 
@@ -214,25 +254,28 @@ pub fn is_github_cli_available() -> bool {
 // AI CLI Availability (Claude or OpenCode)
 // =============================================================================
 
-/// Checks if either Claude CLI or OpenCode CLI is available.
+/// Checks if Claude CLI, OpenCode CLI, or Codex CLI is available.
 ///
 /// Returns true if at least one AI CLI is installed that can be used
 /// for environment name generation.
 pub fn is_any_ai_cli_available() -> bool {
-    is_claude_cli_available() || is_opencode_cli_available()
+    is_claude_cli_available() || is_opencode_cli_available() || is_codex_cli_available()
 }
 
-/// Returns which AI CLI is available, preferring Claude over OpenCode.
+/// Returns which AI CLI is available, preferring Claude over OpenCode over Codex.
 ///
 /// Returns:
 /// - `Some("claude")` if Claude CLI is available
 /// - `Some("opencode")` if OpenCode CLI is available (and Claude is not)
+/// - `Some("codex")` if Codex CLI is available (and Claude/OpenCode are not)
 /// - `None` if neither is available
 pub fn get_available_ai_cli() -> Option<&'static str> {
     if is_claude_cli_available() {
         Some("claude")
     } else if is_opencode_cli_available() {
         Some("opencode")
+    } else if is_codex_cli_available() {
+        Some("codex")
     } else {
         None
     }

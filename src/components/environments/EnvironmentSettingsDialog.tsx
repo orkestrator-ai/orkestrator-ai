@@ -574,10 +574,17 @@ export function EnvironmentSettingsDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="global">
-                      Use global default ({config.global.defaultAgent === "claude" ? "Claude" : "OpenCode"})
+                      Use global default (
+                      {config.global.defaultAgent === "claude"
+                        ? "Claude"
+                        : config.global.defaultAgent === "codex"
+                          ? "Codex"
+                          : "OpenCode"}
+                      )
                     </SelectItem>
                     <SelectItem value="claude">Claude</SelectItem>
                     <SelectItem value="opencode">OpenCode</SelectItem>
+                    <SelectItem value="codex">Codex</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

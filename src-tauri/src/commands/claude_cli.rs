@@ -26,20 +26,26 @@ pub fn check_opencode_cli() -> bool {
     claude_cli::is_opencode_cli_available()
 }
 
+/// Check if the Codex CLI binary is installed and available
+#[tauri::command]
+pub fn check_codex_cli() -> bool {
+    claude_cli::is_codex_cli_available()
+}
+
 /// Check if the GitHub CLI (gh) binary is installed and available
 #[tauri::command]
 pub fn check_github_cli() -> bool {
     claude_cli::is_github_cli_available()
 }
 
-/// Check if any AI CLI (Claude or OpenCode) is available for name generation
+/// Check if any AI CLI (Claude, OpenCode, or Codex) is available for name generation
 #[tauri::command]
 pub fn check_any_ai_cli() -> bool {
     claude_cli::is_any_ai_cli_available()
 }
 
-/// Get the name of the available AI CLI ("claude", "opencode", or null if none)
-/// Prefers Claude over OpenCode
+/// Get the name of the available AI CLI ("claude", "opencode", "codex", or null if none)
+/// Prefers Claude over OpenCode over Codex
 #[tauri::command]
 pub fn get_available_ai_cli() -> Option<String> {
     claude_cli::get_available_ai_cli().map(|s| s.to_string())
@@ -72,6 +78,12 @@ mod tests {
     }
 
     #[test]
+    fn test_check_codex_cli_returns_bool() {
+        let result = check_codex_cli();
+        assert!(result == true || result == false);
+    }
+
+    #[test]
     fn test_check_github_cli_returns_bool() {
         let result = check_github_cli();
         assert!(result == true || result == false);
@@ -88,7 +100,7 @@ mod tests {
         let result = get_available_ai_cli();
         match result {
             None => {}
-            Some(ref cli) if cli == "claude" || cli == "opencode" => {}
+            Some(ref cli) if cli == "claude" || cli == "opencode" || cli == "codex" => {}
             Some(other) => panic!("Unexpected AI CLI: {}", other),
         }
     }

@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 pub enum ProcessType {
     OpenCode,
     ClaudeBridge,
+    CodexBridge,
 }
 
 impl std::fmt::Display for ProcessType {
@@ -23,6 +24,7 @@ impl std::fmt::Display for ProcessType {
         match self {
             ProcessType::OpenCode => write!(f, "opencode"),
             ProcessType::ClaudeBridge => write!(f, "claude-bridge"),
+            ProcessType::CodexBridge => write!(f, "codex-bridge"),
         }
     }
 }

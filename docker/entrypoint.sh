@@ -278,6 +278,23 @@ fi
 
 log_progress "OpenCode configuration ready"
 
+# Set up Codex configuration
+# The host's ~/.codex is mounted read-only at /codex-home
+log_progress "Setting up Codex configuration..."
+mkdir -p "$HOME/.codex"
+
+if [ -d /codex-home ]; then
+    if ! cp -r /codex-home/. "$HOME/.codex/" 2>&1; then
+        echo "Warning: Some Codex files could not be copied from /codex-home"
+    fi
+    if [ -n "$DEBUG" ]; then
+        echo "Copied Codex files:"
+        ls -la "$HOME/.codex/" | head -40
+    fi
+fi
+
+log_progress "Codex configuration ready"
+
 # Verify the config file exists and is valid
 if [ -f "$HOME/.claude.json" ]; then
     if jq -e '.hasCompletedOnboarding' "$HOME/.claude.json" > /dev/null 2>&1; then

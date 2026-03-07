@@ -80,6 +80,7 @@ const markdownComponents: Components = {
 interface OpenCodeMessageProps {
   message: OpenCodeMessageType;
   previousMessage?: OpenCodeMessageType | null;
+  assistantLabel?: string;
 }
 
 /** Render a thinking/reasoning part inline */
@@ -988,6 +989,7 @@ function MessagePart({ part }: { part: OpenCodeMessagePart }) {
 export const OpenCodeMessage = memo(function OpenCodeMessage({
   message,
   previousMessage = null,
+  assistantLabel = "OpenCode",
 }: OpenCodeMessageProps) {
   const isUser = message.role === "user";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
@@ -1046,7 +1048,7 @@ export const OpenCodeMessage = memo(function OpenCodeMessage({
                 isUser ? "text-primary" : "text-muted-foreground",
               )}
             >
-              {isUser ? "You" : "OpenCode"}
+              {isUser ? "You" : assistantLabel}
             </span>
             <span className="text-[10px] text-muted-foreground/60 ml-2">
               {formatTime(message.createdAt)}

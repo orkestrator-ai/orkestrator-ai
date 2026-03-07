@@ -43,6 +43,9 @@
       "../docker/claude-bridge/dist": "claude-bridge/dist",
       "../docker/claude-bridge/package.json": "claude-bridge/package.json",
       "../docker/claude-bridge/node_modules": "claude-bridge/node_modules",
+      "../docker/codex-bridge/dist": "codex-bridge/dist",
+      "../docker/codex-bridge/package.json": "codex-bridge/package.json",
+      "../docker/codex-bridge/node_modules": "codex-bridge/node_modules",
       "../binaries/bun": "bin/bun"
     }
   }

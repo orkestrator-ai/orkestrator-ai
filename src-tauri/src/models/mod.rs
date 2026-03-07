@@ -202,12 +202,18 @@ pub struct Environment {
     /// PID of the claude-bridge process (only for local environments)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_bridge_pid: Option<u32>,
+    /// PID of the codex-bridge process (only for local environments)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_bridge_pid: Option<u32>,
     /// Host port for opencode server (local mode - static allocation)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_opencode_port: Option<u16>,
     /// Host port for claude-bridge server (local mode - static allocation)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_claude_port: Option<u16>,
+    /// Host port for codex-bridge server (local mode - static allocation)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_codex_port: Option<u16>,
 
     // === Agent settings overrides ===
     /// Per-environment default agent override (None = use global config)
@@ -294,8 +300,10 @@ impl Environment {
             worktree_path: None,
             opencode_pid: None,
             claude_bridge_pid: None,
+            codex_bridge_pid: None,
             local_opencode_port: None,
             local_claude_port: None,
+            local_codex_port: None,
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
@@ -327,8 +335,10 @@ impl Environment {
             worktree_path: None,
             opencode_pid: None,
             claude_bridge_pid: None,
+            codex_bridge_pid: None,
             local_opencode_port: None,
             local_claude_port: None,
+            local_codex_port: None,
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
@@ -360,8 +370,10 @@ impl Environment {
             worktree_path: None,
             opencode_pid: None,
             claude_bridge_pid: None,
+            codex_bridge_pid: None,
             local_opencode_port: None,
             local_claude_port: None,
+            local_codex_port: None,
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
@@ -558,6 +570,7 @@ pub enum DefaultAgent {
     #[default]
     Claude,
     Opencode,
+    Codex,
 }
 
 /// OpenCode mode - terminal CLI or native chat interface

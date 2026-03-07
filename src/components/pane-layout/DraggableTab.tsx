@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FileCode, Terminal as TerminalIcon, X } from "lucide-react";
-import { ClaudeIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import {
   Tooltip,
   TooltipContent,
@@ -29,6 +29,10 @@ const isOpenCodeTab = (type: TabType): boolean =>
 /** Check if a tab type is a Claude variant (terminal or native mode) */
 const isClaudeTab = (type: TabType): boolean =>
   type === "claude" || type === "claude-native";
+
+/** Check if a tab type is a Codex variant */
+const isCodexTab = (type: TabType): boolean =>
+  type === "codex" || type === "codex-native";
 
 interface DraggableTabProps {
   tab: TabInfo;
@@ -126,6 +130,7 @@ export function DraggableTab({
     if (tab.type === "plain") return `Terminal ${tabNumber}`;
     if (isClaudeTab(tab.type)) return `Claude ${tabNumber}`;
     if (isOpenCodeTab(tab.type)) return `OpenCode ${tabNumber}`;
+    if (isCodexTab(tab.type)) return `Codex ${tabNumber}`;
     if (tab.type === "root") return `ROOT ${tabNumber}`;
     return `Tab ${tabNumber}`;
   };
@@ -140,6 +145,9 @@ export function DraggableTab({
     }
     if (isClaudeTab(tab.type)) {
       return <ClaudeIcon className="h-3 w-3 shrink-0 text-orange-400" />;
+    }
+    if (isCodexTab(tab.type)) {
+      return <CodexIcon className="h-3 w-3 shrink-0 text-emerald-400" />;
     }
     return <TerminalIcon className="h-3 w-3 shrink-0" />;
   };
