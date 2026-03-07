@@ -218,6 +218,7 @@ pub fn run() {
             check_claude_cli,
             check_claude_config,
             check_opencode_cli,
+            check_codex_cli,
             check_github_cli,
             check_any_ai_cli,
             get_available_ai_cli,
@@ -255,6 +256,11 @@ pub fn run() {
             stop_claude_server,
             get_claude_server_status,
             get_claude_server_log,
+            // Codex bridge commands
+            start_codex_server,
+            stop_codex_server,
+            get_codex_server_status,
+            get_codex_server_log,
             // Local server commands (for local/worktree environments)
             start_local_opencode_server_cmd,
             stop_local_opencode_server_cmd,
@@ -262,6 +268,9 @@ pub fn run() {
             start_local_claude_server_cmd,
             stop_local_claude_server_cmd,
             get_local_claude_server_status,
+            start_local_codex_server_cmd,
+            stop_local_codex_server_cmd,
+            get_local_codex_server_status,
             // Local terminal commands (for local/worktree environments)
             create_local_terminal_session,
             start_local_terminal_session,

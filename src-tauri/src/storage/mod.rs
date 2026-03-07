@@ -486,11 +486,17 @@ impl Storage {
         if let Some(claude_pid) = updates.get("claudeBridgePid") {
             environment.claude_bridge_pid = claude_pid.as_u64().map(|v| v as u32);
         }
+        if let Some(codex_pid) = updates.get("codexBridgePid") {
+            environment.codex_bridge_pid = codex_pid.as_u64().map(|v| v as u32);
+        }
         if let Some(opencode_port) = updates.get("localOpencodePort") {
             environment.local_opencode_port = opencode_port.as_u64().map(|v| v as u16);
         }
         if let Some(claude_port) = updates.get("localClaudePort") {
             environment.local_claude_port = claude_port.as_u64().map(|v| v as u16);
+        }
+        if let Some(codex_port) = updates.get("localCodexPort") {
+            environment.local_codex_port = codex_port.as_u64().map(|v| v as u16);
         }
         if let Some(default_agent) = updates.get("defaultAgent") {
             environment.default_agent =

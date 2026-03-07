@@ -47,6 +47,8 @@ pub struct ContainerConfig {
     pub opencode_state_path: Option<String>,
     /// Path to ~/.local/state/opencode/model.json on host (if it exists)
     pub opencode_model_json_path: Option<String>,
+    /// Path to ~/.codex directory on host (if it exists)
+    pub codex_dir_path: Option<String>,
     /// Path to ~/.gitconfig on host
     pub gitconfig_path: Option<String>,
     /// GitHub Personal Access Token for HTTPS authentication
@@ -86,6 +88,7 @@ impl ContainerConfig {
         let opencode_data = home.join(".local").join("share").join("opencode");
         let opencode_state = home.join(".local").join("state").join("opencode");
         let opencode_model_json = opencode_state.join("model.json");
+        let codex_dir = home.join(".codex");
         let gitconfig = home.join(".gitconfig");
 
         // Only use gitconfig if it exists
@@ -131,6 +134,12 @@ impl ContainerConfig {
                 None
             };
 
+        let codex_dir_path = if codex_dir.exists() {
+            Some(codex_dir.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
         Self {
             environment_id: environment.id.clone(),
             project_id: environment.project_id.clone(),
@@ -146,6 +155,7 @@ impl ContainerConfig {
             opencode_data_path,
             opencode_state_path,
             opencode_model_json_path,
+            codex_dir_path,
             gitconfig_path,
             github_token: None,
             cpu_limit: None,
@@ -217,6 +227,11 @@ pub async fn create_environment_container(
     if let Some(claude_json_path) = &config.claude_json_path {
         debug!(path = %claude_json_path, "Mounting .claude.json");
         binds.push(format!("{}:/claude-config.json:ro", claude_json_path));
+    }
+
+    if let Some(codex_dir_path) = &config.codex_dir_path {
+        debug!(path = %codex_dir_path, "Mounting .codex");
+        binds.push(format!("{}:/codex-home:ro", codex_dir_path));
     }
 
     // Mount ~/.config/opencode if it exists - OpenCode configuration
@@ -409,6 +424,20 @@ pub async fn create_environment_container(
         CLAUDE_BRIDGE_PORT
     );
 
+    // Always expose port 4098 for Codex Bridge server (Codex native mode)
+    const CODEX_BRIDGE_PORT: u16 = 4098;
+    let codex_key = format!("{}/tcp", CODEX_BRIDGE_PORT);
+    exposed_ports.insert(codex_key.clone(), HashMap::new());
+    let codex_binding = PortBinding {
+        host_ip: Some("127.0.0.1".to_string()),
+        host_port: Some("".to_string()),
+    };
+    port_bindings.insert(codex_key, Some(vec![codex_binding]));
+    debug!(
+        "Added Codex Bridge server port {} with dynamic host allocation",
+        CODEX_BRIDGE_PORT
+    );
+
     if !config.port_mappings.is_empty() {
         debug!("User port mappings: {:?}", config.port_mappings);
     }
@@ -467,6 +496,12 @@ fn build_container_env(config: &ContainerConfig) -> Vec<String> {
     // Add OpenCode model if configured
     if !config.opencode_model.is_empty() {
         env.push(format!("OPENCODE_MODEL={}", config.opencode_model));
+    }
+
+    if let Ok(openai_api_key) = std::env::var("OPENAI_API_KEY") {
+        if !openai_api_key.trim().is_empty() {
+            env.push(format!("OPENAI_API_KEY={}", openai_api_key));
+        }
     }
 
     // Enable debug mode for verbose entrypoint logging

@@ -192,12 +192,12 @@ export function TerminalContainer({
   const previousContainerIdRef = useRef<string | null>(null);
 
   // Track pending native agent launch (after workspace setup completes)
-  const pendingNativeOpenCodeRef = useRef<{
+  const pendingNativeAgentRef = useRef<{
     containerId: string | null;
     environmentId: string;
     initialPrompt?: string;
     targetPaneId: string;
-    agentType?: "opencode" | "claude";
+    agentType?: "opencode" | "claude" | "codex";
   } | null>(null);
 
   // Set active environment when this container becomes active
@@ -280,6 +280,7 @@ export function TerminalContainer({
       // Check if we should use native mode instead of terminal
       const useNativeOpenCode = initialTabType === "opencode" && opencodeMode === "native";
       const useNativeClaude = initialTabType === "claude" && claudeMode === "native";
+      const useNativeCodex = initialTabType === "codex";
 
       // For local environments, check for pending setup commands
       const setupCommands = isLocalEnvironment ? consumePendingSetupCommands(environmentId) : undefined;
@@ -292,6 +293,7 @@ export function TerminalContainer({
         claudeMode,
         useNativeOpenCode,
         useNativeClaude,
+        useNativeCodex,
         isLocalEnvironment,
         hasSetupCommands,
         setupCommandsResolved,
@@ -317,6 +319,14 @@ export function TerminalContainer({
               id: "default",
               type: "claude-native",
               claudeNativeData: { containerId: undefined, environmentId, isLocal: true },
+              initialPrompt: pendingInitialPrompt,
+            };
+            addTab("default", agentTab, environmentId);
+          } else if (useNativeCodex) {
+            const agentTab: TabInfo = {
+              id: "default",
+              type: "codex-native",
+              codexNativeData: { containerId: undefined, environmentId, isLocal: true },
               initialPrompt: pendingInitialPrompt,
             };
             addTab("default", agentTab, environmentId);
@@ -346,14 +356,26 @@ export function TerminalContainer({
             initialCommands: setupCommands,
           };
           addTab("default", initialTab, environmentId);
-        } else if (useNativeOpenCode || useNativeClaude) {
+        } else if (useNativeOpenCode || useNativeClaude || useNativeCodex) {
           // Local + native mode + no setup commands: directly create native tab
-          console.log("[TerminalContainer] Local environment - directly creating native", useNativeClaude ? "Claude" : "OpenCode", "tab");
+          console.log(
+            "[TerminalContainer] Local environment - directly creating native",
+            useNativeClaude ? "Claude" : useNativeCodex ? "Codex" : "OpenCode",
+            "tab",
+          );
           if (useNativeClaude) {
             const initialTab: TabInfo = {
               id: "default",
               type: "claude-native",
               claudeNativeData: { containerId: undefined, environmentId, isLocal: true },
+              initialPrompt: pendingInitialPrompt,
+            };
+            addTab("default", initialTab, environmentId);
+          } else if (useNativeCodex) {
+            const initialTab: TabInfo = {
+              id: "default",
+              type: "codex-native",
+              codexNativeData: { containerId: undefined, environmentId, isLocal: true },
               initialPrompt: pendingInitialPrompt,
             };
             addTab("default", initialTab, environmentId);
@@ -376,17 +398,22 @@ export function TerminalContainer({
           };
           addTab("default", initialTab, environmentId);
         }
-      } else if (useNativeOpenCode || useNativeClaude) {
+      } else if (useNativeOpenCode || useNativeClaude || useNativeCodex) {
         // Container + native mode: start with plain terminal for setup scripts
         setWorkspaceReady(environmentId, false);
-        pendingNativeOpenCodeRef.current = {
+        pendingNativeAgentRef.current = {
           containerId,
           environmentId,
           initialPrompt: pendingInitialPrompt,
           targetPaneId: "default",
-          agentType: useNativeClaude ? "claude" : "opencode",
+          agentType: useNativeClaude ? "claude" : useNativeCodex ? "codex" : "opencode",
         };
-        console.log("[TerminalContainer] Pending native", useNativeClaude ? "Claude" : "OpenCode", "launch stored for environment:", environmentId);
+        console.log(
+          "[TerminalContainer] Pending native",
+          useNativeClaude ? "Claude" : useNativeCodex ? "Codex" : "OpenCode",
+          "launch stored for environment:",
+          environmentId,
+        );
         const initialTab: TabInfo = { id: "default", type: "plain" };
         addTab("default", initialTab, environmentId);
       } else {
@@ -420,18 +447,18 @@ export function TerminalContainer({
       setWorkspaceReady(environmentId, false);
       reset();
       // Clear pending native OpenCode launch on container stop
-      pendingNativeOpenCodeRef.current = null;
+      pendingNativeAgentRef.current = null;
     }
   }, [isContainerRunning, environmentId, containerId, setWorkspaceReady, reset]);
 
   // Launch native tab after workspace setup completes
   useEffect(() => {
-    console.log("[TerminalContainer] Native tab effect check - workspaceReady:", workspaceReady, "hasPending:", !!pendingNativeOpenCodeRef.current, "containerId:", !!containerId, "isLocalEnvironmentReady:", isLocalEnvironmentReady);
+    console.log("[TerminalContainer] Native tab effect check - workspaceReady:", workspaceReady, "hasPending:", !!pendingNativeAgentRef.current, "containerId:", !!containerId, "isLocalEnvironmentReady:", isLocalEnvironmentReady);
 
     // Simple logic: when workspace is ready and we have a pending launch, create the tab
     // For local environments, containerId is null so we check isLocalEnvironmentReady (worktreePath exists)
-    if (workspaceReady && pendingNativeOpenCodeRef.current && (containerId || isLocalEnvironmentReady)) {
-      const pending = pendingNativeOpenCodeRef.current;
+    if (workspaceReady && pendingNativeAgentRef.current && (containerId || isLocalEnvironmentReady)) {
+      const pending = pendingNativeAgentRef.current;
 
       // Only launch if this is for the current container/environment
       // For local envs, both containerId values are null, so we also check environmentId
@@ -441,7 +468,13 @@ export function TerminalContainer({
 
       if (containerMatch) {
         const isClaudeNative = pending.agentType === "claude";
-        console.log("[TerminalContainer] Workspace ready, launching native", isClaudeNative ? "Claude" : "OpenCode", "tab for environment:", environmentId);
+        const isCodexNative = pending.agentType === "codex";
+        console.log(
+          "[TerminalContainer] Workspace ready, launching native",
+          isClaudeNative ? "Claude" : isCodexNative ? "Codex" : "OpenCode",
+          "tab for environment:",
+          environmentId,
+        );
 
         if (isClaudeNative) {
           // Create Claude native tab
@@ -450,6 +483,19 @@ export function TerminalContainer({
             id: newTabId,
             type: "claude-native",
             claudeNativeData: {
+              containerId: isLocalEnvironment ? undefined : pending.containerId ?? undefined,
+              environmentId: pending.environmentId,
+              isLocal: isLocalEnvironment,
+            },
+            initialPrompt: pending.initialPrompt,
+          };
+          addTab(pending.targetPaneId, newTab, environmentId);
+        } else if (isCodexNative) {
+          const newTabId = `codex-native-${Date.now()}`;
+          const newTab: TabInfo = {
+            id: newTabId,
+            type: "codex-native",
+            codexNativeData: {
               containerId: isLocalEnvironment ? undefined : pending.containerId ?? undefined,
               environmentId: pending.environmentId,
               isLocal: isLocalEnvironment,
@@ -474,7 +520,7 @@ export function TerminalContainer({
         }
 
         // Clear the pending launch
-        pendingNativeOpenCodeRef.current = null;
+        pendingNativeAgentRef.current = null;
       }
     }
   }, [workspaceReady, containerId, environmentId, isLocalEnvironmentReady, addTab]);
@@ -538,6 +584,22 @@ export function TerminalContainer({
           initialPrompt: options?.initialPrompt,
         };
         console.debug("[TerminalContainer] Creating claude-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
+        addTab(activePaneId, newTab, environmentId);
+        return;
+      }
+
+      if (type === "codex") {
+        const newTab: TabInfo = {
+          id: newTabId,
+          type: "codex-native",
+          codexNativeData: {
+            containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
+            environmentId,
+            isLocal: isLocalEnvironment,
+          },
+          initialPrompt: options?.initialPrompt,
+        };
+        console.debug("[TerminalContainer] Creating codex-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
         return;
       }

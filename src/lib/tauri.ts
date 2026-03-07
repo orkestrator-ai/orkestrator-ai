@@ -466,6 +466,16 @@ export interface ClaudeServerStatus {
   hostPort: number | null;
 }
 
+export interface CodexServerStartResult {
+  hostPort: number;
+  wasRunning: boolean;
+}
+
+export interface CodexServerStatus {
+  running: boolean;
+  hostPort: number | null;
+}
+
 /** Start the Claude bridge server in a container */
 export async function startClaudeServer(containerId: string): Promise<ClaudeServerStartResult> {
   return invoke<ClaudeServerStartResult>("start_claude_server", { containerId });
@@ -484,6 +494,26 @@ export async function getClaudeServerStatus(containerId: string): Promise<Claude
 /** Get the Claude bridge server log from a container (for debugging) */
 export async function getClaudeServerLog(containerId: string): Promise<string> {
   return invoke<string>("get_claude_server_log", { containerId });
+}
+
+/** Start the Codex bridge server in a container */
+export async function startCodexServer(containerId: string): Promise<CodexServerStartResult> {
+  return invoke<CodexServerStartResult>("start_codex_server", { containerId });
+}
+
+/** Stop the Codex bridge server in a container */
+export async function stopCodexServer(containerId: string): Promise<void> {
+  return invoke("stop_codex_server", { containerId });
+}
+
+/** Get the status of the Codex bridge server in a container */
+export async function getCodexServerStatus(containerId: string): Promise<CodexServerStatus> {
+  return invoke<CodexServerStatus>("get_codex_server_status", { containerId });
+}
+
+/** Get the Codex bridge server log from a container (for debugging) */
+export async function getCodexServerLog(containerId: string): Promise<string> {
+  return invoke<string>("get_codex_server_log", { containerId });
 }
 
 // --- Credential Commands ---
@@ -516,6 +546,11 @@ export async function checkClaudeConfig(): Promise<boolean> {
 /** Check if the OpenCode CLI binary is installed and available */
 export async function checkOpencodeCli(): Promise<boolean> {
   return invoke<boolean>("check_opencode_cli");
+}
+
+/** Check if the Codex CLI binary is installed and available */
+export async function checkCodexCli(): Promise<boolean> {
+  return invoke<boolean>("check_codex_cli");
 }
 
 /** Check if the GitHub CLI (gh) binary is installed and available */
@@ -930,6 +965,21 @@ export async function stopLocalClaudeServer(environmentId: string): Promise<void
 /** Get the status of the local Claude-bridge server for a local environment */
 export async function getLocalClaudeServerStatus(environmentId: string): Promise<LocalServerStatus> {
   return invoke<LocalServerStatus>("get_local_claude_server_status", { environmentId });
+}
+
+/** Start the local Codex bridge server for a local environment */
+export async function startLocalCodexServer(environmentId: string): Promise<LocalServerStartResult> {
+  return invoke<LocalServerStartResult>("start_local_codex_server_cmd", { environmentId });
+}
+
+/** Stop the local Codex bridge server for a local environment */
+export async function stopLocalCodexServer(environmentId: string): Promise<void> {
+  return invoke("stop_local_codex_server_cmd", { environmentId });
+}
+
+/** Get the status of the local Codex bridge server for a local environment */
+export async function getLocalCodexServerStatus(environmentId: string): Promise<LocalServerStatus> {
+  return invoke<LocalServerStatus>("get_local_codex_server_status", { environmentId });
 }
 
 // --- Local Terminal Commands (for local/worktree environments) ---

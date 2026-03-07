@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { FileViewerTab } from "@/components/terminal/FileViewerTab";
 import { OpenCodeChatTab } from "@/components/opencode";
 import { ClaudeChatTab } from "@/components/claude/ClaudeChatTab";
+import { CodexChatTab } from "@/components/codex";
 import { DraggableTabBar } from "./DraggableTabBar";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 
@@ -87,8 +88,15 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
     // Collect portal elements for this pane's terminal tabs
     const portalElements: HTMLDivElement[] = [];
     for (const tab of pane.tabs) {
-      // Skip non-terminal tabs (file, opencode-native, and claude-native render directly)
-      if (tab.type === "file" || tab.type === "opencode-native" || tab.type === "claude-native") continue;
+      // Skip non-terminal tabs (file and native agent tabs render directly)
+      if (
+        tab.type === "file"
+        || tab.type === "opencode-native"
+        || tab.type === "claude-native"
+        || tab.type === "codex-native"
+      ) {
+        continue;
+      }
       const terminalKey = createTerminalKey(environmentId, tab.id);
       const terminalData = terminals.get(terminalKey);
       if (terminalData?.portalElement) {
@@ -215,6 +223,26 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                 <ClaudeChatTab
                   tabId={tab.id}
                   data={tab.claudeNativeData}
+                  isActive={isTabActive && isActive}
+                  initialPrompt={tab.initialPrompt}
+                />
+              </div>
+            );
+          }
+
+          // Codex native chat tabs
+          if (tab.type === "codex-native" && tab.codexNativeData) {
+            return (
+              <div
+                key={tab.id}
+                className={cn(
+                  "absolute inset-0",
+                  isTabActive && isActive ? "z-10 pointer-events-auto" : "hidden"
+                )}
+              >
+                <CodexChatTab
+                  tabId={tab.id}
+                  data={tab.codexNativeData}
                   isActive={isTabActive && isActive}
                   initialPrompt={tab.initialPrompt}
                 />

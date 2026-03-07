@@ -58,6 +58,20 @@ export interface ClaudeNativeData {
   isLocal?: boolean;
 }
 
+// Data for Codex native chat tabs
+export interface CodexNativeData {
+  /** Container ID for the environment (undefined for local environments) */
+  containerId?: string;
+  /** Environment ID */
+  environmentId: string;
+  /** Host port for the Codex bridge server (assigned on server start) */
+  hostPort?: number;
+  /** Active session ID */
+  sessionId?: string;
+  /** Whether this is a local environment (no container) */
+  isLocal?: boolean;
+}
+
 // Tab information stored in pane leaves
 export interface TabInfo {
   id: string;
@@ -67,6 +81,8 @@ export interface TabInfo {
   openCodeNativeData?: OpenCodeNativeData;
   /** Data for claude-native tabs */
   claudeNativeData?: ClaudeNativeData;
+  /** Data for codex-native tabs */
+  codexNativeData?: CodexNativeData;
   /** Initial prompt to send to agent (only for claude/opencode tabs) */
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */

@@ -341,7 +341,7 @@ pub async fn start_local_claude_bridge(
     // The bridge is a Node.js application
     // We need to run: node/bun <bridge_path>/dist/index.js
     let entry_point = format!("{}/dist/index.js", bridge_path);
-    ensure_claude_bridge_ready(bridge_path, &entry_point).await?;
+    ensure_bridge_ready("claude-bridge", bridge_path, &entry_point).await?;
     if !Path::new(&entry_point).exists() {
         return Err(format!(
             "Claude-bridge entrypoint missing after readiness check: {}",
@@ -439,6 +439,132 @@ pub async fn get_local_claude_status(
     }
 }
 
+/// Start the Codex bridge server for a local environment
+pub async fn start_local_codex_bridge(
+    environment_id: &str,
+    worktree_path: &str,
+    port: u16,
+    bridge_path: &str,
+    bundled_bun_path: Option<&str>,
+) -> Result<LocalServerStartResult, String> {
+    let start_lock = get_start_lock(environment_id);
+    let _guard = start_lock.lock().await;
+
+    info!(
+        environment_id = %environment_id,
+        worktree_path = %worktree_path,
+        port = port,
+        bridge_path = %bridge_path,
+        "Starting local Codex bridge server"
+    );
+
+    let manager = get_process_manager();
+
+    if manager
+        .is_running(environment_id, ProcessType::CodexBridge)
+        .await
+    {
+        if let Some(pid) = manager
+            .get_pid(environment_id, ProcessType::CodexBridge)
+            .await
+        {
+            return Ok(LocalServerStartResult {
+                port,
+                pid,
+                was_running: true,
+            });
+        }
+    }
+
+    let mut env_vars = HashMap::new();
+    env_vars.insert("PORT".to_string(), port.to_string());
+    env_vars.insert("HOSTNAME".to_string(), "127.0.0.1".to_string());
+    env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+    env_vars.insert("PATH".to_string(), build_comprehensive_path(bundled_bun_path));
+    env_vars.insert("CWD".to_string(), worktree_path.to_string());
+
+    if let Ok(openai_api_key) = std::env::var("OPENAI_API_KEY") {
+        if !openai_api_key.trim().is_empty() {
+            env_vars.insert("OPENAI_API_KEY".to_string(), openai_api_key);
+        }
+    }
+
+    let entry_point = format!("{}/dist/index.js", bridge_path);
+    ensure_bridge_ready("codex-bridge", bridge_path, &entry_point).await?;
+    if !Path::new(&entry_point).exists() {
+        return Err(format!(
+            "Codex bridge entrypoint missing after readiness check: {}",
+            entry_point
+        ));
+    }
+
+    let (runtime_cmd, runtime_args) = resolve_js_runtime(&entry_point, bundled_bun_path);
+    let runtime_args_ref: Vec<&str> = runtime_args.iter().map(String::as_str).collect();
+
+    let pid = manager
+        .spawn(
+            environment_id,
+            ProcessType::CodexBridge,
+            runtime_cmd,
+            &runtime_args_ref,
+            bridge_path,
+            env_vars,
+        )
+        .await
+        .map_err(|e| format!("Failed to spawn Codex bridge server: {}", e))?;
+
+    if !wait_for_server_health(port).await {
+        let _ = manager.kill(environment_id, ProcessType::CodexBridge).await;
+        return Err("Codex bridge server failed to start within timeout".to_string());
+    }
+
+    Ok(LocalServerStartResult {
+        port,
+        pid,
+        was_running: false,
+    })
+}
+
+/// Stop the Codex bridge server for a local environment
+pub async fn stop_local_codex_bridge(environment_id: &str) -> Result<(), String> {
+    let manager = get_process_manager();
+    manager
+        .kill(environment_id, ProcessType::CodexBridge)
+        .await
+        .map_err(|e| format!("Failed to stop Codex bridge server: {}", e))?;
+    Ok(())
+}
+
+/// Get the status of the Codex bridge server for a local environment
+pub async fn get_local_codex_status(
+    environment_id: &str,
+    port: Option<u16>,
+    pid: Option<u32>,
+) -> LocalServerStatus {
+    let manager = get_process_manager();
+    let is_running = if let Some(p) = pid {
+        if is_process_alive(p) {
+            if let Some(port) = port {
+                check_server_health(port).await
+            } else {
+                true
+            }
+        } else {
+            false
+        }
+    } else {
+        manager
+            .is_running(environment_id, ProcessType::CodexBridge)
+            .await
+    };
+
+    LocalServerStatus {
+        running: is_running,
+        port,
+        pid,
+    }
+}
+
 /// Stop all local servers for an environment
 pub async fn stop_all_local_servers(environment_id: &str) -> Result<(), String> {
     info!(environment_id = %environment_id, "Stopping all local servers");
@@ -452,7 +578,11 @@ pub async fn stop_all_local_servers(environment_id: &str) -> Result<(), String> 
     Ok(())
 }
 
-async fn ensure_claude_bridge_ready(bridge_path: &str, entry_point: &str) -> Result<(), String> {
+async fn ensure_bridge_ready(
+    bridge_name: &str,
+    bridge_path: &str,
+    entry_point: &str,
+) -> Result<(), String> {
     let entry_path = Path::new(entry_point);
     if entry_path.exists() {
         return Ok(());
@@ -461,23 +591,24 @@ async fn ensure_claude_bridge_ready(bridge_path: &str, entry_point: &str) -> Res
     let bridge_dir = Path::new(bridge_path);
     if !bridge_dir.exists() {
         return Err(format!(
-            "Claude-bridge directory not found at {}",
-            bridge_path
+            "{} directory not found at {}",
+            bridge_name, bridge_path
         ));
     }
 
     let has_package_json = bridge_dir.join("package.json").exists();
     if !has_package_json {
         return Err(format!(
-            "Claude-bridge entrypoint missing at {} (no package.json found to build)",
-            entry_point
+            "{} entrypoint missing at {} (no package.json found to build)",
+            bridge_name, entry_point
         ));
     }
 
     info!(
+        bridge_name = %bridge_name,
         bridge_path = %bridge_path,
         entry_point = %entry_point,
-        "Claude-bridge dist missing; attempting build"
+        "Bridge dist missing; attempting build"
     );
 
     let install_output = Command::new("bun")
@@ -485,14 +616,14 @@ async fn ensure_claude_bridge_ready(bridge_path: &str, entry_point: &str) -> Res
         .current_dir(bridge_path)
         .output()
         .await
-        .map_err(|e| format!("Failed to run bun install for claude-bridge: {}", e))?;
+        .map_err(|e| format!("Failed to run bun install for {}: {}", bridge_name, e))?;
 
     if !install_output.status.success() {
         let stderr = String::from_utf8_lossy(&install_output.stderr);
         let stdout = String::from_utf8_lossy(&install_output.stdout);
         return Err(format!(
-            "Claude-bridge bun install failed: {}\n{}",
-            stderr, stdout
+            "{} bun install failed: {}\n{}",
+            bridge_name, stderr, stdout
         ));
     }
 
@@ -501,21 +632,21 @@ async fn ensure_claude_bridge_ready(bridge_path: &str, entry_point: &str) -> Res
         .current_dir(bridge_path)
         .output()
         .await
-        .map_err(|e| format!("Failed to run bun build for claude-bridge: {}", e))?;
+        .map_err(|e| format!("Failed to run bun build for {}: {}", bridge_name, e))?;
 
     if !build_output.status.success() {
         let stderr = String::from_utf8_lossy(&build_output.stderr);
         let stdout = String::from_utf8_lossy(&build_output.stdout);
         return Err(format!(
-            "Claude-bridge bun build failed: {}\n{}",
-            stderr, stdout
+            "{} bun build failed: {}\n{}",
+            bridge_name, stderr, stdout
         ));
     }
 
     if !entry_path.exists() {
         return Err(format!(
-            "Claude-bridge build completed but entrypoint is still missing at {}",
-            entry_point
+            "{} build completed but entrypoint is still missing at {}",
+            bridge_name, entry_point
         ));
     }
 
@@ -612,6 +743,12 @@ fn build_comprehensive_path(bundled_bun_path: Option<&str>) -> String {
     // Prefer discovered OpenCode/Bun/Node locations first.
     if let Some(opencode_path) = find_opencode_binary() {
         if let Some(parent) = PathBuf::from(opencode_path).parent() {
+            prepend_path_entry(&mut path, parent.to_string_lossy().as_ref());
+        }
+    }
+
+    if let Some(codex_path) = find_codex_binary() {
+        if let Some(parent) = PathBuf::from(codex_path).parent() {
             prepend_path_entry(&mut path, parent.to_string_lossy().as_ref());
         }
     }
@@ -733,6 +870,45 @@ fn find_opencode_binary() -> Option<String> {
     }
 
     if let Ok(output) = std::process::Command::new("which").arg("opencode").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() && PathBuf::from(&path).exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+/// Find Codex binary by checking common installation locations.
+fn find_codex_binary() -> Option<String> {
+    for var_name in ["CODEX_BINARY", "CODEX_CLI_PATH"] {
+        if let Ok(path) = std::env::var(var_name) {
+            if !path.is_empty() && PathBuf::from(&path).exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    let home = get_home_dir();
+    let candidates: Vec<PathBuf> = vec![
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/usr/bin/codex"),
+        home.as_ref()
+            .map(|h| PathBuf::from(h).join(".local/bin/codex"))
+            .unwrap_or_default(),
+    ];
+
+    for candidate in candidates {
+        if !candidate.as_os_str().is_empty() && candidate.exists() {
+            debug!(path = %candidate.display(), "Found codex binary");
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    if let Ok(output) = std::process::Command::new("which").arg("codex").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() && PathBuf::from(&path).exists() {

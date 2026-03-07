@@ -1,0 +1,596 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, Check, ChevronDown, FileText, Image as ImageIcon, Plus, Square, X } from "lucide-react";
+import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { useCodexStore } from "@/stores";
+import { OpenCodeSlashCommandMenu } from "@/components/opencode/OpenCodeSlashCommandMenu";
+import { useEnvironmentStore } from "@/stores/environmentStore";
+import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
+import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
+import { toast } from "sonner";
+import type { OpenCodeSlashCommand } from "@/lib/opencode-client";
+import type {
+  CodexConversationMode,
+  CodexModel,
+  CodexReasoningOption,
+  CodexReasoningEffort,
+  CodexSlashCommand,
+} from "@/lib/codex-client";
+import type { CodexAttachment } from "@/stores/codexStore";
+
+const MIN_HEIGHT_PX = 28;
+const MAX_HEIGHT_PX = 160;
+const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
+const MAX_RGBA_SIZE = 32 * 1024 * 1024;
+const EMPTY_ATTACHMENTS: CodexAttachment[] = [];
+
+const REASONING_LABELS: Record<CodexReasoningEffort, string> = {
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+};
+const REASONING_DESCRIPTIONS: Record<CodexReasoningEffort, string> = {
+  minimal: "Shortest reasoning path for the fastest possible responses",
+  low: "Fast responses with lighter reasoning",
+  medium: "Balances speed and reasoning depth for everyday tasks",
+  high: "Greater reasoning depth for complex problems",
+  xhigh: "Extra high reasoning depth for complex problems",
+};
+
+function generateImageFilename(): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .slice(0, 19);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `clipboard-${timestamp}-${random}.png`;
+}
+
+interface CodexComposeBarProps {
+  environmentId: string;
+  containerId?: string;
+  sessionKey: string;
+  models: CodexModel[];
+  slashCommands?: CodexSlashCommand[];
+  selectedMode: CodexConversationMode;
+  selectedModel: string;
+  selectedReasoningEffort: CodexReasoningEffort;
+  settingsLocked?: boolean;
+  disabled?: boolean;
+  isLoading?: boolean;
+  onSend: (text: string, attachments: CodexAttachment[]) => Promise<void>;
+  onStop?: () => Promise<void>;
+  onModeChange: (mode: CodexConversationMode) => Promise<void> | void;
+  onModelChange: (modelId: string) => Promise<void> | void;
+  onReasoningEffortChange: (effort: CodexReasoningEffort) => Promise<void> | void;
+}
+
+export function CodexComposeBar({
+  environmentId,
+  containerId,
+  sessionKey,
+  models,
+  slashCommands = [],
+  selectedMode,
+  selectedModel,
+  selectedReasoningEffort,
+  settingsLocked = false,
+  disabled = false,
+  isLoading = false,
+  onSend,
+  onStop,
+  onModeChange,
+  onModelChange,
+  onReasoningEffortChange,
+}: CodexComposeBarProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const text = useCodexStore((state) => state.draftText.get(sessionKey) ?? "");
+  const attachments = useCodexStore(
+    (state) => state.attachments.get(sessionKey) ?? EMPTY_ATTACHMENTS,
+  );
+  const setDraftText = useCodexStore((state) => state.setDraftText);
+  const addAttachment = useCodexStore((state) => state.addAttachment);
+  const removeAttachment = useCodexStore((state) => state.removeAttachment);
+  const clearAttachments = useCodexStore((state) => state.clearAttachments);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashFilter, setSlashFilter] = useState("");
+  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+
+  const worktreePath = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.worktreePath,
+  );
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  const resizeTextarea = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(
+      Math.max(textarea.scrollHeight, MIN_HEIGHT_PX),
+      MAX_HEIGHT_PX,
+    );
+    textarea.style.height = `${nextHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [resizeTextarea, text]);
+
+  useEffect(() => {
+    if (text.startsWith("/") && slashCommands.length > 0) {
+      const spaceIndex = text.indexOf(" ");
+      const currentCommand = spaceIndex === -1 ? text.slice(1) : "";
+
+      if (spaceIndex === -1) {
+        setSlashFilter(currentCommand);
+        setSlashMenuOpen(true);
+        setSlashSelectedIndex(0);
+      } else {
+        setSlashMenuOpen(false);
+      }
+    } else {
+      setSlashMenuOpen(false);
+      setSlashFilter("");
+    }
+  }, [slashCommands.length, text]);
+
+  const handleSubmit = useCallback(async () => {
+    const trimmed = text.trim();
+    if ((trimmed.length === 0 && attachments.length === 0) || disabled || isLoading) {
+      return;
+    }
+    setDraftText(sessionKey, "");
+    clearAttachments(sessionKey);
+    await onSend(trimmed, attachments);
+  }, [attachments, clearAttachments, disabled, isLoading, onSend, sessionKey, setDraftText, text]);
+
+  const selectedModelObj = useMemo(
+    () => models.find((model) => model.id === selectedModel),
+    [models, selectedModel],
+  );
+  const selectedModelName = selectedModelObj?.name ?? "No models";
+  const availableReasoningEfforts = useMemo(
+    () =>
+      selectedModelObj?.reasoningEfforts?.length
+        ? selectedModelObj.reasoningEfforts
+        : (["medium", "high"] as CodexReasoningEffort[]),
+    [selectedModelObj],
+  );
+  const availableReasoningOptions = useMemo<CodexReasoningOption[]>(
+    () =>
+      selectedModelObj?.reasoningOptions?.length
+        ? selectedModelObj.reasoningOptions
+        : availableReasoningEfforts.map((effort) => ({
+            effort,
+            label: REASONING_LABELS[effort],
+            description: REASONING_DESCRIPTIONS[effort],
+          })),
+    [availableReasoningEfforts, selectedModelObj],
+  );
+  const effectiveReasoningEffort = availableReasoningEfforts.includes(
+    selectedReasoningEffort,
+  )
+    ? selectedReasoningEffort
+    : (selectedModelObj?.defaultReasoningEffort ??
+      availableReasoningEfforts[0] ??
+      "medium");
+  const currentReasoningOption = availableReasoningOptions.find(
+    (option) => option.effort === effectiveReasoningEffort,
+  );
+  const reasoningDisplayLabel =
+    currentReasoningOption?.label ?? REASONING_LABELS[effectiveReasoningEffort];
+  const modeDisplayLabel = selectedMode === "plan" ? "Plan" : "Build";
+  const filteredSlashCommands = useMemo(
+    () =>
+      slashCommands.filter((command) =>
+        command.name.toLowerCase().includes(slashFilter.toLowerCase()),
+      ),
+    [slashCommands, slashFilter],
+  );
+
+  const handleSlashCommandSelect = useCallback(
+    (command: Pick<OpenCodeSlashCommand, "name">) => {
+      setDraftText(sessionKey, `${command.name} `);
+      setSlashMenuOpen(false);
+      textareaRef.current?.focus();
+    },
+    [sessionKey, setDraftText],
+  );
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        attachmentMenuRef.current
+        && !attachmentMenuRef.current.contains(event.target as Node)
+      ) {
+        setShowAttachmentMenu(false);
+      }
+    }
+
+    if (showAttachmentMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showAttachmentMenu]);
+
+  const handlePaste = useCallback(
+    async (event: ClipboardEvent) => {
+      if (document.activeElement !== textareaRef.current) return;
+
+      try {
+        const image = await readImage();
+        const rgba = await image.rgba();
+        const { width, height } = await image.size();
+
+        let canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
+        ctx.putImageData(imageDataObj, 0, 0);
+
+        canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+
+        const dataUrl = canvas.toDataURL("image/png");
+        const base64Data = dataUrl.split(",")[1] || "";
+        const estimatedSize = (base64Data.length * 3) / 4;
+        if (estimatedSize > MAX_IMAGE_SIZE) {
+          toast.error("Image too large", {
+            description: `Image is ${(estimatedSize / 1024 / 1024).toFixed(1)}MB. Maximum is 8MB.`,
+          });
+          return;
+        }
+
+        canvas.width = 0;
+        canvas.height = 0;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const filename = generateImageFilename();
+        const filePath = `.orkestrator/clipboard/${filename}`;
+
+        let savedPath: string | null = null;
+        if (containerId) {
+          await writeContainerFile(containerId, filePath, base64Data);
+          savedPath = `/workspace/${filePath}`;
+        } else if (worktreePath) {
+          savedPath = await writeLocalFile(worktreePath, filePath, base64Data);
+        }
+
+        if (!savedPath) {
+          toast.error("Cannot save image", {
+            description: "Environment not properly configured for attachments",
+          });
+          return;
+        }
+
+        addAttachment(sessionKey, {
+          id: Math.random().toString(36).substring(2, 9),
+          type: "image",
+          path: savedPath,
+          previewUrl: dataUrl,
+          name: filename,
+        });
+      } catch (error) {
+        if (!(error instanceof Error)) return;
+        const msg = error.message.toLowerCase();
+        if (
+          msg.includes("clipboard")
+          || msg.includes("no image")
+          || msg.includes("not found")
+          || msg.includes("empty")
+          || msg.includes("unavailable")
+        ) {
+          return;
+        }
+        console.error("[CodexComposeBar] Unexpected paste error:", error);
+      }
+    },
+    [addAttachment, containerId, sessionKey, worktreePath],
+  );
+
+  useEffect(() => {
+    document.addEventListener("paste", handlePaste, { capture: true });
+    return () => {
+      document.removeEventListener("paste", handlePaste, { capture: true });
+    };
+  }, [handlePaste]);
+
+  return (
+    <div className="border-t border-border bg-background p-3">
+      {attachments.length > 0 ? (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {attachments.map((attachment) => (
+            <div
+              key={attachment.id}
+              className="relative flex items-center gap-1.5 rounded border border-border bg-muted/50 px-2 py-1 text-xs"
+            >
+              {attachment.previewUrl ? (
+                <img
+                  src={attachment.previewUrl}
+                  alt={attachment.name}
+                  className="h-6 w-6 rounded object-cover"
+                />
+              ) : (
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              )}
+              <span className="max-w-[120px] truncate">{attachment.name}</span>
+              <button
+                type="button"
+                onClick={() => removeAttachment(sessionKey, attachment.id)}
+                className="ml-1 rounded-full p-0.5 hover:bg-muted"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="relative">
+        {slashMenuOpen && filteredSlashCommands.length > 0 ? (
+          <OpenCodeSlashCommandMenu
+            commands={filteredSlashCommands}
+            selectedIndex={slashSelectedIndex}
+            onSelect={handleSlashCommandSelect}
+            onClose={() => setSlashMenuOpen(false)}
+          />
+        ) : null}
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(event) => setDraftText(sessionKey, event.target.value)}
+          onKeyDown={(event) => {
+            if (slashMenuOpen && filteredSlashCommands.length > 0) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setSlashSelectedIndex((index) => (index + 1) % filteredSlashCommands.length);
+                return;
+              }
+
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setSlashSelectedIndex((index) =>
+                  index === 0 ? filteredSlashCommands.length - 1 : index - 1,
+                );
+                return;
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setSlashMenuOpen(false);
+                return;
+              }
+
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                const command = filteredSlashCommands[slashSelectedIndex];
+                if (command) {
+                  handleSlashCommandSelect(command);
+                }
+                return;
+              }
+            }
+
+            if (event.key === "Tab" && event.shiftKey) {
+              event.preventDefault();
+              void onModeChange(selectedMode === "plan" ? "build" : "plan");
+              return;
+            }
+
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void handleSubmit();
+            }
+          }}
+          placeholder="Ask Codex anything..."
+          rows={1}
+          disabled={disabled}
+          className={cn(
+            "w-full resize-none overflow-y-hidden border-none bg-transparent px-1 py-1 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground",
+            disabled && "opacity-60",
+          )}
+          style={{
+            minHeight: MIN_HEIGHT_PX,
+            maxHeight: MAX_HEIGHT_PX,
+          }}
+        />
+      </div>
+
+      <div className="flex items-center gap-1 pt-1">
+        <div className="relative" ref={attachmentMenuRef}>
+          <button
+            type="button"
+            className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            disabled={disabled}
+            onClick={() => setShowAttachmentMenu((open) => !open)}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+
+          {showAttachmentMenu ? (
+            <div className="absolute bottom-full left-0 z-50 mb-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md">
+              <button
+                type="button"
+                className="flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground"
+                disabled
+              >
+                <FileText className="h-4 w-4" />
+                Attach file from workspace
+              </button>
+              <button
+                type="button"
+                className="flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground"
+                disabled
+              >
+                <ImageIcon className="h-4 w-4" />
+                Paste image (Cmd+V)
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || settingsLocked}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              title={settingsLocked ? "Start a new Codex conversation to change the mode" : "Choose mode"}
+            >
+              <ChevronDown className="h-3 w-3" />
+              <span>{modeDisplayLabel}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => void onModeChange("build")} disabled={settingsLocked}>
+              Build
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void onModeChange("plan")} disabled={settingsLocked}>
+              Plan
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || settingsLocked}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              title={settingsLocked ? "Start a new Codex conversation to change the model" : "Choose model"}
+            >
+              <ChevronDown className="h-3 w-3" />
+              <span className="max-w-[220px] truncate">{selectedModelName}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[260px] max-h-[360px] overflow-y-auto">
+            {models.length === 0 ? (
+              <DropdownMenuItem disabled>No models available</DropdownMenuItem>
+            ) : (
+              models.map((model) => {
+                const isSelected = model.id === selectedModel;
+                return (
+                  <DropdownMenuItem
+                    key={model.id}
+                    onClick={() => void onModelChange(model.id)}
+                    disabled={settingsLocked}
+                    className="flex items-start gap-2 py-2"
+                  >
+                    <div className="mt-0.5 h-4 w-4 shrink-0">
+                      {isSelected ? <Check className="h-4 w-4 text-primary" /> : null}
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <span className="truncate text-sm font-medium">{model.name}</span>
+                      {model.description ? (
+                        <span className="line-clamp-2 text-xs text-muted-foreground">
+                          {model.description}
+                        </span>
+                      ) : null}
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || settingsLocked}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              title={settingsLocked ? "Start a new Codex conversation to change reasoning" : "Choose reasoning effort"}
+            >
+              <ChevronDown className="h-3 w-3" />
+              <span>{reasoningDisplayLabel}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[340px]">
+            {availableReasoningOptions.map((option) => (
+              <DropdownMenuItem
+                key={option.effort}
+                onClick={() => void onReasoningEffortChange(option.effort)}
+                disabled={settingsLocked}
+                className="flex items-start gap-2 py-2"
+              >
+                <div className="mt-0.5 h-4 w-4 shrink-0">
+                  {effectiveReasoningEffort === option.effort ? (
+                    <Check className="h-4 w-4 text-primary" />
+                  ) : null}
+                </div>
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="truncate text-sm font-medium">
+                    {option.label}
+                    {selectedModelObj?.defaultReasoningEffort === option.effort
+                      ? " (default)"
+                      : ""}
+                    {effectiveReasoningEffort === option.effort
+                      && selectedModelObj?.defaultReasoningEffort !== option.effort
+                      ? " (current)"
+                      : ""}
+                  </span>
+                  {option.description ? (
+                    <span className="line-clamp-2 text-xs text-muted-foreground">
+                      {option.description}
+                    </span>
+                  ) : null}
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <div className="flex-1" />
+
+        {isLoading && !text.trim() ? (
+          <button
+            type="button"
+            onClick={() => {
+              void onStop?.();
+            }}
+            disabled={disabled}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full bg-destructive/10 text-destructive transition-colors hover:bg-destructive/20",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+            title="Stop current query"
+          >
+            <Square className="h-4 w-4 fill-current" />
+          </button>
+        ) : (
+          <Button
+            type="button"
+            size="icon"
+            className="h-8 w-8 rounded-full bg-muted text-foreground transition-colors hover:bg-muted/80"
+            disabled={disabled || (text.trim().length === 0 && attachments.length === 0)}
+            onClick={() => {
+              void handleSubmit();
+            }}
+            title="Send message"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}

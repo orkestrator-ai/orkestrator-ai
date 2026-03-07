@@ -19,6 +19,8 @@ pub struct PortAllocation {
     pub opencode_port: u16,
     /// Port for Claude-bridge server
     pub claude_port: u16,
+    /// Port for Codex bridge server
+    pub codex_port: u16,
 }
 
 /// Check if a port is available for binding
@@ -35,6 +37,9 @@ fn get_used_ports(environments: &[Environment]) -> Vec<u16> {
             ports.push(port);
         }
         if let Some(port) = env.local_claude_port {
+            ports.push(port);
+        }
+        if let Some(port) = env.local_codex_port {
             ports.push(port);
         }
     }
@@ -55,6 +60,7 @@ pub fn allocate_ports(existing_environments: &[Environment]) -> Result<PortAlloc
 
     let mut opencode_port: Option<u16> = None;
     let mut claude_port: Option<u16> = None;
+    let mut codex_port: Option<u16> = None;
 
     for port in LOCAL_PORT_RANGE_START..=LOCAL_PORT_RANGE_END {
         // Skip if already in use by another environment
@@ -74,14 +80,18 @@ pub fn allocate_ports(existing_environments: &[Environment]) -> Result<PortAlloc
         } else if claude_port.is_none() {
             claude_port = Some(port);
             debug!(port = port, "Allocated Claude-bridge port");
+        } else if codex_port.is_none() {
+            codex_port = Some(port);
+            debug!(port = port, "Allocated Codex bridge port");
             break;
         }
     }
 
-    match (opencode_port, claude_port) {
-        (Some(oport), Some(cport)) => Ok(PortAllocation {
+    match (opencode_port, claude_port, codex_port) {
+        (Some(oport), Some(cport), Some(xport)) => Ok(PortAllocation {
             opencode_port: oport,
             claude_port: cport,
+            codex_port: xport,
         }),
         _ => {
             warn!(
@@ -116,6 +126,9 @@ mod tests {
         let allocation = result.unwrap();
         assert!(allocation.opencode_port >= LOCAL_PORT_RANGE_START);
         assert!(allocation.claude_port >= LOCAL_PORT_RANGE_START);
+        assert!(allocation.codex_port >= LOCAL_PORT_RANGE_START);
         assert_ne!(allocation.opencode_port, allocation.claude_port);
+        assert_ne!(allocation.opencode_port, allocation.codex_port);
+        assert_ne!(allocation.claude_port, allocation.codex_port);
     }
 }

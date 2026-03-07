@@ -267,9 +267,11 @@ pub async fn create_environment(
             .map_err(|e| format!("Failed to allocate ports: {}", e))?;
         environment.local_opencode_port = Some(port_allocation.opencode_port);
         environment.local_claude_port = Some(port_allocation.claude_port);
+        environment.local_codex_port = Some(port_allocation.codex_port);
         debug!(
             opencode_port = port_allocation.opencode_port,
             claude_port = port_allocation.claude_port,
+            codex_port = port_allocation.codex_port,
             "Allocated ports for local environment"
         );
     }
