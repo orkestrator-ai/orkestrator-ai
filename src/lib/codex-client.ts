@@ -72,6 +72,12 @@ interface CodexSessionListResponse {
   sessions: CodexStoredSession[];
 }
 
+interface CodexSessionStatusResponse {
+  status: "idle" | "running" | "error";
+  title?: string;
+  error?: string;
+}
+
 export interface CodexClient {
   baseUrl: string;
 }
@@ -93,6 +99,12 @@ export interface CodexStoredSession {
   id: string;
   title?: string;
   updatedAt: string;
+}
+
+export interface CodexSessionStatus {
+  status: "idle" | "running" | "error";
+  title?: string;
+  error?: string;
 }
 
 export interface CodexPromptAttachment {
@@ -294,6 +306,34 @@ export async function getSessionMessages(
   } catch (error) {
     console.error("[codex-client] Failed to get session messages:", error);
     return [];
+  }
+}
+
+export async function getSessionStatus(
+  client: CodexClient,
+  sessionId: string,
+): Promise<CodexSessionStatus | null> {
+  try {
+    const response = await fetchWithTimeout(
+      `${client.baseUrl}/session/${sessionId}/status`,
+    );
+    if (!response.ok) return null;
+    const data = (await response.json()) as Partial<CodexSessionStatusResponse>;
+    if (
+      data.status !== "idle"
+      && data.status !== "running"
+      && data.status !== "error"
+    ) {
+      return null;
+    }
+    return {
+      status: data.status,
+      title: typeof data.title === "string" ? data.title : undefined,
+      error: typeof data.error === "string" ? data.error : undefined,
+    };
+  } catch (error) {
+    console.error("[codex-client] Failed to get session status:", error);
+    return null;
   }
 }
 

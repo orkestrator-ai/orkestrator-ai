@@ -123,6 +123,12 @@ interface PersistedSessionMeta {
   transcriptPath?: string;
 }
 
+interface SessionStatusResponse {
+  status: SessionState["status"];
+  title?: string;
+  error?: string;
+}
+
 interface ToolDiffMetadata {
   filePath?: string;
   additions?: number;
@@ -1596,6 +1602,21 @@ app.get("/session/:id/messages", (c) => {
   updateSessionAccess(sessionId);
 
   return c.json({ messages: session.messages });
+});
+
+app.get("/session/:id/status", (c) => {
+  const sessionId = c.req.param("id");
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+  updateSessionAccess(sessionId);
+
+  return c.json({
+    status: session.status,
+    title: session.title,
+    error: session.error,
+  } satisfies SessionStatusResponse);
 });
 
 app.post("/session/:id/prompt", async (c) => {

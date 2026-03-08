@@ -873,6 +873,34 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     }
   }, [client, session, sessionKey, clearQueue, setSessionLoading, addMessage]);
 
+  useEffect(() => {
+    if (!isActive || !session?.isLoading) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape"
+        || event.defaultPrevented
+        || event.repeat
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
+        || event.isComposing
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleStop();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleStop, isActive, session?.isLoading]);
+
   // Compute thinking and plan mode values outside useEffect to avoid function reference dependencies
   const thinkingEnabledValue = isThinkingEnabled(sessionKey);
   const planModeEnabledValue = isPlanMode(sessionKey);
