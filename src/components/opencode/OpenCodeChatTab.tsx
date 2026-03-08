@@ -1177,6 +1177,34 @@ export function OpenCodeChatTab({
     }
   }, [client, session, sessionKey, clearQueue, setSessionLoading]);
 
+  useEffect(() => {
+    if (!isActive || !session?.isLoading) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape"
+        || event.defaultPrevented
+        || event.repeat
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
+        || event.isComposing
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleStop();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleStop, isActive, session?.isLoading]);
+
   const handleResumeSession = useCallback(
     async (sessionId: string) => {
       if (!client) return;

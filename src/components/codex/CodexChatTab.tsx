@@ -19,6 +19,7 @@ import {
   getModels,
   getSlashCommands,
   getSessionMessages,
+  getSessionStatus,
   resumeSession,
   sendPrompt,
   subscribeToEvents,
@@ -291,6 +292,34 @@ export function CodexChatTab({
     if (!client || !session?.sessionId) return;
     await abortSession(client, session.sessionId);
   }, [client, session?.sessionId]);
+
+  useEffect(() => {
+    if (!isActive || !session?.isLoading) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape"
+        || event.defaultPrevented
+        || event.repeat
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
+        || event.isComposing
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleStop();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleStop, isActive, session?.isLoading]);
 
   const handleResumeSession = useCallback(
     async (threadId: string) => {
@@ -589,67 +618,149 @@ export function CodexChatTab({
     ],
   );
 
+  const reconcileSessionState = useCallback(async () => {
+    if (
+      connectionState !== "connected"
+      || !client
+      || !session?.sessionId
+    ) {
+      return;
+    }
+
+    const status = await getSessionStatus(client, session.sessionId);
+    if (!status) {
+      return;
+    }
+
+    if (typeof status.title === "string" && status.title.trim().length > 0) {
+      setSessionTitle(sessionKey, status.title);
+    }
+
+    if (status.status === "idle") {
+      setSessionLoading(sessionKey, false);
+      setSessionError(sessionKey, undefined);
+      await refreshMessages(client, session.sessionId);
+      return;
+    }
+
+    if (status.status === "error") {
+      const error = status.error?.trim() || "Codex session failed";
+      setSessionLoading(sessionKey, false);
+      setSessionError(sessionKey, error);
+      setErrorMessage(error);
+      await refreshMessages(client, session.sessionId);
+      return;
+    }
+
+    setSessionLoading(sessionKey, true);
+  }, [
+    client,
+    connectionState,
+    refreshMessages,
+    session?.sessionId,
+    sessionKey,
+    setSessionError,
+    setSessionLoading,
+    setSessionTitle,
+  ]);
+
   useEffect(() => {
-    if (connectionState !== "connected" || !client || !session?.sessionId) {
+    if (
+      !isActive
+      || connectionState !== "connected"
+      || !client
+      || !session?.sessionId
+    ) {
+      return;
+    }
+
+    void reconcileSessionState();
+  }, [client, connectionState, isActive, reconcileSessionState, session?.sessionId]);
+
+  useEffect(() => {
+    if (
+      !isActive
+      || !session?.isLoading
+      || connectionState !== "connected"
+      || !client
+      || !session?.sessionId
+    ) {
       return;
     }
 
     const abortController = new AbortController();
+    const isTurnActive = () =>
+      useCodexStore.getState().sessions.get(sessionKey)?.isLoading === true;
 
     (async () => {
-      try {
-        for await (const event of subscribeToEvents(client, abortController.signal)) {
-          if (!event || typeof event.type !== "string") {
-            console.warn("[CodexChatTab] Received malformed event, skipping");
-            continue;
-          }
-
-          if (event.sessionId && event.sessionId !== session.sessionId) {
-            continue;
-          }
-
-          if (event.type === "message.updated") {
-            await refreshMessages(client, session.sessionId);
-            continue;
-          }
-
-          if (event.type === "session.updated") {
-            setSessionLoading(sessionKey, true);
-            continue;
-          }
-
-          if (event.type === "session.idle") {
-            setSessionLoading(sessionKey, false);
-            const title = event.data?.title;
-            if (typeof title === "string" && title.trim().length > 0) {
-              setSessionTitle(sessionKey, title);
+      while (!abortController.signal.aborted && isTurnActive()) {
+        try {
+          for await (const event of subscribeToEvents(client, abortController.signal)) {
+            if (!event || typeof event.type !== "string") {
+              console.warn("[CodexChatTab] Received malformed event, skipping");
+              continue;
             }
-            await refreshMessages(client, session.sessionId);
-            continue;
-          }
 
-          if (event.type === "session.title-updated") {
-            const title = event.data?.title;
-            if (typeof title === "string" && title.trim().length > 0) {
-              setSessionTitle(sessionKey, title);
+            if (event.sessionId && event.sessionId !== session.sessionId) {
+              continue;
             }
-            continue;
-          }
 
-          if (event.type === "session.error") {
-            const error =
-              typeof event.data?.error === "string"
-                ? event.data.error
-                : "Codex session failed";
-            setSessionLoading(sessionKey, false);
-            setSessionError(sessionKey, error);
-            setErrorMessage(error);
+            if (event.type === "message.updated") {
+              await refreshMessages(client, session.sessionId);
+              continue;
+            }
+
+            if (event.type === "session.updated") {
+              setSessionLoading(sessionKey, true);
+              continue;
+            }
+
+            if (event.type === "session.idle") {
+              setSessionLoading(sessionKey, false);
+              setSessionError(sessionKey, undefined);
+              const title = event.data?.title;
+              if (typeof title === "string" && title.trim().length > 0) {
+                setSessionTitle(sessionKey, title);
+              }
+              await refreshMessages(client, session.sessionId);
+              continue;
+            }
+
+            if (event.type === "session.title-updated") {
+              const title = event.data?.title;
+              if (typeof title === "string" && title.trim().length > 0) {
+                setSessionTitle(sessionKey, title);
+              }
+              continue;
+            }
+
+            if (event.type === "session.error") {
+              const error =
+                typeof event.data?.error === "string"
+                  ? event.data.error
+                  : "Codex session failed";
+              setSessionLoading(sessionKey, false);
+              setSessionError(sessionKey, error);
+              setErrorMessage(error);
+            }
+          }
+        } catch (error) {
+          if (!abortController.signal.aborted) {
+            console.error("[CodexChatTab] Event subscription error:", error);
           }
         }
-      } catch (error) {
-        if (!abortController.signal.aborted) {
-          console.error("[CodexChatTab] Event subscription error:", error);
+
+        if (abortController.signal.aborted) {
+          break;
         }
+
+        await reconcileSessionState();
+
+        if (abortController.signal.aborted || !isTurnActive()) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     })();
 
@@ -659,7 +770,10 @@ export function CodexChatTab({
   }, [
     client,
     connectionState,
+    isActive,
     refreshMessages,
+    reconcileSessionState,
+    session?.isLoading,
     session?.sessionId,
     sessionKey,
     setSessionError,
