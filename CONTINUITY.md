@@ -1,35 +1,38 @@
 Goal (incl. success criteria):
-- Complete full PR workflow for current workspace changes: stage all files, create a conventional commit, push current branch, and open a PR targeting `main`.
-- Success: all changes are committed and pushed; PR is created and URL is available.
+- Complete end-to-end PR creation workflow for the current workspace changes.
+- Success: all changes staged, committed with conventional commit message, pushed to remote branch, and PR opened against `main` with a usable URL.
 
 Constraints/Assumptions:
-- Follow `AGENTS.md` workflow; keep this ledger current.
-- Include all tracked and untracked changes (`git add -A`) per user instruction.
-- Do not use `--no-verify` and do not skip hooks.
-- Do not revert unrelated user changes.
+- Follow `AGENTS.md` and continuity ledger rules.
+- Execute user-requested git/gh commands in the exact step order.
+- Do not use `--no-verify`; do not attribute to Claude.
+- Preserve unrelated existing workspace changes; include all current changes per user request.
 
 Key decisions:
-- Follow user-specified PR sequence exactly: status -> stage all -> verify -> review cached diff -> commit -> push -> PR create.
-- Use conventional commit message with bullet list body.
+- Use `git add -A` to stage all tracked/untracked changes.
+- Generate conventional commit message from actual staged diff.
+- Use `gh pr create --base main --fill` first, then fallback to explicit title/body only if needed.
 
 State:
-- Done: loaded prior ledger content.
-- Now: executing full PR workflow for current branch.
-- Next: return completion status and PR URL.
+- Done: Loaded existing ledger and refreshed to current task.
+- Now: Running Step 1 (status, stage all, verify staged state).
+- Next: Step 2 commit, Step 3 push, Step 4 PR creation and report URL.
 
 Done:
-- Read prior `CONTINUITY.md` state.
-- Started PR workflow requested by user.
+- Read existing `CONTINUITY.md`.
+- Rebuilt ledger for current PR workflow task.
 
 Now:
-- Run git status/stage/commit/push/PR creation commands in order.
+- Execute git staging commands and verify status.
 
 Next:
-- Confirm each workflow step outcome and provide PR URL.
+- Review cached diff, commit with conventional format.
+- Push current branch and handle rebase if needed.
+- Create PR against `main` and return URL.
 
 Open questions (UNCONFIRMED if needed):
-- UNCONFIRMED: final commit title/body wording until staged diff is reviewed.
+- None.
 
 Working set (files/ids/commands):
-- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-dfbta7/CONTINUITY.md`
-- Commands planned/run: `git status --porcelain`, `git add -A`, `git status`, `git diff --cached`, `git commit`, `git branch --show-current`, `git push -u origin <branch>`, `git diff origin/main...HEAD`, `git log main..HEAD --oneline`, `gh pr create --base main --fill`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-s5udd4/CONTINUITY.md`
+- Commands planned: `git status --porcelain`, `git add -A`, `git status`, `git diff --cached`, `git commit`, `git branch --show-current`, `git push -u origin <branch>`, `git diff origin/main...HEAD`, `git log main..HEAD --oneline`, `gh pr create --base main --fill`.
