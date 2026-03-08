@@ -48,6 +48,10 @@ type ConnectionState = "connecting" | "connected" | "error";
 
 const DEFAULT_CODEX_MODE: CodexConversationMode = "build";
 const DEFAULT_REASONING_EFFORT: CodexReasoningEffort = "medium";
+type CodexSendHandler = (
+  text: string,
+  attachments: CodexAttachment[],
+) => Promise<void>;
 
 function resolveReasoningEffort(
   modelId: string,
@@ -89,6 +93,7 @@ export function CodexChatTab({
   const initialPromptSentRef = useRef(false);
   const lastInitTimeRef = useRef(0);
   const isInitializedRef = useRef(false);
+  const isProcessingQueueRef = useRef(false);
 
   const sessionKey = useMemo(
     () => createCodexSessionKey(environmentId, tabId),
@@ -109,6 +114,8 @@ export function CodexChatTab({
     setSelectedModel,
     setSelectedMode,
     setSelectedReasoningEffort,
+    addToQueue,
+    removeFromQueue,
     clients: clientsMap,
     sessions: sessionsMap,
     selectedModel: selectedModelMap,
@@ -149,6 +156,13 @@ export function CodexChatTab({
     () => slashCommandsMap.get(environmentId) ?? [],
     [environmentId, slashCommandsMap],
   );
+  const queueLength = useCodexStore(
+    useCallback(
+      (state) => state.messageQueue.get(sessionKey)?.length ?? 0,
+      [sessionKey],
+    ),
+  );
+  const handleSendRef = useRef<CodexSendHandler | null>(null);
 
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
     scrollTrigger: sessionMessages,
@@ -210,6 +224,68 @@ export function CodexChatTab({
       setSessionLoading,
     ],
   );
+
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
+
+  const handleQueue = useCallback(
+    (text: string, attachments: CodexAttachment[]) => {
+      addToQueue(sessionKey, {
+        id: crypto.randomUUID(),
+        text,
+        attachments,
+        model: selectedModel,
+        mode: selectedMode,
+        reasoningEffort: selectedReasoningEffort,
+      });
+    },
+    [addToQueue, selectedMode, selectedModel, selectedReasoningEffort, sessionKey],
+  );
+
+  const processQueue = useCallback(() => {
+    if (isProcessingQueueRef.current) return;
+    if (connectionState !== "connected" || !client) return;
+
+    const latestSession = useCodexStore.getState().sessions.get(sessionKey);
+    if (!latestSession || latestSession.isLoading) return;
+
+    const nextMessage = removeFromQueue(sessionKey);
+    if (!nextMessage) return;
+
+    isProcessingQueueRef.current = true;
+
+    const sendPromise = handleSendRef.current?.(nextMessage.text, nextMessage.attachments);
+
+    if (!sendPromise) {
+      isProcessingQueueRef.current = false;
+      return;
+    }
+
+    sendPromise
+      .catch((error) => {
+        console.error("[CodexChatTab] Failed to send queued prompt:", error);
+        setSessionLoading(sessionKey, false);
+        setSessionError(
+          sessionKey,
+          `Failed to send queued prompt: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        );
+      })
+      .finally(() => {
+        isProcessingQueueRef.current = false;
+        // Don't recurse here — the useEffect watching isLoading/queueLength
+        // will call processQueue again when the session becomes idle.
+      });
+  }, [
+    client,
+    connectionState,
+    removeFromQueue,
+    sessionKey,
+    setSessionError,
+    setSessionLoading,
+  ]);
 
   const handleStop = useCallback(async () => {
     if (!client || !session?.sessionId) return;
@@ -592,6 +668,12 @@ export function CodexChatTab({
   ]);
 
   useEffect(() => {
+    if (queueLength > 0) {
+      processQueue();
+    }
+  }, [processQueue, queueLength, session?.isLoading]);
+
+  useEffect(() => {
     if (
       connectionState !== "connected"
       || !session?.sessionId
@@ -723,7 +805,9 @@ export function CodexChatTab({
         settingsLocked={(sessionMessages.length > 0) || (session?.isLoading ?? false)}
         disabled={!session?.sessionId}
         isLoading={session?.isLoading ?? false}
+        queueLength={queueLength}
         onSend={handleSend}
+        onQueue={handleQueue}
         onStop={handleStop}
         onModeChange={handleModeChange}
         onModelChange={handleModelChange}

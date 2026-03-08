@@ -207,6 +207,25 @@ if [ -n "$TOKEN" ]; then
     export GIT_TERMINAL_PROMPT=0
 fi
 
+print_workspace_disk_status() {
+    echo "Disk availability:"
+    df -h /workspace /tmp 2>/dev/null | awk 'NR==1 || $6=="/workspace" || $6=="/tmp" {print "  " $0}'
+}
+
+clone_repository() {
+    local clone_url="$1"
+    local clone_dest="$2"
+
+    # Try partial clone first to reduce disk usage for large repositories.
+    if git clone --filter=blob:none --no-tags "$clone_url" "$clone_dest"; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}Partial clone failed, retrying full clone...${NC}"
+    rm -rf "$clone_dest"/* "$clone_dest"/.[!.]* 2>/dev/null || true
+    git clone "$clone_url" "$clone_dest"
+}
+
 # Check if setup already completed
 if [ -f /tmp/.workspace-setup-complete ]; then
     echo -e "${GREEN}Workspace already set up.${NC}"
@@ -232,6 +251,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
     rm -rf /workspace/* 2>/dev/null || true
     rm -rf /workspace/.* 2>/dev/null || true
     find /workspace -mindepth 1 -delete 2>/dev/null || true
+    print_workspace_disk_status
 
     # Prepare clone URL - inject token directly for more reliable auth
     # Note: We avoid logging the URL with token to prevent credential exposure
@@ -246,7 +266,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
 
     # Clone directly into /workspace
     echo "Cloning..."
-    if git clone "$CLONE_URL" /workspace; then
+    if clone_repository "$CLONE_URL" /workspace; then
         echo -e "${GREEN}Clone successful!${NC}"
         cd /workspace
 
@@ -299,7 +319,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
         TEMP_CLONE="/tmp/repo_clone"
         rm -rf "$TEMP_CLONE" 2>/dev/null
 
-        if git clone "$CLONE_URL" "$TEMP_CLONE"; then
+        if clone_repository "$CLONE_URL" "$TEMP_CLONE"; then
             echo "Moving files to workspace..."
             mv "$TEMP_CLONE"/* /workspace/ 2>/dev/null || true
             mv "$TEMP_CLONE"/.[!.]* /workspace/ 2>/dev/null || true
