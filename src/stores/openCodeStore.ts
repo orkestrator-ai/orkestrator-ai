@@ -203,6 +203,15 @@ interface OpenCodeState {
   getContextUsage: (sessionKey: string) => ContextUsageSnapshot | undefined;
 }
 
+// Stable empty array constants to prevent infinite re-render loops with useSyncExternalStore.
+// Returning `?? []` creates a new array reference on every getSnapshot call,
+// which React 19 detects as an unstable snapshot and triggers an infinite loop.
+const EMPTY_MODELS: OpenCodeModel[] = [];
+const EMPTY_COMMANDS: OpenCodeSlashCommand[] = [];
+const EMPTY_ATTACHMENTS: OpenCodeAttachment[] = [];
+const EMPTY_QUESTIONS: QuestionRequest[] = [];
+const EMPTY_PERMISSIONS: PermissionRequest[] = [];
+
 export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   // Initial state
   serverStatus: new Map(),
@@ -725,16 +734,16 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
 
   getSelectedModel: (environmentId) => get().selectedModel.get(environmentId),
 
-  getModels: (environmentId) => get().models.get(environmentId) ?? [],
+  getModels: (environmentId) => get().models.get(environmentId) ?? EMPTY_MODELS,
 
-  getSlashCommands: (environmentId) => get().slashCommands.get(environmentId) || [],
+  getSlashCommands: (environmentId) => get().slashCommands.get(environmentId) ?? EMPTY_COMMANDS,
 
   getSelectedVariant: (environmentId) => get().selectedVariant.get(environmentId),
 
   getSelectedMode: (sessionKey) =>
     get().selectedMode.get(sessionKey) || "build",
 
-  getAttachments: (sessionKey) => get().attachments.get(sessionKey) || [],
+  getAttachments: (sessionKey) => get().attachments.get(sessionKey) ?? EMPTY_ATTACHMENTS,
 
   getDraftText: (sessionKey) => get().draftText.get(sessionKey) || "",
 
@@ -748,7 +757,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         questions.push(question);
       }
     }
-    return questions;
+    return questions.length > 0 ? questions : EMPTY_QUESTIONS;
   },
 
   getPendingQuestion: (requestId) => get().pendingQuestions.get(requestId),
@@ -760,7 +769,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         permissions.push(permission);
       }
     }
-    return permissions;
+    return permissions.length > 0 ? permissions : EMPTY_PERMISSIONS;
   },
 
   getPendingPermission: (requestId) => get().pendingPermissions.get(requestId),
