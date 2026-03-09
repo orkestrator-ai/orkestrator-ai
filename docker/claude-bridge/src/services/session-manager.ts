@@ -486,10 +486,10 @@ class ToolTracker {
   }
 }
 
-/** Entry in the ordered parts sequence - either a thinking block or a tool reference */
+/** Entry in the ordered parts sequence - a thinking block, tool reference, or text block */
 interface OrderedPartEntry {
-  type: "thinking" | "tool-ref";
-  /** For thinking: the thinking content. For tool-ref: the tool use ID */
+  type: "thinking" | "tool-ref" | "text";
+  /** For thinking: the thinking content. For tool-ref: the tool use ID. For text: the text content */
   value: string;
   /** Message UUID this part belongs to (for streaming updates) */
   messageUuid?: string;
@@ -602,6 +602,12 @@ function parseMessageContent(
         type: "text",
         content: block.text || "",
       });
+      // Track text in ordered parts so it maintains position relative to thinking/tools
+      orderedParts.push({
+        type: "text",
+        value: block.text || "",
+        messageUuid,
+      });
     } else if (block.type === "thinking") {
       const thinkingContent = block.thinking || "";
       thinkingParts.push({
@@ -708,7 +714,7 @@ function parseMessageContent(
 
 /**
  * Build message parts from ordered sequence and text
- * Maintains chronological order of thinking blocks and tool invocations
+ * Maintains chronological order of all parts (thinking, tools, and text)
  */
 function buildMessageParts(
   orderedParts: OrderedPartEntry[],
@@ -716,6 +722,8 @@ function buildMessageParts(
   textParts: NormalizedPart[]
 ): NormalizedPart[] {
   const result: NormalizedPart[] = [];
+  // Track whether any text entries exist in orderedParts
+  let hasTextInOrder = false;
 
   // Build parts in chronological order
   for (const entry of orderedParts) {
@@ -731,11 +739,20 @@ function buildMessageParts(
       if (tool) {
         result.push(tool);
       }
+    } else if (entry.type === "text") {
+      hasTextInOrder = true;
+      result.push({
+        type: "text",
+        content: entry.value,
+      });
     }
   }
 
-  // Add text parts at the end
-  result.push(...textParts);
+  // Fallback: if no text entries were in orderedParts (e.g., legacy data),
+  // append text parts at the end to maintain backward compatibility
+  if (!hasTextInOrder && textParts.length > 0) {
+    result.push(...textParts);
+  }
 
   return result;
 }

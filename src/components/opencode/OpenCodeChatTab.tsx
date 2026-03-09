@@ -33,6 +33,7 @@ import {
   type QuestionRequest,
   type OpenCodeConversationMode,
   type OpenCodeSlashCommand,
+  type OpenCodeModel,
 } from "@/lib/opencode-client";
 import { extractContextUsage } from "@/lib/context-usage";
 import {
@@ -75,6 +76,7 @@ const EMPTY_MODEL_PREFERENCES: OpenCodeModelPreferences = {
 };
 
 const EMPTY_SLASH_COMMANDS: OpenCodeSlashCommand[] = [];
+const EMPTY_MODELS: OpenCodeModel[] = [];
 
 function toOpenCodeModelId(modelRef?: OpenCodeModelRef): string | undefined {
   if (!modelRef?.providerID || !modelRef?.modelID) {
@@ -255,7 +257,7 @@ export function OpenCodeChatTab({
 
   const models = useOpenCodeStore(
     useCallback(
-      (state) => state.getModels(environmentId),
+      (state) => state.models.get(environmentId) ?? EMPTY_MODELS,
       [environmentId],
     ),
   );
