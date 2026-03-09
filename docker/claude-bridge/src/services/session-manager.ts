@@ -570,7 +570,6 @@ function parseMessageContent(
   activeTaskIds?: Set<string>
 ): {
   content: string;
-  textParts: NormalizedPart[];
   thinkingParts: NormalizedPart[];
   /** Ordered sequence of thinking blocks and tool references as they appeared */
   orderedParts: OrderedPartEntry[];
@@ -579,7 +578,6 @@ function parseMessageContent(
   /** IDs of Task tools that completed in this message (to remove from active tasks) */
   completedTaskIds: string[];
 } {
-  const textParts: NormalizedPart[] = [];
   const thinkingParts: NormalizedPart[] = [];
   const orderedParts: OrderedPartEntry[] = [];
   const newTaskIds: string[] = [];
@@ -598,10 +596,6 @@ function parseMessageContent(
   for (const block of contentBlocks) {
     if (block.type === "text") {
       textContent += block.text || "";
-      textParts.push({
-        type: "text",
-        content: block.text || "",
-      });
       // Track text in ordered parts so it maintains position relative to thinking/tools
       orderedParts.push({
         type: "text",
@@ -709,23 +703,19 @@ function parseMessageContent(
     }
   }
 
-  return { content: textContent, textParts, thinkingParts, orderedParts, newTaskIds, completedTaskIds };
+  return { content: textContent, thinkingParts, orderedParts, newTaskIds, completedTaskIds };
 }
 
 /**
- * Build message parts from ordered sequence and text
- * Maintains chronological order of all parts (thinking, tools, and text)
+ * Build message parts from ordered sequence.
+ * Maintains chronological order of all parts (thinking, tools, and text).
  */
 function buildMessageParts(
   orderedParts: OrderedPartEntry[],
   toolTracker: ToolTracker,
-  textParts: NormalizedPart[]
 ): NormalizedPart[] {
   const result: NormalizedPart[] = [];
-  // Track whether any text entries exist in orderedParts
-  let hasTextInOrder = false;
 
-  // Build parts in chronological order
   for (const entry of orderedParts) {
     if (entry.type === "thinking") {
       result.push({
@@ -734,24 +724,16 @@ function buildMessageParts(
         _messageUuid: entry.messageUuid,
       });
     } else if (entry.type === "tool-ref") {
-      // Look up the tool from the tracker
       const tool = toolTracker.getTool(entry.value);
       if (tool) {
         result.push(tool);
       }
     } else if (entry.type === "text") {
-      hasTextInOrder = true;
       result.push({
         type: "text",
         content: entry.value,
       });
     }
-  }
-
-  // Fallback: if no text entries were in orderedParts (e.g., legacy data),
-  // append text parts at the end to maintain backward compatibility
-  if (!hasTextInOrder && textParts.length > 0) {
-    result.push(...textParts);
   }
 
   return result;
@@ -1095,11 +1077,9 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     // Tool tracker persists across all messages in this turn
     const toolTracker = new ToolTracker();
 
-    // Track accumulated text parts and ordered non-text parts (thinking + tools in chronological order)
-    // Text parts are tracked per message UUID to preserve text from previous messages
-    // when a new assistant message starts streaming (prevents text loss during think→tool→think sequences)
-    const textPartsByMessageUuid = new Map<string, NormalizedPart[]>();
-    let accumulatedTextParts: NormalizedPart[] = [];
+    // Track accumulated ordered parts (text, thinking, and tools in chronological order)
+    // Parts are tracked per message UUID to preserve content from previous messages
+    // when a new assistant message starts streaming (prevents loss during think→tool→think sequences)
     let accumulatedOrderedParts: OrderedPartEntry[] = [];
 
     // Track active (pending) Task tool IDs for parent tracking
@@ -1241,7 +1221,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         }
       } else if (message.type === "assistant") {
         // Assistant message - parse content and register tools with tracker
-        const { content, textParts, orderedParts, newTaskIds } = parseMessageContent(
+        const { content, orderedParts, newTaskIds } = parseMessageContent(
           message,
           toolTracker,
           mcpServerNames,
@@ -1256,18 +1236,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         // Get the message UUID to detect new messages vs streaming updates
         const messageUuid = message.uuid as string | undefined;
 
-        // Update accumulated parts
-        // For text: track per message UUID so text from previous messages is preserved
-        // when a new assistant message starts streaming (prevents text loss during think→tool→think)
-        if (messageUuid) {
-          textPartsByMessageUuid.set(messageUuid, textParts);
-          accumulatedTextParts = Array.from(textPartsByMessageUuid.values()).flat();
-        } else {
-          // No UUID (shouldn't normally happen) - fall back to direct replacement
-          accumulatedTextParts = textParts;
-        }
-
-        // For ordered parts (thinking + tools): we need to handle two cases:
+        // For ordered parts (thinking, tools, and text): we need to handle two cases:
         // 1. Streaming update to same message (same UUID): replace parts from this message
         // 2. New assistant message (different UUID): accumulate parts
         // This preserves chronological order across think → tool → think sequences
@@ -1291,7 +1260,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         }
 
         // Build final parts maintaining chronological order
-        const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker, accumulatedTextParts);
+        const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker);
 
         if (!currentAssistantMessage) {
           currentAssistantMessage = {
@@ -1336,7 +1305,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
 
         // Rebuild message parts with updated tool results
         if (currentAssistantMessage) {
-          const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker, accumulatedTextParts);
+          const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker);
           currentAssistantMessage.parts = finalParts;
 
           eventEmitter.emit({
