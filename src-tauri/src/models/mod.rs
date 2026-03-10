@@ -648,6 +648,14 @@ fn default_opencode_model() -> String {
     "opencode/grok-code".to_string()
 }
 
+fn default_codex_model() -> String {
+    "gpt-5.3-codex".to_string()
+}
+
+fn default_codex_reasoning_effort() -> String {
+    "medium".to_string()
+}
+
 impl Default for TerminalAppearance {
     fn default() -> Self {
         Self {
@@ -682,6 +690,12 @@ pub struct GlobalConfig {
     /// Default model for OpenCode (e.g., "opencode/grok-code")
     #[serde(default = "default_opencode_model")]
     pub opencode_model: String,
+    /// Default model for Codex Native tabs
+    #[serde(default = "default_codex_model")]
+    pub codex_model: String,
+    /// Default reasoning effort for Codex Native tabs
+    #[serde(default = "default_codex_reasoning_effort")]
+    pub codex_reasoning_effort: String,
     /// OpenCode mode - terminal CLI or native chat interface
     #[serde(default)]
     pub opencode_mode: OpenCodeMode,
@@ -707,6 +721,8 @@ impl Default for GlobalConfig {
             preferred_editor: None,
             default_agent: DefaultAgent::default(),
             opencode_model: default_opencode_model(),
+            codex_model: default_codex_model(),
+            codex_reasoning_effort: default_codex_reasoning_effort(),
             opencode_mode: OpenCodeMode::default(),
             claude_mode: ClaudeMode::default(),
             terminal_appearance: TerminalAppearance::default(),

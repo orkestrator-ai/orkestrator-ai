@@ -208,6 +208,41 @@ describe("opencode-client getModelsWithDefaults", () => {
     ]);
     expect(result.defaults.modelId).toBe("anthropic/claude-sonnet-4");
   });
+
+  test("uses object-map model keys when model entries omit id", async () => {
+    const client = {
+      config: {
+        providers: async () => ({
+          data: {
+            providers: {
+              openai: {
+                models: {
+                  "gpt-5-codex": {
+                    name: "GPT-5 Codex",
+                  },
+                },
+              },
+            },
+            default: {
+              providerID: "openai",
+              modelID: "gpt-5-codex",
+            },
+          },
+        }),
+      },
+    } as unknown as OpencodeClient;
+
+    const result = await getModelsWithDefaults(client);
+
+    expect(result.models).toEqual([
+      {
+        id: "openai/gpt-5-codex",
+        name: "GPT-5 Codex",
+        provider: "openai",
+      },
+    ]);
+    expect(result.defaults.modelId).toBe("openai/gpt-5-codex");
+  });
 });
 
 describe("opencode-client getAvailableSlashCommands", () => {

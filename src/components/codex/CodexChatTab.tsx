@@ -5,11 +5,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useScrollLock } from "@/hooks";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
-import { useCodexStore, createCodexSessionKey } from "@/stores";
+import { useCodexStore, createCodexSessionKey, useConfigStore } from "@/stores";
 import {
   type CodexConversationMode,
   type CodexPromptAttachment,
-  type CodexModel,
   type CodexReasoningEffort,
   DEFAULT_CODEX_MODEL,
   abortSession,
@@ -31,11 +30,18 @@ import {
   getLocalCodexServerStatus,
   startCodexServer,
   startLocalCodexServer,
+  updateGlobalConfig,
 } from "@/lib/tauri";
 import { OpenCodeMessage } from "@/components/opencode/OpenCodeMessage";
 import { CodexComposeBar } from "./CodexComposeBar";
 import { CodexResumeSessionDialog } from "./CodexResumeSessionDialog";
 import { createCodexSessionRefreshController } from "./session-refresh";
+import {
+  getPersistedCodexPreferences,
+  persistCodexGlobalPreferences,
+  resolveCodexPreferenceSelection,
+  resolveReasoningEffort,
+} from "./codex-preferences";
 import type { CodexNativeData } from "@/types/paneLayout";
 import type { CodexAttachment } from "@/stores/codexStore";
 
@@ -54,30 +60,6 @@ type CodexSendHandler = (
   text: string,
   attachments: CodexAttachment[],
 ) => Promise<void>;
-
-function resolveReasoningEffort(
-  modelId: string,
-  models: CodexModel[],
-  storedEffort?: CodexReasoningEffort,
-): CodexReasoningEffort {
-  const model = models.find((entry) => entry.id === modelId);
-  const supportedEfforts = model?.reasoningEfforts?.length
-    ? model.reasoningEfforts
-    : ([DEFAULT_REASONING_EFFORT, "high"] as CodexReasoningEffort[]);
-
-  if (storedEffort && supportedEfforts.includes(storedEffort)) {
-    return storedEffort;
-  }
-
-  if (
-    model?.defaultReasoningEffort
-    && supportedEfforts.includes(model.defaultReasoningEffort)
-  ) {
-    return model.defaultReasoningEffort;
-  }
-
-  return supportedEfforts[0] ?? DEFAULT_REASONING_EFFORT;
-}
 
 export function CodexChatTab({
   tabId,
@@ -98,11 +80,13 @@ export function CodexChatTab({
   const isProcessingQueueRef = useRef(false);
   const isWatchdogRefreshInFlightRef = useRef(false);
   const refreshControllerRef = useRef(createCodexSessionRefreshController());
-
   const sessionKey = useMemo(
     () => createCodexSessionKey(environmentId, tabId),
     [environmentId, tabId],
   );
+  const config = useConfigStore((state) => state.config);
+  const setConfig = useConfigStore((state) => state.setConfig);
+  const persistedPreferencesRef = useRef(getPersistedCodexPreferences(config));
 
   const {
     models,
@@ -151,6 +135,22 @@ export function CodexChatTab({
   const selectedReasoningEffort = useMemo(
     () => selectedReasoningEffortMap.get(sessionKey) ?? DEFAULT_REASONING_EFFORT,
     [selectedReasoningEffortMap, sessionKey],
+  );
+  const persistCodexPreferences = useCallback(
+    async (model: string, effort: CodexReasoningEffort) => {
+      try {
+        await persistCodexGlobalPreferences({
+          config,
+          setConfig,
+          persistGlobalConfig: updateGlobalConfig,
+          model,
+          effort,
+        });
+      } catch (error) {
+        console.error("[CodexChatTab] Failed to persist Codex defaults:", error);
+      }
+    },
+    [config, setConfig],
   );
   const sessionMessages = useMemo(
     () => session?.messages ?? [],
@@ -369,6 +369,10 @@ export function CodexChatTab({
   );
 
   useEffect(() => {
+    persistedPreferencesRef.current = getPersistedCodexPreferences(config);
+  }, [config]);
+
+  useEffect(() => {
     if (!isActive) return;
     const now = Date.now();
     if (now - lastInitTimeRef.current < 1000 && isInitializedRef.current) return;
@@ -427,20 +431,19 @@ export function CodexChatTab({
         }
         setSlashCommands(environmentId, availableSlashCommands);
 
-        const availableModelIds = new Set(availableModels.map((model) => model.id));
         const storedSelectedModel = codexState.selectedModel.get(sessionKey);
-        const resolvedModel =
-          storedSelectedModel && availableModelIds.has(storedSelectedModel)
-            ? storedSelectedModel
-            : availableModels[0]?.id ?? DEFAULT_CODEX_MODEL;
         const storedMode = codexState.selectedMode.get(sessionKey);
         const resolvedMode = storedMode ?? DEFAULT_CODEX_MODE;
         const storedReasoningEffort = codexState.selectedReasoningEffort.get(sessionKey);
-        const resolvedReasoningEffort = resolveReasoningEffort(
-          resolvedModel,
-          availableModels,
+        const resolvedSelection = resolveCodexPreferenceSelection({
+          models: availableModels,
+          storedModel: storedSelectedModel,
           storedReasoningEffort,
-        );
+          persistedModel: persistedPreferencesRef.current.model,
+          persistedReasoningEffort: persistedPreferencesRef.current.reasoningEffort,
+        });
+        const resolvedModel = resolvedSelection.model;
+        const resolvedReasoningEffort = resolvedSelection.reasoningEffort;
 
         const existingSession = useCodexStore.getState().sessions.get(sessionKey);
         if (existingSession?.sessionId) {
@@ -569,10 +572,15 @@ export function CodexChatTab({
         if (nextReasoningEffort !== selectedReasoningEffort) {
           setSelectedReasoningEffort(sessionKey, selectedReasoningEffort);
         }
+        void persistCodexPreferences(previousModel, selectedReasoningEffort);
+        return;
       }
+
+      void persistCodexPreferences(model, nextReasoningEffort);
     },
     [
       models,
+      persistCodexPreferences,
       selectedModel,
       selectedMode,
       selectedReasoningEffort,
@@ -617,9 +625,14 @@ export function CodexChatTab({
       const updated = await syncSessionConfig(selectedModel, effort, selectedMode);
       if (!updated && sessionMessages.length === 0 && !session?.isLoading) {
         setSelectedReasoningEffort(sessionKey, previousReasoningEffort);
+        void persistCodexPreferences(selectedModel, previousReasoningEffort);
+        return;
       }
+
+      void persistCodexPreferences(selectedModel, effort);
     },
     [
+      persistCodexPreferences,
       selectedModel,
       selectedMode,
       selectedReasoningEffort,
