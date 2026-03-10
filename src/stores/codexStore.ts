@@ -10,6 +10,7 @@ import {
   type CodexSlashCommand,
 } from "@/lib/codex-client";
 import { createSessionKey } from "@/lib/utils";
+import type { FileMention } from "@/types";
 
 export const createCodexSessionKey = createSessionKey;
 
@@ -51,6 +52,7 @@ interface CodexState {
   slashCommands: Map<string, CodexSlashCommand[]>;
   attachments: Map<string, CodexAttachment[]>;
   draftText: Map<string, string>;
+  draftMentions: Map<string, FileMention[]>;
   messageQueue: Map<string, CodexQueuedMessage[]>;
   selectedModel: Map<string, string>;
   selectedMode: Map<string, CodexConversationMode>;
@@ -68,6 +70,7 @@ interface CodexState {
   removeAttachment: (sessionKey: string, attachmentId: string) => void;
   clearAttachments: (sessionKey: string) => void;
   setDraftText: (sessionKey: string, text: string) => void;
+  setDraftMentions: (sessionKey: string, mentions: FileMention[]) => void;
   addToQueue: (sessionKey: string, message: CodexQueuedMessage) => void;
   removeFromQueue: (sessionKey: string) => CodexQueuedMessage | undefined;
   removeQueueItem: (sessionKey: string, messageId: string) => void;
@@ -92,6 +95,7 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
   slashCommands: new Map(),
   attachments: new Map(),
   draftText: new Map(),
+  draftMentions: new Map(),
   messageQueue: new Map(),
   selectedModel: new Map(),
   selectedMode: new Map(),
@@ -214,6 +218,17 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
       return { draftText: next };
     }),
 
+  setDraftMentions: (sessionKey, mentions) =>
+    set((state) => {
+      const next = new Map(state.draftMentions);
+      if (mentions.length > 0) {
+        next.set(sessionKey, mentions);
+      } else {
+        next.delete(sessionKey);
+      }
+      return { draftMentions: next };
+    }),
+
   addToQueue: (sessionKey, message) =>
     set((state) => {
       const current = state.messageQueue.get(sessionKey) ?? [];
@@ -330,6 +345,7 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
       const nextSessions = new Map(state.sessions);
       const nextAttachments = new Map(state.attachments);
       const nextDraftText = new Map(state.draftText);
+      const nextDraftMentions = new Map(state.draftMentions);
       const nextMessageQueue = new Map(state.messageQueue);
       const nextSelectedModel = new Map(state.selectedModel);
       const nextSelectedMode = new Map(state.selectedMode);
@@ -351,6 +367,12 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
       for (const key of nextDraftText.keys()) {
         if (key.startsWith(prefix)) {
           nextDraftText.delete(key);
+        }
+      }
+
+      for (const key of nextDraftMentions.keys()) {
+        if (key.startsWith(prefix)) {
+          nextDraftMentions.delete(key);
         }
       }
 
@@ -386,6 +408,7 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
         sessions: nextSessions,
         attachments: nextAttachments,
         draftText: nextDraftText,
+        draftMentions: nextDraftMentions,
         messageQueue: nextMessageQueue,
         selectedModel: nextSelectedModel,
         selectedMode: nextSelectedMode,

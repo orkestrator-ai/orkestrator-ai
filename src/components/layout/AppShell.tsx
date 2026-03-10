@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/resizable";
 import { Sidebar } from "./Sidebar";
 import { ActionBar } from "./ActionBar";
+import { OpenFileDialog } from "./OpenFileDialog";
 import { FilesPanel } from "@/components/files-panel";
 import { useConfigStore, useFilesPanelStore } from "@/stores";
 import {
@@ -54,6 +55,7 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="h-screen w-screen overflow-hidden">
+      <OpenFileDialog />
       {/* Custom title bar - replaces macOS title bar (Overlay mode) */}
       <div
         className="flex h-7 w-full items-center justify-center bg-black"

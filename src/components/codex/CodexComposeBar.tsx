@@ -18,10 +18,13 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useCodexStore } from "@/stores";
+import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
+import { MentionableInput, type MentionableInputRef } from "@/components/chat/MentionableInput";
 import { OpenCodeSlashCommandMenu } from "@/components/opencode/OpenCodeSlashCommandMenu";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
+import { useFileMentions, useFileSearch } from "@/hooks";
 import { toast } from "sonner";
 import type { OpenCodeSlashCommand } from "@/lib/opencode-client";
 import type {
@@ -32,12 +35,14 @@ import type {
   CodexSlashCommand,
 } from "@/lib/codex-client";
 import type { CodexAttachment, CodexQueuedMessage } from "@/stores/codexStore";
+import type { FileCandidate, FileMention } from "@/types";
 
 const MIN_HEIGHT_PX = 28;
 const MAX_HEIGHT_PX = 160;
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 const MAX_RGBA_SIZE = 32 * 1024 * 1024;
 const EMPTY_ATTACHMENTS: CodexAttachment[] = [];
+const EMPTY_MENTIONS: FileMention[] = [];
 const EMPTY_QUEUE: CodexQueuedMessage[] = [];
 
 const REASONING_LABELS: Record<CodexReasoningEffort, string> = {
@@ -106,10 +111,14 @@ export function CodexComposeBar({
   onReasoningEffortChange,
 }: CodexComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<MentionableInputRef>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const prevFileMentionMenuOpen = useRef(false);
   const [queueDialogOpen, setQueueDialogOpen] = useState(false);
   const text = useCodexStore((state) => state.draftText.get(sessionKey) ?? "");
+  const mentions = useCodexStore(
+    (state) => state.draftMentions.get(sessionKey) ?? EMPTY_MENTIONS,
+  );
   const attachments = useCodexStore(
     (state) => state.attachments.get(sessionKey) ?? EMPTY_ATTACHMENTS,
   );
@@ -120,6 +129,7 @@ export function CodexComposeBar({
     ),
   );
   const setDraftText = useCodexStore((state) => state.setDraftText);
+  const setDraftMentions = useCodexStore((state) => state.setDraftMentions);
   const addAttachment = useCodexStore((state) => state.addAttachment);
   const removeAttachment = useCodexStore((state) => state.removeAttachment);
   const clearAttachments = useCodexStore((state) => state.clearAttachments);
@@ -133,25 +143,41 @@ export function CodexComposeBar({
   const worktreePath = useEnvironmentStore(
     (state) => state.getEnvironmentById(environmentId)?.worktreePath,
   );
+  const { searchFiles, error: fileSearchError, refresh: refreshFileTree } = useFileSearch(
+    containerId,
+    worktreePath,
+  );
+  const {
+    isMenuOpen: fileMentionMenuOpen,
+    selectedIndex: fileMentionSelectedIndex,
+    filteredFiles,
+    handleCursorChange: detectFileMention,
+    handleKeyDown: handleFileMentionKeyDown,
+    closeMenu: closeFileMentionMenu,
+    serializeForLLM,
+    createMention,
+  } = useFileMentions({ searchFiles });
 
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
-
-  const resizeTextarea = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "0px";
-    const nextHeight = Math.min(
-      Math.max(textarea.scrollHeight, MIN_HEIGHT_PX),
-      MAX_HEIGHT_PX,
-    );
-    textarea.style.height = `${nextHeight}px`;
+    inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    resizeTextarea();
-  }, [resizeTextarea, text]);
+    if (fileSearchError) {
+      toast.error("Failed to load files for @mentions", {
+        description: fileSearchError,
+        duration: 4000,
+      });
+    }
+  }, [fileSearchError]);
+
+  useEffect(() => {
+    const wasOpen = prevFileMentionMenuOpen.current;
+    prevFileMentionMenuOpen.current = fileMentionMenuOpen;
+    if (!wasOpen && fileMentionMenuOpen) {
+      refreshFileTree();
+    }
+  }, [fileMentionMenuOpen, refreshFileTree]);
 
   useEffect(() => {
     if (text.startsWith("/") && slashCommands.length > 0) {
@@ -178,17 +204,19 @@ export function CodexComposeBar({
     }
 
     if (isLoading) {
-      onQueue?.(trimmed, attachments);
+      onQueue?.(serializeForLLM(trimmed, mentions), attachments);
       setDraftText(sessionKey, "");
+      setDraftMentions(sessionKey, []);
       clearAttachments(sessionKey);
       return;
     }
 
     setIsSending(true);
     setDraftText(sessionKey, "");
+    setDraftMentions(sessionKey, []);
     clearAttachments(sessionKey);
     try {
-      await onSend(trimmed, attachments);
+      await onSend(serializeForLLM(trimmed, mentions), attachments);
     } finally {
       setIsSending(false);
     }
@@ -197,11 +225,14 @@ export function CodexComposeBar({
     clearAttachments,
     disabled,
     isLoading,
+    mentions,
     onQueue,
     onSend,
     sessionKey,
+    setDraftMentions,
     setDraftText,
     text,
+    serializeForLLM,
   ]);
 
   const selectedModelObj = useMemo(
@@ -252,9 +283,33 @@ export function CodexComposeBar({
     (command: Pick<OpenCodeSlashCommand, "name">) => {
       setDraftText(sessionKey, `${command.name} `);
       setSlashMenuOpen(false);
-      textareaRef.current?.focus();
+      inputRef.current?.focus();
     },
     [sessionKey, setDraftText],
+  );
+
+  const handleTextAndMentionsChange = useCallback(
+    (newText: string, newMentions: FileMention[]) => {
+      setDraftText(sessionKey, newText);
+      setDraftMentions(sessionKey, newMentions);
+    },
+    [sessionKey, setDraftMentions, setDraftText],
+  );
+
+  const handleCursorPositionChange = useCallback(
+    (position: number) => {
+      detectFileMention(position, text);
+    },
+    [detectFileMention, text],
+  );
+
+  const handleFileMentionSelect = useCallback(
+    (file: FileCandidate) => {
+      const mention = createMention(file);
+      inputRef.current?.insertMention(mention);
+      closeFileMentionMenu();
+    },
+    [closeFileMentionMenu, createMention],
   );
 
   useEffect(() => {
@@ -275,7 +330,8 @@ export function CodexComposeBar({
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
-      if (document.activeElement !== textareaRef.current) return;
+      const activeEl = document.activeElement;
+      if (!activeEl || !activeEl.closest("[data-mentionable-input]")) return;
 
       try {
         const image = await readImage();
@@ -362,15 +418,16 @@ export function CodexComposeBar({
   const handleQueuedMessageClick = useCallback(
     (message: CodexQueuedMessage) => {
       setDraftText(sessionKey, message.text);
+      setDraftMentions(sessionKey, []);
       clearAttachments(sessionKey);
       for (const attachment of message.attachments) {
         addAttachment(sessionKey, attachment);
       }
       removeQueueItem(sessionKey, message.id);
       setQueueDialogOpen(false);
-      textareaRef.current?.focus();
+      inputRef.current?.focus();
     },
-    [addAttachment, clearAttachments, removeQueueItem, sessionKey, setDraftText],
+    [addAttachment, clearAttachments, removeQueueItem, sessionKey, setDraftMentions, setDraftText],
   );
 
   const handleMoveQueuedMessage = useCallback(
@@ -418,7 +475,7 @@ export function CodexComposeBar({
         </div>
       ) : null}
 
-      <div className="relative">
+      <div className="relative" data-mentionable-input>
         {slashMenuOpen && filteredSlashCommands.length > 0 ? (
           <OpenCodeSlashCommandMenu
             commands={filteredSlashCommands}
@@ -427,11 +484,33 @@ export function CodexComposeBar({
             onClose={() => setSlashMenuOpen(false)}
           />
         ) : null}
-        <textarea
-          ref={textareaRef}
+
+        {fileMentionMenuOpen ? (
+          <FileMentionMenu
+            files={filteredFiles}
+            selectedIndex={fileMentionSelectedIndex}
+            onSelect={handleFileMentionSelect}
+            onClose={closeFileMentionMenu}
+          />
+        ) : null}
+
+        <MentionableInput
+          ref={inputRef}
           value={text}
-          onChange={(event) => setDraftText(sessionKey, event.target.value)}
+          mentions={mentions}
+          onChange={handleTextAndMentionsChange}
+          onCursorChange={handleCursorPositionChange}
           onKeyDown={(event) => {
+            if (fileMentionMenuOpen && filteredFiles.length > 0) {
+              const handled = handleFileMentionKeyDown(event, (file) => {
+                const mention = createMention(file);
+                inputRef.current?.insertMention(mention);
+              });
+              if (handled) {
+                return;
+              }
+            }
+
             if (slashMenuOpen && filteredSlashCommands.length > 0) {
               if (event.key === "ArrowDown") {
                 event.preventDefault();
@@ -475,16 +554,10 @@ export function CodexComposeBar({
             }
           }}
           placeholder="Ask Codex anything..."
-          rows={1}
           disabled={disabled}
-          className={cn(
-            "w-full resize-none overflow-y-hidden border-none bg-transparent px-1 py-1 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground",
-            disabled && "opacity-60",
-          )}
-          style={{
-            minHeight: MIN_HEIGHT_PX,
-            maxHeight: MAX_HEIGHT_PX,
-          }}
+          minHeight={MIN_HEIGHT_PX}
+          maxHeight={MAX_HEIGHT_PX}
+          className={cn(disabled && "opacity-60")}
         />
       </div>
 
