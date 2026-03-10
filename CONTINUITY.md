@@ -1,38 +1,43 @@
 Goal (incl. success criteria):
-- Complete end-to-end PR creation workflow for the current workspace changes.
-- Success: all changes staged, committed with conventional commit message, pushed to remote branch, and PR opened against `main` with a usable URL.
+- Complete the requested commit and code review workflow for the current workspace state.
+- Success: create one conventional commit for the current changes, then review `origin/main...HEAD` for bugs, risks, readability, performance, and test coverage.
 
 Constraints/Assumptions:
-- Follow `AGENTS.md` and continuity ledger rules.
-- Execute user-requested git/gh commands in the exact step order.
-- Do not use `--no-verify`; do not attribute to Claude.
-- Preserve unrelated existing workspace changes; include all current changes per user request.
+- Follow `AGENTS.md` and continuity rules.
+- Do not reference Claude or add Claude as a contributor in the commit.
+- Preserve user changes; do not revert unrelated work.
+- Review should compare the current branch against remote `main`.
 
 Key decisions:
-- Use `git add -A` to stage all tracked/untracked changes.
-- Generate conventional commit message from actual staged diff.
-- Use `gh pr create --base main --fill` first, then fallback to explicit title/body only if needed.
+- Commit all current tracked changes in one commit if they belong to the active feature.
+- Use a conventional commit message derived from the actual diff.
+- Review findings should prioritize correctness and regression risk.
 
 State:
-- Done: Loaded existing ledger and refreshed to current task.
-- Now: Running Step 1 (status, stage all, verify staged state).
-- Next: Step 2 commit, Step 3 push, Step 4 PR creation and report URL.
+- Done: Read ledger, checked git status, inspected working diff.
+- Now: Updating ledger, then creating the requested commit.
+- Next: Diff against `origin/main` and perform code review.
 
 Done:
-- Read existing `CONTINUITY.md`.
-- Rebuilt ledger for current PR workflow task.
+- Loaded `CONTINUITY.md`.
+- Inspected `git status --porcelain`.
+- Inspected `git diff HEAD`.
 
 Now:
-- Execute git staging commands and verify status.
+- Create a single commit for the current changes.
 
 Next:
-- Review cached diff, commit with conventional format.
-- Push current branch and handle rebase if needed.
-- Create PR against `main` and return URL.
+- Run `git diff origin/main...HEAD` after the commit.
+- Review the branch diff and report findings with file/line references.
 
 Open questions (UNCONFIRMED if needed):
 - None.
 
 Working set (files/ids/commands):
-- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-s5udd4/CONTINUITY.md`
-- Commands planned: `git status --porcelain`, `git add -A`, `git status`, `git diff --cached`, `git commit`, `git branch --show-current`, `git push -u origin <branch>`, `git diff origin/main...HEAD`, `git log main..HEAD --oneline`, `gh pr create --base main --fill`.
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-1ee5dy/CONTINUITY.md`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-1ee5dy/src/components/codex/CodexChatTab.tsx`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-1ee5dy/src/stores/configStore.ts`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-1ee5dy/src/types/index.ts`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-1ee5dy/src/components/settings/GlobalSettings.tsx`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-1ee5dy/src-tauri/src/models/mod.rs`
+- Commands run: `git status --porcelain`, `git diff HEAD`

@@ -221,6 +221,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
         preferredEditor?: PreferredEditor;
         defaultAgent: DefaultAgent;
         opencodeModel: string;
+        codexModel: string;
+        codexReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
         opencodeMode: OpenCodeMode;
         claudeMode: ClaudeMode;
         terminalAppearance: TerminalAppearance;
@@ -235,6 +237,8 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
         preferredEditor,
         defaultAgent,
         opencodeModel,
+        codexModel: global.codexModel || "gpt-5.3-codex",
+        codexReasoningEffort: global.codexReasoningEffort || "medium",
         opencodeMode,
         claudeMode,
         terminalAppearance: {

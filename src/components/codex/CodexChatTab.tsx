@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useScrollLock } from "@/hooks";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
-import { useCodexStore, createCodexSessionKey } from "@/stores";
+import { useCodexStore, createCodexSessionKey, useConfigStore } from "@/stores";
 import {
   type CodexConversationMode,
   type CodexPromptAttachment,
@@ -31,6 +31,7 @@ import {
   getLocalCodexServerStatus,
   startCodexServer,
   startLocalCodexServer,
+  updateGlobalConfig,
 } from "@/lib/tauri";
 import { OpenCodeMessage } from "@/components/opencode/OpenCodeMessage";
 import { CodexComposeBar } from "./CodexComposeBar";
@@ -100,6 +101,8 @@ export function CodexChatTab({
     () => createCodexSessionKey(environmentId, tabId),
     [environmentId, tabId],
   );
+  const config = useConfigStore((state) => state.config);
+  const setConfig = useConfigStore((state) => state.setConfig);
 
   const {
     models,
@@ -148,6 +151,36 @@ export function CodexChatTab({
   const selectedReasoningEffort = useMemo(
     () => selectedReasoningEffortMap.get(sessionKey) ?? DEFAULT_REASONING_EFFORT,
     [selectedReasoningEffortMap, sessionKey],
+  );
+  const persistCodexPreferences = useCallback(
+    async (model: string, effort: CodexReasoningEffort) => {
+      const currentConfig = useConfigStore.getState().config;
+      const currentModel = currentConfig.global.codexModel || DEFAULT_CODEX_MODEL;
+      const currentEffort =
+        (currentConfig.global.codexReasoningEffort as CodexReasoningEffort | undefined)
+        || DEFAULT_REASONING_EFFORT;
+
+      if (currentModel === model && currentEffort === effort) {
+        return;
+      }
+
+      const nextGlobal = {
+        ...currentConfig.global,
+        codexModel: model,
+        codexReasoningEffort: effort,
+      };
+
+      // Optimistically update local config so the next new tab picks these defaults immediately.
+      setConfig({ ...currentConfig, global: nextGlobal });
+
+      try {
+        const updatedConfig = await updateGlobalConfig(nextGlobal);
+        setConfig(updatedConfig);
+      } catch (error) {
+        console.error("[CodexChatTab] Failed to persist Codex defaults:", error);
+      }
+    },
+    [setConfig],
   );
   const sessionMessages = useMemo(
     () => session?.messages ?? [],
@@ -415,18 +448,23 @@ export function CodexChatTab({
         setSlashCommands(environmentId, availableSlashCommands);
 
         const availableModelIds = new Set(availableModels.map((model) => model.id));
+        const persistedModel = config.global.codexModel;
+        const persistedReasoningEffort =
+          config.global.codexReasoningEffort as CodexReasoningEffort | undefined;
         const storedSelectedModel = codexState.selectedModel.get(sessionKey);
         const resolvedModel =
           storedSelectedModel && availableModelIds.has(storedSelectedModel)
             ? storedSelectedModel
-            : availableModels[0]?.id ?? DEFAULT_CODEX_MODEL;
+            : persistedModel && availableModelIds.has(persistedModel)
+              ? persistedModel
+              : availableModels[0]?.id ?? DEFAULT_CODEX_MODEL;
         const storedMode = codexState.selectedMode.get(sessionKey);
         const resolvedMode = storedMode ?? DEFAULT_CODEX_MODE;
         const storedReasoningEffort = codexState.selectedReasoningEffort.get(sessionKey);
         const resolvedReasoningEffort = resolveReasoningEffort(
           resolvedModel,
           availableModels,
-          storedReasoningEffort,
+          storedReasoningEffort ?? persistedReasoningEffort,
         );
 
         const existingSession = useCodexStore.getState().sessions.get(sessionKey);
@@ -494,6 +532,8 @@ export function CodexChatTab({
   }, [
     containerId,
     environmentId,
+    config.global.codexModel,
+    config.global.codexReasoningEffort,
     isActive,
     isLocal,
     initAttempt,
@@ -556,10 +596,15 @@ export function CodexChatTab({
         if (nextReasoningEffort !== selectedReasoningEffort) {
           setSelectedReasoningEffort(sessionKey, selectedReasoningEffort);
         }
+        void persistCodexPreferences(previousModel, selectedReasoningEffort);
+        return;
       }
+
+      void persistCodexPreferences(model, nextReasoningEffort);
     },
     [
       models,
+      persistCodexPreferences,
       selectedModel,
       selectedMode,
       selectedReasoningEffort,
@@ -604,9 +649,14 @@ export function CodexChatTab({
       const updated = await syncSessionConfig(selectedModel, effort, selectedMode);
       if (!updated && sessionMessages.length === 0 && !session?.isLoading) {
         setSelectedReasoningEffort(sessionKey, previousReasoningEffort);
+        void persistCodexPreferences(selectedModel, previousReasoningEffort);
+        return;
       }
+
+      void persistCodexPreferences(selectedModel, effort);
     },
     [
+      persistCodexPreferences,
       selectedModel,
       selectedMode,
       selectedReasoningEffort,
