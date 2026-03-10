@@ -35,6 +35,7 @@ import {
 import { OpenCodeMessage } from "@/components/opencode/OpenCodeMessage";
 import { CodexComposeBar } from "./CodexComposeBar";
 import { CodexResumeSessionDialog } from "./CodexResumeSessionDialog";
+import { createCodexSessionRefreshController } from "./session-refresh";
 import type { CodexNativeData } from "@/types/paneLayout";
 import type { CodexAttachment } from "@/stores/codexStore";
 
@@ -95,6 +96,8 @@ export function CodexChatTab({
   const lastInitTimeRef = useRef(0);
   const isInitializedRef = useRef(false);
   const isProcessingQueueRef = useRef(false);
+  const isWatchdogRefreshInFlightRef = useRef(false);
+  const refreshControllerRef = useRef(createCodexSessionRefreshController());
 
   const sessionKey = useMemo(
     () => createCodexSessionKey(environmentId, tabId),
@@ -189,11 +192,21 @@ export function CodexChatTab({
   const refreshMessages = useCallback(
     async (activeClient = client, sessionId = session?.sessionId) => {
       if (!activeClient || !sessionId) return;
+      const requestId = refreshControllerRef.current.beginRequest();
       const messages = await getSessionMessages(activeClient, sessionId);
+      if (!refreshControllerRef.current.shouldApplyRequest(requestId)) {
+        return;
+      }
+      refreshControllerRef.current.markActivity();
       setMessages(sessionKey, messages);
     },
     [client, session?.sessionId, sessionKey, setMessages],
   );
+
+  useEffect(() => {
+    refreshControllerRef.current = createCodexSessionRefreshController();
+    refreshControllerRef.current.markActivity();
+  }, [sessionKey, session?.sessionId]);
 
   const handleSend = useCallback(
     async (text: string, attachments: CodexAttachment[]) => {
@@ -618,7 +631,7 @@ export function CodexChatTab({
     ],
   );
 
-  const reconcileSessionState = useCallback(async () => {
+  const reconcileSessionState = useCallback(async (options?: { forceRefreshMessages?: boolean }) => {
     if (
       connectionState !== "connected"
       || !client
@@ -631,6 +644,7 @@ export function CodexChatTab({
     if (!status) {
       return;
     }
+    refreshControllerRef.current.markActivity();
 
     if (typeof status.title === "string" && status.title.trim().length > 0) {
       setSessionTitle(sessionKey, status.title);
@@ -653,6 +667,9 @@ export function CodexChatTab({
     }
 
     setSessionLoading(sessionKey, true);
+    if (options?.forceRefreshMessages) {
+      await refreshMessages(client, session.sessionId);
+    }
   }, [
     client,
     connectionState,
@@ -704,6 +721,8 @@ export function CodexChatTab({
             if (event.sessionId && event.sessionId !== session.sessionId) {
               continue;
             }
+
+            refreshControllerRef.current.markActivity();
 
             if (event.type === "message.updated") {
               await refreshMessages(client, session.sessionId);
@@ -793,43 +812,37 @@ export function CodexChatTab({
     }
 
     let cancelled = false;
-    const sessionId = session.sessionId;
-
-    const sleep = (ms: number) =>
-      new Promise<void>((resolve) => {
-        window.setTimeout(resolve, ms);
-      });
 
     const pollSessionState = async () => {
-      while (!cancelled) {
-        await refreshMessages(client, sessionId);
-        await reconcileSessionState();
+      if (
+        cancelled
+        || isWatchdogRefreshInFlightRef.current
+        || !refreshControllerRef.current.shouldRefresh()
+      ) {
+        return;
+      }
 
-        if (cancelled) {
-          return;
-        }
-
-        const isStillLoading =
-          useCodexStore.getState().sessions.get(sessionKey)?.isLoading === true;
-        if (!isStillLoading) {
-          return;
-        }
-
-        await sleep(1000);
+      isWatchdogRefreshInFlightRef.current = true;
+      try {
+        await reconcileSessionState({ forceRefreshMessages: true });
+      } finally {
+        isWatchdogRefreshInFlightRef.current = false;
       }
     };
 
-    void pollSessionState();
+    const intervalId = window.setInterval(() => {
+      void pollSessionState();
+    }, 1000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [
     client,
     connectionState,
     isActive,
     reconcileSessionState,
-    refreshMessages,
     session?.isLoading,
     session?.sessionId,
     sessionKey,
