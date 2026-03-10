@@ -151,6 +151,13 @@ export type OpenCodeMode = "terminal" | "native";
 
 /** Claude mode - terminal CLI or native chat interface */
 export type ClaudeMode = "terminal" | "native";
+/** Codex reasoning effort preference */
+export type CodexReasoningEffortPreference =
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
 
 /** Terminal appearance settings */
 export interface TerminalAppearance {
@@ -175,6 +182,10 @@ export interface GlobalConfig {
   defaultAgent: DefaultAgent;
   /** Default model for OpenCode */
   opencodeModel: string;
+  /** Default model for Codex Native tabs */
+  codexModel: string;
+  /** Default reasoning effort for Codex Native tabs */
+  codexReasoningEffort: CodexReasoningEffortPreference;
   /** OpenCode mode - terminal CLI or native chat interface */
   opencodeMode: OpenCodeMode;
   /** Claude mode - terminal CLI or native chat interface */
