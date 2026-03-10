@@ -30,6 +30,9 @@ pub enum WorktreeError {
     #[error("Failed to copy env files: {0}")]
     EnvCopyFailed(String),
 
+    #[error("Failed to configure local git behavior: {0}")]
+    GitConfigurationFailed(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -41,6 +44,9 @@ pub struct WorktreeCreateResult {
     pub path: String,
     pub branch: String,
 }
+
+const LOCAL_GIT_EXCLUDE_PATTERNS: &[&str] = &[".orkestrator", "CONTINUITY.md"];
+const LOCAL_SKIP_WORKTREE_PATHS: &[&str] = &["CONTINUITY.md"];
 
 /// Base directory for local worktrees
 const WORKTREE_BASE_DIR: &str = "orkestrator-ai/workspaces";
@@ -276,6 +282,53 @@ pub async fn add_to_git_exclude(worktree_path: &str, pattern: &str) -> Result<()
     Ok(())
 }
 
+async fn git_path_is_tracked(worktree_path: &str, path: &str) -> Result<bool, WorktreeError> {
+    let output = Command::new("git")
+        .args(["ls-files", "--error-unmatch", "--", path])
+        .current_dir(worktree_path)
+        .output()
+        .await
+        .map_err(|e| WorktreeError::GitConfigurationFailed(e.to_string()))?;
+
+    Ok(output.status.success())
+}
+
+async fn mark_path_skip_worktree(worktree_path: &str, path: &str) -> Result<(), WorktreeError> {
+    if !git_path_is_tracked(worktree_path, path).await? {
+        debug!(worktree_path = %worktree_path, path = %path, "Skipping skip-worktree for untracked path");
+        return Ok(());
+    }
+
+    let output = Command::new("git")
+        .args(["update-index", "--skip-worktree", "--", path])
+        .current_dir(worktree_path)
+        .output()
+        .await
+        .map_err(|e| WorktreeError::GitConfigurationFailed(e.to_string()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(WorktreeError::GitConfigurationFailed(
+            stderr.trim().to_string(),
+        ));
+    }
+
+    debug!(worktree_path = %worktree_path, path = %path, "Marked path skip-worktree");
+    Ok(())
+}
+
+pub async fn configure_local_git_artifacts(worktree_path: &str) -> Result<(), WorktreeError> {
+    for pattern in LOCAL_GIT_EXCLUDE_PATTERNS {
+        add_to_git_exclude(worktree_path, pattern).await?;
+    }
+
+    for path in LOCAL_SKIP_WORKTREE_PATHS {
+        mark_path_skip_worktree(worktree_path, path).await?;
+    }
+
+    Ok(())
+}
+
 /// Create a git worktree for a local environment
 ///
 /// # Arguments
@@ -319,7 +372,10 @@ pub async fn create_worktree(
 
     // Resolve the branch to base the worktree on.
     // Repository settings can provide an explicit branch override.
-    let default_branch = match base_branch_override.map(str::trim).filter(|b| !b.is_empty()) {
+    let default_branch = match base_branch_override
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
         Some(branch) => {
             debug!(branch = %branch, "Using configured default branch override");
             branch.to_string()
@@ -436,9 +492,9 @@ pub async fn create_worktree(
         "Successfully created git worktree"
     );
 
-    // Add .orkestrator to git exclude file so it's ignored locally
-    if let Err(e) = add_to_git_exclude(&worktree_path_str, ".orkestrator").await {
-        warn!(error = %e, "Failed to add .orkestrator to git exclude (non-fatal)");
+    // Configure local-only Git behavior for workspace artifacts.
+    if let Err(e) = configure_local_git_artifacts(&worktree_path_str).await {
+        warn!(error = %e, "Failed to configure local git artifacts (non-fatal)");
     }
 
     Ok(WorktreeCreateResult {
@@ -656,6 +712,21 @@ pub async fn get_setup_local_commands(worktree_path: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    async fn run_git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn test_generate_unique_suffix() {
@@ -926,5 +997,63 @@ mod tests {
 
         let result = add_to_git_exclude(temp_dir.path().to_str().unwrap(), ".orkestrator").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_configure_local_git_artifacts_marks_continuity_skip_worktree() {
+        let temp_dir = TempDir::new().unwrap();
+
+        run_git(temp_dir.path(), &["init"]).await;
+        run_git(
+            temp_dir.path(),
+            &["config", "user.email", "test@example.com"],
+        )
+        .await;
+        run_git(temp_dir.path(), &["config", "user.name", "Test User"]).await;
+
+        tokio::fs::write(temp_dir.path().join("CONTINUITY.md"), "initial\n")
+            .await
+            .unwrap();
+        run_git(temp_dir.path(), &["add", "CONTINUITY.md"]).await;
+        run_git(temp_dir.path(), &["commit", "-m", "init"]).await;
+
+        let result = configure_local_git_artifacts(temp_dir.path().to_str().unwrap()).await;
+        assert!(result.is_ok());
+
+        let exclude_content = tokio::fs::read_to_string(temp_dir.path().join(".git/info/exclude"))
+            .await
+            .unwrap();
+        assert!(exclude_content.contains(".orkestrator"));
+        assert!(exclude_content.contains("CONTINUITY.md"));
+
+        tokio::fs::write(temp_dir.path().join("CONTINUITY.md"), "changed\n")
+            .await
+            .unwrap();
+
+        let flags = Command::new("git")
+            .args(["ls-files", "-v", "CONTINUITY.md"])
+            .current_dir(temp_dir.path())
+            .output()
+            .await
+            .unwrap();
+        assert!(flags.status.success());
+        assert!(
+            String::from_utf8_lossy(&flags.stdout).starts_with("S "),
+            "Expected skip-worktree flag, got: {}",
+            String::from_utf8_lossy(&flags.stdout)
+        );
+
+        let status = Command::new("git")
+            .args(["status", "--short"])
+            .current_dir(temp_dir.path())
+            .output()
+            .await
+            .unwrap();
+        assert!(status.status.success());
+        assert!(
+            String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+            "Expected clean status, got: {}",
+            String::from_utf8_lossy(&status.stdout)
+        );
     }
 }
