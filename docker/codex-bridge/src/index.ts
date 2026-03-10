@@ -123,6 +123,12 @@ interface PersistedSessionMeta {
   transcriptPath?: string;
 }
 
+interface TranscriptCatalog {
+  metas: PersistedSessionMeta[];
+  metaByPath: Map<string, PersistedSessionMeta>;
+  transcriptPathByThreadId: Map<string, string>;
+}
+
 interface SessionStatusResponse {
   status: SessionState["status"];
   title?: string;
@@ -554,12 +560,54 @@ async function getSessionMetaFromTranscriptPath(
   }
 }
 
+async function buildTranscriptCatalog(): Promise<TranscriptCatalog> {
+  const metas: PersistedSessionMeta[] = [];
+  const metaByPath = new Map<string, PersistedSessionMeta>();
+  const transcriptPathByThreadId = new Map<string, string>();
+
+  for (const root of [
+    join(getCodexHomeDir(), "sessions"),
+    join(getCodexHomeDir(), "archived_sessions"),
+  ]) {
+    const files = await walkJsonlFiles(root);
+    for (const transcriptPath of files) {
+      const meta = await getSessionMetaFromTranscriptPath(transcriptPath);
+      if (!meta) {
+        continue;
+      }
+
+      metas.push(meta);
+      metaByPath.set(transcriptPath, meta);
+
+      const fileThreadId = basename(transcriptPath, ".jsonl");
+      if (!transcriptPathByThreadId.has(fileThreadId)) {
+        transcriptPathByThreadId.set(fileThreadId, transcriptPath);
+      }
+      if (!transcriptPathByThreadId.has(meta.id)) {
+        transcriptPathByThreadId.set(meta.id, transcriptPath);
+      }
+    }
+  }
+
+  return {
+    metas,
+    metaByPath,
+    transcriptPathByThreadId,
+  };
+}
+
 async function getPersistedSessionMeta(
   threadId: string,
   fallbackTitle?: string,
   fallbackUpdatedAt?: string,
+  transcriptCatalog?: TranscriptCatalog,
 ): Promise<PersistedSessionMeta | null> {
-  const transcriptPath = await findTranscriptPath(threadId);
+  const transcriptPath = transcriptCatalog
+    ? transcriptCatalog.transcriptPathByThreadId.get(threadId) ??
+      transcriptCatalog.metas.find((meta) => meta.transcriptPath?.includes(threadId))
+        ?.transcriptPath ??
+      null
+    : await findTranscriptPath(threadId);
   if (!transcriptPath) {
     return fallbackUpdatedAt
       ? {
@@ -570,11 +618,18 @@ async function getPersistedSessionMeta(
       : null;
   }
 
-  const meta = await getSessionMetaFromTranscriptPath(
-    transcriptPath,
-    fallbackTitle,
-    fallbackUpdatedAt,
-  );
+  const cachedMeta = transcriptCatalog?.metaByPath.get(transcriptPath);
+  const meta = cachedMeta
+    ? {
+        ...cachedMeta,
+        title: cachedMeta.title ?? fallbackTitle,
+        updatedAt: cachedMeta.updatedAt || fallbackUpdatedAt || new Date().toISOString(),
+      }
+    : await getSessionMetaFromTranscriptPath(
+        transcriptPath,
+        fallbackTitle,
+        fallbackUpdatedAt,
+      );
   if (!meta) {
     return {
       id: threadId,
@@ -599,6 +654,7 @@ async function listPersistedSessionsForCwd(cwd: string): Promise<PersistedSessio
   const indexPath = join(getCodexHomeDir(), "session_index.jsonl");
   const lines = await readTranscriptLines(indexPath);
   const sessions = new Map<string, PersistedSessionMeta>();
+  const transcriptCatalog = await buildTranscriptCatalog();
 
   for (const line of lines) {
     let entry: PersistedSessionIndexEntry;
@@ -615,6 +671,7 @@ async function listPersistedSessionsForCwd(cwd: string): Promise<PersistedSessio
       id,
       typeof entry.thread_name === "string" ? entry.thread_name : undefined,
       typeof entry.updated_at === "string" ? entry.updated_at : undefined,
+      transcriptCatalog,
     );
 
     if (!meta || meta.cwd !== cwd) {
@@ -626,37 +683,30 @@ async function listPersistedSessionsForCwd(cwd: string): Promise<PersistedSessio
 
   // Active sessions can exist on disk before Codex appends them to session_index.jsonl,
   // so scan transcript files directly and merge any missing matches for this cwd.
-  for (const root of [
-    join(getCodexHomeDir(), "sessions"),
-    join(getCodexHomeDir(), "archived_sessions"),
-  ]) {
-    const files = await walkJsonlFiles(root);
-    for (const transcriptPath of files) {
-      const meta = await getSessionMetaFromTranscriptPath(transcriptPath);
-      if (!meta || meta.cwd !== cwd) {
-        continue;
-      }
+  for (const meta of transcriptCatalog.metas) {
+    if (meta.cwd !== cwd) {
+      continue;
+    }
 
-      const indexed = sessions.get(meta.id);
-      if (!indexed) {
-        sessions.set(meta.id, meta);
-        continue;
-      }
+    const indexed = sessions.get(meta.id);
+    if (!indexed) {
+      sessions.set(meta.id, { ...meta });
+      continue;
+    }
 
-      if (!indexed.transcriptPath) {
-        indexed.transcriptPath = meta.transcriptPath;
-      }
-      if (!indexed.cwd && meta.cwd) {
-        indexed.cwd = meta.cwd;
-      }
-      if (!indexed.title && meta.title) {
-        indexed.title = meta.title;
-      }
-      if (
-        new Date(meta.updatedAt).getTime() > new Date(indexed.updatedAt).getTime()
-      ) {
-        indexed.updatedAt = meta.updatedAt;
-      }
+    if (!indexed.transcriptPath) {
+      indexed.transcriptPath = meta.transcriptPath;
+    }
+    if (!indexed.cwd && meta.cwd) {
+      indexed.cwd = meta.cwd;
+    }
+    if (!indexed.title && meta.title) {
+      indexed.title = meta.title;
+    }
+    if (
+      new Date(meta.updatedAt).getTime() > new Date(indexed.updatedAt).getTime()
+    ) {
+      indexed.updatedAt = meta.updatedAt;
     }
   }
 
