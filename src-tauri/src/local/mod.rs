@@ -16,9 +16,9 @@ pub use servers::{
     get_local_claude_status, get_local_codex_status, get_local_opencode_status,
     isolated_opencode_data_home, start_local_claude_bridge, start_local_codex_bridge,
     start_local_opencode_server, stop_all_local_servers, stop_local_claude_bridge,
-    stop_local_codex_bridge, stop_local_opencode_server, LocalServerStartResult,
-    LocalServerStatus,
+    stop_local_codex_bridge, stop_local_opencode_server, LocalServerStartResult, LocalServerStatus,
 };
 pub use worktree::{
-    add_to_git_exclude, copy_env_files, create_worktree, delete_worktree, get_setup_local_commands,
+    add_to_git_exclude, configure_local_git_artifacts, copy_env_files, create_worktree,
+    delete_worktree, get_setup_local_commands,
 };

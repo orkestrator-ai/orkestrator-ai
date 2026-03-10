@@ -193,10 +193,7 @@ pub async fn start_local_opencode_server_cmd(
             .is_running(&environment_id, ProcessType::OpenCode)
             .await
         {
-            if let Err(err) = manager
-                .kill(&environment_id, ProcessType::OpenCode)
-                .await
-            {
+            if let Err(err) = manager.kill(&environment_id, ProcessType::OpenCode).await {
                 warn!(
                     environment_id = %environment_id,
                     port = port,
@@ -805,7 +802,10 @@ pub async fn start_local_codex_server_cmd(
             .is_running(&environment_id, ProcessType::CodexBridge)
             .await
         {
-            if let Err(err) = manager.kill(&environment_id, ProcessType::CodexBridge).await {
+            if let Err(err) = manager
+                .kill(&environment_id, ProcessType::CodexBridge)
+                .await
+            {
                 warn!(
                     environment_id = %environment_id,
                     port = port,

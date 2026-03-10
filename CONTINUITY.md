@@ -1,39 +1,45 @@
 Goal (incl. success criteria):
-- Address the review finding in Codex bridge session discovery without regressing the resume-session fix.
-- Success: resume-session listing avoids repeated full transcript-tree scans while still returning indexed and not-yet-indexed sessions for the current cwd.
+- Merge `origin/main` into the current branch, preserve the current branch work, resolve any conflicts correctly, create the merge commit, and push the branch successfully.
+- Success: no unresolved conflict markers remain, commit `Merge main and resolve conflicts` exists, and `git push` updates the remote branch.
 
 Constraints/Assumptions:
 - Follow `AGENTS.md`: read and refresh this ledger at turn start and when state changes.
-- Do not revert unrelated user changes.
-- Preserve the existing resume-session behavior fix.
-- Prefer targeted code changes and verification in the affected bridge code.
+- Do not revert unrelated user changes unless required by conflict resolution.
+- Keep both local branch changes and incoming `origin/main` changes unless one side is clearly superseded.
+- Do not use `--no-verify` or bypass hooks.
 
 Key decisions:
-- Rework the bridge to build transcript metadata once and reuse it for both index-backed and direct transcript discovery.
-- Keep the fix localized to `docker/codex-bridge/src/index.ts` unless testing support is straightforward.
+- Resolve the only merge conflict in `CONTINUITY.md` by replacing stale branch-specific ledger content with the actual current merge state.
+- Preserve the non-conflicting code and test changes introduced by `origin/main`.
 
 State:
-- Done: Updated the ledger for the follow-up task, refactored session discovery to reuse a per-request transcript catalog, and checked the resulting diff.
-- Now: Summarizing the fix and verification status for the user.
-- Next: If requested, stage/commit this follow-up fix or add targeted tests once a suitable harness is available.
+- Done: Read the prior ledger, fetched `origin`, checked status, retried the merge after clearing the local ledger edit, merged `origin/main`, and identified `CONTINUITY.md` as the only conflicted file.
+- Now: Finalizing the ledger conflict resolution, staging all files, then creating the merge commit.
+- Next: Push the merge commit and verify the branch is updated remotely.
 
+Done:
 - Read `CONTINUITY.md`.
-- Ran `git status --porcelain`.
-- Re-read `docker/codex-bridge/src/index.ts` around transcript discovery and session listing.
-- Patched `docker/codex-bridge/src/index.ts` to build one transcript catalog and reuse it for indexed and direct-discovery session lookups.
-- Ran `bunx tsc --noEmit`; it failed due missing workspace dependencies and many unrelated pre-existing module resolution/type errors, so it was not a valid targeted verification signal for this change.
-- Reviewed the resulting `git diff` for the bridge change.
+- Ran `git fetch origin`.
+- Ran `git status --short --branch`.
+- Ran `git merge origin/main`.
+- Inspected `git status --short --branch`, `git diff --name-only --diff-filter=U`, and `CONTINUITY.md`.
+- Rewrote `CONTINUITY.md` to resolve the merge conflict with the real current state.
 
 Now:
-- Report the session discovery refactor and verification caveat.
+- Run `git add -A`.
+- Run `git commit -m "Merge main and resolve conflicts"`.
 
 Next:
-- Wait for user direction on whether to commit this follow-up change.
+- Run `git push`.
+- Verify the branch is up to date on `origin`.
 
 Open questions (UNCONFIRMED if needed):
-- UNCONFIRMED: Whether the user wants this follow-up fix committed now.
+- None.
 
 Working set (files/ids/commands):
 - `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/CONTINUITY.md`
-- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/docker/codex-bridge/src/index.ts`
-- Commands used/planned: `git status --porcelain`, `sed`, `rg`, `git diff`, `bunx tsc --noEmit`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src-tauri/src/commands/codex.rs`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src/components/codex/CodexChatTab.tsx`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src/components/codex/session-refresh.ts`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src/components/codex/session-refresh.test.ts`
+- Commands used/planned: `git fetch origin`, `git status --short --branch`, `git merge origin/main`, `git diff --name-only --diff-filter=U`, `git add -A`, `git commit -m "Merge main and resolve conflicts"`, `git push`

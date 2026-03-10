@@ -10,8 +10,8 @@ use crate::docker::{
     ContainerConfig, DockerError,
 };
 use crate::local::{
-    add_to_git_exclude, allocate_ports, copy_env_files, create_worktree, delete_worktree,
-    get_setup_local_commands, isolated_opencode_data_home, stop_all_local_servers,
+    allocate_ports, configure_local_git_artifacts, copy_env_files, create_worktree,
+    delete_worktree, get_setup_local_commands, isolated_opencode_data_home, stop_all_local_servers,
 };
 use crate::models::{
     ClaudeMode, DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode,
@@ -1127,9 +1127,9 @@ async fn start_local_environment(
         if std::path::Path::new(worktree_path).exists() {
             debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Worktree already exists");
 
-            // Ensure .orkestrator is in git exclude (idempotent - won't duplicate)
-            if let Err(e) = add_to_git_exclude(worktree_path, ".orkestrator").await {
-                warn!(error = %e, "Failed to add .orkestrator to git exclude (non-fatal)");
+            // Ensure local-only workspace artifacts stay out of Git noise.
+            if let Err(e) = configure_local_git_artifacts(worktree_path).await {
+                warn!(error = %e, "Failed to configure local git artifacts (non-fatal)");
             }
 
             // Get setupLocal commands from orkestrator-ai.json
