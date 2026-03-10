@@ -1,7 +1,7 @@
 // Claude Bridge Server client wrapper
 // Provides typed functions for interacting with the Claude bridge server
 
-import { appendLatestTodoSnapshot } from "./todo-tool";
+import { appendLatestTodoSnapshot, getLatestTimestamp } from "./todo-tool";
 
 /**
  * Session key used as the Map key in the Zustand store.
@@ -99,22 +99,6 @@ export interface ClaudeMessage {
   timestamp: string;
 }
 
-function getLatestMessageTimestamp(messages: ClaudeMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const timestamp = messages[index]?.timestamp;
-    if (typeof timestamp !== "string" || timestamp.length === 0) {
-      continue;
-    }
-
-    const parsed = Date.parse(timestamp);
-    if (!Number.isNaN(parsed)) {
-      return new Date(parsed + 1).toISOString();
-    }
-  }
-
-  return new Date().toISOString();
-}
-
 function withLatestTodoSnapshot(messages: ClaudeMessage[]): ClaudeMessage[] {
   return appendLatestTodoSnapshot(messages, ({ message, part, todos }) => ({
     id: `todo-snapshot-${message.id}`,
@@ -134,7 +118,7 @@ function withLatestTodoSnapshot(messages: ClaudeMessage[]): ClaudeMessage[] {
       isMcpTool: part.isMcpTool,
       mcpServerName: part.mcpServerName,
     }],
-    timestamp: getLatestMessageTimestamp(messages),
+    timestamp: getLatestTimestamp(messages, (m) => m.timestamp),
   }));
 }
 

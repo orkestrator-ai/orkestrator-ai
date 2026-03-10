@@ -40,4 +40,31 @@ describe("claude-client todo snapshots", () => {
       todos: [{ content: "Claude task", status: "cancelled" }],
     });
   });
+
+  test("does not append a snapshot when no TodoWrite parts exist", async () => {
+    globalThis.fetch = mock(async () =>
+      new Response(JSON.stringify({
+        messages: [
+          {
+            id: "msg-1",
+            role: "assistant",
+            content: "Hello",
+            parts: [{
+              type: "tool-invocation",
+              toolName: "Read",
+              toolArgs: { file_path: "/foo" },
+              toolState: "success",
+            }],
+            timestamp: "2026-03-10T11:00:00.000Z",
+          },
+        ],
+      })),
+    ) as unknown as typeof fetch;
+
+    const client: ClaudeClient = { baseUrl: "http://127.0.0.1:4001" };
+    const messages = await getSessionMessages(client, "session-1");
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe("msg-1");
+  });
 });

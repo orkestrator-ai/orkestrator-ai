@@ -3,7 +3,7 @@
 
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { isEditTool } from "./tool-names";
-import { appendLatestTodoSnapshot } from "./todo-tool";
+import { appendLatestTodoSnapshot, getLatestTimestamp } from "./todo-tool";
 
 export { type OpencodeClient };
 
@@ -146,22 +146,6 @@ export interface OpenCodeMessage {
   createdAt: string;
 }
 
-function getLatestMessageCreatedAt(messages: OpenCodeMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const createdAt = messages[index]?.createdAt;
-    if (typeof createdAt !== "string" || createdAt.length === 0) {
-      continue;
-    }
-
-    const parsed = Date.parse(createdAt);
-    if (!Number.isNaN(parsed)) {
-      return new Date(parsed + 1).toISOString();
-    }
-  }
-
-  return new Date().toISOString();
-}
-
 function withLatestTodoSnapshot(messages: OpenCodeMessage[]): OpenCodeMessage[] {
   return appendLatestTodoSnapshot(messages, ({ message, part, todos }) => ({
     id: `todo-snapshot-${message.id}`,
@@ -177,7 +161,7 @@ function withLatestTodoSnapshot(messages: OpenCodeMessage[]): OpenCodeMessage[] 
       toolTitle: part.toolTitle ?? "Latest todo list",
       toolError: part.toolError,
     }],
-    createdAt: getLatestMessageCreatedAt(messages),
+    createdAt: getLatestTimestamp(messages, (m) => m.createdAt),
   }));
 }
 

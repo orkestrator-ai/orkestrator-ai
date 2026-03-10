@@ -82,8 +82,10 @@ export interface TodoTimelineMessage<TPart extends TodoTimelinePart = TodoTimeli
   parts: TPart[];
 }
 
-function isTodoTool(toolName?: string): boolean {
-  return typeof toolName === "string" && toolName.toLowerCase() === "todowrite";
+const TODO_TOOL_NAMES = new Set(["TodoWrite", "todowrite"]);
+
+export function isTodoTool(toolName?: string): boolean {
+  return typeof toolName === "string" && TODO_TOOL_NAMES.has(toolName);
 }
 
 function isTodoSnapshotMessageId(messageId: string): boolean {
@@ -109,6 +111,23 @@ function getLatestTodoPart<TMessage extends TodoTimelineMessage>(
   }
 
   return null;
+}
+
+export function getLatestTimestamp<T>(
+  messages: T[],
+  getTimestamp: (message: T) => string | undefined,
+): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const ts = getTimestamp(messages[index] as T);
+    if (typeof ts !== "string" || ts.length === 0) continue;
+
+    const parsed = Date.parse(ts);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed + 1).toISOString();
+    }
+  }
+
+  return new Date().toISOString();
 }
 
 export function appendLatestTodoSnapshot<

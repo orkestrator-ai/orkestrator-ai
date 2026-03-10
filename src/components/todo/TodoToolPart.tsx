@@ -8,7 +8,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
-const TODO_STATE_COLORS = {
+export const TOOL_STATE_COLORS = {
   success: "text-green-600",
   failure: "text-red-600",
   pending: "text-yellow-600 animate-pulse",
@@ -63,7 +63,7 @@ export function TodoToolPart({
           </span>
         )}
         {toolState && (
-          <span className={cn("ml-auto shrink-0", TODO_STATE_COLORS[toolState] || "")}>
+          <span className={cn("ml-auto shrink-0", TOOL_STATE_COLORS[toolState] || "")}>
             {toolState === "pending" ? "running..." : toolState}
           </span>
         )}

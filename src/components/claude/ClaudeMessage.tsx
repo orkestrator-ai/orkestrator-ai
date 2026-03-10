@@ -13,13 +13,8 @@ import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type Cla
 import { toast } from "sonner";
 import { processPartsInOrder } from "@/lib/claude-task-utils";
 import { isEditTool } from "@/lib/tool-names";
-import { TodoToolPart } from "@/components/todo/TodoToolPart";
-
-const TOOL_STATE_COLORS = {
-  success: "text-green-600",
-  failure: "text-red-600",
-  pending: "text-yellow-600 animate-pulse",
-} as const;
+import { TodoToolPart, TOOL_STATE_COLORS } from "@/components/todo/TodoToolPart";
+import { isTodoTool } from "@/lib/todo-tool";
 
 /** Parsed attachment from XML tags */
 interface ParsedAttachment {
@@ -1103,11 +1098,6 @@ function TextPart({ content }: { content: string }) {
 // isEditTool imported from @/lib/tool-names
 
 
-/** Check if a tool name is a TodoWrite tool */
-function isTodoTool(toolName?: string): boolean {
-  if (!toolName) return false;
-  return toolName.toLowerCase() === "todowrite";
-}
 
 
 export const ClaudeMessage = memo(function ClaudeMessage({
@@ -1251,6 +1241,7 @@ export const ClaudeMessage = memo(function ClaudeMessage({
                           toolState={processed.part?.toolState}
                           toolArgs={processed.part?.toolArgs}
                           toolOutput={processed.part?.toolOutput}
+                          toolError={processed.part?.toolError}
                         />
                       );
                     }
