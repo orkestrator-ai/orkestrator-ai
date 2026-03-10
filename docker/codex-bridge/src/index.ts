@@ -503,6 +503,57 @@ async function readTranscriptLines(path: string): Promise<string[]> {
   }
 }
 
+async function getSessionMetaFromTranscriptPath(
+  transcriptPath: string,
+  fallbackTitle?: string,
+  fallbackUpdatedAt?: string,
+): Promise<PersistedSessionMeta | null> {
+  const lines = await readTranscriptLines(transcriptPath);
+  const sessionMetaLine = lines.find((line) => {
+    try {
+      return JSON.parse(line).type === "session_meta";
+    } catch {
+      return false;
+    }
+  });
+
+  if (!sessionMetaLine) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(sessionMetaLine) as {
+      payload?: {
+        id?: unknown;
+        cwd?: unknown;
+        timestamp?: unknown;
+      };
+    };
+    const id =
+      typeof parsed.payload?.id === "string" && parsed.payload.id.length > 0
+        ? parsed.payload.id
+        : null;
+
+    if (!id) {
+      return null;
+    }
+
+    return {
+      id,
+      title: fallbackTitle,
+      updatedAt:
+        typeof parsed.payload?.timestamp === "string"
+          ? parsed.payload.timestamp
+          : (fallbackUpdatedAt ?? new Date().toISOString()),
+      cwd:
+        typeof parsed.payload?.cwd === "string" ? parsed.payload.cwd : undefined,
+      transcriptPath,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function getPersistedSessionMeta(
   threadId: string,
   fallbackTitle?: string,
@@ -519,46 +570,35 @@ async function getPersistedSessionMeta(
       : null;
   }
 
-  const lines = await readTranscriptLines(transcriptPath);
-  const sessionMetaLine = lines.find((line) => {
-    try {
-      return JSON.parse(line).type === "session_meta";
-    } catch {
-      return false;
-    }
-  });
-
-  let cwd: string | undefined;
-  let title = fallbackTitle;
-  let updatedAt = fallbackUpdatedAt;
-  if (sessionMetaLine) {
-    try {
-      const parsed = JSON.parse(sessionMetaLine) as {
-        payload?: { cwd?: unknown; timestamp?: unknown };
-      };
-      cwd =
-        typeof parsed.payload?.cwd === "string" ? parsed.payload.cwd : undefined;
-      if (!updatedAt && typeof parsed.payload?.timestamp === "string") {
-        updatedAt = parsed.payload.timestamp;
-      }
-    } catch {
-      // Ignore malformed metadata and fall back to index data.
-    }
+  const meta = await getSessionMetaFromTranscriptPath(
+    transcriptPath,
+    fallbackTitle,
+    fallbackUpdatedAt,
+  );
+  if (!meta) {
+    return {
+      id: threadId,
+      title: fallbackTitle,
+      updatedAt: fallbackUpdatedAt || new Date().toISOString(),
+      transcriptPath,
+    };
   }
 
-  return {
-    id: threadId,
-    title,
-    updatedAt: updatedAt || new Date().toISOString(),
-    cwd,
-    transcriptPath,
-  };
+  if (meta.id !== threadId) {
+    meta.id = threadId;
+  }
+
+  if (!meta.title && fallbackTitle) {
+    meta.title = fallbackTitle;
+  }
+
+  return meta;
 }
 
 async function listPersistedSessionsForCwd(cwd: string): Promise<PersistedSessionMeta[]> {
   const indexPath = join(getCodexHomeDir(), "session_index.jsonl");
   const lines = await readTranscriptLines(indexPath);
-  const sessions: PersistedSessionMeta[] = [];
+  const sessions = new Map<string, PersistedSessionMeta>();
 
   for (const line of lines) {
     let entry: PersistedSessionIndexEntry;
@@ -581,10 +621,46 @@ async function listPersistedSessionsForCwd(cwd: string): Promise<PersistedSessio
       continue;
     }
 
-    sessions.push(meta);
+    sessions.set(meta.id, meta);
   }
 
-  return sessions.sort(
+  // Active sessions can exist on disk before Codex appends them to session_index.jsonl,
+  // so scan transcript files directly and merge any missing matches for this cwd.
+  for (const root of [
+    join(getCodexHomeDir(), "sessions"),
+    join(getCodexHomeDir(), "archived_sessions"),
+  ]) {
+    const files = await walkJsonlFiles(root);
+    for (const transcriptPath of files) {
+      const meta = await getSessionMetaFromTranscriptPath(transcriptPath);
+      if (!meta || meta.cwd !== cwd) {
+        continue;
+      }
+
+      const indexed = sessions.get(meta.id);
+      if (!indexed) {
+        sessions.set(meta.id, meta);
+        continue;
+      }
+
+      if (!indexed.transcriptPath) {
+        indexed.transcriptPath = meta.transcriptPath;
+      }
+      if (!indexed.cwd && meta.cwd) {
+        indexed.cwd = meta.cwd;
+      }
+      if (!indexed.title && meta.title) {
+        indexed.title = meta.title;
+      }
+      if (
+        new Date(meta.updatedAt).getTime() > new Date(indexed.updatedAt).getTime()
+      ) {
+        indexed.updatedAt = meta.updatedAt;
+      }
+    }
+  }
+
+  return Array.from(sessions.values()).sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
 }
