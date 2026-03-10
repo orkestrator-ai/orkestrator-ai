@@ -127,7 +127,12 @@ async fn ensure_codex_bridge_present(
             None,
         )
         .await
-        .map_err(|e| format!("Failed to create Codex bridge directory in container: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to create Codex bridge directory in container: {}",
+                e
+            )
+        })?;
 
     client
         .upload_file_to_container(container_id, "/opt/codex-bridge/package.json", package_json)
@@ -317,7 +322,11 @@ pub async fn stop_codex_server(container_id: String) -> Result<(), String> {
     }
 
     client
-        .exec_in_container(&container_id, vec!["bash", "-c", "pkill -f 'codex-bridge' || true"], None)
+        .exec_in_container(
+            &container_id,
+            vec!["bash", "-c", "pkill -f 'codex-bridge' || true"],
+            None,
+        )
         .await
         .map_err(|e| format!("Failed to stop Codex bridge server: {}", e))?;
 

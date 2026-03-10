@@ -480,7 +480,10 @@ pub async fn start_local_codex_bridge(
     env_vars.insert("PORT".to_string(), port.to_string());
     env_vars.insert("HOSTNAME".to_string(), "127.0.0.1".to_string());
     env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
-    env_vars.insert("PATH".to_string(), build_comprehensive_path(bundled_bun_path));
+    env_vars.insert(
+        "PATH".to_string(),
+        build_comprehensive_path(bundled_bun_path),
+    );
     env_vars.insert("CWD".to_string(), worktree_path.to_string());
 
     if let Ok(openai_api_key) = std::env::var("OPENAI_API_KEY") {

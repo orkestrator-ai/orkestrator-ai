@@ -503,8 +503,7 @@ impl Storage {
                 serde_json::from_value(default_agent.clone()).ok().flatten();
         }
         if let Some(claude_mode) = updates.get("claudeMode") {
-            environment.claude_mode =
-                serde_json::from_value(claude_mode.clone()).ok().flatten();
+            environment.claude_mode = serde_json::from_value(claude_mode.clone()).ok().flatten();
         }
         if let Some(opencode_mode) = updates.get("opencodeMode") {
             environment.opencode_mode =
