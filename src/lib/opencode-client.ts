@@ -527,7 +527,8 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
     try {
       const providerResponse = await client.provider.list();
       responseData = providerResponse.data;
-    } catch {
+    } catch (err) {
+      console.debug("[opencode-client] provider.list() unavailable, falling back to config.providers()", err);
       const configResponse = await client.config.providers();
       responseData = configResponse.data;
     }
@@ -538,8 +539,9 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
 
     const models: OpenCodeModel[] = [];
 
-    // Response structure: { providers: Provider[], default: {...} }
-    // Each Provider has: { id, name, models: { [modelId]: Model } }
+    // provider.list() returns: { all: Provider[], default: {...}, connected: [...] }
+    // config.providers() returns: { providers: Provider[] | { [id]: Provider }, default: {...} }
+    // Each Provider has: { id, name, models: { [modelId]: Model } | Model[] }
     // Each Model has: { id, name, providerID, ... }
     const providers = getProvidersFromCatalog(responseData);
     for (const provider of providers) {
