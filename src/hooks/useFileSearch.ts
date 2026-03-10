@@ -8,7 +8,8 @@ import type { FileCandidate } from "@/types";
  */
 export function useFileSearch(
   containerId: string | undefined,
-  worktreePath: string | undefined
+  worktreePath: string | undefined,
+  enabled = true
 ) {
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,8 +49,12 @@ export function useFileSearch(
 
   // Load file tree on mount and when environment changes
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     loadFileTree();
-  }, [loadFileTree]);
+  }, [enabled, loadFileTree]);
 
   // Flatten hierarchical file tree into searchable array of files and directories
   const flatFiles = useMemo((): FileCandidate[] => {

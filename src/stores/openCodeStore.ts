@@ -12,6 +12,7 @@ import {
 } from "@/lib/opencode-client";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { createSessionKey } from "@/lib/utils";
+import type { FileMention } from "@/types";
 
 /**
  * Creates a unique session key for OpenCode sessions.
@@ -87,6 +88,8 @@ interface OpenCodeState {
   attachments: Map<string, OpenCodeAttachment[]>;
   /** Draft text per tab session key (format: env-{environmentId}:{tabId}) */
   draftText: Map<string, string>;
+  /** Draft file mentions per tab session key */
+  draftMentions: Map<string, FileMention[]>;
   /** Queued messages per tab session key */
   messageQueue: Map<string, OpenCodeQueuedMessage[]>;
   /** Whether the compose bar is loading per environment */
@@ -135,6 +138,8 @@ interface OpenCodeState {
   clearAttachments: (sessionKey: string) => void;
   /** Set draft text for a tab session */
   setDraftText: (sessionKey: string, text: string) => void;
+  /** Set draft file mentions for a tab session */
+  setDraftMentions: (sessionKey: string, mentions: FileMention[]) => void;
   /** Set composing state */
   setComposing: (environmentId: string, isComposing: boolean) => void;
   /** Add message to queue for this tab session */
@@ -189,6 +194,8 @@ interface OpenCodeState {
   getAttachments: (sessionKey: string) => OpenCodeAttachment[];
   /** Get draft text for a tab session */
   getDraftText: (sessionKey: string) => string;
+  /** Get draft file mentions for a tab session */
+  getDraftMentions: (sessionKey: string) => FileMention[];
   /** Check if composing for an environment */
   isComposingFor: (environmentId: string) => boolean;
   /** Get pending questions for a session */
@@ -224,6 +231,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   selectedMode: new Map(),
   attachments: new Map(),
   draftText: new Map(),
+  draftMentions: new Map(),
   messageQueue: new Map(),
   isComposing: new Map(),
   pendingQuestions: new Map(),
@@ -429,6 +437,17 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       return { draftText: newMap };
     }),
 
+  setDraftMentions: (sessionKey, mentions) =>
+    set((state) => {
+      const newMap = new Map(state.draftMentions);
+      if (mentions.length > 0) {
+        newMap.set(sessionKey, mentions);
+      } else {
+        newMap.delete(sessionKey);
+      }
+      return { draftMentions: newMap };
+    }),
+
   setComposing: (environmentId, isComposing) =>
     set((state) => {
       const newMap = new Map(state.isComposing);
@@ -532,6 +551,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const newSelectedMode = new Map(state.selectedMode);
       const newAttachments = new Map(state.attachments);
       const newDraftText = new Map(state.draftText);
+      const newDraftMentions = new Map(state.draftMentions);
       const newMessageQueue = new Map(state.messageQueue);
       const newIsComposing = new Map(state.isComposing);
       const newPendingQuestions = new Map(state.pendingQuestions);
@@ -572,6 +592,11 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
           newDraftText.delete(key);
         }
       }
+      for (const key of newDraftMentions.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) {
+          newDraftMentions.delete(key);
+        }
+      }
       for (const key of newMessageQueue.keys()) {
         if (key.startsWith(sessionKeyPrefix)) {
           newMessageQueue.delete(key);
@@ -608,6 +633,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
         selectedMode: newSelectedMode,
         attachments: newAttachments,
         draftText: newDraftText,
+        draftMentions: newDraftMentions,
         messageQueue: newMessageQueue,
         isComposing: newIsComposing,
         pendingQuestions: newPendingQuestions,
@@ -746,6 +772,8 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
   getAttachments: (sessionKey) => get().attachments.get(sessionKey) ?? EMPTY_ATTACHMENTS,
 
   getDraftText: (sessionKey) => get().draftText.get(sessionKey) || "",
+
+  getDraftMentions: (sessionKey) => get().draftMentions.get(sessionKey) ?? [],
 
   isComposingFor: (environmentId) =>
     get().isComposing.get(environmentId) || false,

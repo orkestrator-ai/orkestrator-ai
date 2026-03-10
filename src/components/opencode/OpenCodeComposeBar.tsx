@@ -2,7 +2,6 @@ import {
   useState,
   useRef,
   useEffect,
-  useLayoutEffect,
   useCallback,
   useMemo,
   KeyboardEvent,
@@ -44,12 +43,16 @@ import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment, type OpenCodeQueuedMessage } from "@/stores/openCodeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
+import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
+import { MentionableInput, type MentionableInputRef } from "@/components/chat/MentionableInput";
+import { useFileMentions, useFileSearch } from "@/hooks";
 import { OpenCodeSlashCommandMenu } from "./OpenCodeSlashCommandMenu";
 import type {
   OpenCodeModel,
   OpenCodeConversationMode,
   OpenCodeSlashCommand,
 } from "@/lib/opencode-client";
+import type { FileCandidate, FileMention } from "@/types";
 
 interface OpenCodeComposeBarProps {
   environmentId: string;
@@ -76,8 +79,8 @@ const MAX_LINES = 12;
 const LINE_HEIGHT = 20;
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 const MAX_RGBA_SIZE = 32 * 1024 * 1024;
-const MIN_TEXTAREA_HEIGHT = LINE_HEIGHT + 8;
-const MAX_TEXTAREA_HEIGHT = MAX_LINES * LINE_HEIGHT + 16;
+const MIN_INPUT_HEIGHT = LINE_HEIGHT + 8;
+const MAX_INPUT_HEIGHT = MAX_LINES * LINE_HEIGHT + 16;
 
 function generateImageFilename(): string {
   const timestamp = new Date()
@@ -108,8 +111,9 @@ export function OpenCodeComposeBar({
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [queueDialogOpen, setQueueDialogOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<MentionableInputRef>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const prevFileMentionMenuOpen = useRef(false);
 
   const {
     getAttachments,
@@ -118,6 +122,8 @@ export function OpenCodeComposeBar({
     clearAttachments,
     getDraftText,
     setDraftText,
+    getDraftMentions,
+    setDraftMentions,
     getSelectedModel,
     setSelectedModel,
     getSelectedVariant,
@@ -144,6 +150,7 @@ export function OpenCodeComposeBar({
 
   const attachments = getAttachments(sessionKey);
   const text = getDraftText(sessionKey);
+  const mentions = getDraftMentions(sessionKey);
   const selectedModel = getSelectedModel(environmentId);
   const selectedVariant = getSelectedVariant(environmentId);
   const selectedMode = getSelectedMode(sessionKey);
@@ -156,36 +163,41 @@ export function OpenCodeComposeBar({
   const worktreePath = useEnvironmentStore(
     (state) => state.getEnvironmentById(environmentId)?.worktreePath
   );
+  const { searchFiles, error: fileSearchError, refresh: refreshFileTree } = useFileSearch(
+    containerId,
+    worktreePath
+  );
+  const {
+    isMenuOpen: fileMentionMenuOpen,
+    selectedIndex: fileMentionSelectedIndex,
+    filteredFiles,
+    handleCursorChange: detectFileMention,
+    handleKeyDown: handleFileMentionKeyDown,
+    closeMenu: closeFileMentionMenu,
+    serializeForLLM,
+    createMention,
+  } = useFileMentions({ searchFiles });
 
-  const adjustTextareaHeight = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    textarea.style.height = "auto";
-    const clampedHeight = Math.min(
-      MAX_TEXTAREA_HEIGHT,
-      Math.max(MIN_TEXTAREA_HEIGHT, textarea.scrollHeight)
-    );
-    textarea.style.height = `${clampedHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
-  }, []);
-
-  // Focus textarea on mount
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.focus();
-      adjustTextareaHeight();
+    if (fileSearchError) {
+      toast.error("Failed to load files for @mentions", {
+        description: fileSearchError,
+        duration: 4000,
+      });
     }
-  }, [adjustTextareaHeight]);
-
-  useLayoutEffect(() => {
-    adjustTextareaHeight();
-  }, [text, adjustTextareaHeight]);
+  }, [fileSearchError]);
 
   useEffect(() => {
-    window.addEventListener("resize", adjustTextareaHeight);
-    return () => window.removeEventListener("resize", adjustTextareaHeight);
-  }, [adjustTextareaHeight]);
+    const wasOpen = prevFileMentionMenuOpen.current;
+    prevFileMentionMenuOpen.current = fileMentionMenuOpen;
+    if (!wasOpen && fileMentionMenuOpen) {
+      refreshFileTree();
+    }
+  }, [fileMentionMenuOpen, refreshFileTree]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   // Close attachment menu when clicking outside
   useEffect(() => {
@@ -234,15 +246,40 @@ export function OpenCodeComposeBar({
     (command: OpenCodeSlashCommand) => {
       setDraftText(sessionKey, `${command.name} `);
       setSlashMenuOpen(false);
-      textareaRef.current?.focus();
+      inputRef.current?.focus();
     },
     [sessionKey, setDraftText],
+  );
+
+  const handleTextAndMentionsChange = useCallback(
+    (newText: string, newMentions: FileMention[]) => {
+      setDraftText(sessionKey, newText);
+      setDraftMentions(sessionKey, newMentions);
+    },
+    [sessionKey, setDraftMentions, setDraftText]
+  );
+
+  const handleCursorPositionChange = useCallback(
+    (position: number) => {
+      detectFileMention(position, text);
+    },
+    [detectFileMention, text]
+  );
+
+  const handleFileMentionSelect = useCallback(
+    (file: FileCandidate) => {
+      const mention = createMention(file);
+      inputRef.current?.insertMention(mention);
+      closeFileMentionMenu();
+    },
+    [closeFileMentionMenu, createMention]
   );
 
   // Handle paste for clipboard images
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
-      if (document.activeElement !== textareaRef.current) return;
+      const activeEl = document.activeElement;
+      if (!activeEl || !activeEl.closest("[data-mentionable-input]")) return;
 
       try {
         const image = await readImage();
@@ -332,7 +369,15 @@ export function OpenCodeComposeBar({
     };
   }, [handlePaste]);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (fileMentionMenuOpen && filteredFiles.length > 0) {
+      const handled = handleFileMentionKeyDown(event, (file) => {
+        const mention = createMention(file);
+        inputRef.current?.insertMention(mention);
+      });
+      if (handled) return;
+    }
+
     if (slashMenuOpen && filteredSlashCommands.length > 0) {
       switch (event.key) {
         case "ArrowDown":
@@ -379,12 +424,14 @@ export function OpenCodeComposeBar({
 
     setIsSending(true);
     try {
+      const serializedText = serializeForLLM(text.trim(), mentions);
       if (isLoading && onQueue) {
-        onQueue(text.trim(), attachments);
+        onQueue(serializedText, attachments);
       } else {
-        onSend(text.trim(), attachments);
+        onSend(serializedText, attachments);
       }
       setDraftText(sessionKey, "");
+      setDraftMentions(sessionKey, []);
       clearAttachments(sessionKey);
     } finally {
       setIsSending(false);
@@ -513,7 +560,7 @@ export function OpenCodeComposeBar({
       )}
 
       {/* Text input area - on top */}
-      <div className="relative">
+      <div className="relative" data-mentionable-input>
         {slashMenuOpen && filteredSlashCommands.length > 0 && (
           <OpenCodeSlashCommandMenu
             commands={filteredSlashCommands}
@@ -523,24 +570,26 @@ export function OpenCodeComposeBar({
           />
         )}
 
-        <textarea
-          ref={textareaRef}
+        {fileMentionMenuOpen && (
+          <FileMentionMenu
+            files={filteredFiles}
+            selectedIndex={fileMentionSelectedIndex}
+            onSelect={handleFileMentionSelect}
+            onClose={closeFileMentionMenu}
+          />
+        )}
+
+        <MentionableInput
+          ref={inputRef}
           value={text}
-          onChange={(e) => setDraftText(sessionKey, e.target.value)}
+          mentions={mentions}
+          onChange={handleTextAndMentionsChange}
+          onCursorChange={handleCursorPositionChange}
           onKeyDown={handleKeyDown}
           placeholder="Ask anything (⌘L), @ to mention, / for workflows"
-          rows={1}
-          className={cn(
-            "w-full bg-transparent border-none px-1 py-1",
-            "text-sm text-foreground placeholder:text-muted-foreground",
-            "resize-none outline-none overflow-y-hidden",
-            "transition-colors",
-          )}
-          style={{
-            minHeight: MIN_TEXTAREA_HEIGHT,
-            maxHeight: MAX_TEXTAREA_HEIGHT,
-          }}
           disabled={disabled || isSending}
+          minHeight={MIN_INPUT_HEIGHT}
+          maxHeight={MAX_INPUT_HEIGHT}
         />
       </div>
 
