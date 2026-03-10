@@ -443,6 +443,12 @@ type ProviderLike = {
   models?: unknown;
 };
 
+type ProviderCatalogLike = {
+  all?: unknown;
+  providers?: unknown;
+  default?: unknown;
+};
+
 function normalizeProviders(value: unknown): ProviderLike[] {
   if (Array.isArray(value)) {
     return value.filter((provider): provider is ProviderLike => {
@@ -459,6 +465,24 @@ function normalizeProviders(value: unknown): ProviderLike[] {
         // If the provider doesn't have an id, use the object key
         return provider.id ? provider : { ...provider, id: key };
       });
+  }
+
+  return [];
+}
+
+function getProvidersFromCatalog(value: unknown): ProviderLike[] {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const catalog = value as ProviderCatalogLike;
+
+  if (catalog.all) {
+    return normalizeProviders(catalog.all);
+  }
+
+  if (catalog.providers) {
+    return normalizeProviders(catalog.providers);
   }
 
   return [];
@@ -496,10 +520,19 @@ export async function getModels(client: OpencodeClient): Promise<OpenCodeModel[]
  */
 export async function getModelsWithDefaults(client: OpencodeClient): Promise<OpenCodeModelsResponse> {
   try {
-    // Use config.providers() to get the list of configured providers and models
-    const response = await client.config.providers();
+    // Prefer provider.list() because it exposes the full provider/model catalog
+    // used by the OpenCode TUI. Fall back to config.providers() for older servers.
+    let responseData: unknown;
 
-    if (!response.data) {
+    try {
+      const providerResponse = await client.provider.list();
+      responseData = providerResponse.data;
+    } catch {
+      const configResponse = await client.config.providers();
+      responseData = configResponse.data;
+    }
+
+    if (!responseData || typeof responseData !== "object") {
       return { models: [], defaults: {} };
     }
 
@@ -508,7 +541,7 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
     // Response structure: { providers: Provider[], default: {...} }
     // Each Provider has: { id, name, models: { [modelId]: Model } }
     // Each Model has: { id, name, providerID, ... }
-    const providers = normalizeProviders(response.data.providers);
+    const providers = getProvidersFromCatalog(responseData);
     for (const provider of providers) {
       if (provider && provider.id && provider.models) {
         for (const model of normalizeProviderModels(provider.models)) {
@@ -560,10 +593,11 @@ export async function getModelsWithDefaults(client: OpencodeClient): Promise<Ope
       }
     }
 
-    const defaults = response.data.default && typeof response.data.default === "object"
+    const catalog = responseData as ProviderCatalogLike;
+    const defaults = catalog.default && typeof catalog.default === "object"
       ? {
-          modelId: resolveDefaultModelId(response.data.default),
-          variant: resolveDefaultVariant(response.data.default),
+          modelId: resolveDefaultModelId(catalog.default),
+          variant: resolveDefaultVariant(catalog.default),
         }
       : {};
 

@@ -54,8 +54,80 @@ describe("opencode-client listSessions", () => {
 });
 
 describe("opencode-client getModelsWithDefaults", () => {
+  test("prefers provider catalog so unconfigured models still appear", async () => {
+    const client = {
+      provider: {
+        list: async () => ({
+          data: {
+            all: [
+              {
+                id: "anthropic",
+                name: "Anthropic",
+                models: {
+                  "claude-sonnet-4": {
+                    id: "claude-sonnet-4",
+                    name: "Claude Sonnet 4",
+                  },
+                  "claude-opus-4": {
+                    id: "claude-opus-4",
+                    name: "Claude Opus 4",
+                  },
+                },
+              },
+            ],
+            default: {
+              model: "anthropic/claude-sonnet-4",
+            },
+            connected: ["anthropic"],
+          },
+        }),
+      },
+      config: {
+        providers: async () => ({
+          data: {
+            providers: [
+              {
+                id: "anthropic",
+                models: {
+                  "claude-sonnet-4": {
+                    id: "claude-sonnet-4",
+                    name: "Claude Sonnet 4",
+                  },
+                },
+              },
+            ],
+            default: {
+              model: "anthropic/claude-sonnet-4",
+            },
+          },
+        }),
+      },
+    } as unknown as OpencodeClient;
+
+    const result = await getModelsWithDefaults(client);
+
+    expect(result.models).toEqual([
+      {
+        id: "anthropic/claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        provider: "anthropic",
+      },
+      {
+        id: "anthropic/claude-opus-4",
+        name: "Claude Opus 4",
+        provider: "anthropic",
+      },
+    ]);
+    expect(result.defaults.modelId).toBe("anthropic/claude-sonnet-4");
+  });
+
   test("maps default model and variant from direct default config", async () => {
     const client = {
+      provider: {
+        list: async () => {
+          throw new Error("provider catalog unavailable");
+        },
+      },
       config: {
         providers: async () => ({
           data: {
@@ -94,6 +166,11 @@ describe("opencode-client getModelsWithDefaults", () => {
 
   test("maps nested default model object to provider/model id", async () => {
     const client = {
+      provider: {
+        list: async () => {
+          throw new Error("provider catalog unavailable");
+        },
+      },
       config: {
         providers: async () => ({
           data: {
@@ -133,6 +210,11 @@ describe("opencode-client getModelsWithDefaults", () => {
 
   test("accepts provider models returned as an array", async () => {
     const client = {
+      provider: {
+        list: async () => {
+          throw new Error("provider catalog unavailable");
+        },
+      },
       config: {
         providers: async () => ({
           data: {
@@ -174,6 +256,11 @@ describe("opencode-client getModelsWithDefaults", () => {
 
   test("accepts providers returned as an object map", async () => {
     const client = {
+      provider: {
+        list: async () => {
+          throw new Error("provider catalog unavailable");
+        },
+      },
       config: {
         providers: async () => ({
           data: {
@@ -211,6 +298,11 @@ describe("opencode-client getModelsWithDefaults", () => {
 
   test("uses object-map model keys when model entries omit id", async () => {
     const client = {
+      provider: {
+        list: async () => {
+          throw new Error("provider catalog unavailable");
+        },
+      },
       config: {
         providers: async () => ({
           data: {
