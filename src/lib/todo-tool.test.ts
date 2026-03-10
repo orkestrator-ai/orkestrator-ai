@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { getTodoItems, isTodoItem, parseTodosFromOutput } from "./todo-tool";
+import {
+  appendLatestTodoSnapshot,
+  getTodoItems,
+  isTodoItem,
+  parseTodosFromOutput,
+} from "./todo-tool";
 
 describe("todo-tool", () => {
   test("accepts cancelled todos as valid items", () => {
@@ -57,5 +62,74 @@ describe("todo-tool", () => {
     expect(todos).toEqual([
       { content: "Take args todos", status: "completed" },
     ]);
+  });
+
+  test("appends one latest todo snapshot message at the end of the timeline", () => {
+    interface TestMessage {
+      id: string;
+      role: string;
+      content: string;
+      parts: Array<{
+        type: "tool-invocation";
+        toolName: "TodoWrite";
+        toolArgs?: { todos: Array<{ content: string; status: string }> };
+        toolOutput?: string;
+        toolState: "success" | "pending";
+      }>;
+    }
+
+    const messages = appendLatestTodoSnapshot<TestMessage>(
+      [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          parts: [{
+            type: "tool-invocation",
+            toolName: "TodoWrite",
+            toolArgs: {
+              todos: [{ content: "Old todo", status: "pending" }],
+            },
+            toolState: "success" as const,
+          }],
+        },
+        {
+          id: "assistant-2",
+          role: "assistant",
+          content: "",
+          parts: [{
+            type: "tool-invocation",
+            toolName: "TodoWrite",
+            toolOutput: JSON.stringify({
+              todos: [{ content: "Newest todo", status: "in_progress" }],
+            }),
+            toolState: "pending" as const,
+          }],
+        },
+      ] satisfies TestMessage[],
+      ({ message, part, todos }): TestMessage => ({
+        id: `todo-snapshot-${message.id}`,
+        role: "assistant",
+        content: "",
+        parts: [{
+          type: "tool-invocation",
+          toolName: "TodoWrite",
+          toolOutput: part.toolOutput,
+          toolState: part.toolState === "success" ? "success" : "pending",
+          toolArgs: { todos },
+        }],
+      }),
+    );
+
+    expect(messages).toHaveLength(3);
+    expect(messages[2]?.id).toBe("todo-snapshot-assistant-2");
+    expect(messages[2]?.parts[0]).toMatchObject({
+      type: "tool-invocation",
+      toolName: "TodoWrite",
+      toolState: "pending",
+      toolArgs: {
+        todos: [{ content: "Newest todo", status: "in_progress" }],
+      },
+    });
   });
 });

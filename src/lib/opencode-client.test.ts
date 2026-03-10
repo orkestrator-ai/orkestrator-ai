@@ -462,13 +462,17 @@ describe("opencode-client getSessionMessages", () => {
 
     const messages = await getSessionMessages(client, "session-1");
 
-    expect(messages).toHaveLength(1);
+    expect(messages).toHaveLength(2);
     expect(messages[0]?.id).toBe("msg-1");
+    expect(messages[1]?.id).toBe("todo-snapshot-msg-1");
 
     const part = messages[0]?.parts[0];
     expect(part?.type).toBe("tool-invocation");
     expect(part?.toolOutput).toBe(JSON.stringify(outputPayload, null, 2));
     expect(part?.toolError).toBe(JSON.stringify(errorPayload, null, 2));
+    expect(messages[1]?.parts[0]?.toolArgs).toEqual({
+      todos: [{ content: "Task", status: "pending" }],
+    });
   });
 });
 

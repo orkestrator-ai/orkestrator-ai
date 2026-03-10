@@ -3,6 +3,7 @@
 
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { isEditTool } from "./tool-names";
+import { appendLatestTodoSnapshot, getLatestTimestamp } from "./todo-tool";
 
 export { type OpencodeClient };
 
@@ -143,6 +144,25 @@ export interface OpenCodeMessage {
   /** Structured parts with type information */
   parts: OpenCodeMessagePart[];
   createdAt: string;
+}
+
+function withLatestTodoSnapshot(messages: OpenCodeMessage[]): OpenCodeMessage[] {
+  return appendLatestTodoSnapshot(messages, ({ message, part, todos }) => ({
+    id: `todo-snapshot-${message.id}`,
+    role: "assistant" as const,
+    content: "",
+    parts: [{
+      type: "tool-invocation" as const,
+      content: "",
+      toolName: part.toolName ?? "TodoWrite",
+      toolArgs: { todos },
+      toolOutput: part.toolOutput,
+      toolState: part.toolState,
+      toolTitle: part.toolTitle ?? "Latest todo list",
+      toolError: part.toolError,
+    }],
+    createdAt: getLatestTimestamp(messages, (m) => m.createdAt),
+  }));
 }
 
 export interface OpenCodeSession {
@@ -713,7 +733,7 @@ export async function getSessionMessages(
 
     if (!response.data) return [];
 
-    return response.data.map((msg) => {
+    const messages = response.data.map((msg) => {
       const info = msg.info;
       const createdTime = info?.time?.created;
       const createdAt = typeof createdTime === "number"
@@ -931,6 +951,8 @@ export async function getSessionMessages(
         createdAt,
       };
     });
+
+    return withLatestTodoSnapshot(messages);
   } catch (error) {
     console.error("[opencode-client] Failed to get messages:", error);
     return [];
