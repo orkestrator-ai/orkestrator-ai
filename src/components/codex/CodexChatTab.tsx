@@ -782,6 +782,60 @@ export function CodexChatTab({
   ]);
 
   useEffect(() => {
+    if (
+      !isActive
+      || !session?.isLoading
+      || connectionState !== "connected"
+      || !client
+      || !session?.sessionId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const sessionId = session.sessionId;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    const pollSessionState = async () => {
+      while (!cancelled) {
+        await refreshMessages(client, sessionId);
+        await reconcileSessionState();
+
+        if (cancelled) {
+          return;
+        }
+
+        const isStillLoading =
+          useCodexStore.getState().sessions.get(sessionKey)?.isLoading === true;
+        if (!isStillLoading) {
+          return;
+        }
+
+        await sleep(1000);
+      }
+    };
+
+    void pollSessionState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    client,
+    connectionState,
+    isActive,
+    reconcileSessionState,
+    refreshMessages,
+    session?.isLoading,
+    session?.sessionId,
+    sessionKey,
+  ]);
+
+  useEffect(() => {
     if (queueLength > 0) {
       processQueue();
     }
