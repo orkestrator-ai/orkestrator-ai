@@ -1,4 +1,5 @@
 import type { OpenCodeMessagePart } from "./opencode-client";
+import { appendLatestTodoSnapshot } from "./todo-tool";
 
 export interface CodexReasoningOption {
   effort: CodexReasoningEffort;
@@ -88,6 +89,41 @@ export interface CodexMessage {
   content: string;
   parts: OpenCodeMessagePart[];
   createdAt: string;
+}
+
+function getLatestMessageCreatedAt(messages: CodexMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const createdAt = messages[index]?.createdAt;
+    if (typeof createdAt !== "string" || createdAt.length === 0) {
+      continue;
+    }
+
+    const parsed = Date.parse(createdAt);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed + 1).toISOString();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
+function withLatestTodoSnapshot(messages: CodexMessage[]): CodexMessage[] {
+  return appendLatestTodoSnapshot(messages, ({ message, part, todos }) => ({
+    id: `todo-snapshot-${message.id}`,
+    role: "assistant" as const,
+    content: "",
+    parts: [{
+      type: "tool-invocation" as const,
+      content: "",
+      toolName: part.toolName ?? "TodoWrite",
+      toolArgs: { todos },
+      toolOutput: part.toolOutput,
+      toolState: part.toolState,
+      toolTitle: part.toolTitle ?? "Latest todo list",
+      toolError: part.toolError,
+    }],
+    createdAt: getLatestMessageCreatedAt(messages),
+  }));
 }
 
 export interface CodexSession {
@@ -259,7 +295,7 @@ export async function resumeSession(
         sessionId: data.sessionId,
         title: data.title,
       },
-      messages: Array.isArray(data.messages) ? data.messages : [],
+      messages: withLatestTodoSnapshot(Array.isArray(data.messages) ? data.messages : []),
     };
   } catch (error) {
     console.error("[codex-client] Failed to resume session:", error);
@@ -302,7 +338,7 @@ export async function getSessionMessages(
     );
     if (!response.ok) return [];
     const data = await response.json();
-    return Array.isArray(data.messages) ? data.messages : [];
+    return withLatestTodoSnapshot(Array.isArray(data.messages) ? data.messages : []);
   } catch (error) {
     console.error("[codex-client] Failed to get session messages:", error);
     return [];
