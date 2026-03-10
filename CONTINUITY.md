@@ -1,48 +1,46 @@
 Goal (incl. success criteria):
-- Merge `origin/main` into the current branch, resolve any merge conflicts correctly, create the merge commit, and push the branch.
-- Success: `git merge` completes with all conflict markers removed, commit `Merge main and resolve conflicts` is created, and `git push` updates `origin/20260310-153347`.
+- Merge `origin/main` into the current branch, preserve the current branch work, resolve any conflicts correctly, create the merge commit, and push the branch successfully.
+- Success: no unresolved conflict markers remain, commit `Merge main and resolve conflicts` exists, and `git push` updates the remote branch.
 
 Constraints/Assumptions:
-- Follow `AGENTS.md` and continuity ledger rules.
-- Execute the requested flow as closely as possible: fetch, inspect status, merge `origin/main`, resolve conflicts, stage, commit, push.
+- Follow `AGENTS.md`: read and refresh this ledger at turn start and when state changes.
+- Do not revert unrelated user changes unless required by conflict resolution.
+- Keep both local branch changes and incoming `origin/main` changes unless one side is clearly superseded.
 - Do not use `--no-verify` or bypass hooks.
-- Preserve both current-branch work and incoming `origin/main` changes unless analysis shows one side is obsolete.
 
 Key decisions:
-- Temporarily stashed the local ledger edit because it blocked the initial merge attempt.
-- Resolve `src/components/codex/CodexChatTab.tsx` by combining current-branch session refresh logic with `origin/main` Codex preference persistence changes.
-- Replace stale ledger content from both sides with the actual current merge task state.
+- Resolve the only merge conflict in `CONTINUITY.md` by replacing stale branch-specific ledger content with the actual current merge state.
+- Preserve the non-conflicting code and test changes introduced by `origin/main`.
 
 State:
-- Done: Read the prior ledger, refreshed it for this task, fetched `origin`, inspected status, stashed the local `CONTINUITY.md` edit, resolved the merge conflicts, staged the merge result, and verified TypeScript compilation.
-- Now: Create the merge commit and push the branch.
-- Next: Verify the remote update and clean up the temporary stash if it is no longer needed.
+- Done: Read the prior ledger, fetched `origin`, checked status, merged `origin/main`, resolved the `CONTINUITY.md` conflict, staged all files, created merge commit `cb2f9d1`, and pushed the branch.
+- Now: Verifying the branch is clean and aligned with `origin/20260310-155244`.
+- Next: Report the merge result, conflicted files, and push status to the user.
 
 Done:
 - Read `CONTINUITY.md`.
-- Checked current branch with `git branch --show-current`.
 - Ran `git fetch origin`.
 - Ran `git status --short --branch`.
-- Ran `git merge origin/main` and saw it abort because local `CONTINUITY.md` changes would be overwritten.
-- Ran `git stash push -m "temp-continuity-before-main-merge" -- CONTINUITY.md`.
-- Ran `git merge --no-commit origin/main`.
-- Inspected `git status --short`, `CONTINUITY.md`, and `src/components/codex/CodexChatTab.tsx`.
-- Resolved conflicts in `CONTINUITY.md` and `src/components/codex/CodexChatTab.tsx`.
+- Ran `git merge origin/main`.
+- Inspected `git status --short --branch`, `git diff --name-only --diff-filter=U`, and `CONTINUITY.md`.
+- Rewrote `CONTINUITY.md` to resolve the merge conflict with the real current state.
 - Ran `git add -A`.
-- Ran `bunx tsc --noEmit`.
+- Ran `git commit -m "Merge main and resolve conflicts"`.
+- Ran `git push`.
 
 Now:
-- Run `git commit -m "Merge main and resolve conflicts"`.
-- Run `git push`.
+- Run `git status --short --branch`.
 
 Next:
-- Verify the branch is updated on `origin`.
-- Drop the temporary stash if it is no longer needed.
+- Summarize the merge, conflict resolution, commit, and push outcome.
 
 Open questions (UNCONFIRMED if needed):
-- UNCONFIRMED whether the temporary stash can be dropped immediately after the merge commit or after the push verification.
+- None.
 
 Working set (files/ids/commands):
-- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-k2kjic/CONTINUITY.md`
-- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-k2kjic/src/components/codex/CodexChatTab.tsx`
-- Commands used/planned: `git fetch origin`, `git status --short --branch`, `git merge origin/main`, `git stash push -- CONTINUITY.md`, `git merge --no-commit origin/main`, `git add -A`, `git commit -m "Merge main and resolve conflicts"`, `git push`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/CONTINUITY.md`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src-tauri/src/commands/codex.rs`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src/components/codex/CodexChatTab.tsx`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src/components/codex/session-refresh.ts`
+- `/Users/arkaydeus/orkestrator-ai/workspaces/orkestrator-ai-zr9akm/src/components/codex/session-refresh.test.ts`
+- Commands used/planned: `git fetch origin`, `git status --short --branch`, `git merge origin/main`, `git diff --name-only --diff-filter=U`, `git add -A`, `git commit -m "Merge main and resolve conflicts"`, `git push`
