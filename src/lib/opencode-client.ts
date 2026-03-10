@@ -452,9 +452,12 @@ function normalizeProviderModels(models: unknown): Array<Record<string, unknown>
   }
 
   if (models && typeof models === "object") {
-    return Object.values(models).filter((model): model is Record<string, unknown> => {
-      return !!model && typeof model === "object";
-    });
+    return Object.entries(models)
+      .filter(([, model]) => !!model && typeof model === "object")
+      .map(([key, model]) => {
+        const record = model as Record<string, unknown>;
+        return typeof record.id === "string" ? record : { ...record, id: key };
+      });
   }
 
   return [];
