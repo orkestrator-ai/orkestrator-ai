@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 use tokio::process::Command;
@@ -16,6 +17,24 @@ use tracing::{debug, info, warn};
 
 static START_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     OnceLock::new();
+
+/// Flag indicating whether startup cleanup has completed.
+/// Server start functions wait for this before proceeding to avoid races.
+static STARTUP_CLEANUP_COMPLETE: AtomicBool = AtomicBool::new(false);
+
+/// Wait for startup cleanup to finish (with a timeout).
+async fn wait_for_startup_cleanup() {
+    const MAX_WAIT_MS: u64 = 10_000;
+    const POLL_INTERVAL_MS: u64 = 50;
+    let mut waited = 0u64;
+    while !STARTUP_CLEANUP_COMPLETE.load(Ordering::Acquire) && waited < MAX_WAIT_MS {
+        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+        waited += POLL_INTERVAL_MS;
+    }
+    if waited >= MAX_WAIT_MS {
+        warn!("Timed out waiting for startup cleanup to complete, proceeding anyway");
+    }
+}
 
 fn get_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     let locks = START_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
@@ -171,6 +190,7 @@ pub async fn start_local_opencode_server(
     worktree_path: &str,
     port: u16,
 ) -> Result<LocalServerStartResult, String> {
+    wait_for_startup_cleanup().await;
     let start_lock = get_start_lock(environment_id);
     let _guard = start_lock.lock().await;
 
@@ -349,6 +369,7 @@ pub async fn start_local_claude_bridge(
     bridge_path: &str,
     bundled_bun_path: Option<&str>,
 ) -> Result<LocalServerStartResult, String> {
+    wait_for_startup_cleanup().await;
     let start_lock = get_start_lock(environment_id);
     let _guard = start_lock.lock().await;
 
@@ -526,6 +547,7 @@ pub async fn start_local_codex_bridge(
     bridge_path: &str,
     bundled_bun_path: Option<&str>,
 ) -> Result<LocalServerStartResult, String> {
+    wait_for_startup_cleanup().await;
     let start_lock = get_start_lock(environment_id);
     let _guard = start_lock.lock().await;
 
@@ -1123,6 +1145,7 @@ pub async fn cleanup_stale_local_servers() {
         Ok(s) => s,
         Err(e) => {
             warn!("Failed to get storage for stale server cleanup: {}", e);
+            STARTUP_CLEANUP_COMPLETE.store(true, Ordering::Release);
             return;
         }
     };
@@ -1131,6 +1154,7 @@ pub async fn cleanup_stale_local_servers() {
         Ok(envs) => envs,
         Err(e) => {
             warn!("Failed to load environments for stale server cleanup: {}", e);
+            STARTUP_CLEANUP_COMPLETE.store(true, Ordering::Release);
             return;
         }
     };
@@ -1179,11 +1203,38 @@ pub async fn cleanup_stale_local_servers() {
                     pid = pid,
                     "Clearing dead stale PID on startup"
                 );
-                let _ = storage.update_environment(env_id, json!({ pid_field: null }));
+                if let Err(e) = storage.update_environment(env_id, json!({ pid_field: null })) {
+                    debug!(
+                        environment_id = %env_id,
+                        pid_field = pid_field,
+                        error = %e,
+                        "Failed to clear dead PID from storage"
+                    );
+                }
                 continue;
             }
 
-            // Process is alive — check if it's healthy
+            // Process is alive — verify it looks like one of our server processes
+            // before taking any action. This guards against PID reuse by the OS.
+            if !is_likely_server_process(pid, process_type) {
+                warn!(
+                    environment_id = %env_id,
+                    process_type = %process_type,
+                    pid = pid,
+                    "Stored PID does not match expected server process, clearing without killing"
+                );
+                if let Err(e) = storage.update_environment(env_id, json!({ pid_field: null })) {
+                    debug!(
+                        environment_id = %env_id,
+                        pid_field = pid_field,
+                        error = %e,
+                        "Failed to clear mismatched PID from storage"
+                    );
+                }
+                continue;
+            }
+
+            // Process is alive and looks like ours — check if it's healthy
             let is_healthy = if let Some(port) = stored_port {
                 check_server_health(port).await
             } else {
@@ -1220,12 +1271,47 @@ pub async fn cleanup_stale_local_servers() {
                         "Failed to kill stale process"
                     );
                 }
-                let _ = storage.update_environment(env_id, json!({ pid_field: null }));
+                if let Err(e) = storage.update_environment(env_id, json!({ pid_field: null })) {
+                    debug!(
+                        environment_id = %env_id,
+                        pid_field = pid_field,
+                        error = %e,
+                        "Failed to clear stale PID from storage"
+                    );
+                }
             }
         }
     }
 
     info!("Stale local server cleanup completed");
+    STARTUP_CLEANUP_COMPLETE.store(true, Ordering::Release);
+}
+
+/// Check if a process looks like one of our server processes by inspecting its
+/// command line. This mitigates PID reuse — if the OS recycled the PID for an
+/// unrelated process, we won't accidentally kill it.
+#[cfg(unix)]
+fn is_likely_server_process(pid: u32, process_type: ProcessType) -> bool {
+    let Some(command_line) = read_process_command(pid, false) else {
+        // Can't read the command — be conservative, assume it could be ours
+        return true;
+    };
+
+    match process_type {
+        ProcessType::OpenCode => is_opencode_server_command(&command_line),
+        ProcessType::ClaudeBridge => {
+            command_line.contains("claude-bridge") || command_line.contains("claude_bridge")
+        }
+        ProcessType::CodexBridge => {
+            command_line.contains("codex-bridge") || command_line.contains("codex_bridge")
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn is_likely_server_process(_pid: u32, _process_type: ProcessType) -> bool {
+    // On non-Unix, we can't easily inspect the command — assume it's ours
+    true
 }
 
 #[cfg(test)]
