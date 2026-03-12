@@ -43,12 +43,6 @@ pub fn run() {
     local::init_local_terminal_manager();
     info!("Local terminal manager initialized");
 
-    // Clean up stale local server processes from previous app sessions.
-    // This runs in a background task so it doesn't block app startup.
-    tokio::spawn(async {
-        local::cleanup_stale_local_servers().await;
-    });
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -121,6 +115,12 @@ pub fn run() {
                     let _ = app_handle.emit("menu-zoom", "reset");
                 }
                 _ => {}
+            });
+
+            // Clean up stale local server processes from previous app sessions.
+            // Schedule this after Tauri's async runtime is available.
+            tauri::async_runtime::spawn(async {
+                local::cleanup_stale_local_servers().await;
             });
 
             Ok(())
