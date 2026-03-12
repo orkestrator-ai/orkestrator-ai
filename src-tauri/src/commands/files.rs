@@ -142,6 +142,32 @@ fn parse_diff_name_status(output: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn normalize_numstat_path(raw_path: &str) -> String {
+    let path = raw_path.trim();
+
+    if let Some(brace_start) = path.find('{') {
+        if let Some(relative_brace_end) = path[brace_start + 1..].find('}') {
+            let brace_end = brace_start + 1 + relative_brace_end;
+            let inside = &path[brace_start + 1..brace_end];
+
+            if let Some((_, destination)) = inside.split_once(" => ") {
+                return format!(
+                    "{}{}{}",
+                    &path[..brace_start],
+                    destination.trim(),
+                    &path[brace_end + 1..]
+                );
+            }
+        }
+    }
+
+    if let Some((_, destination)) = path.rsplit_once(" => ") {
+        return destination.trim().to_string();
+    }
+
+    path.to_string()
+}
+
 /// Parse git diff numstat output into additions/deletions map
 fn parse_numstat(output: &str) -> HashMap<String, (u32, u32)> {
     output
@@ -155,7 +181,7 @@ fn parse_numstat(output: &str) -> HashMap<String, (u32, u32)> {
             // Handle binary files which show as "-"
             let additions = parts[0].parse().unwrap_or(0);
             let deletions = parts[1].parse().unwrap_or(0);
-            let path = parts[2].to_string();
+            let path = normalize_numstat_path(parts[2]);
 
             Some((path, (additions, deletions)))
         })
@@ -1586,6 +1612,17 @@ mod tests {
                 ("src/app.ts".to_string(), "M".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn parse_numstat_uses_destination_path_for_renames() {
+        let parsed = parse_numstat(
+            "5\t3\told/name.ts => new/name.ts\n2\t1\tsrc/{before => after}.rs\n1\t0\tsrc/app.ts\n",
+        );
+
+        assert_eq!(parsed.get("new/name.ts"), Some(&(5, 3)));
+        assert_eq!(parsed.get("src/after.rs"), Some(&(2, 1)));
+        assert_eq!(parsed.get("src/app.ts"), Some(&(1, 0)));
     }
 
     #[test]
