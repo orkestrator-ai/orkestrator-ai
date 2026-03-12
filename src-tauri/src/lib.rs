@@ -43,6 +43,12 @@ pub fn run() {
     local::init_local_terminal_manager();
     info!("Local terminal manager initialized");
 
+    // Clean up stale local server processes from previous app sessions.
+    // This runs in a background task so it doesn't block app startup.
+    tokio::spawn(async {
+        local::cleanup_stale_local_servers().await;
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -271,6 +277,7 @@ pub fn run() {
             start_local_codex_server_cmd,
             stop_local_codex_server_cmd,
             get_local_codex_server_status,
+            cleanup_stale_local_servers_cmd,
             // Local terminal commands (for local/worktree environments)
             create_local_terminal_session,
             start_local_terminal_session,

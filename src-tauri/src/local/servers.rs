@@ -1105,6 +1105,129 @@ pub fn isolated_opencode_data_home(environment_id: &str) -> Option<String> {
     Some(isolated.to_string_lossy().to_string())
 }
 
+/// Clean up stale local server processes from a previous app session.
+///
+/// This should be called during app startup. It iterates all local environments,
+/// checks any stored PIDs, and either:
+/// - Recovers healthy processes into the process manager (so they can be reused)
+/// - Kills unhealthy/stale processes and clears their PIDs from storage
+/// - Clears dead PIDs from storage
+///
+/// This prevents the common issue where restarting the app leaves orphaned bridge
+/// processes holding ports, causing new servers to fail to start.
+pub async fn cleanup_stale_local_servers() {
+    use crate::storage::get_storage;
+    use serde_json::json;
+
+    let storage = match get_storage() {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Failed to get storage for stale server cleanup: {}", e);
+            return;
+        }
+    };
+
+    let environments = match storage.get_all_environments() {
+        Ok(envs) => envs,
+        Err(e) => {
+            warn!("Failed to load environments for stale server cleanup: {}", e);
+            return;
+        }
+    };
+
+    let manager = get_process_manager();
+
+    for env in environments {
+        if !env.is_local() {
+            continue;
+        }
+
+        let env_id = &env.id;
+
+        // Check each server type: OpenCode, Claude-bridge, Codex-bridge
+        let servers: Vec<(ProcessType, Option<u32>, Option<u16>, &str)> = vec![
+            (
+                ProcessType::OpenCode,
+                env.opencode_pid,
+                env.local_opencode_port,
+                "opencodePid",
+            ),
+            (
+                ProcessType::ClaudeBridge,
+                env.claude_bridge_pid,
+                env.local_claude_port,
+                "claudeBridgePid",
+            ),
+            (
+                ProcessType::CodexBridge,
+                env.codex_bridge_pid,
+                env.local_codex_port,
+                "codexBridgePid",
+            ),
+        ];
+
+        for (process_type, stored_pid, stored_port, pid_field) in servers {
+            let Some(pid) = stored_pid else {
+                continue;
+            };
+
+            if !is_process_alive(pid) {
+                // Process is dead — just clear the stale PID
+                debug!(
+                    environment_id = %env_id,
+                    process_type = %process_type,
+                    pid = pid,
+                    "Clearing dead stale PID on startup"
+                );
+                let _ = storage.update_environment(env_id, json!({ pid_field: null }));
+                continue;
+            }
+
+            // Process is alive — check if it's healthy
+            let is_healthy = if let Some(port) = stored_port {
+                check_server_health(port).await
+            } else {
+                false
+            };
+
+            if is_healthy {
+                // Recover the healthy process into the manager so it can be reused
+                info!(
+                    environment_id = %env_id,
+                    process_type = %process_type,
+                    pid = pid,
+                    port = ?stored_port,
+                    "Recovered healthy server from previous session on startup"
+                );
+                manager
+                    .recover_from_pid(env_id, process_type, pid)
+                    .await;
+            } else {
+                // Alive but unhealthy — kill it and free the port
+                warn!(
+                    environment_id = %env_id,
+                    process_type = %process_type,
+                    pid = pid,
+                    port = ?stored_port,
+                    "Killing stale unhealthy server on startup"
+                );
+                if let Err(e) = super::process::kill_process(pid) {
+                    warn!(
+                        environment_id = %env_id,
+                        process_type = %process_type,
+                        pid = pid,
+                        error = %e,
+                        "Failed to kill stale process"
+                    );
+                }
+                let _ = storage.update_environment(env_id, json!({ pid_field: null }));
+            }
+        }
+    }
+
+    info!("Stale local server cleanup completed");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
