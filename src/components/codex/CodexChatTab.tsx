@@ -695,17 +695,27 @@ export function CodexChatTab({
   ]);
 
   useEffect(() => {
+    const hasPendingInitialPrompt = Boolean(initialPrompt) && !initialPromptSentRef.current;
+
     if (
       !isActive
       || connectionState !== "connected"
       || !client
       || !session?.sessionId
+      || hasPendingInitialPrompt
     ) {
       return;
     }
 
     void reconcileSessionState();
-  }, [client, connectionState, isActive, reconcileSessionState, session?.sessionId]);
+  }, [
+    client,
+    connectionState,
+    initialPrompt,
+    isActive,
+    reconcileSessionState,
+    session?.sessionId,
+  ]);
 
   useEffect(() => {
     if (
