@@ -93,10 +93,16 @@ fn parse_git_status(output: &str) -> Vec<(String, String)> {
             let index_status = &line[0..1];
             let worktree_status = &line[1..2];
             // Use get() to safely access the path portion after "XY "
-            let path = match line.get(3..) {
+            let raw_path = match line.get(3..) {
                 Some(p) => p.trim().to_string(),
                 None => return None,
             };
+            let path = raw_path
+                .split(" -> ")
+                .last()
+                .unwrap_or(raw_path.as_str())
+                .trim()
+                .to_string();
 
             // Determine status - prefer worktree status over index
             let status = if worktree_status != " " && worktree_status != "?" {
@@ -122,14 +128,44 @@ fn parse_diff_name_status(output: &str) -> Vec<(String, String)> {
             if parts.len() < 2 {
                 return None;
             }
-            let status = parts[0].trim().to_string();
-            let path = parts[1].trim().to_string();
+            let raw_status = parts[0].trim();
+            let status = raw_status.chars().next()?.to_string();
+            let path = match status.as_str() {
+                "R" | "C" => parts.last()?.trim().to_string(),
+                _ => parts[1].trim().to_string(),
+            };
             if path.is_empty() {
                 return None;
             }
             Some((path, status))
         })
         .collect()
+}
+
+fn normalize_numstat_path(raw_path: &str) -> String {
+    let path = raw_path.trim();
+
+    if let Some(brace_start) = path.find('{') {
+        if let Some(relative_brace_end) = path[brace_start + 1..].find('}') {
+            let brace_end = brace_start + 1 + relative_brace_end;
+            let inside = &path[brace_start + 1..brace_end];
+
+            if let Some((_, destination)) = inside.split_once(" => ") {
+                return format!(
+                    "{}{}{}",
+                    &path[..brace_start],
+                    destination.trim(),
+                    &path[brace_end + 1..]
+                );
+            }
+        }
+    }
+
+    if let Some((_, destination)) = path.rsplit_once(" => ") {
+        return destination.trim().to_string();
+    }
+
+    path.to_string()
 }
 
 /// Parse git diff numstat output into additions/deletions map
@@ -145,7 +181,7 @@ fn parse_numstat(output: &str) -> HashMap<String, (u32, u32)> {
             // Handle binary files which show as "-"
             let additions = parts[0].parse().unwrap_or(0);
             let deletions = parts[1].parse().unwrap_or(0);
-            let path = parts[2].to_string();
+            let path = normalize_numstat_path(parts[2]);
 
             Some((path, (additions, deletions)))
         })
@@ -242,6 +278,42 @@ fn split_path(path: &str) -> (String, String) {
     } else {
         (String::new(), path.to_string())
     }
+}
+
+fn insert_diff_changes(
+    all_changes: &mut HashMap<String, (String, u32, u32)>,
+    diff_files: Vec<(String, String)>,
+    diff_stats: &HashMap<String, (u32, u32)>,
+) {
+    for (path, status) in diff_files {
+        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
+        {
+            continue;
+        }
+
+        let (additions, deletions) = diff_stats.get(&path).copied().unwrap_or((0, 0));
+        all_changes.insert(path, (status, additions, deletions));
+    }
+}
+
+fn build_git_file_changes(all_changes: HashMap<String, (String, u32, u32)>) -> Vec<GitFileChange> {
+    let mut changes: Vec<GitFileChange> = all_changes
+        .into_iter()
+        .map(|(path, (status, additions, deletions))| {
+            let (directory, filename) = split_path(&path);
+            GitFileChange {
+                path,
+                filename,
+                directory,
+                additions,
+                deletions,
+                status,
+            }
+        })
+        .collect();
+
+    changes.sort_by(|a, b| a.path.cmp(&b.path));
+    changes
 }
 
 /// Build a tree structure from a list of file paths
@@ -381,62 +453,106 @@ pub async fn get_git_status(
         debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
     }
 
-    // Use a HashMap to collect all changes, keyed by path
-    // This allows us to merge branch changes with uncommitted changes
+    // Use a HashMap to collect all changes, keyed by path.
+    // Tracked-file changes come from a single diff against the merge-base with the
+    // PR target branch, which includes committed and uncommitted tracked changes.
+    // Untracked files are layered in from git status below.
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
-    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
-    //    Using origin/target_branch...HEAD to compare against the remote default branch
-    //    This ensures we always compare against the remote state, not local (potentially stale) refs
-    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
-
-    let branch_name_status = client
-        .exec_command(
-            &container_id,
-            vec![
-                "git",
-                "-C",
-                "/workspace",
-                "diff",
-                "--name-status",
-                &branch_diff_ref,
-            ],
-        )
-        .await
-        .unwrap_or_default();
-
-    let branch_numstat = client
-        .exec_command(
-            &container_id,
-            vec![
-                "git",
-                "-C",
-                "/workspace",
-                "diff",
-                "--numstat",
-                &branch_diff_ref,
-            ],
-        )
-        .await
-        .unwrap_or_default();
-
-    debug!(target_branch = %target_branch, "Branch diff output: {} files", branch_name_status.lines().count());
-
-    let branch_files = parse_diff_name_status(&branch_name_status);
-    let branch_stats = parse_numstat(&branch_numstat);
-
-    // Add branch changes to our map
-    for (path, status) in branch_files {
-        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
+    let remote_ref = format!("origin/{}", target_branch);
+    let local_ref = target_branch.clone();
+    let mut target_ref: Option<String> = None;
+    for candidate in [&remote_ref, &local_ref] {
+        let rev = format!("{}^{{commit}}", candidate);
+        match client
+            .exec_command_with_status(
+                &container_id,
+                vec![
+                    "git",
+                    "-C",
+                    "/workspace",
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &rev,
+                ],
+            )
+            .await
         {
-            continue;
+            Ok((stdout, _, 0)) if !stdout.trim().is_empty() => {
+                debug!(target_branch = %target_branch, resolved_ref = %candidate, "Resolved target branch ref");
+                target_ref = Some(candidate.to_string());
+                break;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warn!(target_branch = %target_branch, error = %error, candidate = %candidate, "Failed to resolve target branch ref");
+            }
         }
-        let (additions, deletions) = branch_stats.get(&path).copied().unwrap_or((0, 0));
-        all_changes.insert(path, (status, additions, deletions));
     }
 
-    // 2. Get uncommitted changes (working tree + staged)
-    //    Using git status to catch untracked files too
+    if let Some(target_ref) = target_ref {
+        match client
+            .exec_command_with_status(
+                &container_id,
+                vec!["git", "-C", "/workspace", "merge-base", "HEAD", &target_ref],
+            )
+            .await
+        {
+            Ok((stdout, stderr, 0)) => {
+                let merge_base = stdout.trim().to_string();
+                if !merge_base.is_empty() {
+                    let (tracked_name_status, tracked_numstat) = tokio::try_join!(
+                        client.exec_command_with_status(
+                            &container_id,
+                            vec![
+                                "git",
+                                "-C",
+                                "/workspace",
+                                "diff",
+                                "--name-status",
+                                &merge_base,
+                            ],
+                        ),
+                        client.exec_command_with_status(
+                            &container_id,
+                            vec!["git", "-C", "/workspace", "diff", "--numstat", &merge_base,],
+                        )
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    if tracked_name_status.2 != 0 {
+                        warn!(target_branch = %target_branch, merge_base = %merge_base, stderr = %tracked_name_status.1, "git diff --name-status failed for tracked changes");
+                    } else {
+                        let tracked_files = parse_diff_name_status(&tracked_name_status.0);
+                        let tracked_stats = parse_numstat(&tracked_numstat.0);
+                        debug!(target_branch = %target_branch, merge_base = %merge_base, files = tracked_files.len(), "Loaded tracked changes against merge-base");
+                        insert_diff_changes(&mut all_changes, tracked_files, &tracked_stats);
+                    }
+
+                    if tracked_numstat.2 != 0 {
+                        warn!(target_branch = %target_branch, merge_base = %merge_base, stderr = %tracked_numstat.1, "git diff --numstat failed for tracked changes");
+                    }
+                } else {
+                    warn!(target_branch = %target_branch, resolved_ref = %target_ref, "git merge-base returned empty output");
+                }
+
+                if !stderr.trim().is_empty() {
+                    debug!(target_branch = %target_branch, stderr = %stderr.trim(), "git merge-base stderr");
+                }
+            }
+            Ok((_, stderr, exit_code)) => {
+                warn!(target_branch = %target_branch, resolved_ref = %target_ref, exit_code, stderr = %stderr, "git merge-base failed; only untracked files may be shown");
+            }
+            Err(error) => {
+                warn!(target_branch = %target_branch, resolved_ref = %target_ref, error = %error, "Failed to compute merge-base; only untracked files may be shown");
+            }
+        }
+    } else {
+        warn!(target_branch = %target_branch, "Could not resolve PR target branch ref; only untracked files may be shown");
+    }
+
+    // 2. Get untracked changes from git status.
     let status_output = client
         .exec_command(
             &container_id,
@@ -445,87 +561,29 @@ pub async fn get_git_status(
         .await
         .unwrap_or_default();
 
-    let unstaged_numstat = client
-        .exec_command(
-            &container_id,
-            vec!["git", "-C", "/workspace", "diff", "--numstat"],
-        )
-        .await
-        .unwrap_or_default();
-
-    let staged_numstat = client
-        .exec_command(
-            &container_id,
-            vec!["git", "-C", "/workspace", "diff", "--cached", "--numstat"],
-        )
-        .await
-        .unwrap_or_default();
-
     let uncommitted_files = parse_git_status(&status_output);
-    let unstaged_stats = parse_numstat(&unstaged_numstat);
-    let staged_stats = parse_numstat(&staged_numstat);
-
-    // Merge uncommitted changes into our map (overwrites if already present from branch diff)
     for (path, status) in uncommitted_files {
+        if status != "?" {
+            continue;
+        }
+
         if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
         {
             continue;
         }
 
-        let (additions, deletions) = if status == "?" {
-            // Untracked file - count lines with wc -l
-            let full_path = format!("/workspace/{}", path);
-            let line_count = client
-                .exec_command(&container_id, vec!["wc", "-l", &full_path])
-                .await
-                .ok()
-                .and_then(|output| output.split_whitespace().next()?.parse::<u32>().ok())
-                .unwrap_or(0);
-            (line_count, 0u32)
-        } else {
-            // Get stats from unstaged or staged diff
-            unstaged_stats
-                .get(&path)
-                .or_else(|| staged_stats.get(&path))
-                .copied()
-                .unwrap_or((0, 0))
-        };
+        let full_path = format!("/workspace/{}", path);
+        let line_count = client
+            .exec_command(&container_id, vec!["wc", "-l", &full_path])
+            .await
+            .ok()
+            .and_then(|output| output.split_whitespace().next()?.parse::<u32>().ok())
+            .unwrap_or(0);
 
-        // For uncommitted changes, we may need to combine with branch stats
-        // If file was already modified in branch commits AND has more uncommitted changes
-        if let Some(existing) = all_changes.get(&path) {
-            // File exists in branch diff - combine stats to reflect total changes vs target branch
-            // Branch diff shows merge-base..HEAD, uncommitted shows HEAD..working tree
-            // These are additive for the same file
-            let total_additions = additions.saturating_add(existing.1);
-            let total_deletions = deletions.saturating_add(existing.2);
-            all_changes.insert(path, (status, total_additions, total_deletions));
-        } else {
-            // New uncommitted change not in branch diff
-            all_changes.insert(path, (status, additions, deletions));
-        }
+        all_changes.insert(path, (status, line_count, 0));
     }
 
-    // 3. Build final changes vector
-    let mut changes: Vec<GitFileChange> = Vec::new();
-
-    for (path, (status, additions, deletions)) in all_changes {
-        let (directory, filename) = split_path(&path);
-
-        changes.push(GitFileChange {
-            path,
-            filename,
-            directory,
-            additions,
-            deletions,
-            status,
-        });
-    }
-
-    // Sort by path for consistent ordering
-    changes.sort_by(|a, b| a.path.cmp(&b.path));
-
-    Ok(changes)
+    Ok(build_git_file_changes(all_changes))
 }
 
 /// Get workspace file tree from a container
@@ -882,7 +940,9 @@ pub async fn get_local_git_status(
         ));
     }
 
-    // Use a HashMap to collect all changes, keyed by path
+    // Use a HashMap to collect all changes, keyed by path.
+    // Tracked-file changes come from a single diff against the merge-base with the
+    // PR target branch, which includes committed and uncommitted tracked changes.
     let mut all_changes: HashMap<String, (String, u32, u32)> = HashMap::new();
 
     // Fetch latest from origin to ensure remote refs are up to date (with caching)
@@ -929,56 +989,90 @@ pub async fn get_local_git_status(
         debug!(target_branch = %target_branch, "Skipping fetch (cache still valid)");
     }
 
-    // 1. Get files changed between origin/target_branch and HEAD (committed changes on this branch)
-    //    Using origin/target_branch...HEAD to compare against the remote default branch
-    let branch_diff_ref = format!("origin/{}...HEAD", target_branch);
-
-    let branch_name_status = Command::new("git")
-        .args([
-            "-C",
-            &worktree_path,
-            "diff",
-            "--name-status",
-            &branch_diff_ref,
-        ])
-        .output()
-        .map(|o| {
-            if !o.status.success() {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                debug!(stderr = %stderr, "git diff --name-status failed for branch comparison");
-            }
-            String::from_utf8_lossy(&o.stdout).to_string()
-        })
-        .unwrap_or_default();
-
-    let branch_numstat = Command::new("git")
-        .args(["-C", &worktree_path, "diff", "--numstat", &branch_diff_ref])
-        .output()
-        .map(|o| {
-            if !o.status.success() {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                debug!(stderr = %stderr, "git diff --numstat failed for branch comparison");
-            }
-            String::from_utf8_lossy(&o.stdout).to_string()
-        })
-        .unwrap_or_default();
-
-    debug!(target_branch = %target_branch, "Local branch diff output: {} files", branch_name_status.lines().count());
-
-    let branch_files = parse_diff_name_status(&branch_name_status);
-    let branch_stats = parse_numstat(&branch_numstat);
-
-    // Add branch changes to our map
-    for (path, status) in branch_files {
-        if path.contains('\0') || path.contains('\n') || path.contains('\r') || path.contains("..")
+    let remote_ref = format!("origin/{}", target_branch);
+    let local_ref = target_branch.clone();
+    let mut target_ref: Option<String> = None;
+    for candidate in [&remote_ref, &local_ref] {
+        let rev = format!("{}^{{commit}}", candidate);
+        match Command::new("git")
+            .args([
+                "-C",
+                &worktree_path,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &rev,
+            ])
+            .output()
         {
-            continue;
+            Ok(output)
+                if output.status.success()
+                    && !String::from_utf8_lossy(&output.stdout).trim().is_empty() =>
+            {
+                debug!(target_branch = %target_branch, resolved_ref = %candidate, "Resolved target branch ref");
+                target_ref = Some(candidate.to_string());
+                break;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warn!(target_branch = %target_branch, error = %error, candidate = %candidate, "Failed to resolve target branch ref");
+            }
         }
-        let (additions, deletions) = branch_stats.get(&path).copied().unwrap_or((0, 0));
-        all_changes.insert(path, (status, additions, deletions));
     }
 
-    // 2. Get uncommitted changes (working tree + staged)
+    if let Some(target_ref) = target_ref {
+        match Command::new("git")
+            .args(["-C", &worktree_path, "merge-base", "HEAD", &target_ref])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let merge_base = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !merge_base.is_empty() {
+                    let tracked_name_status = Command::new("git")
+                        .args(["-C", &worktree_path, "diff", "--name-status", &merge_base])
+                        .output()
+                        .map(|o| {
+                            if !o.status.success() {
+                                let stderr = String::from_utf8_lossy(&o.stderr);
+                                warn!(target_branch = %target_branch, merge_base = %merge_base, stderr = %stderr, "git diff --name-status failed for tracked changes");
+                            }
+                            String::from_utf8_lossy(&o.stdout).to_string()
+                        })
+                        .unwrap_or_default();
+
+                    let tracked_numstat = Command::new("git")
+                        .args(["-C", &worktree_path, "diff", "--numstat", &merge_base])
+                        .output()
+                        .map(|o| {
+                            if !o.status.success() {
+                                let stderr = String::from_utf8_lossy(&o.stderr);
+                                warn!(target_branch = %target_branch, merge_base = %merge_base, stderr = %stderr, "git diff --numstat failed for tracked changes");
+                            }
+                            String::from_utf8_lossy(&o.stdout).to_string()
+                        })
+                        .unwrap_or_default();
+
+                    let tracked_files = parse_diff_name_status(&tracked_name_status);
+                    let tracked_stats = parse_numstat(&tracked_numstat);
+                    debug!(target_branch = %target_branch, merge_base = %merge_base, files = tracked_files.len(), "Loaded tracked changes against merge-base");
+                    insert_diff_changes(&mut all_changes, tracked_files, &tracked_stats);
+                } else {
+                    warn!(target_branch = %target_branch, resolved_ref = %target_ref, "git merge-base returned empty output");
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(target_branch = %target_branch, resolved_ref = %target_ref, stderr = %stderr, "git merge-base failed; only untracked files may be shown");
+            }
+            Err(error) => {
+                warn!(target_branch = %target_branch, resolved_ref = %target_ref, error = %error, "Failed to compute merge-base; only untracked files may be shown");
+            }
+        }
+    } else {
+        warn!(target_branch = %target_branch, "Could not resolve PR target branch ref; only untracked files may be shown");
+    }
+
+    // 2. Get untracked changes from git status.
     let status_output = Command::new("git")
         .args(["-C", &worktree_path, "status", "--porcelain", "-uall"])
         .output()
@@ -991,36 +1085,13 @@ pub async fn get_local_git_status(
         })
         .unwrap_or_default();
 
-    let unstaged_numstat = Command::new("git")
-        .args(["-C", &worktree_path, "diff", "--numstat"])
-        .output()
-        .map(|o| {
-            if !o.status.success() {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                debug!(stderr = %stderr, "git diff --numstat (unstaged) failed");
-            }
-            String::from_utf8_lossy(&o.stdout).to_string()
-        })
-        .unwrap_or_default();
-
-    let staged_numstat = Command::new("git")
-        .args(["-C", &worktree_path, "diff", "--cached", "--numstat"])
-        .output()
-        .map(|o| {
-            if !o.status.success() {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                debug!(stderr = %stderr, "git diff --cached --numstat (staged) failed");
-            }
-            String::from_utf8_lossy(&o.stdout).to_string()
-        })
-        .unwrap_or_default();
-
     let uncommitted_files = parse_git_status(&status_output);
-    let unstaged_stats = parse_numstat(&unstaged_numstat);
-    let staged_stats = parse_numstat(&staged_numstat);
 
-    // Merge uncommitted changes into our map
     for (file_path, status) in uncommitted_files {
+        if status != "?" {
+            continue;
+        }
+
         if file_path.contains('\0')
             || file_path.contains('\n')
             || file_path.contains('\r')
@@ -1029,53 +1100,14 @@ pub async fn get_local_git_status(
             continue;
         }
 
-        let (additions, deletions) = if status == "?" {
-            // Untracked file - count lines with wc -l
-            let full_path = std::path::Path::new(&worktree_path).join(&file_path);
-            let line_count = std::fs::read_to_string(&full_path)
-                .map(|content| content.lines().count() as u32)
-                .unwrap_or(0);
-            (line_count, 0u32)
-        } else {
-            // Get stats from unstaged or staged diff
-            unstaged_stats
-                .get(&file_path)
-                .or_else(|| staged_stats.get(&file_path))
-                .copied()
-                .unwrap_or((0, 0))
-        };
-
-        // For uncommitted changes, take the max of uncommitted vs branch stats
-        // to avoid double-counting lines that were modified in both commits and working tree
-        if let Some(existing) = all_changes.get(&file_path) {
-            let total_additions = additions.max(existing.1);
-            let total_deletions = deletions.max(existing.2);
-            all_changes.insert(file_path, (status, total_additions, total_deletions));
-        } else {
-            all_changes.insert(file_path, (status, additions, deletions));
-        }
+        let full_path = std::path::Path::new(&worktree_path).join(&file_path);
+        let line_count = std::fs::read_to_string(&full_path)
+            .map(|content| content.lines().count() as u32)
+            .unwrap_or(0);
+        all_changes.insert(file_path, (status, line_count, 0));
     }
 
-    // 3. Build final changes vector
-    let mut changes: Vec<GitFileChange> = Vec::new();
-
-    for (path, (status, additions, deletions)) in all_changes {
-        let (directory, filename) = split_path(&path);
-
-        changes.push(GitFileChange {
-            path,
-            filename,
-            directory,
-            additions,
-            deletions,
-            status,
-        });
-    }
-
-    // Sort by path for consistent ordering
-    changes.sort_by(|a, b| a.path.cmp(&b.path));
-
-    Ok(changes)
+    Ok(build_git_file_changes(all_changes))
 }
 
 /// Get file tree from a local environment (worktree path)
@@ -1525,4 +1557,148 @@ pub async fn write_local_file(
 
     // Return the full path as string
     Ok(full_path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn run_git(repo_path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .expect("git command should execute");
+
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn parse_git_status_uses_destination_path_for_renames() {
+        let parsed =
+            parse_git_status("R  old/name.ts -> new/name.ts\n?? src/new.ts\n M src/app.ts\n");
+
+        assert_eq!(
+            parsed,
+            vec![
+                ("new/name.ts".to_string(), "R".to_string()),
+                ("src/new.ts".to_string(), "?".to_string()),
+                ("src/app.ts".to_string(), "M".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_diff_name_status_uses_destination_path_for_renames() {
+        let parsed = parse_diff_name_status(
+            "R100\told/name.ts\tnew/name.ts\nC100\tfrom.ts\tcopy.ts\nM\tsrc/app.ts\n",
+        );
+
+        assert_eq!(
+            parsed,
+            vec![
+                ("new/name.ts".to_string(), "R".to_string()),
+                ("copy.ts".to_string(), "C".to_string()),
+                ("src/app.ts".to_string(), "M".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_numstat_uses_destination_path_for_renames() {
+        let parsed = parse_numstat(
+            "5\t3\told/name.ts => new/name.ts\n2\t1\tsrc/{before => after}.rs\n1\t0\tsrc/app.ts\n",
+        );
+
+        assert_eq!(parsed.get("new/name.ts"), Some(&(5, 3)));
+        assert_eq!(parsed.get("src/after.rs"), Some(&(2, 1)));
+        assert_eq!(parsed.get("src/app.ts"), Some(&(1, 0)));
+    }
+
+    #[test]
+    fn build_git_file_changes_sorts_and_splits_paths() {
+        let mut changes = HashMap::new();
+        changes.insert("src/app.ts".to_string(), ("M".to_string(), 3, 1));
+        changes.insert("README.md".to_string(), ("?".to_string(), 2, 0));
+
+        let built = build_git_file_changes(changes);
+
+        assert_eq!(built.len(), 2);
+        assert_eq!(built[0].path, "README.md");
+        assert_eq!(built[0].directory, "");
+        assert_eq!(built[0].filename, "README.md");
+        assert_eq!(built[1].path, "src/app.ts");
+        assert_eq!(built[1].directory, "src");
+        assert_eq!(built[1].filename, "app.ts");
+    }
+
+    #[tokio::test]
+    async fn get_local_git_status_includes_committed_and_uncommitted_changes_against_target_branch()
+    {
+        let temp_dir = tempfile::tempdir().expect("tempdir should be created");
+        let remote_path = temp_dir.path().join("remote.git");
+        let repo_path = temp_dir.path().join("repo");
+
+        run_git(
+            temp_dir.path(),
+            &["init", "--bare", remote_path.to_str().unwrap()],
+        );
+        run_git(
+            temp_dir.path(),
+            &[
+                "clone",
+                remote_path.to_str().unwrap(),
+                repo_path.to_str().unwrap(),
+            ],
+        );
+
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+
+        fs::write(repo_path.join("app.txt"), "base\n").expect("base file should be written");
+        run_git(&repo_path, &["add", "app.txt"]);
+        run_git(&repo_path, &["commit", "-m", "initial"]);
+        run_git(&repo_path, &["branch", "-M", "dev"]);
+        run_git(&repo_path, &["push", "-u", "origin", "dev"]);
+
+        run_git(&repo_path, &["checkout", "-b", "feature/test"]);
+        fs::write(repo_path.join("app.txt"), "base\ncommitted\n")
+            .expect("tracked file should be updated");
+        run_git(&repo_path, &["add", "app.txt"]);
+        run_git(&repo_path, &["commit", "-m", "feature commit"]);
+
+        fs::write(repo_path.join("app.txt"), "base\ncommitted\nworking-tree\n")
+            .expect("working tree update should be written");
+        fs::write(repo_path.join("notes.txt"), "untracked\n")
+            .expect("untracked file should be written");
+
+        let changes =
+            get_local_git_status(repo_path.to_string_lossy().to_string(), "dev".to_string())
+                .await
+                .expect("git status should load");
+
+        let tracked = changes
+            .iter()
+            .find(|change| change.path == "app.txt")
+            .expect("tracked change should be present");
+        assert_eq!(tracked.status, "M");
+        assert!(tracked.additions >= 2);
+
+        let untracked = changes
+            .iter()
+            .find(|change| change.path == "notes.txt")
+            .expect("untracked change should be present");
+        assert_eq!(untracked.status, "?");
+        assert_eq!(untracked.additions, 1);
+    }
 }
