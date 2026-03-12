@@ -5,31 +5,28 @@ describe("uiStore", () => {
   beforeEach(() => {
     // Reset store between tests
     useUIStore.setState({
-      sidebarView: "projects",
       selectedProjectId: null,
       selectedEnvironmentId: null,
       sidebarWidth: 280,
+      collapsedProjects: [],
+      selectedEnvironmentIds: [],
+      expandedSessionsEnvironments: [],
+      zoomLevel: 100,
     });
   });
 
   test("initial state has correct defaults", () => {
     const state = useUIStore.getState();
-    expect(state.sidebarView).toBe("projects");
     expect(state.selectedProjectId).toBeNull();
     expect(state.selectedEnvironmentId).toBeNull();
     expect(state.sidebarWidth).toBe(280);
-  });
-
-  test("setSidebarView updates the view", () => {
-    useUIStore.getState().setSidebarView("environments");
-    expect(useUIStore.getState().sidebarView).toBe("environments");
-
-    useUIStore.getState().setSidebarView("projects");
-    expect(useUIStore.getState().sidebarView).toBe("projects");
+    expect(state.collapsedProjects).toEqual([]);
+    expect(state.selectedEnvironmentIds).toEqual([]);
+    expect(state.expandedSessionsEnvironments).toEqual([]);
+    expect(state.zoomLevel).toBe(100);
   });
 
   test("selectProject sets project and clears environment", () => {
-    // First set an environment
     useUIStore.setState({ selectedEnvironmentId: "env-1" });
 
     useUIStore.getState().selectProject("project-1");
@@ -72,51 +69,105 @@ describe("uiStore", () => {
     expect(useUIStore.getState().sidebarWidth).toBe(200);
   });
 
-  test("navigateToEnvironments sets view, project, and clears environment", () => {
-    useUIStore.setState({ selectedEnvironmentId: "env-1" });
-
-    useUIStore.getState().navigateToEnvironments("project-1");
+  test("selectProjectAndEnvironment sets both", () => {
+    useUIStore.getState().selectProjectAndEnvironment("project-1", "env-1");
 
     const state = useUIStore.getState();
-    expect(state.sidebarView).toBe("environments");
     expect(state.selectedProjectId).toBe("project-1");
-    expect(state.selectedEnvironmentId).toBeNull();
+    expect(state.selectedEnvironmentId).toBe("env-1");
   });
 
-  test("navigateToProjects resets to projects view and clears selections", () => {
-    useUIStore.setState({
-      sidebarView: "environments",
-      selectedProjectId: "project-1",
-      selectedEnvironmentId: "env-1",
-    });
+  test("toggleProjectCollapse adds and removes", () => {
+    useUIStore.getState().toggleProjectCollapse("project-1");
+    expect(useUIStore.getState().collapsedProjects).toEqual(["project-1"]);
 
-    useUIStore.getState().navigateToProjects();
-
-    const state = useUIStore.getState();
-    expect(state.sidebarView).toBe("projects");
-    expect(state.selectedProjectId).toBeNull();
-    expect(state.selectedEnvironmentId).toBeNull();
+    useUIStore.getState().toggleProjectCollapse("project-1");
+    expect(useUIStore.getState().collapsedProjects).toEqual([]);
   });
 
-  test("navigation workflow: projects -> environments -> projects", () => {
-    // Start at projects
-    expect(useUIStore.getState().sidebarView).toBe("projects");
+  test("setProjectCollapsed sets collapsed state", () => {
+    useUIStore.getState().setProjectCollapsed("project-1", true);
+    expect(useUIStore.getState().collapsedProjects).toEqual(["project-1"]);
 
-    // Navigate to environments for a project
-    useUIStore.getState().navigateToEnvironments("project-1");
-    let state = useUIStore.getState();
-    expect(state.sidebarView).toBe("environments");
-    expect(state.selectedProjectId).toBe("project-1");
+    // No duplicate when already collapsed
+    useUIStore.getState().setProjectCollapsed("project-1", true);
+    expect(useUIStore.getState().collapsedProjects).toEqual(["project-1"]);
 
-    // Select an environment
-    useUIStore.getState().selectEnvironment("env-1");
-    expect(useUIStore.getState().selectedEnvironmentId).toBe("env-1");
+    useUIStore.getState().setProjectCollapsed("project-1", false);
+    expect(useUIStore.getState().collapsedProjects).toEqual([]);
+  });
 
-    // Navigate back to projects
-    useUIStore.getState().navigateToProjects();
-    state = useUIStore.getState();
-    expect(state.sidebarView).toBe("projects");
-    expect(state.selectedProjectId).toBeNull();
-    expect(state.selectedEnvironmentId).toBeNull();
+  test("toggleEnvironmentSelection adds and removes", () => {
+    useUIStore.getState().toggleEnvironmentSelection("env-1");
+    expect(useUIStore.getState().selectedEnvironmentIds).toEqual(["env-1"]);
+
+    useUIStore.getState().toggleEnvironmentSelection("env-2");
+    expect(useUIStore.getState().selectedEnvironmentIds).toEqual(["env-1", "env-2"]);
+
+    useUIStore.getState().toggleEnvironmentSelection("env-1");
+    expect(useUIStore.getState().selectedEnvironmentIds).toEqual(["env-2"]);
+  });
+
+  test("setMultiSelection and clearMultiSelection", () => {
+    useUIStore.getState().setMultiSelection(["env-1", "env-2", "env-3"]);
+    expect(useUIStore.getState().selectedEnvironmentIds).toEqual(["env-1", "env-2", "env-3"]);
+
+    useUIStore.getState().clearMultiSelection();
+    expect(useUIStore.getState().selectedEnvironmentIds).toEqual([]);
+  });
+
+  test("toggleSessionsExpanded and isSessionsExpanded", () => {
+    expect(useUIStore.getState().isSessionsExpanded("env-1")).toBe(false);
+
+    useUIStore.getState().toggleSessionsExpanded("env-1");
+    expect(useUIStore.getState().isSessionsExpanded("env-1")).toBe(true);
+
+    useUIStore.getState().toggleSessionsExpanded("env-1");
+    expect(useUIStore.getState().isSessionsExpanded("env-1")).toBe(false);
+  });
+
+  test("setZoomLevel clamps to 50-200", () => {
+    useUIStore.getState().setZoomLevel(150);
+    expect(useUIStore.getState().zoomLevel).toBe(150);
+
+    useUIStore.getState().setZoomLevel(10);
+    expect(useUIStore.getState().zoomLevel).toBe(50);
+
+    useUIStore.getState().setZoomLevel(300);
+    expect(useUIStore.getState().zoomLevel).toBe(200);
+  });
+
+  test("zoomIn and zoomOut step by 10", () => {
+    useUIStore.getState().zoomIn();
+    expect(useUIStore.getState().zoomLevel).toBe(110);
+
+    useUIStore.getState().zoomOut();
+    expect(useUIStore.getState().zoomLevel).toBe(100);
+  });
+
+  test("zoomIn caps at 200 and zoomOut caps at 50", () => {
+    useUIStore.getState().setZoomLevel(200);
+    useUIStore.getState().zoomIn();
+    expect(useUIStore.getState().zoomLevel).toBe(200);
+
+    useUIStore.getState().setZoomLevel(50);
+    useUIStore.getState().zoomOut();
+    expect(useUIStore.getState().zoomLevel).toBe(50);
+  });
+
+  test("resetZoom sets zoom to 100", () => {
+    useUIStore.getState().setZoomLevel(150);
+    useUIStore.getState().resetZoom();
+    expect(useUIStore.getState().zoomLevel).toBe(100);
+  });
+
+  test("collapseEmptyProjects collapses only empty projects", () => {
+    const projectsWithEnvs = new Set(["project-2"]);
+    useUIStore.getState().collapseEmptyProjects(["project-1", "project-2", "project-3"], projectsWithEnvs);
+
+    const collapsed = useUIStore.getState().collapsedProjects;
+    expect(collapsed).toContain("project-1");
+    expect(collapsed).toContain("project-3");
+    expect(collapsed).not.toContain("project-2");
   });
 });

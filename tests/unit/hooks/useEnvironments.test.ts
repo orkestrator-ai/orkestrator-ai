@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useEnvironmentStore } from "../../../src/stores/environmentStore";
-import type { Environment, EnvironmentStatus } from "../../../src/types";
+import type { Environment } from "../../../src/types";
 import { createMockEnvironment } from "../utils/testFactories";
 
 // Mock tauri module BEFORE importing the hook
@@ -11,7 +11,7 @@ const mockCreateEnvironment = mock<(projectId: string) => Promise<Environment>>(
   Promise.resolve(createMockEnvironment({ id: "new-env-id", projectId, name: "test-env" }))
 );
 const mockDeleteEnvironment = mock<(environmentId: string) => Promise<void>>(() => Promise.resolve());
-const mockStartEnvironment = mock<(environmentId: string) => Promise<void>>(() => Promise.resolve());
+const mockStartEnvironment = mock<(environmentId: string) => Promise<{ setupCommands?: string[] }>>(() => Promise.resolve({ setupCommands: undefined }));
 const mockStopEnvironment = mock<(environmentId: string) => Promise<void>>(() => Promise.resolve());
 const mockSyncEnvironmentStatus = mock<(environmentId: string) => Promise<Environment>>((environmentId) =>
   Promise.resolve(createMockEnvironment({ id: environmentId, containerId: "container-123", status: "running" }))
@@ -55,7 +55,7 @@ describe("useEnvironments", () => {
       Promise.resolve(createMockEnvironment({ id: "new-env-id", projectId, name: "test-env" }))
     );
     mockDeleteEnvironment.mockImplementation(() => Promise.resolve());
-    mockStartEnvironment.mockImplementation(() => Promise.resolve());
+    mockStartEnvironment.mockImplementation(() => Promise.resolve({ setupCommands: undefined }));
     mockStopEnvironment.mockImplementation(() => Promise.resolve());
     mockSyncEnvironmentStatus.mockImplementation((environmentId) =>
       Promise.resolve(createMockEnvironment({ id: environmentId, containerId: "container-123", status: "running" }))
@@ -98,7 +98,7 @@ describe("useEnvironments", () => {
       createdEnv = await result.current.createEnvironment("project-1");
     });
 
-    expect(mockCreateEnvironment).toHaveBeenCalledWith("project-1", undefined);
+    expect(mockCreateEnvironment).toHaveBeenCalledWith("project-1", undefined, undefined, undefined, undefined, undefined);
     expect(createdEnv?.id).toBe("new-env-id");
     expect(result.current.allEnvironments).toHaveLength(1);
     expect(result.current.error).toBeNull();

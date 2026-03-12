@@ -19,6 +19,6 @@ pub use servers::{
     stop_local_codex_bridge, stop_local_opencode_server, LocalServerStartResult, LocalServerStatus,
 };
 pub use worktree::{
-    add_to_git_exclude, configure_local_git_artifacts, copy_env_files, create_worktree,
+    configure_local_git_artifacts, copy_env_files, create_worktree,
     delete_worktree, get_setup_local_commands,
 };
