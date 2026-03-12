@@ -1148,9 +1148,18 @@ pub fn isolated_opencode_data_home(environment_id: &str) -> Option<String> {
 ///
 /// This ensures OAuth credentials and other shared state are accessible
 /// while keeping the SQLite database isolated per environment.
+fn shared_opencode_data_dir() -> Option<PathBuf> {
+    let xdg_base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| get_home_dir().map(|h| h.join(".local").join("share")))?;
+
+    Some(xdg_base.join("opencode"))
+}
+
 fn symlink_shared_opencode_files(isolated_opencode_dir: &Path) {
-    let default_opencode_dir = get_home_dir()
-        .map(|h| h.join(".local").join("share").join("opencode"));
+    let default_opencode_dir = shared_opencode_data_dir();
 
     let Some(source_dir) = default_opencode_dir else {
         return;
@@ -1412,6 +1421,14 @@ mod tests {
         assert!(result.is_some());
         let path = result.unwrap();
         assert!(path.contains("orkestrator-ai/opencode-data/test-env-123"));
+    }
+
+    #[test]
+    fn test_shared_opencode_data_dir_defaults_to_home() {
+        let home = get_home_dir().expect("expected home directory for test");
+        let expected = home.join(".local").join("share").join("opencode");
+
+        assert_eq!(shared_opencode_data_dir(), Some(expected));
     }
 
     #[cfg(unix)]

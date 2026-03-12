@@ -96,7 +96,7 @@ orkestrator-ai/
 bun install
 
 # Build the Docker base image
-cd docker && docker build -t orkestrator-ai:latest .
+docker build -t orkestrator-ai:latest -f docker/Dockerfile .
 ```
 
 ### Running
