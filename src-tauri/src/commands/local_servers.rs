@@ -901,6 +901,18 @@ pub async fn stop_local_codex_server_cmd(environment_id: String) -> Result<(), S
     Ok(())
 }
 
+/// Clean up stale local server processes from previous app sessions.
+///
+/// Iterates all local environments and kills or recovers any orphaned bridge
+/// processes. This is automatically called on app startup, but can also be
+/// triggered manually from the frontend.
+#[tauri::command]
+pub async fn cleanup_stale_local_servers_cmd() -> Result<(), String> {
+    info!("Manual stale server cleanup requested");
+    crate::local::cleanup_stale_local_servers().await;
+    Ok(())
+}
+
 /// Get the status of the Codex bridge server for a local environment
 #[tauri::command]
 pub async fn get_local_codex_server_status(
