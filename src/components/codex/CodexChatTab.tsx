@@ -35,6 +35,7 @@ import {
 import { OpenCodeMessage } from "@/components/opencode/OpenCodeMessage";
 import { CodexComposeBar } from "./CodexComposeBar";
 import { CodexResumeSessionDialog } from "./CodexResumeSessionDialog";
+import { hasPendingInitialPrompt } from "./reconcile-guards";
 import { createCodexSessionRefreshController } from "./session-refresh";
 import {
   getPersistedCodexPreferences,
@@ -74,7 +75,7 @@ export function CodexChatTab({
   const [serverLog, setServerLog] = useState<string | null>(null);
   const [initAttempt, setInitAttempt] = useState(0);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
-  const initialPromptSentRef = useRef(false);
+  const [initialPromptSent, setInitialPromptSent] = useState(false);
   const lastInitTimeRef = useRef(0);
   const isInitializedRef = useRef(false);
   const isProcessingQueueRef = useRef(false);
@@ -695,14 +696,12 @@ export function CodexChatTab({
   ]);
 
   useEffect(() => {
-    const hasPendingInitialPrompt = Boolean(initialPrompt) && !initialPromptSentRef.current;
-
     if (
       !isActive
       || connectionState !== "connected"
       || !client
       || !session?.sessionId
-      || hasPendingInitialPrompt
+      || hasPendingInitialPrompt(initialPrompt, initialPromptSent)
     ) {
       return;
     }
@@ -712,6 +711,7 @@ export function CodexChatTab({
     client,
     connectionState,
     initialPrompt,
+    initialPromptSent,
     isActive,
     reconcileSessionState,
     session?.sessionId,
@@ -882,12 +882,12 @@ export function CodexChatTab({
       connectionState !== "connected"
       || !session?.sessionId
       || !initialPrompt
-      || initialPromptSentRef.current
+      || initialPromptSent
     ) {
       return;
     }
 
-    initialPromptSentRef.current = true;
+    setInitialPromptSent(true);
     void handleSend(initialPrompt, []).then(() => {
       clearTabInitialPrompt(tabId, environmentId);
     });
@@ -897,6 +897,7 @@ export function CodexChatTab({
     environmentId,
     handleSend,
     initialPrompt,
+    initialPromptSent,
     session?.sessionId,
     tabId,
   ]);
