@@ -52,7 +52,7 @@ fn resolve_codex_bridge_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> 
                 .parent()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("."));
-            let dev_path = workspace_root.join("docker").join("codex-bridge");
+            let dev_path = workspace_root.join("bridges").join("codex-bridge");
             if dev_path.exists() {
                 debug!(path = %dev_path.display(), "Using dev codex-bridge path");
                 return dev_path;
@@ -81,7 +81,7 @@ fn resolve_codex_bridge_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> 
         }
     }
 
-    PathBuf::from("docker").join("codex-bridge")
+    PathBuf::from("bridges").join("codex-bridge")
 }
 
 async fn ensure_codex_bridge_present(

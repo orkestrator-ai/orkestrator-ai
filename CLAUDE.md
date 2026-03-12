@@ -71,11 +71,13 @@ orkestrator-ai/
 │       ├── pty/            # Terminal session management
 │       ├── storage/        # JSON file persistence
 │       └── models/         # Data models
+├── bridges/                # Bridge servers for native agent modes
+│   ├── claude-bridge/      # Claude Native Mode bridge server (Node.js)
+│   └── codex-bridge/       # Codex Native Mode bridge server (Node.js)
 ├── docker/                 # Docker configuration
 │   ├── Dockerfile          # Base image definition
 │   ├── entrypoint.sh       # Container entrypoint
-│   ├── init-firewall.sh    # Network firewall setup
-│   └── claude-bridge/      # Claude Native Mode bridge server (Node.js)
+│   └── init-firewall.sh    # Network firewall setup
 └── docs/                   # Documentation and stories
 ```
 
@@ -210,10 +212,10 @@ Containers have restricted network access via iptables firewall:
 | `src/lib/claude-client.ts` | Claude bridge server client wrapper |
 | `src/stores/claudeStore.ts` | Zustand store for Claude sessions |
 | `src-tauri/src/commands/claude.rs` | Claude bridge commands (container) |
-| `docker/claude-bridge/src/index.ts` | Bridge server entry point |
-| `docker/claude-bridge/src/services/session-manager.ts` | Claude Agent SDK integration |
-| `docker/claude-bridge/src/routes/session.ts` | Session API endpoints |
-| `docker/claude-bridge/src/routes/events.ts` | SSE event subscription |
+| `bridges/claude-bridge/src/index.ts` | Bridge server entry point |
+| `bridges/claude-bridge/src/services/session-manager.ts` | Claude Agent SDK integration |
+| `bridges/claude-bridge/src/routes/session.ts` | Session API endpoints |
+| `bridges/claude-bridge/src/routes/events.ts` | SSE event subscription |
 
 ## Claude Store Session Identifiers
 
