@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "bunx tsc && vite build",
     "build:claude-bridge": "cd docker/claude-bridge && bun install && bun run build",
     "build:codex-bridge": "cd docker/codex-bridge && bun install && bun run build",
     "download:bun": "./scripts/download-bun.sh",
