@@ -578,10 +578,6 @@ export function OpenCodeChatTab({
           const newSession = await createSession(sdkClient);
           if (!mounted) return;
 
-          if (!newSession) {
-            throw new Error("Failed to create session");
-          }
-
           // Store the session ID in the ref for future re-activations
           tabSessionIdRef.current = newSession.id;
           isInitializedRef.current = true;

@@ -153,7 +153,7 @@ pub async fn start_local_opencode_server_cmd(
                 environment_id = %environment_id,
                 pid = pid,
                 port = port,
-                "Stored OpenCode PID is alive but unhealthy; clearing stale PID"
+                "Stored OpenCode PID is alive but invalid for this environment; clearing stale PID"
             );
             storage
                 .update_environment(
