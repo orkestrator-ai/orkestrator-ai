@@ -450,7 +450,7 @@ pub async fn start_local_claude_server_cmd(
     }
 
     // Get the path to the claude-bridge
-    // In development, it's in the docker/claude-bridge directory
+    // In development, it's in the bridges/claude-bridge directory
     // In production, it's bundled as a resource
     let bridge_path = resolve_claude_bridge_path(&app_handle);
     debug!(environment_id = %environment_id, bridge_path = %bridge_path, "Resolved claude-bridge path");
@@ -497,7 +497,7 @@ pub async fn start_local_claude_server_cmd(
 }
 
 fn dev_claude_bridge_path() -> Option<String> {
-    // In dev, CARGO_MANIFEST_DIR points to src-tauri; claude-bridge lives at ../docker/claude-bridge.
+    // In dev, CARGO_MANIFEST_DIR points to src-tauri; claude-bridge lives at ../bridges/claude-bridge.
     //
     // IMPORTANT: env!() captures the path at COMPILE TIME, not runtime. This means:
     // - In debug builds: Points to the developer's local src-tauri directory
@@ -513,7 +513,7 @@ fn dev_claude_bridge_path() -> Option<String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);
     let workspace_root = manifest_path.parent()?;
-    let bridge_path = workspace_root.join("docker").join("claude-bridge");
+    let bridge_path = workspace_root.join("bridges").join("claude-bridge");
     Some(bridge_path.to_string_lossy().to_string())
 }
 
@@ -567,14 +567,14 @@ fn resolve_claude_bridge_path(app_handle: &tauri::AppHandle) -> String {
 
     // Last resort - relative path (will likely fail but provides a clear error)
     warn!("Could not resolve claude-bridge path, using fallback");
-    "docker/claude-bridge".to_string()
+    "bridges/claude-bridge".to_string()
 }
 
 fn dev_codex_bridge_path() -> Option<String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);
     let workspace_root = manifest_path.parent()?;
-    let bridge_path = workspace_root.join("docker").join("codex-bridge");
+    let bridge_path = workspace_root.join("bridges").join("codex-bridge");
     Some(bridge_path.to_string_lossy().to_string())
 }
 
@@ -619,7 +619,7 @@ fn resolve_codex_bridge_path(app_handle: &tauri::AppHandle) -> String {
     }
 
     warn!("Could not resolve codex-bridge path, using fallback");
-    "docker/codex-bridge".to_string()
+    "bridges/codex-bridge".to_string()
 }
 
 /// Resolve the bundled bun binary path for packaged apps

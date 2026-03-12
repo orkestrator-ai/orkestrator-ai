@@ -91,18 +91,18 @@ RUN curl -fsSL https://opencode.ai/install | bash
 RUN npm install -g @openai/codex
 
 # Copy and build Claude Bridge Server
-COPY --chown=node:node claude-bridge /opt/claude-bridge
+COPY --chown=node:node bridges/claude-bridge /opt/claude-bridge
 WORKDIR /opt/claude-bridge
 RUN npm install && npm run build && npm prune --production
 
 # Copy and build Codex Bridge Server
-COPY --chown=node:node codex-bridge /opt/codex-bridge
+COPY --chown=node:node bridges/codex-bridge /opt/codex-bridge
 WORKDIR /opt/codex-bridge
 RUN npm install && npm run build && npm prune --production
 WORKDIR /workspace
 
 # Copy and set up firewall scripts
-COPY init-firewall.sh update-firewall.sh /usr/local/bin/
+COPY docker/init-firewall.sh docker/update-firewall.sh /usr/local/bin/
 USER root
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/update-firewall.sh && \
   echo "node ALL=(root) NOPASSWD:SETENV: /usr/local/bin/init-firewall.sh, /usr/local/bin/update-firewall.sh" > /etc/sudoers.d/node-firewall && \
@@ -123,9 +123,9 @@ RUN mkdir -p /home/node/.ssh && \
   chmod 700 /home/node/.ssh
 
 # Copy entrypoint and workspace setup scripts
-COPY entrypoint.sh /usr/local/bin/
-COPY workspace-setup.sh /usr/local/bin/
-COPY git-branch-helpers.sh /usr/local/bin/
+COPY docker/entrypoint.sh /usr/local/bin/
+COPY docker/workspace-setup.sh /usr/local/bin/
+COPY docker/git-branch-helpers.sh /usr/local/bin/
 RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/workspace-setup.sh /usr/local/bin/git-branch-helpers.sh
 
 USER node

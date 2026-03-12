@@ -230,7 +230,8 @@ pub async fn start_local_opencode_server(
     // not support concurrent writers, so multiple `opencode serve` processes
     // sharing the default ~/.local/share will conflict.
     if let Some(data_home) = isolated_opencode_data_home(environment_id) {
-        if let Err(e) = std::fs::create_dir_all(&data_home) {
+        let isolated_opencode_dir = PathBuf::from(&data_home).join("opencode");
+        if let Err(e) = std::fs::create_dir_all(&isolated_opencode_dir) {
             warn!(
                 environment_id = %environment_id,
                 path = %data_home,
@@ -238,6 +239,11 @@ pub async fn start_local_opencode_server(
                 "Failed to create isolated XDG_DATA_HOME; falling back to shared default"
             );
         } else {
+            // Symlink shared files (auth, config) from the real data home so that
+            // OAuth tokens and other credentials are available in the isolated
+            // environment.  Only the SQLite database needs true isolation.
+            symlink_shared_opencode_files(&isolated_opencode_dir);
+
             debug!(
                 environment_id = %environment_id,
                 path = %data_home,
@@ -715,7 +721,17 @@ async fn ensure_bridge_ready(
         "Bridge dist missing; attempting build"
     );
 
-    let install_output = Command::new("bun")
+    // Resolve the bun binary path explicitly. When Tauri runs as a GUI app
+    // (launched from Finder/Spotlight), the process inherits a minimal PATH
+    // that may not include ~/.bun/bin or /opt/homebrew/bin.
+    let bun_cmd = find_bun_binary().unwrap_or_else(|| "bun".to_string());
+    debug!(
+        bridge_name = %bridge_name,
+        bun_cmd = %bun_cmd,
+        "Resolved bun binary for bridge build"
+    );
+
+    let install_output = Command::new(&bun_cmd)
         .args(["install"])
         .current_dir(bridge_path)
         .output()
@@ -731,7 +747,7 @@ async fn ensure_bridge_ready(
         ));
     }
 
-    let build_output = Command::new("bun")
+    let build_output = Command::new(&bun_cmd)
         .args(["run", "build"])
         .current_dir(bridge_path)
         .output()
@@ -1127,6 +1143,80 @@ pub fn isolated_opencode_data_home(environment_id: &str) -> Option<String> {
     Some(isolated.to_string_lossy().to_string())
 }
 
+/// Symlink shared OpenCode files (auth tokens, etc.) from the default data
+/// directory into an isolated `opencode/` subdirectory.
+///
+/// This ensures OAuth credentials and other shared state are accessible
+/// while keeping the SQLite database isolated per environment.
+fn shared_opencode_data_dir() -> Option<PathBuf> {
+    let xdg_base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| get_home_dir().map(|h| h.join(".local").join("share")))?;
+
+    Some(xdg_base.join("opencode"))
+}
+
+fn symlink_shared_opencode_files(isolated_opencode_dir: &Path) {
+    let default_opencode_dir = shared_opencode_data_dir();
+
+    let Some(source_dir) = default_opencode_dir else {
+        return;
+    };
+
+    if !source_dir.exists() {
+        return;
+    }
+
+    // Files that should be shared (not isolated) across environments
+    let shared_files = ["auth.json"];
+
+    for filename in &shared_files {
+        let source = source_dir.join(filename);
+        let target = isolated_opencode_dir.join(filename);
+
+        if !source.exists() {
+            continue;
+        }
+
+        // Skip if target already exists (could be a symlink or real file)
+        if target.exists() || target.symlink_metadata().is_ok() {
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            if let Err(e) = std::os::unix::fs::symlink(&source, &target) {
+                warn!(
+                    source = %source.display(),
+                    target = %target.display(),
+                    error = %e,
+                    "Failed to symlink shared OpenCode file"
+                );
+            } else {
+                debug!(
+                    source = %source.display(),
+                    target = %target.display(),
+                    "Symlinked shared OpenCode file"
+                );
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            if let Err(e) = std::os::windows::fs::symlink_file(&source, &target) {
+                warn!(
+                    source = %source.display(),
+                    target = %target.display(),
+                    error = %e,
+                    "Failed to symlink shared OpenCode file"
+                );
+            }
+        }
+    }
+}
+
 /// Clean up stale local server processes from a previous app session.
 ///
 /// This should be called during app startup. It iterates all local environments,
@@ -1331,6 +1421,14 @@ mod tests {
         assert!(result.is_some());
         let path = result.unwrap();
         assert!(path.contains("orkestrator-ai/opencode-data/test-env-123"));
+    }
+
+    #[test]
+    fn test_shared_opencode_data_dir_defaults_to_home() {
+        let home = get_home_dir().expect("expected home directory for test");
+        let expected = home.join(".local").join("share").join("opencode");
+
+        assert_eq!(shared_opencode_data_dir(), Some(expected));
     }
 
     #[cfg(unix)]

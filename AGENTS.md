@@ -241,7 +241,7 @@ bun run dev
 bun run tauri build
 
 # Build Docker base image
-cd docker && docker build -t orkestrator-ai:latest .
+docker build -t orkestrator-ai:latest -f docker/Dockerfile .
 ```
 
 ## UI Components
