@@ -103,12 +103,25 @@ fn read_process_command(pid: u32, include_env: bool) -> Option<String> {
 }
 
 #[cfg(unix)]
+fn is_opencode_server_command(command_line: &str) -> bool {
+    command_line.contains("opencode") && command_line.contains("serve")
+}
+
+#[cfg(unix)]
+fn extract_env_var(process_with_env: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    process_with_env
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix(&prefix).map(str::to_string))
+}
+
+#[cfg(unix)]
 fn is_expected_opencode_process(environment_id: &str, pid: u32) -> bool {
     let Some(command_line) = read_process_command(pid, false) else {
         return false;
     };
 
-    if !command_line.contains("opencode") || !command_line.contains("serve") {
+    if !is_opencode_server_command(&command_line) {
         debug!(
             environment_id = %environment_id,
             pid = pid,
@@ -124,13 +137,13 @@ fn is_expected_opencode_process(environment_id: &str, pid: u32) -> bool {
     let Some(process_with_env) = read_process_command(pid, true) else {
         return false;
     };
-    let expected_fragment = format!("XDG_DATA_HOME={expected_data_home}");
-    if !process_with_env.contains(&expected_fragment) {
+    let actual_data_home = extract_env_var(&process_with_env, "XDG_DATA_HOME");
+    if actual_data_home.as_deref() != Some(expected_data_home.as_str()) {
         warn!(
             environment_id = %environment_id,
             pid = pid,
             expected_data_home = %expected_data_home,
-            process = %process_with_env,
+            actual_data_home = actual_data_home.as_deref().unwrap_or("<missing>"),
             "Stored OpenCode PID belongs to a different environment"
         );
         return false;
@@ -1109,5 +1122,28 @@ mod tests {
         assert!(result.is_some());
         let path = result.unwrap();
         assert!(path.contains("orkestrator-ai/opencode-data/test-env-123"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_opencode_server_command() {
+        assert!(is_opencode_server_command(
+            "/usr/local/bin/opencode serve --port 14096"
+        ));
+        assert!(!is_opencode_server_command(
+            "/usr/local/bin/opencode auth login"
+        ));
+        assert!(!is_opencode_server_command("/usr/bin/python worker.py"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_env_var() {
+        let process = "XDG_DATA_HOME=/tmp/opencode-data PATH=/usr/bin opencode serve --port 14096";
+        assert_eq!(
+            extract_env_var(process, "XDG_DATA_HOME").as_deref(),
+            Some("/tmp/opencode-data")
+        );
+        assert_eq!(extract_env_var(process, "HOME"), None);
     }
 }
