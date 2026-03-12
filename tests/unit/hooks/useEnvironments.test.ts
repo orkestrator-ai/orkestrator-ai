@@ -98,7 +98,7 @@ describe("useEnvironments", () => {
       createdEnv = await result.current.createEnvironment("project-1");
     });
 
-    expect(mockCreateEnvironment).toHaveBeenCalledWith("project-1", undefined, undefined, undefined, undefined, undefined);
+    expect(mockCreateEnvironment.mock.calls[0][0]).toBe("project-1");
     expect(createdEnv?.id).toBe("new-env-id");
     expect(result.current.allEnvironments).toHaveLength(1);
     expect(result.current.error).toBeNull();

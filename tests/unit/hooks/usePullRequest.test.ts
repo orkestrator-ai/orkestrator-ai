@@ -16,7 +16,7 @@ mock.module("@/lib/tauri", () => ({
 
 // Mock prMonitorStore
 const mockSetMonitoringMode = mock(() => {});
-const mockGetMonitoringState = mock(() => null);
+const mockGetMonitoringState = mock(() => null as { checkInProgress: boolean } | null);
 
 mock.module("@/stores/prMonitorStore", () => ({
   usePrMonitorStore: () => ({
@@ -212,5 +212,43 @@ describe("usePullRequest", () => {
     });
 
     expect(mockClearEnvironmentPr).not.toHaveBeenCalled();
+  });
+
+  test("isDetecting reflects monitor store checkInProgress", () => {
+    mockGetMonitoringState.mockImplementation(() => ({ checkInProgress: true }));
+
+    const { result } = renderHook(() => usePullRequest({ environmentId: "env-1" }));
+
+    expect(result.current.isDetecting).toBe(true);
+  });
+
+  test("setModeCreatePending calls setMonitoringMode with create-pending", () => {
+    const { result } = renderHook(() => usePullRequest({ environmentId: "env-1" }));
+
+    act(() => {
+      result.current.setModeCreatePending();
+    });
+
+    expect(mockSetMonitoringMode).toHaveBeenCalledWith("env-1", "create-pending");
+  });
+
+  test("setModeMergePending calls setMonitoringMode with merge-pending", () => {
+    const { result } = renderHook(() => usePullRequest({ environmentId: "env-1" }));
+
+    act(() => {
+      result.current.setModeMergePending();
+    });
+
+    expect(mockSetMonitoringMode).toHaveBeenCalledWith("env-1", "merge-pending");
+  });
+
+  test("setModeCreatePending does nothing when no environmentId", () => {
+    const { result } = renderHook(() => usePullRequest({ environmentId: null }));
+
+    act(() => {
+      result.current.setModeCreatePending();
+    });
+
+    expect(mockSetMonitoringMode).not.toHaveBeenCalled();
   });
 });
