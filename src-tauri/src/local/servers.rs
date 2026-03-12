@@ -8,6 +8,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 use tokio::process::Command;
@@ -76,6 +77,71 @@ async fn wait_for_server_health(port: u16) -> bool {
     }
     warn!(port = port, "Server did not become healthy within timeout");
     false
+}
+
+#[cfg(unix)]
+fn read_process_command(pid: u32, include_env: bool) -> Option<String> {
+    let mut command = StdCommand::new("ps");
+    if include_env {
+        command.args(["eww", "-o", "command=", "-p"]);
+    } else {
+        command.args(["-o", "command=", "-p"]);
+    }
+
+    let output = command.arg(pid.to_string()).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
+#[cfg(unix)]
+fn is_expected_opencode_process(environment_id: &str, pid: u32) -> bool {
+    let Some(command_line) = read_process_command(pid, false) else {
+        return false;
+    };
+
+    if !command_line.contains("opencode") || !command_line.contains("serve") {
+        debug!(
+            environment_id = %environment_id,
+            pid = pid,
+            command = %command_line,
+            "Stored PID does not look like an OpenCode server"
+        );
+        return false;
+    }
+
+    let Some(expected_data_home) = isolated_opencode_data_home(environment_id) else {
+        return true;
+    };
+    let Some(process_with_env) = read_process_command(pid, true) else {
+        return false;
+    };
+    let expected_fragment = format!("XDG_DATA_HOME={expected_data_home}");
+    if !process_with_env.contains(&expected_fragment) {
+        warn!(
+            environment_id = %environment_id,
+            pid = pid,
+            expected_data_home = %expected_data_home,
+            process = %process_with_env,
+            "Stored OpenCode PID belongs to a different environment"
+        );
+        return false;
+    }
+
+    true
+}
+
+#[cfg(not(unix))]
+fn is_expected_opencode_process(_environment_id: &str, _pid: u32) -> bool {
+    true
 }
 
 /// Start the OpenCode server for a local environment
@@ -229,7 +295,7 @@ pub async fn get_local_opencode_status(
     // Check if we're tracking this process
     let is_running = if let Some(p) = pid {
         // Check if stored PID is still alive
-        if is_process_alive(p) {
+        if is_process_alive(p) && is_expected_opencode_process(environment_id, p) {
             // Verify it's responding to health checks
             if let Some(port) = port {
                 check_server_health(port).await

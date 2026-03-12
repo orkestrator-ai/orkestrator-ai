@@ -731,28 +731,25 @@ export async function getAvailableSlashCommands(
 export async function createSession(
   client: OpencodeClient,
   title?: string
-): Promise<OpenCodeSession | null> {
-  try {
-    const response = await client.session.create({
-      title,
-    });
+): Promise<OpenCodeSession> {
+  const response = await client.session.create({
+    title,
+  });
 
-    if (!response.data) return null;
-
-    const createdTime = response.data.time?.created;
-    const createdAt = typeof createdTime === "number"
-      ? new Date(createdTime).toISOString()
-      : createdTime || new Date().toISOString();
-
-    return {
-      id: response.data.id,
-      title: response.data.title,
-      createdAt,
-    };
-  } catch (error) {
-    console.error("[opencode-client] Failed to create session:", error);
-    return null;
+  if (!response.data) {
+    throw new Error("OpenCode returned an empty session response");
   }
+
+  const createdTime = response.data.time?.created;
+  const createdAt = typeof createdTime === "number"
+    ? new Date(createdTime).toISOString()
+    : createdTime || new Date().toISOString();
+
+  return {
+    id: response.data.id,
+    title: response.data.title,
+    createdAt,
+  };
 }
 
 /**
