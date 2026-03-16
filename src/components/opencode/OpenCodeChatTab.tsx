@@ -441,10 +441,11 @@ export function OpenCodeChatTab({
         // Create SDK client (shared per environment)
         const baseUrl = `http://127.0.0.1:${hostPort}`;
         console.debug("[OpenCodeChatTab] OpenCode server running at:", baseUrl);
-        const sdkClient = createClient(
-          baseUrl,
-          isLocal ? worktreePath ?? undefined : undefined,
-        );
+        // Local OpenCode servers are already launched with their CWD set to the
+        // environment worktree, so attaching the SDK-wide directory header is
+        // unnecessary here. Avoiding that extra browser header also removes one
+        // more local-only variable from native-tab startup.
+        const sdkClient = createClient(baseUrl);
         setClient(environmentId, sdkClient);
 
         // Fetch available models, server defaults, and model preferences

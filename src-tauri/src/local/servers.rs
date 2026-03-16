@@ -243,6 +243,7 @@ pub async fn start_local_opencode_server(
             // OAuth tokens and other credentials are available in the isolated
             // environment.  Only the SQLite database needs true isolation.
             symlink_shared_opencode_files(&isolated_opencode_dir);
+            reset_isolated_opencode_database(&isolated_opencode_dir);
 
             debug!(
                 environment_id = %environment_id,
@@ -1213,6 +1214,34 @@ fn symlink_shared_opencode_files(isolated_opencode_dir: &Path) {
                     "Failed to symlink shared OpenCode file"
                 );
             }
+        }
+    }
+}
+
+/// Reset isolated SQLite artifacts before starting a fresh local OpenCode server.
+///
+/// The per-environment database is only used to avoid cross-environment locking,
+/// and it can become unusable after interrupted runs, later surfacing as
+/// `SQLiteError: disk I/O error` when native tabs create sessions. Keep shared
+/// auth/config intact, but drop the isolated database so OpenCode can recreate it.
+fn reset_isolated_opencode_database(isolated_opencode_dir: &Path) {
+    for filename in ["opencode.db", "opencode.db-shm", "opencode.db-wal"] {
+        let path = isolated_opencode_dir.join(filename);
+        if !path.exists() {
+            continue;
+        }
+
+        if let Err(error) = std::fs::remove_file(&path) {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "Failed to remove stale isolated OpenCode database file"
+            );
+        } else {
+            debug!(
+                path = %path.display(),
+                "Removed stale isolated OpenCode database file"
+            );
         }
     }
 }

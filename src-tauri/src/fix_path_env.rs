@@ -5,9 +5,28 @@
 //! This means CLI tools installed via Homebrew, npm global, pip, etc. won't be found.
 //!
 //! This module reads the PATH from the user's login shell and updates the current
-//! process's PATH environment variable so that CLI tool detection works correctly.
+//! process environment so that CLI tools and bridge child processes work correctly.
 
 use tracing::{debug, info, warn};
+
+#[cfg(target_os = "macos")]
+const SHELL_ENV_KEYS: &[&str] = &[
+    "PATH",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_ORG_ID",
+    "OPENAI_ORGANIZATION",
+    "OPENAI_PROJECT",
+    "CODEX_HOME",
+    "CODEX_PATH",
+    "CODEX_BINARY",
+    "OPENCODE_BINARY",
+    "OPENCODE_CLI_PATH",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "SHELL",
+];
 
 /// Fix the PATH environment variable on macOS by reading it from the user's login shell.
 ///
@@ -52,18 +71,24 @@ pub fn fix_path_env() {
 
                     // Only update if the new PATH is different and looks valid
                     // A valid PATH should contain at least /usr/bin or similar
-                    if new_path != current_path && new_path.contains("/usr") {
-                        env::set_var("PATH", &new_path);
-                        info!(
-                            shell = %shell,
-                            path_length = new_path.len(),
-                            "Updated PATH from login shell"
-                        );
-                        debug!(new_path = %new_path, "New PATH value");
+                    if new_path.contains("/usr") {
+                        if new_path != current_path {
+                            env::set_var("PATH", &new_path);
+                            info!(
+                                shell = %shell,
+                                path_length = new_path.len(),
+                                "Updated PATH from login shell"
+                            );
+                            debug!(new_path = %new_path, "New PATH value");
+                        } else {
+                            debug!(shell = %shell, "PATH already matches login shell");
+                        }
+
+                        import_selected_shell_env(shell);
                         return;
-                    } else {
-                        debug!(shell = %shell, "PATH unchanged or invalid, trying next");
                     }
+
+                    debug!(shell = %shell, "PATH invalid, trying next");
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     debug!(shell = %shell, stderr = %stderr, "Shell command failed");
@@ -76,6 +101,52 @@ pub fn fix_path_env() {
     }
 
     warn!("Could not read PATH from any login shell - CLI tools may not be found");
+}
+
+#[cfg(target_os = "macos")]
+fn import_selected_shell_env(shell: &str) {
+    use std::env;
+    use std::process::Command;
+
+    let joined_keys = SHELL_ENV_KEYS.join(" ");
+    let script = format!(
+        "for key in {joined_keys}; do\n  eval \"value=\\${{$key:-}}\"\n  printf '%s=%s\\n' \"$key\" \"$value\"\ndone"
+    );
+
+    let output = match Command::new(shell).args(["-ilc", &script]).output() {
+        Ok(output) => output,
+        Err(error) => {
+            debug!(shell = %shell, error = %error, "Failed to import shell environment");
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        debug!(shell = %shell, stderr = %stderr, "Shell environment import command failed");
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        if value.is_empty() {
+            continue;
+        }
+
+        let should_override = matches!(key, "PATH" | "SHELL") || env::var_os(key).is_none();
+        if !should_override {
+            continue;
+        }
+
+        env::set_var(key, value);
+        debug!(key = %key, "Imported environment variable from login shell");
+    }
+
+    info!("Imported bridge-relevant environment variables from login shell");
 }
 
 /// No-op implementation for non-macOS platforms.
