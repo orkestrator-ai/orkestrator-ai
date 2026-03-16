@@ -98,6 +98,64 @@ async fn wait_for_server_health(port: u16) -> bool {
     false
 }
 
+/// Probe a server endpoint that exercises OpenCode's provider/config paths rather
+/// than just the shallow health route.
+async fn check_opencode_server_readiness(port: u16) -> bool {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .ok();
+
+    let Some(client) = client else {
+        return false;
+    };
+
+    for endpoint in ["/provider", "/config/providers"] {
+        let url = format!("http://127.0.0.1:{port}{endpoint}");
+        match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                debug!(
+                    port = port,
+                    endpoint = endpoint,
+                    "OpenCode readiness probe succeeded"
+                );
+                return true;
+            }
+            Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+                debug!(
+                    port = port,
+                    endpoint = endpoint,
+                    "OpenCode readiness probe endpoint unavailable, trying fallback"
+                );
+            }
+            Ok(response) => {
+                warn!(
+                    port = port,
+                    endpoint = endpoint,
+                    status = %response.status(),
+                    "OpenCode readiness probe failed"
+                );
+                return false;
+            }
+            Err(error) => {
+                warn!(
+                    port = port,
+                    endpoint = endpoint,
+                    error = %error,
+                    "OpenCode readiness probe request failed"
+                );
+                return false;
+            }
+        }
+    }
+
+    warn!(
+        port = port,
+        "OpenCode readiness probe endpoints unavailable"
+    );
+    false
+}
+
 #[cfg(unix)]
 fn read_process_command(pid: u32, include_env: bool) -> Option<String> {
     let mut command = StdCommand::new("ps");
@@ -229,9 +287,10 @@ pub async fn start_local_opencode_server(
     // $XDG_DATA_HOME/opencode/opencode.db and uses SQLite locking that does
     // not support concurrent writers, so multiple `opencode serve` processes
     // sharing the default ~/.local/share will conflict.
+    let mut isolated_opencode_dir: Option<PathBuf> = None;
     if let Some(data_home) = isolated_opencode_data_home(environment_id) {
-        let isolated_opencode_dir = PathBuf::from(&data_home).join("opencode");
-        if let Err(e) = std::fs::create_dir_all(&isolated_opencode_dir) {
+        let isolated_dir = PathBuf::from(&data_home).join("opencode");
+        if let Err(e) = std::fs::create_dir_all(&isolated_dir) {
             warn!(
                 environment_id = %environment_id,
                 path = %data_home,
@@ -242,8 +301,7 @@ pub async fn start_local_opencode_server(
             // Symlink shared files (auth, config) from the real data home so that
             // OAuth tokens and other credentials are available in the isolated
             // environment.  Only the SQLite database needs true isolation.
-            symlink_shared_opencode_files(&isolated_opencode_dir);
-            reset_isolated_opencode_database(&isolated_opencode_dir);
+            symlink_shared_opencode_files(&isolated_dir);
 
             debug!(
                 environment_id = %environment_id,
@@ -251,6 +309,7 @@ pub async fn start_local_opencode_server(
                 "Using isolated XDG_DATA_HOME for OpenCode server"
             );
             env_vars.insert("XDG_DATA_HOME".to_string(), data_home);
+            isolated_opencode_dir = Some(isolated_dir);
         }
     }
 
@@ -270,31 +329,62 @@ pub async fn start_local_opencode_server(
         );
     }
 
-    // Spawn the opencode serve process
-    // Prefer resolved executable path to avoid shell PATH inconsistencies.
-    let pid = manager
-        .spawn(
-            environment_id,
-            ProcessType::OpenCode,
-            opencode_cmd.as_str(),
-            &[
-                "serve",
-                "--port",
-                &port.to_string(),
-                "--hostname",
-                "0.0.0.0",
-            ],
-            worktree_path,
-            env_vars,
-        )
-        .await
-        .map_err(|e| format!("Failed to spawn OpenCode server: {}", e))?;
+    let mut pid = spawn_local_opencode_process(
+        manager,
+        environment_id,
+        worktree_path,
+        port,
+        &opencode_cmd,
+        env_vars.clone(),
+    )
+    .await?;
 
     // Wait for server to become healthy
     if !wait_for_server_health(port).await {
-        // Try to kill the process if it didn't start properly
         let _ = manager.kill(environment_id, ProcessType::OpenCode).await;
         return Err("OpenCode server failed to start within timeout".to_string());
+    }
+
+    if !check_opencode_server_readiness(port).await {
+        let _ = manager.kill(environment_id, ProcessType::OpenCode).await;
+
+        let Some(isolated_opencode_dir) = isolated_opencode_dir.as_ref() else {
+            return Err("OpenCode server failed readiness check after startup".to_string());
+        };
+
+        warn!(
+            environment_id = %environment_id,
+            port = port,
+            path = %isolated_opencode_dir.display(),
+            "OpenCode readiness check failed; retrying once after resetting isolated database"
+        );
+
+        reset_isolated_opencode_database(isolated_opencode_dir);
+
+        pid = spawn_local_opencode_process(
+            manager,
+            environment_id,
+            worktree_path,
+            port,
+            &opencode_cmd,
+            env_vars,
+        )
+        .await?;
+
+        if !wait_for_server_health(port).await {
+            let _ = manager.kill(environment_id, ProcessType::OpenCode).await;
+            return Err(
+                "OpenCode server failed to start within timeout after database recovery"
+                    .to_string(),
+            );
+        }
+
+        if !check_opencode_server_readiness(port).await {
+            let _ = manager.kill(environment_id, ProcessType::OpenCode).await;
+            return Err(
+                "OpenCode server failed readiness check after database recovery".to_string(),
+            );
+        }
     }
 
     info!(
@@ -309,6 +399,33 @@ pub async fn start_local_opencode_server(
         pid,
         was_running: false,
     })
+}
+
+async fn spawn_local_opencode_process(
+    manager: &super::process::LocalProcessManager,
+    environment_id: &str,
+    worktree_path: &str,
+    port: u16,
+    opencode_cmd: &str,
+    env_vars: HashMap<String, String>,
+) -> Result<u32, String> {
+    manager
+        .spawn(
+            environment_id,
+            ProcessType::OpenCode,
+            opencode_cmd,
+            &[
+                "serve",
+                "--port",
+                &port.to_string(),
+                "--hostname",
+                "0.0.0.0",
+            ],
+            worktree_path,
+            env_vars,
+        )
+        .await
+        .map_err(|e| format!("Failed to spawn OpenCode server: {}", e))
 }
 
 /// Stop the OpenCode server for a local environment
@@ -1272,7 +1389,10 @@ pub async fn cleanup_stale_local_servers() {
     let environments = match storage.get_all_environments() {
         Ok(envs) => envs,
         Err(e) => {
-            warn!("Failed to load environments for stale server cleanup: {}", e);
+            warn!(
+                "Failed to load environments for stale server cleanup: {}",
+                e
+            );
             STARTUP_CLEANUP_COMPLETE.store(true, Ordering::Release);
             return;
         }
@@ -1369,9 +1489,7 @@ pub async fn cleanup_stale_local_servers() {
                     port = ?stored_port,
                     "Recovered healthy server from previous session on startup"
                 );
-                manager
-                    .recover_from_pid(env_id, process_type, pid)
-                    .await;
+                manager.recover_from_pid(env_id, process_type, pid).await;
             } else {
                 // Alive but unhealthy — kill it and free the port
                 warn!(
