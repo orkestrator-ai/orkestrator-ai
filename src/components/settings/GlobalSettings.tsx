@@ -982,7 +982,7 @@ export function GlobalSettings({ onSaveSuccess }: GlobalSettingsProps) {
                   type="button"
                   onClick={() => {
                     if (logDirectory) {
-                      tauri.openInBrowser(logDirectory).catch(() => {});
+                      tauri.revealInFileManager(logDirectory).catch(() => {});
                     }
                   }}
                   className="flex items-center gap-1.5 text-xs text-primary hover:underline font-mono truncate max-w-full"

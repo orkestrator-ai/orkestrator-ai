@@ -97,11 +97,7 @@ pub async fn update_repository_config(
 /// Get the path where debug logs are written
 #[tauri::command]
 pub async fn get_log_directory() -> Result<String, String> {
-    let log_dir = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("orkestrator-ai")
-        .join("logs");
-    Ok(log_dir.to_string_lossy().to_string())
+    Ok(crate::log_dir_path().to_string_lossy().to_string())
 }
 
 #[cfg(test)]

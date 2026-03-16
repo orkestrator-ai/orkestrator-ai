@@ -49,12 +49,43 @@ fn is_debug_logging_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// Return the log directory path (for display in the UI).
-fn log_dir_path() -> std::path::PathBuf {
+/// Return the log directory path.
+///
+/// Used both at startup (to configure the file appender) and by the
+/// `get_log_directory` Tauri command so there is a single source of truth.
+pub fn log_dir_path() -> std::path::PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("orkestrator-ai")
         .join("logs")
+}
+
+/// Delete log files in `dir` that are older than `max_age_days`.
+fn cleanup_old_logs(dir: &std::path::Path, max_age_days: u64) {
+    let cutoff = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(max_age_days * 24 * 60 * 60);
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("log")
+            || path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("orkestrator-ai.log"))
+        {
+            if let Ok(meta) = path.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if modified < cutoff {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -75,11 +106,16 @@ pub fn run() {
         let log_dir = log_dir_path();
         let _ = std::fs::create_dir_all(&log_dir);
 
+        // Remove log files older than 7 days to prevent unbounded disk usage.
+        cleanup_old_logs(&log_dir, 7);
+
         let file_appender = tracing_appender::rolling::daily(&log_dir, "orkestrator-ai.log");
         let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
         // Keep the guard alive for the entire app lifetime by leaking it.
         // Dropping the guard would stop the background writer thread.
+        // Note: this means the write buffer is not flushed on exit, so
+        // the last few log lines may be lost. Acceptable for debug logging.
         std::mem::forget(_guard);
 
         tracing_subscriber::registry()
@@ -272,6 +308,7 @@ pub fn run() {
             cleanup_orphaned_buffers,
             // GitHub commands
             open_in_browser,
+            reveal_in_file_manager,
             get_environment_pr_url,
             clear_environment_pr,
             detect_pr,

@@ -205,6 +205,10 @@ export async function openInBrowser(url: string): Promise<void> {
   return invoke("open_in_browser", { url });
 }
 
+export async function revealInFileManager(path: string): Promise<void> {
+  return invoke("reveal_in_file_manager", { path });
+}
+
 export async function getEnvironmentPrUrl(environmentId: string): Promise<string | null> {
   return invoke<string | null>("get_environment_pr_url", { environmentId });
 }
