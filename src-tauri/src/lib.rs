@@ -16,7 +16,46 @@ use commands::*;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
 use tracing::{info, warn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+
+/// Check whether debug logging to disk is enabled by reading config.json directly.
+///
+/// This runs before the Tauri runtime is available, so we read the config file
+/// from the well-known app data directory instead of going through the storage layer.
+fn is_debug_logging_enabled() -> bool {
+    let config_path = dirs::data_dir()
+        .or_else(|| dirs::config_dir())
+        .map(|d| d.join("orkestrator-ai").join("config.json"));
+
+    let Some(path) = config_path else {
+        return false;
+    };
+
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+
+    // Parse just enough to check global.debugLogging
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return false;
+    };
+
+    value
+        .get("global")
+        .and_then(|g| g.get("debugLogging"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Return the log directory path (for display in the UI).
+fn log_dir_path() -> std::path::PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("orkestrator-ai")
+        .join("logs")
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,12 +63,41 @@ pub fn run() {
     // This must be called before logging is initialized to ensure CLI tools are found
     fix_path_env::fix_path_env();
 
+    let debug_logging = is_debug_logging_enabled();
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,orkestrator_ai_lib=debug"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+
+    // Always log to stderr. Optionally also write to a rolling log file
+    // when the user has enabled "Save logs for debugging" in settings.
+    // Log directory: ~/Library/Application Support/orkestrator-ai/logs/ (macOS)
+    if debug_logging {
+        let log_dir = log_dir_path();
+        let _ = std::fs::create_dir_all(&log_dir);
+
+        let file_appender = tracing_appender::rolling::daily(&log_dir, "orkestrator-ai.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+        // Keep the guard alive for the entire app lifetime by leaking it.
+        // Dropping the guard would stop the background writer thread.
+        std::mem::forget(_guard);
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().with_target(false))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false)
+                    .with_ansi(false)
+                    .with_writer(non_blocking),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .init();
+    }
 
     // Initialize terminal manager if Docker is available
     if Docker::connect_with_local_defaults().is_ok() {
@@ -217,6 +285,7 @@ pub fn run() {
             update_global_config,
             get_repository_config,
             update_repository_config,
+            get_log_directory,
             // Credentials commands
             has_claude_credentials,
             get_credential_status,
