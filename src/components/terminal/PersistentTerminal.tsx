@@ -896,6 +896,8 @@ export function PersistentTerminal({
   // tiny window resize, so bounce the PTY size once and then restore it.
   const wasEnvironmentVisibleRef = useRef(isEnvironmentVisible);
   useEffect(() => {
+    if (!terminal || !fitAddon) return;
+
     const becameVisible = shouldTriggerEnvironmentVisibilityRedraw({
       isEnvironmentVisible,
       wasEnvironmentVisible: wasEnvironmentVisibleRef.current,
@@ -910,16 +912,20 @@ export function PersistentTerminal({
     }
 
     let cancelled = false;
+    let redrawCleanup: { cancel: () => void } | null = null;
 
     void forceTerminalVisibilityRedraw({
       terminal,
       fitAddon,
       resize,
       isCancelled: () => cancelled,
+    }).then((cleanup) => {
+      redrawCleanup = cleanup;
     });
 
     return () => {
       cancelled = true;
+      redrawCleanup?.cancel();
     };
   }, [isEnvironmentVisible, isActive, terminalIsOpened, isConnected, fitAddon, terminal, resize]);
 

@@ -40,21 +40,24 @@ describe("persistent terminal redraw helpers", () => {
     expect(getTerminalResizeBounceDimensions(120, 65535)).toEqual({ cols: 121, rows: 65535 });
   });
 
-  it("forces a bounce resize and refresh sequence", async () => {
+  it("uses pre-fit dimensions for the bounce resize", async () => {
     const fit = mock(() => {});
     const refresh = mock(() => {});
     const resize = mock(async () => {});
     const scheduledTimeouts: Array<() => void> = [];
 
-    await forceTerminalVisibilityRedraw({
-      terminal: {
-        cols: 100,
-        rows: 30,
-        refresh,
-      },
+    const terminal = { cols: 100, rows: 30, refresh };
+
+    const { cancel } = await forceTerminalVisibilityRedraw({
+      terminal,
       fitAddon: { fit },
       resize,
       requestAnimationFrameFn: (callback) => {
+        // Simulate fit() changing terminal dimensions during the rAF
+        fit.mockImplementation(() => {
+          terminal.cols = 110;
+          terminal.rows = 35;
+        });
         callback(0);
         return 1;
       },
@@ -64,6 +67,7 @@ describe("persistent terminal redraw helpers", () => {
       }) as unknown) as typeof setTimeout,
     });
 
+    // Bounce and restore should use the *original* 100x30, not the post-fit 110x35
     expect(resize).toHaveBeenNthCalledWith(1, 100, 31);
     expect(resize).toHaveBeenNthCalledWith(2, 100, 30);
     expect(fit).toHaveBeenCalledTimes(2);
@@ -74,6 +78,26 @@ describe("persistent terminal redraw helpers", () => {
 
     expect(fit).toHaveBeenCalledTimes(3);
     expect(refresh).toHaveBeenCalledTimes(3);
+
+    // Cleanup exists
+    expect(typeof cancel).toBe("function");
+  });
+
+  it("cancel() clears the pending timeout", async () => {
+    const clearTimeoutMock = mock(() => {});
+    const timerId = 42 as unknown as ReturnType<typeof setTimeout>;
+
+    const { cancel } = await forceTerminalVisibilityRedraw({
+      terminal: { cols: 80, rows: 24, refresh: mock(() => {}) },
+      fitAddon: { fit: mock(() => {}) },
+      resize: mock(async () => {}),
+      requestAnimationFrameFn: (callback) => { callback(0); return 1; },
+      setTimeoutFn: ((() => timerId) as unknown) as typeof setTimeout,
+      clearTimeoutFn: clearTimeoutMock,
+    });
+
+    cancel();
+    expect(clearTimeoutMock).toHaveBeenCalledWith(timerId);
   });
 
   it("stops before resizing when cancelled after the first frame", async () => {

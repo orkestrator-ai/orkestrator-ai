@@ -141,7 +141,24 @@ mock.module("@/components/terminal/ComposeBar", () => ({
 
 const { PersistentTerminal } = await import("./PersistentTerminal");
 
-function createMockTerminal() {
+type MockTerminal = {
+  cols: number;
+  rows: number;
+  options: Record<string, unknown>;
+  refresh: ReturnType<typeof mock>;
+  focus: ReturnType<typeof mock>;
+  hasSelection: ReturnType<typeof mock>;
+  getSelection: ReturnType<typeof mock>;
+  selectAll: ReturnType<typeof mock>;
+  onSelectionChange: ReturnType<typeof mock>;
+  onData: ReturnType<typeof mock>;
+  attachCustomKeyEventHandler: ReturnType<typeof mock>;
+  clear: ReturnType<typeof mock>;
+  write: ReturnType<typeof mock>;
+  scrollToBottom: ReturnType<typeof mock>;
+};
+
+function createMockTerminal(): MockTerminal {
   return {
     cols: 80,
     rows: 24,
@@ -165,6 +182,10 @@ function createMockTerminal() {
   };
 }
 
+/**
+ * Creates mock terminal data. Uses structural typing — the mock satisfies the
+ * PersistentTerminalData interface shape without importing the real xterm types.
+ */
 function createTerminalData() {
   storedContainerElement = document.createElement("div");
   const xtermNode = document.createElement("div");
@@ -183,7 +204,7 @@ function createTerminalData() {
     containerElement: storedContainerElement,
     currentPaneId: "pane-1",
     isOpened: true,
-  } as any;
+  } as unknown as Parameters<typeof PersistentTerminal>[0]["terminalData"];
 }
 
 describe("PersistentTerminal", () => {
