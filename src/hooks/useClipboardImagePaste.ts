@@ -3,13 +3,15 @@ import { readImage, readText } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 
+type AsyncPasteCallback<T> = (value: T) => void | Promise<void>;
+
 interface UseClipboardImagePasteOptions {
   containerId: string | null;
   /** Worktree path for local environments (alternative to containerId) */
   worktreePath?: string | null;
   isActive: boolean;
-  onImageSaved?: (filePath: string) => void;
-  onError?: (error: string) => void;
+  onImageSaved?: AsyncPasteCallback<string>;
+  onError?: AsyncPasteCallback<string>;
 }
 
 /** Maximum image size in bytes (8MB) */
@@ -35,9 +37,9 @@ function generateImageFilename(): string {
  */
 export async function processClipboardPaste(
   containerId: string,
-  onImageSaved?: (filePath: string) => void,
-  onTextPaste?: (text: string) => void,
-  onError?: (error: string) => void
+  onImageSaved?: AsyncPasteCallback<string>,
+  onTextPaste?: AsyncPasteCallback<string>,
+  onError?: AsyncPasteCallback<string>
 ): Promise<boolean> {
   try {
     // First, try to read an image from clipboard
@@ -84,14 +86,14 @@ export async function processClipboardPaste(
 
       // Write to container
       const fullPath = await writeContainerFile(containerId, filePath, imageData);
-      onImageSaved?.(fullPath);
+      await onImageSaved?.(fullPath);
       return true;
     } else {
       // No image - try to paste text instead
       try {
         const text = await readText();
         if (text) {
-          onTextPaste?.(text);
+          await onTextPaste?.(text);
           return true;
         }
       } catch {
@@ -101,7 +103,7 @@ export async function processClipboardPaste(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to process paste";
     console.error("[processClipboardPaste] Error:", message);
-    onError?.(message);
+    await onError?.(message);
   }
   return false;
 }
@@ -112,9 +114,9 @@ export async function processClipboardPaste(
  */
 export async function processLocalClipboardPaste(
   worktreePath: string,
-  onImageSaved?: (filePath: string) => void,
-  onTextPaste?: (text: string) => void,
-  onError?: (error: string) => void
+  onImageSaved?: AsyncPasteCallback<string>,
+  onTextPaste?: AsyncPasteCallback<string>,
+  onError?: AsyncPasteCallback<string>
 ): Promise<boolean> {
   try {
     let imageData: string | null = null;
@@ -151,13 +153,13 @@ export async function processLocalClipboardPaste(
       const filePath = `.orkestrator/clipboard/${filename}`;
 
       const fullPath = await writeLocalFile(worktreePath, filePath, imageData);
-      onImageSaved?.(fullPath);
+      await onImageSaved?.(fullPath);
       return true;
     } else {
       try {
         const text = await readText();
         if (text) {
-          onTextPaste?.(text);
+          await onTextPaste?.(text);
           return true;
         }
       } catch {
@@ -167,7 +169,7 @@ export async function processLocalClipboardPaste(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to process paste";
     console.error("[processLocalClipboardPaste] Error:", message);
-    onError?.(message);
+    await onError?.(message);
   }
   return false;
 }
@@ -258,12 +260,12 @@ export function useClipboardImagePaste({
         } else {
           throw new Error("No target for image save (no containerId or worktreePath)");
         }
-        onImageSaved?.(fullPath);
+        await onImageSaved?.(fullPath);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Failed to save image";
         console.error("[useClipboardImagePaste] Error:", message);
-        onError?.(message);
+        await onError?.(message);
       } finally {
         isProcessingRef.current = false;
       }

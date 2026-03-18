@@ -4,7 +4,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useClaudeState } from "@/hooks/useClaudeState";
 import { useClipboardImagePaste } from "@/hooks/useClipboardImagePaste";
-import { handleTerminalPaste } from "@/lib/terminal-paste";
+import { escapePathForTerminalInput, handleTerminalPaste } from "@/lib/terminal-paste";
 import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore, useEnvironmentStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData } from "@/stores/terminalPortalStore";
@@ -172,9 +172,10 @@ export function PersistentTerminal({
 
   // Clipboard image paste handler
   const handleImageSaved = useCallback(async (filePath: string) => {
-    await writeRef.current(filePath + " ");
+    const terminalPath = isLocalEnvironment ? escapePathForTerminalInput(filePath) : filePath;
+    await writeRef.current(terminalPath + " ");
     terminal.focus();
-  }, [terminal]);
+  }, [isLocalEnvironment, terminal]);
 
   const handleImageError = useCallback((error: string) => {
     console.error("[PersistentTerminal] Clipboard image error:", error);
@@ -235,9 +236,10 @@ export function PersistentTerminal({
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
       // Send each image one by one with a delay to let Claude Code process each.
-      // The img.id contains the container file path (set by ComposeBar.handleSend).
+      // The img.id contains the saved attachment path (set by ComposeBar.handleSend).
       for (const img of images) {
-        await writeRef.current(img.id);
+        const terminalPath = isLocalEnvironment ? escapePathForTerminalInput(img.id) : img.id;
+        await writeRef.current(terminalPath);
         await writeRef.current("\r");
         await delay(CLAUDE_CODE_INPUT_DELAY_MS);
       }
@@ -252,7 +254,7 @@ export function PersistentTerminal({
       // Keep compose bar open but refocus terminal
       terminal.focus();
     },
-    [terminal]
+    [isLocalEnvironment, terminal]
   );
 
   // Track mount lifecycle - reset restoration flag on mount

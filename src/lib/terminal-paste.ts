@@ -5,6 +5,8 @@
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { processClipboardPaste, processLocalClipboardPaste } from "@/hooks/useClipboardImagePaste";
 
+const TERMINAL_PATH_ESCAPE_PATTERN = /([\s\\"'`$&|;<>()[\]{}*?!#~])/g;
+
 export interface TerminalPasteOptions {
   /** Container ID for container environments, null/undefined for local */
   containerId: string | null | undefined;
@@ -16,6 +18,13 @@ export interface TerminalPasteOptions {
   focusTerminal: () => void;
   /** Component name for error logging */
   componentName: string;
+}
+
+/**
+ * Escape a filesystem path before typing it into a shell-like terminal input.
+ */
+export function escapePathForTerminalInput(filePath: string): string {
+  return filePath.replace(TERMINAL_PATH_ESCAPE_PATTERN, "\\$1");
 }
 
 /**
@@ -33,7 +42,7 @@ export async function handleTerminalPaste({
 }: TerminalPasteOptions): Promise<void> {
   if (containerId) {
     // Container environment - supports both image and text paste
-    processClipboardPaste(
+    await processClipboardPaste(
       containerId,
       async (filePath) => {
         await writeToTerminal(filePath + " ");
@@ -49,10 +58,10 @@ export async function handleTerminalPaste({
     );
   } else if (worktreePath) {
     // Local environment - supports both image and text paste via worktree
-    processLocalClipboardPaste(
+    await processLocalClipboardPaste(
       worktreePath,
       async (filePath) => {
-        await writeToTerminal(filePath + " ");
+        await writeToTerminal(escapePathForTerminalInput(filePath) + " ");
         focusTerminal();
       },
       async (text) => {

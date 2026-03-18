@@ -11,8 +11,12 @@ const mockReadImage = mock(() =>
   })
 );
 const mockReadText = mock(() => Promise.resolve("clipboard text"));
-const mockWriteContainerFile = mock(() => Promise.resolve("/workspace/.orkestrator/clipboard/test.png"));
-const mockWriteLocalFile = mock(() => Promise.resolve("/tmp/worktrees/env/.orkestrator/clipboard/test.png"));
+const mockWriteContainerFile = mock<
+  (containerId: string, filePath: string, base64Data: string) => Promise<string>
+>(() => Promise.resolve("/workspace/.orkestrator/clipboard/test.png"));
+const mockWriteLocalFile = mock<
+  (worktreePath: string, filePath: string, base64Data: string) => Promise<string>
+>(() => Promise.resolve("/tmp/worktrees/env/.orkestrator/clipboard/test.png"));
 
 mock.module("@tauri-apps/plugin-clipboard-manager", () => ({
   readImage: mockReadImage,
@@ -98,6 +102,29 @@ describe("processLocalClipboardPaste", () => {
     expect(mockWriteLocalFile.mock.calls[0][1]).toMatch(/^\.orkestrator\/clipboard\/clipboard-.*\.png$/);
     expect(onImageSaved).toHaveBeenCalledWith("/tmp/worktrees/env/.orkestrator/clipboard/test.png");
     expect(onTextPaste).not.toHaveBeenCalled();
+  });
+
+  test("waits for async onImageSaved callbacks before resolving", async () => {
+    let resolveCallback: (() => void) | null = null;
+    let pasteFinished = false;
+
+    const resultPromise = processLocalClipboardPaste(
+      "/tmp/worktrees/env",
+      () => new Promise<void>((resolve) => {
+        resolveCallback = resolve;
+      })
+    ).then((result) => {
+      pasteFinished = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pasteFinished).toBe(false);
+    expect(resolveCallback).not.toBeNull();
+
+    resolveCallback!();
+    await expect(resultPromise).resolves.toBe(true);
+    expect(pasteFinished).toBe(true);
   });
 
   test("falls back to text paste when no image in clipboard", async () => {
@@ -197,6 +224,32 @@ describe("processClipboardPaste", () => {
     expect(mockWriteContainerFile).toHaveBeenCalledTimes(1);
     expect(mockWriteContainerFile.mock.calls[0][0]).toBe("container-123");
     expect(onImageSaved).toHaveBeenCalledWith("/workspace/.orkestrator/clipboard/test.png");
+  });
+
+  test("waits for async container text paste callbacks before resolving", async () => {
+    mockReadImage.mockImplementation(() => Promise.reject(new Error("No image")));
+
+    let resolveCallback: (() => void) | null = null;
+    let pasteFinished = false;
+
+    const resultPromise = processClipboardPaste(
+      "container-123",
+      undefined,
+      () => new Promise<void>((resolve) => {
+        resolveCallback = resolve;
+      })
+    ).then((result) => {
+      pasteFinished = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pasteFinished).toBe(false);
+    expect(resolveCallback).not.toBeNull();
+
+    resolveCallback!();
+    await expect(resultPromise).resolves.toBe(true);
+    expect(pasteFinished).toBe(true);
   });
 
   test("falls back to text when no image in clipboard", async () => {
