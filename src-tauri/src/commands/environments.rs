@@ -54,6 +54,39 @@ fn resolve_base_branch_override(
         .filter(|branch| !branch.is_empty())
 }
 
+fn resolve_container_github_token(
+    configured_token: Option<&str>,
+    environment_id: &str,
+) -> Option<String> {
+    let configured_token = configured_token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string);
+
+    if configured_token.is_some() {
+        debug!(
+            environment_id = %environment_id,
+            "Using GitHub token from app configuration"
+        );
+        return configured_token;
+    }
+
+    let detected_token = claude_cli::get_github_token();
+    if detected_token.is_some() {
+        debug!(
+            environment_id = %environment_id,
+            "Using GitHub token from host gh auth login"
+        );
+    } else {
+        debug!(
+            environment_id = %environment_id,
+            "No GitHub token available from app configuration or host gh auth login"
+        );
+    }
+
+    detected_token
+}
+
 /// Fetch setup commands from orkestrator-ai.json and log if any are found
 ///
 /// Returns `None` if no setup commands are configured, otherwise `Some(commands)`.
@@ -1030,7 +1063,8 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
     container_config.memory_limit =
         Some(config.global.container_resources.memory_gb as i64 * 1024 * 1024 * 1024);
     container_config.anthropic_api_key = config.global.anthropic_api_key.clone();
-    container_config.github_token = config.global.github_token.clone();
+    container_config.github_token =
+        resolve_container_github_token(config.global.github_token.as_deref(), &environment_id);
     container_config.opencode_model = config.global.opencode_model.clone();
 
     // Set allowed domains from global config (for restricted network mode)
@@ -1456,7 +1490,8 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
     container_config.memory_limit =
         Some(config.global.container_resources.memory_gb as i64 * 1024 * 1024 * 1024);
     container_config.anthropic_api_key = config.global.anthropic_api_key.clone();
-    container_config.github_token = config.global.github_token.clone();
+    container_config.github_token =
+        resolve_container_github_token(config.global.github_token.as_deref(), &environment_id);
     container_config.opencode_model = config.global.opencode_model.clone();
     container_config.allowed_domains = config.global.allowed_domains.clone();
 
@@ -1869,5 +1904,11 @@ mod tests {
             resolve_base_branch_override(&config, "missing-project"),
             None
         );
+    }
+
+    #[test]
+    fn test_resolve_container_github_token_prefers_configured_token() {
+        let token = resolve_container_github_token(Some("  ghp-configured  "), "env-123");
+        assert_eq!(token, Some("ghp-configured".to_string()));
     }
 }

@@ -250,6 +250,29 @@ pub fn is_github_cli_available() -> bool {
     find_github_cli().is_some()
 }
 
+/// Retrieve the active GitHub token from the host's `gh` login, if available.
+///
+/// This allows containerized environments to reuse an existing host `gh auth login`
+/// session when the user has not explicitly configured a GitHub token in app settings.
+pub fn get_github_token() -> Option<String> {
+    let gh_path = find_github_cli()?;
+    let output = Command::new(&gh_path)
+        .args(["auth", "token"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
 // =============================================================================
 // AI CLI Availability (Claude or OpenCode)
 // =============================================================================
