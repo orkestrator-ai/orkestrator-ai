@@ -1,10 +1,12 @@
 import { useEffect, useCallback, useRef } from "react";
 import { readImage, readText } from "@tauri-apps/plugin-clipboard-manager";
-import { writeContainerFile } from "@/lib/tauri";
+import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 
 interface UseClipboardImagePasteOptions {
   containerId: string | null;
+  /** Worktree path for local environments (alternative to containerId) */
+  worktreePath?: string | null;
   isActive: boolean;
   onImageSaved?: (filePath: string) => void;
   onError?: (error: string) => void;
@@ -105,6 +107,72 @@ export async function processClipboardPaste(
 }
 
 /**
+ * Process clipboard content for local environments - tries image first, then falls back to text.
+ * Same as processClipboardPaste but writes to the local filesystem via worktree path.
+ */
+export async function processLocalClipboardPaste(
+  worktreePath: string,
+  onImageSaved?: (filePath: string) => void,
+  onTextPaste?: (text: string) => void,
+  onError?: (error: string) => void
+): Promise<boolean> {
+  try {
+    let imageData: string | null = null;
+    try {
+      const image = await readImage();
+      const rgba = await image.rgba();
+      const { width, height } = await image.size();
+
+      let canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
+        ctx.putImageData(imageDataObj, 0, 0);
+        canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
+        const dataUrl = canvas.toDataURL("image/png");
+        imageData = dataUrl.split(",")[1] || null;
+      }
+      canvas.width = 0;
+      canvas.height = 0;
+    } catch {
+      // No image in clipboard or processing failed - we'll try text
+    }
+
+    if (imageData) {
+      const estimatedSize = (imageData.length * 3) / 4;
+      if (estimatedSize > MAX_IMAGE_SIZE) {
+        const sizeMB = (estimatedSize / 1024 / 1024).toFixed(1);
+        throw new Error(`Image too large (${sizeMB}MB). Maximum size is 8MB.`);
+      }
+
+      const filename = generateImageFilename();
+      const filePath = `.orkestrator/clipboard/${filename}`;
+
+      const fullPath = await writeLocalFile(worktreePath, filePath, imageData);
+      onImageSaved?.(fullPath);
+      return true;
+    } else {
+      try {
+        const text = await readText();
+        if (text) {
+          onTextPaste?.(text);
+          return true;
+        }
+      } catch {
+        // No text either - nothing to paste
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to process paste";
+    console.error("[processLocalClipboardPaste] Error:", message);
+    onError?.(message);
+  }
+  return false;
+}
+
+/**
  * Hook to intercept right-click paste events and save images to the container.
  *
  * For keyboard shortcuts (Cmd+V / Ctrl+V), use xterm's attachCustomKeyEventHandler
@@ -114,6 +182,7 @@ export async function processClipboardPaste(
  */
 export function useClipboardImagePaste({
   containerId,
+  worktreePath,
   isActive,
   onImageSaved,
   onError,
@@ -123,8 +192,8 @@ export function useClipboardImagePaste({
   // Handle DOM paste events (for right-click paste menu)
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
-      // Only handle when active and container is available
-      if (!isActive || !containerId) return;
+      // Only handle when active and a target is available (container or worktree)
+      if (!isActive || (!containerId && !worktreePath)) return;
 
       // Don't process if focus is within a compose bar (it handles its own paste)
       if (document.activeElement?.closest("[data-compose-bar]")) return;
@@ -180,8 +249,15 @@ export function useClipboardImagePaste({
         const filename = generateImageFilename();
         const filePath = `.orkestrator/clipboard/${filename}`;
 
-        // Write to container
-        const fullPath = await writeContainerFile(containerId, filePath, base64Data);
+        // Write to container or local worktree
+        let fullPath: string;
+        if (containerId) {
+          fullPath = await writeContainerFile(containerId, filePath, base64Data);
+        } else if (worktreePath) {
+          fullPath = await writeLocalFile(worktreePath, filePath, base64Data);
+        } else {
+          throw new Error("No target for image save (no containerId or worktreePath)");
+        }
         onImageSaved?.(fullPath);
       } catch (error) {
         const message =
@@ -192,7 +268,7 @@ export function useClipboardImagePaste({
         isProcessingRef.current = false;
       }
     },
-    [containerId, isActive, onImageSaved, onError]
+    [containerId, worktreePath, isActive, onImageSaved, onError]
   );
 
   useEffect(() => {

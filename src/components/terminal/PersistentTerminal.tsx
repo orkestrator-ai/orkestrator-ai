@@ -152,6 +152,11 @@ export function PersistentTerminal({
     (state) => state.getEnvironmentById(environmentId)?.environmentType === "local"
   );
 
+  // Get worktree path for local environments (needed for image paste)
+  const worktreePath = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.worktreePath ?? null
+  );
+
   // Extract terminal and addons from terminalData
   const { terminal, fitAddon, serializeAddon } = terminalData;
 
@@ -177,6 +182,7 @@ export function PersistentTerminal({
 
   useClipboardImagePaste({
     containerId,
+    worktreePath,
     isActive: isFocused && !isComposeBarOpen,
     onImageSaved: handleImageSaved,
     onError: handleImageError,
@@ -200,11 +206,12 @@ export function PersistentTerminal({
   const handlePaste = useCallback(async () => {
     await handleTerminalPaste({
       containerId,
+      worktreePath,
       writeToTerminal: writeRef.current,
       focusTerminal: () => terminal.focus(),
       componentName: "PersistentTerminal",
     });
-  }, [containerId, terminal]);
+  }, [containerId, worktreePath, terminal]);
 
   // Keep compose bar ref in sync with state for synchronous access in key handler
   useEffect(() => {
@@ -1039,6 +1046,7 @@ export function PersistentTerminal({
           }}
           onSend={handleComposeSend}
           containerId={containerId}
+          worktreePath={worktreePath}
         />
       )}
     </>
