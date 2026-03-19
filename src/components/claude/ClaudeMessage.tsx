@@ -183,6 +183,7 @@ const markdownComponents: Components = {
 
 interface ClaudeMessageProps {
   message: ClaudeMessageType;
+  previousMessage?: ClaudeMessageType | null;
   /** Whether the session is still actively streaming (turn in progress) */
   isStreaming?: boolean;
 }
@@ -239,6 +240,7 @@ function ThinkingPart({ content, isComplete }: { content: string; isComplete: bo
             content={content}
             components={markdownComponents}
             className="text-muted-foreground/80 prose-invert prose-p:my-1 prose-headings:my-2 prose-headings:text-muted-foreground prose-ul:my-1 prose-ol:my-1 prose-pre:my-1 prose-pre:p-2"
+            enableBreaks={false}
           />
         </div>
       </CollapsibleContent>
@@ -1103,11 +1105,19 @@ function TextPart({ content }: { content: string }) {
 
 export const ClaudeMessage = memo(function ClaudeMessage({
   message,
+  previousMessage = null,
   isStreaming = false,
 }: ClaudeMessageProps) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
+  const isContinuation =
+    !isUser &&
+    !isSystem &&
+    !isError &&
+    previousMessage?.role === "assistant" &&
+    !previousMessage.id.startsWith(ERROR_MESSAGE_PREFIX) &&
+    isSameMinute(previousMessage.timestamp, message.timestamp);
 
   // For user messages, parse out attachment XML tags
   const { cleanContent, attachments } = useMemo(() => {
@@ -1156,6 +1166,8 @@ export const ClaudeMessage = memo(function ClaudeMessage({
       isUser={isUser}
       authorLabel={isUser ? "You" : "Claude"}
       timestampLabel={formatTime(message.timestamp)}
+      showHeader={!isContinuation}
+      className={cn(!isUser && isContinuation ? "pt-0 pb-3" : undefined)}
     >
       {isUser ? (
         <>
@@ -1255,5 +1267,26 @@ function formatTime(isoString: string): string {
     });
   } catch {
     return "";
+  }
+}
+
+function isSameMinute(a: string, b: string): boolean {
+  try {
+    const first = new Date(a);
+    const second = new Date(b);
+
+    if (Number.isNaN(first.getTime()) || Number.isNaN(second.getTime())) {
+      return false;
+    }
+
+    return (
+      first.getFullYear() === second.getFullYear() &&
+      first.getMonth() === second.getMonth() &&
+      first.getDate() === second.getDate() &&
+      first.getHours() === second.getHours() &&
+      first.getMinutes() === second.getMinutes()
+    );
+  } catch {
+    return false;
   }
 }
