@@ -77,6 +77,8 @@ const markdownComponents: Components = {
   a: ExternalLink,
 };
 
+const TASK_LIST_SYNTAX_PATTERN = /(^|\n)\s*(?:[-*+]|\d+\.)\s+\[(?: |x|X)\]\s+/m;
+
 interface NativeMessageProps {
   message: NativeMessageType;
   previousMessage?: NativeMessageType | null;
@@ -85,6 +87,23 @@ interface NativeMessageProps {
 
 /** Render a thinking/reasoning part inline */
 function ThinkingPart({ content }: { content: string }) {
+  if (TASK_LIST_SYNTAX_PATTERN.test(content)) {
+    return (
+      <div className="my-1.5 rounded-md border border-border/30 bg-muted/20 p-3">
+        <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Brain className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-medium shrink-0">thinking</span>
+        </div>
+        <MessageMarkdown
+          content={content}
+          components={markdownComponents}
+          className="text-muted-foreground/80 prose-invert prose-p:my-1 prose-headings:my-2 prose-headings:text-muted-foreground prose-ul:my-1 prose-ol:my-1 prose-pre:my-1 prose-pre:p-2"
+          enableBreaks={false}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="my-1.5 flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md">
       <Brain className="w-3.5 h-3.5 shrink-0" />
