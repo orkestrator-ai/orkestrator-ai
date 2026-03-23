@@ -3,7 +3,6 @@ import {
   isValidElement,
   useMemo,
   type HTMLAttributes,
-  type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -20,9 +19,11 @@ const DEFAULT_MARKDOWN_CLASSNAME =
 const PLUGINS_WITH_BREAKS: PluggableList = [remarkGfm, remarkBreaks];
 const PLUGINS_WITHOUT_BREAKS: PluggableList = [remarkGfm];
 
-function TaskListCheckbox({
-  checked,
-}: InputHTMLAttributes<HTMLInputElement>) {
+interface TaskListCheckboxProps {
+  checked?: boolean;
+}
+
+function TaskListCheckbox({ checked }: TaskListCheckboxProps) {
   return (
     <span
       aria-hidden="true"
@@ -35,7 +36,7 @@ function TaskListCheckbox({
 
 function isTaskListCheckbox(
   child: ReactNode,
-): child is ReactElement<InputHTMLAttributes<HTMLInputElement>> {
+): child is ReactElement<TaskListCheckboxProps> {
   return isValidElement(child) && child.type === TaskListCheckbox;
 }
 
@@ -138,7 +139,7 @@ export function MessageMarkdown({
     [enableBreaks],
   );
   const mergedComponents = useMemo(
-    () => ({ ...DEFAULT_COMPONENTS, ...components }),
+    () => (components ? { ...DEFAULT_COMPONENTS, ...components } : DEFAULT_COMPONENTS),
     [components],
   );
 
