@@ -34,6 +34,7 @@ import {
 } from "@/lib/tauri";
 import { NativeMessage } from "@/components/chat/NativeMessage";
 import { CodexComposeBar } from "./CodexComposeBar";
+import { CodexPlanModeCard } from "./CodexPlanModeCard";
 import { CodexResumeSessionDialog } from "./CodexResumeSessionDialog";
 import { hasPendingInitialPrompt } from "./reconcile-guards";
 import { createCodexSessionRefreshController } from "./session-refresh";
@@ -76,6 +77,8 @@ export function CodexChatTab({
   const [initAttempt, setInitAttempt] = useState(0);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [initialPromptSent, setInitialPromptSent] = useState(false);
+  const [dismissedPlanReviewMessageId, setDismissedPlanReviewMessageId] = useState<string | null>(null);
+  const [isPlanTransitionPending, setIsPlanTransitionPending] = useState(false);
   const lastInitTimeRef = useRef(0);
   const isInitializedRef = useRef(false);
   const isProcessingQueueRef = useRef(false);
@@ -157,6 +160,13 @@ export function CodexChatTab({
     () => session?.messages ?? [],
     [session?.messages],
   );
+  const latestAssistantMessage = useMemo(
+    () =>
+      [...sessionMessages]
+        .reverse()
+        .find((message) => message.role === "assistant"),
+    [sessionMessages],
+  );
   const slashCommands = useMemo(
     () => slashCommandsMap.get(environmentId) ?? [],
     [environmentId, slashCommandsMap],
@@ -208,6 +218,12 @@ export function CodexChatTab({
     refreshControllerRef.current = createCodexSessionRefreshController();
     refreshControllerRef.current.markActivity();
   }, [sessionKey, session?.sessionId]);
+
+  useEffect(() => {
+    if (selectedMode !== "plan") {
+      setDismissedPlanReviewMessageId(null);
+    }
+  }, [selectedMode]);
 
   const handleSend = useCallback(
     async (text: string, attachments: CodexAttachment[]) => {
@@ -536,7 +552,7 @@ export function CodexChatTab({
         return true;
       }
 
-      if (sessionMessages.length > 0 || session.isLoading) {
+      if (session.isLoading) {
         return false;
       }
 
@@ -552,7 +568,33 @@ export function CodexChatTab({
 
       return updated;
     },
-    [client, session?.isLoading, session?.sessionId, sessionKey, sessionMessages.length, setSessionError],
+    [client, session?.isLoading, session?.sessionId, sessionKey, setSessionError],
+  );
+
+  const applyModeChange = useCallback(
+    async (mode: CodexConversationMode): Promise<boolean> => {
+      const previousMode = selectedMode;
+      setSelectedMode(sessionKey, mode);
+      const updated = await syncSessionConfig(
+        selectedModel,
+        selectedReasoningEffort,
+        mode,
+      );
+      if (!updated && !session?.isLoading) {
+        setSelectedMode(sessionKey, previousMode);
+        return false;
+      }
+      return true;
+    },
+    [
+      selectedMode,
+      selectedModel,
+      selectedReasoningEffort,
+      session?.isLoading,
+      sessionKey,
+      setSelectedMode,
+      syncSessionConfig,
+    ],
   );
 
   const handleModelChange = useCallback(
@@ -568,7 +610,7 @@ export function CodexChatTab({
         setSelectedReasoningEffort(sessionKey, nextReasoningEffort);
       }
       const updated = await syncSessionConfig(model, nextReasoningEffort, selectedMode);
-      if (!updated && sessionMessages.length === 0 && !session?.isLoading) {
+      if (!updated && !session?.isLoading) {
         setSelectedModel(sessionKey, previousModel);
         if (nextReasoningEffort !== selectedReasoningEffort) {
           setSelectedReasoningEffort(sessionKey, selectedReasoningEffort);
@@ -587,7 +629,6 @@ export function CodexChatTab({
       selectedReasoningEffort,
       session?.isLoading,
       sessionKey,
-      sessionMessages.length,
       setSelectedModel,
       setSelectedReasoningEffort,
       syncSessionConfig,
@@ -596,27 +637,9 @@ export function CodexChatTab({
 
   const handleModeChange = useCallback(
     async (mode: CodexConversationMode) => {
-      const previousMode = selectedMode;
-      setSelectedMode(sessionKey, mode);
-      const updated = await syncSessionConfig(
-        selectedModel,
-        selectedReasoningEffort,
-        mode,
-      );
-      if (!updated && sessionMessages.length === 0 && !session?.isLoading) {
-        setSelectedMode(sessionKey, previousMode);
-      }
+      await applyModeChange(mode);
     },
-    [
-      selectedModel,
-      selectedMode,
-      selectedReasoningEffort,
-      session?.isLoading,
-      sessionKey,
-      sessionMessages.length,
-      setSelectedMode,
-      syncSessionConfig,
-    ],
+    [applyModeChange],
   );
 
   const handleReasoningEffortChange = useCallback(
@@ -624,7 +647,7 @@ export function CodexChatTab({
       const previousReasoningEffort = selectedReasoningEffort;
       setSelectedReasoningEffort(sessionKey, effort);
       const updated = await syncSessionConfig(selectedModel, effort, selectedMode);
-      if (!updated && sessionMessages.length === 0 && !session?.isLoading) {
+      if (!updated && !session?.isLoading) {
         setSelectedReasoningEffort(sessionKey, previousReasoningEffort);
         void persistCodexPreferences(selectedModel, previousReasoningEffort);
         return;
@@ -639,11 +662,45 @@ export function CodexChatTab({
       selectedReasoningEffort,
       session?.isLoading,
       sessionKey,
-      sessionMessages.length,
       setSelectedReasoningEffort,
       syncSessionConfig,
     ],
   );
+
+  const handleSwitchPlanToBuild = useCallback(async (): Promise<void> => {
+    setIsPlanTransitionPending(true);
+    try {
+      const changed = await applyModeChange("build");
+      if (changed) {
+        setDismissedPlanReviewMessageId(latestAssistantMessage?.id ?? null);
+      }
+    } finally {
+      setIsPlanTransitionPending(false);
+    }
+  }, [applyModeChange, latestAssistantMessage?.id]);
+
+  const handleApprovePlan = useCallback(async (): Promise<void> => {
+    setIsPlanTransitionPending(true);
+    try {
+      const changed = await applyModeChange("build");
+      if (!changed) {
+        return;
+      }
+
+      setDismissedPlanReviewMessageId(latestAssistantMessage?.id ?? null);
+      await handleSend(
+        "The plan is approved. Exit plan mode and implement it.",
+        [],
+      );
+    } finally {
+      setIsPlanTransitionPending(false);
+    }
+  }, [applyModeChange, handleSend, latestAssistantMessage?.id]);
+
+  const showPlanModeCard = selectedMode === "plan"
+    && !session?.isLoading
+    && !!latestAssistantMessage
+    && latestAssistantMessage.id !== dismissedPlanReviewMessageId;
 
   const reconcileSessionState = useCallback(async (options?: { forceRefreshMessages?: boolean }) => {
     if (
@@ -998,6 +1055,15 @@ export function CodexChatTab({
         </div>
       ) : null}
 
+      {showPlanModeCard ? (
+        <CodexPlanModeCard
+          isSubmitting={isPlanTransitionPending}
+          onApproveAndBuild={handleApprovePlan}
+          onSwitchToBuild={handleSwitchPlanToBuild}
+          onDismiss={() => setDismissedPlanReviewMessageId(latestAssistantMessage?.id ?? null)}
+        />
+      ) : null}
+
       <CodexComposeBar
         environmentId={environmentId}
         containerId={containerId}
@@ -1007,7 +1073,7 @@ export function CodexChatTab({
         selectedModel={selectedModel}
         selectedReasoningEffort={selectedReasoningEffort}
         slashCommands={slashCommands}
-        settingsLocked={(sessionMessages.length > 0) || (session?.isLoading ?? false)}
+        settingsLocked={session?.isLoading ?? false}
         disabled={!session?.sessionId}
         isLoading={session?.isLoading ?? false}
         queueLength={queueLength}
