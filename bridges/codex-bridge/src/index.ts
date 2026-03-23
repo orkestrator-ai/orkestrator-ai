@@ -46,6 +46,7 @@ interface NormalizedMessage {
 interface SessionState {
   id: string;
   title?: string;
+  conversationMode: ConversationMode;
   thread: Thread;
   threadOptions: ThreadOptions;
   threadId?: string | null;
@@ -370,6 +371,42 @@ function createMessageId(): string {
 function buildSessionTitle(prompt: string): string {
   const words = prompt.trim().split(/\s+/).filter(Boolean).slice(0, 5);
   return words.length > 0 ? words.join(" ") : "Codex";
+}
+
+function resolveConversationMode(body: Record<string, unknown>): ConversationMode {
+  return body.mode === "plan" || body.mode === "build"
+    ? (body.mode as ConversationMode)
+    : "build";
+}
+
+// NOTE: This is a soft hint prepended to the user message, not a true system
+// prompt.  The model may not enforce it perfectly and a determined user could
+// override it.  This is acceptable because plan mode is a UX convenience, not
+// a security boundary.
+function wrapPromptForConversationMode(
+  prompt: string,
+  mode: ConversationMode,
+): string {
+  if (mode !== "plan") {
+    return prompt;
+  }
+
+  const preamble = [
+    "<system-reminder>",
+    "You are in Orkestrator plan mode.",
+    "This turn is planning-only. The user expects analysis, a concrete plan, and optional diffs before any implementation.",
+    "Treat the current session as consultative and read-only.",
+    "Do not claim to have made changes, completed implementation, or written files.",
+    "Do not attempt mutating commands or filesystem writes.",
+    "Inspect the codebase as needed, then produce:",
+    "1. a concise implementation plan,",
+    "2. important risks or open questions,",
+    "3. exact diffs or patch snippets when useful.",
+    "If the user approves the plan later, they will switch you back to build mode in a later turn.",
+    "</system-reminder>",
+  ].join("\n");
+
+  return `${preamble}\n\n${prompt}`;
 }
 
 function buildPromptInput(
@@ -1171,10 +1208,7 @@ async function getAvailableModels(): Promise<{ models: BridgeModel[]; source: "c
 }
 
 function buildThreadOptions(body: Record<string, unknown>): ThreadOptions {
-  const mode =
-    body.mode === "plan" || body.mode === "build"
-      ? (body.mode as ConversationMode)
-      : "build";
+  const mode = resolveConversationMode(body);
   const model =
     typeof body.model === "string" && body.model.trim().length > 0
       ? body.model.trim()
@@ -1499,7 +1533,10 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       : prompt;
   const attachments = session.pendingAttachments ?? [];
   session.pendingAttachments = [];
-  const executionInput = buildPromptInput(executionPrompt, attachments);
+  const executionInput = buildPromptInput(
+    wrapPromptForConversationMode(executionPrompt, session.conversationMode),
+    attachments,
+  );
 
   session.status = "running";
   session.error = undefined;
@@ -1634,12 +1671,14 @@ app.post("/session/create", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const title = typeof body.title === "string" ? body.title : undefined;
   const sessionId = createSessionId();
+  const conversationMode = resolveConversationMode(body);
   const threadOptions = buildThreadOptions(body);
   const thread = codex.startThread(threadOptions);
 
   sessions.set(sessionId, {
     id: sessionId,
     title,
+    conversationMode,
     thread,
     threadOptions,
     threadId: null,
@@ -1665,6 +1704,7 @@ app.post("/session/resume", async (c) => {
     return c.json({ error: "threadId is required" }, 400);
   }
 
+  const conversationMode = resolveConversationMode(body);
   const threadOptions = buildThreadOptions(body);
   const thread = codex.resumeThread(threadId, threadOptions);
   const hydrated = await hydrateMessagesFromPersistedSession(threadId);
@@ -1673,6 +1713,7 @@ app.post("/session/resume", async (c) => {
   sessions.set(sessionId, {
     id: sessionId,
     title: hydrated.title,
+    conversationMode,
     thread,
     threadOptions,
     threadId,
@@ -1707,14 +1748,15 @@ app.post("/session/:id/config", async (c) => {
     return c.json({ error: "Cannot update settings while session is running" }, 409);
   }
 
-  if (session.messages.length > 0) {
-    return c.json({ error: "Settings can only be changed before the first prompt" }, 409);
-  }
-
+  // Mid-conversation config changes are allowed (e.g. switching plan↔build mode).
+  // When a threadId exists we resume it so the conversation context is preserved;
+  // otherwise we start a fresh thread.
   const body = await c.req.json().catch(() => ({}));
+  session.conversationMode = resolveConversationMode(body);
   session.threadOptions = buildThreadOptions(body);
-  session.thread = codex.startThread(session.threadOptions);
-  session.threadId = null;
+  session.thread = session.threadId
+    ? codex.resumeThread(session.threadId, session.threadOptions)
+    : codex.startThread(session.threadOptions);
 
   return c.json({ status: "updated" });
 });

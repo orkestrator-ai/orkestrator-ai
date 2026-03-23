@@ -600,7 +600,7 @@ export function CodexComposeBar({
               type="button"
               disabled={disabled || settingsLocked}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              title={settingsLocked ? "Start a new Codex conversation to change the mode" : "Choose mode"}
+              title={settingsLocked ? "Wait for Codex to finish before changing the mode" : "Choose mode"}
             >
               <ChevronDown className="h-3 w-3" />
               <span>{modeDisplayLabel}</span>
@@ -622,7 +622,7 @@ export function CodexComposeBar({
               type="button"
               disabled={disabled || settingsLocked}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              title={settingsLocked ? "Start a new Codex conversation to change the model" : "Choose model"}
+              title={settingsLocked ? "Wait for Codex to finish before changing the model" : "Choose model"}
             >
               <ChevronDown className="h-3 w-3" />
               <span className="max-w-[220px] truncate">{selectedModelName}</span>
@@ -665,7 +665,7 @@ export function CodexComposeBar({
               type="button"
               disabled={disabled || settingsLocked}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              title={settingsLocked ? "Start a new Codex conversation to change reasoning" : "Choose reasoning effort"}
+              title={settingsLocked ? "Wait for Codex to finish before changing reasoning" : "Choose reasoning effort"}
             >
               <ChevronDown className="h-3 w-3" />
               <span>{reasoningDisplayLabel}</span>
