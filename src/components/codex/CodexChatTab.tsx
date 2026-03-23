@@ -160,13 +160,12 @@ export function CodexChatTab({
     () => session?.messages ?? [],
     [session?.messages],
   );
-  const latestAssistantMessage = useMemo(
-    () =>
-      [...sessionMessages]
-        .reverse()
-        .find((message) => message.role === "assistant"),
-    [sessionMessages],
-  );
+  const latestAssistantMessage = useMemo(() => {
+    for (let i = sessionMessages.length - 1; i >= 0; i--) {
+      if (sessionMessages[i].role === "assistant") return sessionMessages[i];
+    }
+    return undefined;
+  }, [sessionMessages]);
   const slashCommands = useMemo(
     () => slashCommandsMap.get(environmentId) ?? [],
     [environmentId, slashCommandsMap],

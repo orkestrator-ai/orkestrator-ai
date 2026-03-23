@@ -379,6 +379,10 @@ function resolveConversationMode(body: Record<string, unknown>): ConversationMod
     : "build";
 }
 
+// NOTE: This is a soft hint prepended to the user message, not a true system
+// prompt.  The model may not enforce it perfectly and a determined user could
+// override it.  This is acceptable because plan mode is a UX convenience, not
+// a security boundary.
 function wrapPromptForConversationMode(
   prompt: string,
   mode: ConversationMode,
@@ -387,7 +391,7 @@ function wrapPromptForConversationMode(
     return prompt;
   }
 
-  return [
+  const preamble = [
     "<system-reminder>",
     "You are in Orkestrator plan mode.",
     "This turn is planning-only. The user expects analysis, a concrete plan, and optional diffs before any implementation.",
@@ -400,9 +404,9 @@ function wrapPromptForConversationMode(
     "3. exact diffs or patch snippets when useful.",
     "If the user approves the plan later, they will switch you back to build mode in a later turn.",
     "</system-reminder>",
-    "",
-    prompt,
   ].join("\n");
+
+  return `${preamble}\n\n${prompt}`;
 }
 
 function buildPromptInput(
@@ -1744,6 +1748,9 @@ app.post("/session/:id/config", async (c) => {
     return c.json({ error: "Cannot update settings while session is running" }, 409);
   }
 
+  // Mid-conversation config changes are allowed (e.g. switching plan↔build mode).
+  // When a threadId exists we resume it so the conversation context is preserved;
+  // otherwise we start a fresh thread.
   const body = await c.req.json().catch(() => ({}));
   session.conversationMode = resolveConversationMode(body);
   session.threadOptions = buildThreadOptions(body);

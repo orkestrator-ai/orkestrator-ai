@@ -1,4 +1,4 @@
-import { FileText, Check, ArrowRight, X } from "lucide-react";
+import { FileText, Check, ArrowRight, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface CodexPlanModeCardProps {
@@ -54,7 +54,9 @@ export function CodexPlanModeCard({
             onClick={() => void onSwitchToBuild()}
             disabled={isSubmitting}
           >
-            <ArrowRight className="mr-1.5 h-3.5 w-3.5" />
+            {isSubmitting
+              ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              : <ArrowRight className="mr-1.5 h-3.5 w-3.5" />}
             Switch To Build
           </Button>
           <Button
@@ -62,7 +64,9 @@ export function CodexPlanModeCard({
             onClick={() => void onApproveAndBuild()}
             disabled={isSubmitting}
           >
-            <Check className="mr-1.5 h-3.5 w-3.5" />
+            {isSubmitting
+              ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              : <Check className="mr-1.5 h-3.5 w-3.5" />}
             Approve Plan
           </Button>
         </div>
