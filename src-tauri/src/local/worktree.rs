@@ -4,7 +4,7 @@
 //! ~/orkestrator-ai/workspaces/ directory.
 
 use rand::Rng;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 use tokio::process::Command;
 use tracing::{debug, error, info, warn};
@@ -27,8 +27,8 @@ pub enum WorktreeError {
     #[error("Failed to detect default branch: {0}")]
     BranchDetectionFailed(String),
 
-    #[error("Failed to copy env files: {0}")]
-    EnvCopyFailed(String),
+    #[error("Failed to copy project files: {0}")]
+    FileCopyFailed(String),
 
     #[error("Failed to configure local git behavior: {0}")]
     GitConfigurationFailed(String),
@@ -636,7 +636,7 @@ pub fn copy_env_files(source_path: &str, dest_path: &str) -> Result<(), Worktree
 
         if source_file.exists() {
             std::fs::copy(&source_file, &dest_file).map_err(|e| {
-                WorktreeError::EnvCopyFailed(format!(
+                WorktreeError::FileCopyFailed(format!(
                     "Failed to copy {} to {}: {}",
                     source_file.display(),
                     dest_file.display(),
@@ -649,6 +649,96 @@ pub fn copy_env_files(source_path: &str, dest_path: &str) -> Result<(), Worktree
     }
 
     info!(count = copied_count, "Copied env files to worktree");
+
+    Ok(())
+}
+
+/// Copy configured project files from source to destination, preserving relative paths.
+pub fn copy_project_files(
+    source_path: &str,
+    dest_path: &str,
+    relative_paths: &[String],
+) -> Result<(), WorktreeError> {
+    debug!(
+        source = %source_path,
+        dest = %dest_path,
+        count = relative_paths.len(),
+        "Copying configured project files to worktree"
+    );
+
+    let source = Path::new(source_path);
+    let dest = Path::new(dest_path);
+    let mut copied_count = 0;
+
+    for relative_path in relative_paths {
+        let relative_path = relative_path.trim();
+
+        if relative_path.is_empty() {
+            debug!("Skipping empty configured file path");
+            continue;
+        }
+
+        let relative = Path::new(relative_path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            debug!(path = %relative_path, "Skipping invalid configured file path");
+            continue;
+        }
+
+        let source_file = source.join(relative);
+        if !source_file.exists() {
+            debug!(path = %source_file.display(), "Configured file not found");
+            continue;
+        }
+
+        if source_file.is_symlink() {
+            debug!(path = %source_file.display(), "Skipping symlink for safety");
+            continue;
+        }
+
+        if !source_file.is_file() {
+            debug!(path = %source_file.display(), "Configured path is not a file");
+            continue;
+        }
+
+        let dest_file = dest.join(relative);
+        if let Some(parent) = dest_file.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!(
+                    path = %relative_path,
+                    error = %e,
+                    "Failed to create parent directory, skipping file"
+                );
+                continue;
+            }
+        }
+
+        match std::fs::copy(&source_file, &dest_file) {
+            Ok(_) => {
+                debug!(
+                    source = %source_file.display(),
+                    dest = %dest_file.display(),
+                    "Copied configured project file"
+                );
+                copied_count += 1;
+            }
+            Err(e) => {
+                warn!(
+                    path = %relative_path,
+                    error = %e,
+                    "Failed to copy configured project file, skipping"
+                );
+            }
+        }
+    }
+
+    info!(
+        count = copied_count,
+        "Copied configured project files to worktree"
+    );
 
     Ok(())
 }
@@ -810,6 +900,77 @@ mod tests {
 
         // Each call should generate a different path (different suffix)
         assert_ne!(path1, path2, "Each call should generate a unique path");
+    }
+
+    #[test]
+    fn test_copy_project_files_preserves_relative_paths() {
+        let source_dir = TempDir::new().unwrap();
+        let dest_dir = TempDir::new().unwrap();
+
+        let nested_source_dir = source_dir.path().join("config/environments");
+        std::fs::create_dir_all(&nested_source_dir).unwrap();
+        std::fs::write(nested_source_dir.join(".env.local"), "TEST=1\n").unwrap();
+
+        copy_project_files(
+            source_dir.path().to_str().unwrap(),
+            dest_dir.path().to_str().unwrap(),
+            &["config/environments/.env.local".to_string()],
+        )
+        .unwrap();
+
+        let copied_file = dest_dir.path().join("config/environments/.env.local");
+        assert!(copied_file.exists());
+        assert_eq!(std::fs::read_to_string(copied_file).unwrap(), "TEST=1\n");
+    }
+
+    #[test]
+    fn test_copy_project_files_skips_invalid_paths() {
+        let source_dir = TempDir::new().unwrap();
+        let dest_dir = TempDir::new().unwrap();
+
+        std::fs::write(source_dir.path().join("allowed.env"), "SAFE=1\n").unwrap();
+
+        copy_project_files(
+            source_dir.path().to_str().unwrap(),
+            dest_dir.path().to_str().unwrap(),
+            &[
+                "../secret.env".to_string(),
+                "/absolute/path.env".to_string(),
+                "allowed.env".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert!(dest_dir.path().join("allowed.env").exists());
+        assert!(!dest_dir.path().join("secret.env").exists());
+    }
+
+    #[test]
+    fn test_copy_project_files_skips_symlinks() {
+        let source_dir = TempDir::new().unwrap();
+        let dest_dir = TempDir::new().unwrap();
+
+        let secret = source_dir.path().join("secret.txt");
+        std::fs::write(&secret, "SECRET\n").unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&secret, source_dir.path().join("link.txt")).unwrap();
+
+        std::fs::write(source_dir.path().join("regular.txt"), "REGULAR\n").unwrap();
+
+        copy_project_files(
+            source_dir.path().to_str().unwrap(),
+            dest_dir.path().to_str().unwrap(),
+            &["link.txt".to_string(), "regular.txt".to_string()],
+        )
+        .unwrap();
+
+        assert!(dest_dir.path().join("regular.txt").exists());
+        #[cfg(unix)]
+        assert!(
+            !dest_dir.path().join("link.txt").exists(),
+            "Symlinks should be skipped"
+        );
     }
 
     #[tokio::test]

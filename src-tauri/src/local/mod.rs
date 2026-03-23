@@ -20,6 +20,6 @@ pub use servers::{
     LocalServerStartResult, LocalServerStatus,
 };
 pub use worktree::{
-    configure_local_git_artifacts, copy_env_files, create_worktree, delete_worktree,
-    get_setup_local_commands,
+    configure_local_git_artifacts, copy_env_files, copy_project_files, create_worktree,
+    delete_worktree, get_setup_local_commands,
 };

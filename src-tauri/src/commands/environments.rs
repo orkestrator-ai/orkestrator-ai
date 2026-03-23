@@ -10,8 +10,9 @@ use crate::docker::{
     ContainerConfig, DockerError,
 };
 use crate::local::{
-    allocate_ports, configure_local_git_artifacts, copy_env_files, create_worktree,
-    delete_worktree, get_setup_local_commands, isolated_opencode_data_home, stop_all_local_servers,
+    allocate_ports, configure_local_git_artifacts, copy_env_files, copy_project_files,
+    create_worktree, delete_worktree, get_setup_local_commands, isolated_opencode_data_home,
+    stop_all_local_servers,
 };
 use crate::models::{
     ClaudeMode, DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode,
@@ -1185,10 +1186,14 @@ async fn start_local_environment(
         .ok_or("Project has no local path - cannot create worktree")?;
 
     // Resolve repository-specific default branch for new environment branching.
-    let base_branch_override = storage
-        .load_config()
-        .ok()
-        .and_then(|config| resolve_base_branch_override(&config, &project.id));
+    let config = storage.load_config().ok();
+    let base_branch_override = config
+        .as_ref()
+        .and_then(|config| resolve_base_branch_override(config, &project.id));
+    let files_to_copy = config
+        .as_ref()
+        .and_then(|config| config.repositories.get(&project.id))
+        .and_then(|repo| repo.files_to_copy.clone());
 
     if let Some(branch) = &base_branch_override {
         debug!(
@@ -1230,6 +1235,16 @@ async fn start_local_environment(
     if let Err(e) = copy_env_files(source_repo_path, &worktree_path) {
         // Non-fatal - just log it
         warn!(environment_id = %environment_id, error = %e, "Failed to copy env files (non-fatal)");
+    }
+
+    if let Some(files) = files_to_copy.as_ref() {
+        if let Err(e) = copy_project_files(source_repo_path, &worktree_path, files) {
+            warn!(
+                environment_id = %environment_id,
+                error = %e,
+                "Failed to copy configured project files (non-fatal)"
+            );
+        }
     }
 
     // Get setupLocal commands from orkestrator-ai.json (to be run in terminal by frontend)
