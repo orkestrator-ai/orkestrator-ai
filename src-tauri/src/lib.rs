@@ -62,8 +62,8 @@ pub fn log_dir_path() -> std::path::PathBuf {
 
 /// Delete log files in `dir` that are older than `max_age_days`.
 fn cleanup_old_logs(dir: &std::path::Path, max_age_days: u64) {
-    let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(max_age_days * 24 * 60 * 60);
+    let cutoff =
+        std::time::SystemTime::now() - std::time::Duration::from_secs(max_age_days * 24 * 60 * 60);
 
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
