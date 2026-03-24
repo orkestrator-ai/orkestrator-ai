@@ -132,4 +132,103 @@ describe("todo-tool", () => {
       },
     });
   });
+
+  test("does not append snapshot when all todos are completed", () => {
+    interface TestMessage {
+      id: string;
+      role: string;
+      content: string;
+      parts: Array<{
+        type: "tool-invocation";
+        toolName: "TodoWrite";
+        toolArgs?: { todos: Array<{ content: string; status: string }> };
+        toolOutput?: string;
+        toolState: "success";
+      }>;
+    }
+
+    const messages = appendLatestTodoSnapshot<TestMessage>(
+      [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          parts: [{
+            type: "tool-invocation",
+            toolName: "TodoWrite",
+            toolArgs: {
+              todos: [
+                { content: "Task A", status: "completed" },
+                { content: "Task B", status: "completed" },
+              ],
+            },
+            toolState: "success" as const,
+          }],
+        },
+      ] satisfies TestMessage[],
+      ({ message, part, todos }): TestMessage => ({
+        id: `todo-snapshot-${message.id}`,
+        role: "assistant",
+        content: "",
+        parts: [{
+          type: "tool-invocation",
+          toolName: "TodoWrite",
+          toolArgs: { todos },
+          toolState: part.toolState,
+        }],
+      }),
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe("assistant-1");
+  });
+
+  test("does not append snapshot when all todos are completed or cancelled", () => {
+    interface TestMessage {
+      id: string;
+      role: string;
+      content: string;
+      parts: Array<{
+        type: "tool-invocation";
+        toolName: "TodoWrite";
+        toolArgs?: { todos: Array<{ content: string; status: string }> };
+        toolOutput?: string;
+        toolState: "success";
+      }>;
+    }
+
+    const messages = appendLatestTodoSnapshot<TestMessage>(
+      [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "",
+          parts: [{
+            type: "tool-invocation",
+            toolName: "TodoWrite",
+            toolArgs: {
+              todos: [
+                { content: "Done task", status: "completed" },
+                { content: "Skipped task", status: "cancelled" },
+              ],
+            },
+            toolState: "success" as const,
+          }],
+        },
+      ] satisfies TestMessage[],
+      ({ message, part, todos }): TestMessage => ({
+        id: `todo-snapshot-${message.id}`,
+        role: "assistant",
+        content: "",
+        parts: [{
+          type: "tool-invocation",
+          toolName: "TodoWrite",
+          toolArgs: { todos },
+          toolState: part.toolState,
+        }],
+      }),
+    );
+
+    expect(messages).toHaveLength(1);
+  });
 });
