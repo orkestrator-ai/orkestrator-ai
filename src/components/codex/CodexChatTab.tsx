@@ -71,7 +71,13 @@ export function CodexChatTab({
 }: CodexChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  // Initialize as "connected" if we already have a client and session from a previous init.
+  // This avoids even a single frame of spinner when switching back to an already-connected env.
+  const [connectionState, setConnectionState] = useState<ConnectionState>(() => {
+    const hasClient = useCodexStore.getState().clients.has(environmentId);
+    const hasSession = useCodexStore.getState().sessions.has(createCodexSessionKey(environmentId, tabId));
+    return hasClient && hasSession ? "connected" : "connecting";
+  });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [serverLog, setServerLog] = useState<string | null>(null);
   const [initAttempt, setInitAttempt] = useState(0);
@@ -398,6 +404,38 @@ export function CodexChatTab({
 
     async function initialize() {
       try {
+        // Fast path: if we already have a client and session from a previous init,
+        // skip all expensive steps (server status, health check, model fetch, etc.)
+        // and reconnect instantly. This makes environment switching near-instant.
+        const cachedClient = useCodexStore.getState().clients.get(environmentId);
+        const cachedSession = useCodexStore.getState().sessions.get(sessionKey);
+        if (cachedClient && cachedSession?.sessionId) {
+          console.debug("[CodexChatTab] Fast reconnect - reusing existing client and session", {
+            tabId,
+            environmentId,
+            sessionId: cachedSession.sessionId,
+          });
+          isInitializedRef.current = true;
+          lastInitTimeRef.current = Date.now();
+          setConnectionState("connected");
+          setErrorMessage(null);
+
+          // Non-blocking background health check
+          checkHealth(cachedClient).then((healthy) => {
+            if (!mounted || healthy) return;
+            console.warn("[CodexChatTab] Background health check failed, re-initializing");
+            setClient(environmentId, null);
+            setConnectionState("error");
+            setErrorMessage("Codex bridge server disconnected. Click retry to reconnect.");
+          }).catch(() => {
+            if (!mounted) return;
+            setClient(environmentId, null);
+            setConnectionState("error");
+            setErrorMessage("Codex bridge server disconnected. Click retry to reconnect.");
+          });
+          return;
+        }
+
         setConnectionState("connecting");
         setErrorMessage(null);
 
