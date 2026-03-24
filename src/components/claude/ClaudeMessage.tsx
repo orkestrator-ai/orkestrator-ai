@@ -331,9 +331,16 @@ function ToolPart({
 
   const displayInfo = getDisplayInfo();
 
+  // Detect Agent tool by name or by required args (prompt + description)
+  const isAgentTool =
+    toolName === "Agent" ||
+    (toolArgs && typeof toolArgs.prompt === "string" && typeof toolArgs.description === "string");
+
   // Format the command input for shell-like display
   const formatInput = () => {
     if (!toolArgs) return null;
+    // For Agent tools, don't format as JSON - we render prompt as markdown separately
+    if (isAgentTool) return null;
     // For shell commands, show the command
     if (toolArgs.command && typeof toolArgs.command === "string") {
       return `$ ${toolArgs.command}`;
@@ -393,6 +400,18 @@ function ToolPart({
       {hasExpandableContent && (
         <CollapsibleContent className="mt-1">
           <div className="rounded-md bg-muted/30 border border-border/50 overflow-hidden">
+            {/* Agent tool prompt rendered as markdown */}
+            {isAgentTool && toolArgs?.prompt && (
+              <div className={cn(
+                "px-3 py-2 border-b border-border/30",
+                "prose prose-sm prose-invert max-w-none text-xs",
+                "[&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_p]:text-xs [&_li]:text-xs",
+                "[&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_h1]:my-2 [&_h2]:my-1.5 [&_h3]:my-1",
+              )}>
+                <MessageMarkdown content={toolArgs.prompt as string} components={markdownComponents} />
+              </div>
+            )}
+
             {/* Input/Command section */}
             {formattedInput && (
               <div className="px-3 py-2 border-b border-border/30">
