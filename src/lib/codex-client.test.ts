@@ -21,7 +21,7 @@ describe("codex-client todo snapshots", () => {
               type: "tool-invocation",
               toolName: "TodoWrite",
               toolArgs: {
-                todos: [{ content: "Track work", status: "completed" }],
+                todos: [{ content: "Track work", status: "in_progress" }],
               },
               toolState: "success",
             }],
@@ -37,7 +37,7 @@ describe("codex-client todo snapshots", () => {
     expect(messages).toHaveLength(2);
     expect(messages[1]?.id).toBe("todo-snapshot-msg-1");
     expect(messages[1]?.parts[0]?.toolArgs).toEqual({
-      todos: [{ content: "Track work", status: "completed" }],
+      todos: [{ content: "Track work", status: "in_progress" }],
     });
   });
 

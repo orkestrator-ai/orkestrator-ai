@@ -21,7 +21,7 @@ describe("claude-client todo snapshots", () => {
               type: "tool-invocation",
               toolName: "TodoWrite",
               toolArgs: {
-                todos: [{ content: "Claude task", status: "cancelled" }],
+                todos: [{ content: "Claude task", status: "in_progress" }],
               },
               toolState: "success",
             }],
@@ -37,7 +37,7 @@ describe("claude-client todo snapshots", () => {
     expect(messages).toHaveLength(2);
     expect(messages[1]?.id).toBe("todo-snapshot-msg-1");
     expect(messages[1]?.parts[0]?.toolArgs).toEqual({
-      todos: [{ content: "Claude task", status: "cancelled" }],
+      todos: [{ content: "Claude task", status: "in_progress" }],
     });
   });
 
