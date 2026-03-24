@@ -412,6 +412,38 @@ export function OpenCodeChatTab({
           return;
         }
 
+        // Warm path: client exists for this environment (another tab already initialized)
+        // but no session for this specific tab. Skip server status/models and
+        // jump straight to session creation using the existing client.
+        if (existingClient) {
+          console.debug("[OpenCodeChatTab] Warm path - reusing existing client, creating new session", {
+            tabId,
+            environmentId,
+          });
+          lastInitTimeRef.current = Date.now();
+          setConnectionState("connecting");
+          setErrorMessage(null);
+
+          const newSession = await createSession(existingClient);
+          if (!mounted) return;
+
+          tabSessionIdRef.current = newSession.id;
+          isInitializedRef.current = true;
+
+          setSession(sessionKey, {
+            sessionId: newSession.id,
+            messages: [],
+            isLoading: false,
+          });
+
+          setConnectionState("connected");
+
+          if (!hasActiveEventSubscription(environmentId)) {
+            startSharedEventSubscription(existingClient);
+          }
+          return;
+        }
+
         lastInitTimeRef.current = Date.now();
         setConnectionState("connecting");
         setErrorMessage(null);

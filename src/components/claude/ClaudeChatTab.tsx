@@ -246,7 +246,64 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           return;
         }
 
-        console.debug("[ClaudeChatTab] Initializing", {
+        // Warm path: client exists for this environment (another tab already initialized)
+        // but no session for this specific tab. Skip server status/health/models and
+        // jump straight to session creation using the existing client.
+        if (existingClient) {
+          console.debug("[ClaudeChatTab] Warm path - reusing existing client, creating new session", {
+            tabId,
+            environmentId,
+          });
+          lastInitTimeRef.current = Date.now();
+          setConnectionState("connecting");
+          setErrorMessage(null);
+
+          const bridgeClient = existingClient;
+
+          // Reuse models from store if available, otherwise fetch
+          if (models.length === 0) {
+            const availableModels = await getModels(bridgeClient);
+            if (!mounted) return;
+            setModels(availableModels);
+
+            const currentSelectedModel = getSelectedModel(sessionKey);
+            const firstModel = availableModels[0];
+            if (!currentSelectedModel && firstModel) {
+              setSelectedModel(sessionKey, firstModel.id);
+            }
+          } else {
+            const currentSelectedModel = getSelectedModel(sessionKey);
+            const firstModel = models[0];
+            if (!currentSelectedModel && firstModel) {
+              setSelectedModel(sessionKey, firstModel.id);
+            }
+          }
+
+          const newSession = await createSession(bridgeClient);
+          if (!mounted) return;
+
+          if (!newSession) {
+            throw new Error("Failed to create session");
+          }
+
+          tabSessionIdRef.current = newSession.sessionId;
+          isInitializedRef.current = true;
+
+          setSession(sessionKey, {
+            sessionId: newSession.sessionId,
+            messages: [],
+            isLoading: false,
+          });
+
+          setConnectionState("connected");
+
+          if (!hasActiveEventSubscription(environmentId)) {
+            startSharedEventSubscription(bridgeClient);
+          }
+          return;
+        }
+
+        console.debug("[ClaudeChatTab] Cold start - full initialization", {
           tabId,
           environmentId,
           isLocal,

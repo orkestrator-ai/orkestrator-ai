@@ -436,6 +436,53 @@ export function CodexChatTab({
           return;
         }
 
+        // Warm path: client exists for this environment (another tab already initialized)
+        // but no session for this specific tab. Skip server status/health/models and
+        // jump straight to session creation using the existing client.
+        if (cachedClient) {
+          console.debug("[CodexChatTab] Warm path - reusing existing client, creating new session", {
+            tabId,
+            environmentId,
+          });
+          lastInitTimeRef.current = Date.now();
+          setConnectionState("connecting");
+          setErrorMessage(null);
+
+          const codexState = useCodexStore.getState();
+          const storedMode = codexState.selectedMode.get(sessionKey);
+          const resolvedMode = storedMode ?? DEFAULT_CODEX_MODE;
+          const resolvedSelection = resolveCodexPreferenceSelection({
+            models: codexState.models.length > 0 ? codexState.models : models,
+            storedModel: codexState.selectedModel.get(sessionKey),
+            storedReasoningEffort: codexState.selectedReasoningEffort.get(sessionKey),
+            persistedModel: persistedPreferencesRef.current.model,
+            persistedReasoningEffort: persistedPreferencesRef.current.reasoningEffort,
+          });
+
+          const created = await createSession(cachedClient, {
+            model: resolvedSelection.model,
+            modelReasoningEffort: resolvedSelection.reasoningEffort,
+            mode: resolvedMode,
+          });
+          if (!mounted) return;
+          if (!created) {
+            throw new Error("Failed to create Codex session");
+          }
+
+          isInitializedRef.current = true;
+          setSession(sessionKey, {
+            sessionId: created.sessionId,
+            messages: [],
+            isLoading: false,
+            title: created.title,
+          });
+          setSelectedModel(sessionKey, resolvedSelection.model);
+          setSelectedMode(sessionKey, resolvedMode);
+          setSelectedReasoningEffort(sessionKey, resolvedSelection.reasoningEffort);
+          setConnectionState("connected");
+          return;
+        }
+
         setConnectionState("connecting");
         setErrorMessage(null);
 
