@@ -162,7 +162,8 @@ export function CodexChatTab({
   );
   const latestAssistantMessage = useMemo(() => {
     for (let i = sessionMessages.length - 1; i >= 0; i--) {
-      if (sessionMessages[i].role === "assistant") return sessionMessages[i];
+      const msg = sessionMessages[i];
+      if (msg?.role === "assistant") return msg;
     }
     return undefined;
   }, [sessionMessages]);
