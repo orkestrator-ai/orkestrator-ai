@@ -427,6 +427,10 @@ export function OpenCodeChatTab({
           const newSession = await createSession(existingClient);
           if (!mounted) return;
 
+          if (!newSession) {
+            throw new Error("Failed to create OpenCode session");
+          }
+
           tabSessionIdRef.current = newSession.id;
           isInitializedRef.current = true;
 

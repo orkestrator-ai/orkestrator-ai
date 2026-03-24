@@ -261,22 +261,17 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           const bridgeClient = existingClient;
 
           // Reuse models from store if available, otherwise fetch
-          if (models.length === 0) {
-            const availableModels = await getModels(bridgeClient);
+          let resolvedModels = models;
+          if (resolvedModels.length === 0) {
+            resolvedModels = await getModels(bridgeClient);
             if (!mounted) return;
-            setModels(availableModels);
+            setModels(resolvedModels);
+          }
 
-            const currentSelectedModel = getSelectedModel(sessionKey);
-            const firstModel = availableModels[0];
-            if (!currentSelectedModel && firstModel) {
-              setSelectedModel(sessionKey, firstModel.id);
-            }
-          } else {
-            const currentSelectedModel = getSelectedModel(sessionKey);
-            const firstModel = models[0];
-            if (!currentSelectedModel && firstModel) {
-              setSelectedModel(sessionKey, firstModel.id);
-            }
+          const currentSelectedModel = getSelectedModel(sessionKey);
+          const firstModel = resolvedModels[0];
+          if (!currentSelectedModel && firstModel) {
+            setSelectedModel(sessionKey, firstModel.id);
           }
 
           const newSession = await createSession(bridgeClient);
