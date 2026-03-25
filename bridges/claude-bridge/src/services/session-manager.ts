@@ -796,10 +796,12 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     finalPrompt = planModeInstruction + displayPrompt;
   }
 
-  // Add user message with displayPrompt (what the user sees, without planning mode instruction)
+  // Add user message with displayPrompt (what the user sees, without planning mode instruction).
+  // Re-prompts (e.g. after plan rejection) use role "system" so they don't appear as user-typed.
+  const messageRole = options?._isReprompt ? "system" : "user";
   const userMessage: NormalizedMessage = {
     id: generateMessageId(),
-    role: "user",
+    role: messageRole,
     content: displayPrompt,
     parts: [{ type: "text", content: displayPrompt }],
     timestamp: new Date().toISOString(),
@@ -1380,7 +1382,8 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     // If a plan was rejected with feedback but the SDK ended the turn without
     // Claude revising, re-send the feedback as a follow-up prompt so Claude
     // actually sees it and generates a revised plan.
-    if (pendingPlanRejectionFeedback && !abortController.signal.aborted) {
+    // Guard: only re-prompt once (skip if this call is itself a re-prompt).
+    if (pendingPlanRejectionFeedback && !abortController.signal.aborted && !options?._isReprompt) {
       const feedbackPrompt = pendingPlanRejectionFeedback;
       pendingPlanRejectionFeedback = null;
 
@@ -1390,10 +1393,17 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
       session.status = "idle";
       session.abortController = undefined;
 
-      // Re-prompt with the same options (stay in plan mode).
-      // sendPrompt will add the user message and handle the full query lifecycle.
+      // Re-prompt with plan mode preserved, attachments stripped, and _isReprompt
+      // set to prevent infinite recursion if this re-prompt also gets rejected.
+      const repromptOptions: PromptOptions = {
+        model: options?.model,
+        thinking: options?.thinking,
+        permissionMode: "plan",
+        _isReprompt: true,
+      };
+
       try {
-        await sendPrompt(sessionId, feedbackPrompt, options);
+        await sendPrompt(sessionId, feedbackPrompt, repromptOptions);
         // sendPrompt handles setting idle status and emitting events, so return early
         return;
       } catch (repromptError) {
