@@ -247,6 +247,7 @@ pub async fn start_local_opencode_server(
     environment_id: &str,
     worktree_path: &str,
     port: u16,
+    bundled_opencode_path: Option<&str>,
 ) -> Result<LocalServerStartResult, String> {
     wait_for_startup_cleanup().await;
     let start_lock = get_start_lock(environment_id);
@@ -313,7 +314,8 @@ pub async fn start_local_opencode_server(
         }
     }
 
-    let opencode_cmd = find_opencode_binary().unwrap_or_else(|| "opencode".to_string());
+    // Prefer bundled binary, then system binary, then PATH fallback
+    let opencode_cmd = resolve_opencode_binary(bundled_opencode_path);
     if opencode_cmd == "opencode" {
         warn!(
             environment_id = %environment_id,
@@ -1112,6 +1114,42 @@ fn find_bun_binary() -> Option<String> {
     }
 
     None
+}
+
+/// Resolve the OpenCode binary, preferring bundled over system-installed.
+///
+/// Priority: bundled binary (with verification) > system binary > PATH fallback
+fn resolve_opencode_binary(bundled_opencode_path: Option<&str>) -> String {
+    // First, try the bundled binary (highest priority for packaged apps)
+    if let Some(opencode_path) = bundled_opencode_path {
+        let path = PathBuf::from(opencode_path);
+        if path.exists() {
+            // Ensure the bundled binary has executable permissions
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    let mut perms = metadata.permissions();
+                    let mode = perms.mode();
+                    if mode & 0o100 == 0 {
+                        debug!(opencode_path = %opencode_path, "Setting executable permission on bundled opencode");
+                        perms.set_mode(mode | 0o755);
+                        let _ = std::fs::set_permissions(&path, perms);
+                    }
+                }
+            }
+
+            // Verify the binary can actually execute (code-signing check on macOS)
+            if verify_runtime_executable(opencode_path) {
+                debug!(opencode_path = %opencode_path, "Using bundled opencode binary");
+                return opencode_path.to_string();
+            }
+            warn!(opencode_path = %opencode_path, "Bundled opencode failed verification, falling back to system binary");
+        }
+    }
+
+    // Fall back to system binary search
+    find_opencode_binary().unwrap_or_else(|| "opencode".to_string())
 }
 
 /// Find OpenCode binary by checking common installation locations.
