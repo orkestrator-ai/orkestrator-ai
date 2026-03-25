@@ -94,6 +94,7 @@ impl From<LocalServerStatus> for LocalServerStatusResult {
 /// Start the OpenCode server for a local environment
 #[tauri::command]
 pub async fn start_local_opencode_server_cmd(
+    app_handle: tauri::AppHandle,
     environment_id: String,
 ) -> Result<LocalServerResult, String> {
     debug!(environment_id = %environment_id, "Starting local OpenCode server");
@@ -226,8 +227,20 @@ pub async fn start_local_opencode_server_cmd(
         }
     }
 
+    // Get the path to the bundled opencode binary (for packaged apps)
+    let bundled_opencode_path = resolve_bundled_opencode_path(&app_handle);
+    if let Some(ref opencode_path) = bundled_opencode_path {
+        debug!(environment_id = %environment_id, opencode_path = %opencode_path, "Resolved bundled opencode path");
+    }
+
     // Start the server
-    let result = start_local_opencode_server(&environment_id, worktree_path, port).await?;
+    let result = start_local_opencode_server(
+        &environment_id,
+        worktree_path,
+        port,
+        bundled_opencode_path.as_deref(),
+    )
+    .await?;
 
     // Persist any changed runtime metadata (PID and possibly reassigned port)
     if environment.opencode_pid != Some(result.pid)
@@ -620,6 +633,43 @@ fn resolve_codex_bridge_path(app_handle: &tauri::AppHandle) -> String {
 
     warn!("Could not resolve codex-bridge path, using fallback");
     "bridges/codex-bridge".to_string()
+}
+
+/// Resolve the bundled opencode binary path for packaged apps
+fn resolve_bundled_opencode_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> Option<String> {
+    // In debug mode, skip bundled opencode - it may have code signing issues on macOS
+    #[cfg(debug_assertions)]
+    {
+        debug!("Debug mode: skipping bundled opencode, will use system binary");
+        return None;
+    }
+
+    // Try bundled resource path (production)
+    #[cfg(not(debug_assertions))]
+    {
+        if let Ok(bundled) = app_handle
+            .path()
+            .resolve("bin/opencode", tauri::path::BaseDirectory::Resource)
+        {
+            debug!(path = %bundled.display(), "Checking bundled opencode path");
+            if bundled.exists() {
+                debug!(path = %bundled.display(), "Found bundled opencode");
+                return Some(bundled.to_string_lossy().to_string());
+            }
+        }
+
+        if let Ok(res_dir) = app_handle.path().resource_dir() {
+            let bundled = res_dir.join("bin").join("opencode");
+            debug!(resource_dir = %res_dir.display(), path = %bundled.display(), "Checking resource_dir opencode path");
+            if bundled.exists() {
+                debug!(path = %bundled.display(), "Found opencode via resource_dir");
+                return Some(bundled.to_string_lossy().to_string());
+            }
+        }
+
+        debug!("No bundled opencode found, will use system binary");
+        None
+    }
 }
 
 /// Resolve the bundled bun binary path for packaged apps
