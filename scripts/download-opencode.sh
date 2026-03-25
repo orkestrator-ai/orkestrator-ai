@@ -25,8 +25,20 @@ case "$ARCH" in
         ;;
 esac
 
-# Platform
-PLATFORM="darwin"
+# Detect platform
+OS=$(uname -s)
+case "$OS" in
+    Darwin)
+        PLATFORM="darwin"
+        ;;
+    Linux)
+        PLATFORM="linux"
+        ;;
+    *)
+        echo "Unsupported platform: $OS"
+        exit 1
+        ;;
+esac
 
 # Download URL
 OPENCODE_FILENAME="opencode-${PLATFORM}-${OPENCODE_ARCH}"
@@ -39,15 +51,13 @@ mkdir -p "$BINARIES_DIR"
 
 # Download and extract
 TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
 curl -fsSL "$OPENCODE_URL" -o "$TEMP_DIR/opencode.zip"
 unzip -q "$TEMP_DIR/opencode.zip" -d "$TEMP_DIR"
 
 # Copy only the binary (skip .map files)
 cp "$TEMP_DIR/opencode" "$BINARIES_DIR/opencode"
 chmod +x "$BINARIES_DIR/opencode"
-
-# Cleanup
-rm -rf "$TEMP_DIR"
 
 # Re-sign the binary with an ad-hoc signature.
 # Same reasoning as bun: when embedded inside a Tauri app bundle that uses a
