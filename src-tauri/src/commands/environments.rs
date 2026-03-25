@@ -15,8 +15,8 @@ use crate::local::{
     stop_all_local_servers,
 };
 use crate::models::{
-    ClaudeMode, DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode,
-    OpenCodeMode, PortMapping, PrState,
+    sanitize_branch_name, ClaudeMode, DefaultAgent, Environment, EnvironmentStatus,
+    EnvironmentType, NetworkAccessMode, OpenCodeMode, PortMapping, PrState,
 };
 use crate::storage::{get_config, get_storage, StorageError};
 use serde::{Deserialize, Serialize};
@@ -199,6 +199,31 @@ fn make_unique_name(base_name: &str, existing_environments: &[Environment]) -> S
             // Fall back to timestamp-based name
             let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
             return format!("{}-{}", base_name, timestamp);
+        }
+    }
+}
+
+/// Generate a unique branch name by appending an integer suffix if needed.
+/// Only checks against existing branch names (not environment display names).
+fn make_unique_branch(base_branch: &str, existing_environments: &[Environment]) -> String {
+    let is_branch_taken = |branch: &str| -> bool {
+        existing_environments.iter().any(|e| e.branch == branch)
+    };
+
+    if !is_branch_taken(base_branch) {
+        return base_branch.to_string();
+    }
+
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{}-{}", base_branch, suffix);
+        if !is_branch_taken(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+        if suffix > 1000 {
+            let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+            return format!("{}-{}", base_branch, timestamp);
         }
     }
 }
@@ -393,12 +418,19 @@ async fn background_rename_environment(
     };
 
     let unique_name = make_unique_name(&generated_name, &existing_environments);
-    debug!(environment_id = %environment_id, unique_name = %unique_name, "Unique name determined");
+    // Sanitize the branch name separately - the display name may contain spaces/special
+    // chars that are invalid in git branch names. This mirrors what happens during
+    // environment creation (models::sanitize_branch_name).
+    let sanitized_branch = sanitize_branch_name(&unique_name);
+    // Ensure the sanitized branch is also unique (two different names could sanitize to the
+    // same branch, e.g. "My Feature!" and "My Feature?" both become "My-Feature")
+    let unique_branch = make_unique_branch(&sanitized_branch, &existing_environments);
+    debug!(environment_id = %environment_id, unique_name = %unique_name, unique_branch = %unique_branch, "Unique name and branch determined");
 
     // Update environment name and branch in storage
     if let Err(e) = storage.update_environment(
         &environment_id,
-        json!({ "name": &unique_name, "branch": &unique_name }),
+        json!({ "name": &unique_name, "branch": &unique_branch }),
     ) {
         warn!(environment_id = %environment_id, error = %e, "Failed to update environment");
         return;
@@ -422,7 +454,7 @@ async fn background_rename_environment(
                         "-m",
                         "--",
                         &old_branch,
-                        &unique_name,
+                        &unique_branch,
                     ])
                     .output()
                     .await
@@ -435,7 +467,7 @@ async fn background_rename_environment(
                             warn!(
                                 environment_id = %environment_id,
                                 old_branch = %old_branch,
-                                new_branch = %unique_name,
+                                new_branch = %unique_branch,
                                 stderr = %stderr,
                                 "Failed to rename git branch in local worktree"
                             );
@@ -445,7 +477,7 @@ async fn background_rename_environment(
                         warn!(
                             environment_id = %environment_id,
                             old_branch = %old_branch,
-                            new_branch = %unique_name,
+                            new_branch = %unique_branch,
                             error = %e,
                             "Failed to execute git branch rename command"
                         );
@@ -495,7 +527,7 @@ async fn background_rename_environment(
                                 "-m",
                                 "--",
                                 &old_branch,
-                                &unique_name,
+                                &unique_branch,
                             ],
                         )
                         .await
@@ -507,7 +539,7 @@ async fn background_rename_environment(
                             warn!(
                                 environment_id = %environment_id,
                                 old_branch = %old_branch,
-                                new_branch = %unique_name,
+                                new_branch = %unique_branch,
                                 error = %e,
                                 "Failed to rename git branch - branch may not exist or may have a different name"
                             );
@@ -534,7 +566,7 @@ async fn background_rename_environment(
     let payload = EnvironmentRenamedPayload {
         environment_id: environment_id.clone(),
         new_name: unique_name.clone(),
-        new_branch: unique_name.clone(),
+        new_branch: unique_branch.clone(),
     };
 
     if let Err(e) = app_handle.emit("environment-renamed", payload) {
