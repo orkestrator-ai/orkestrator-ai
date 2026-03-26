@@ -121,8 +121,8 @@ export function FileViewerTab({
 
   // Fetch file content (runs even if showing diff, to have content ready when switching)
   useEffect(() => {
-    // Skip loading if we're showing diff view
-    if (showDiff) {
+    // Skip loading if we're showing diff view (but not for images, which bypass the diff viewer)
+    if (showDiff && !isImage) {
       return;
     }
 
@@ -289,7 +289,8 @@ export function FileViewerTab({
   );
 
   // If in diff mode and we have the required data, render DiffViewerTab
-  if (showDiff && gitStatus && baseBranch) {
+  // Image files can't be diffed in Monaco, so they fall through to the image preview
+  if (showDiff && gitStatus && baseBranch && !isImage) {
     return (
       <DiffViewerTab
         filePath={filePath}
