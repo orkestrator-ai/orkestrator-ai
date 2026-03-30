@@ -293,8 +293,11 @@ function App() {
       }
 
       // For local environments, block terminal initialization until setup commands are resolved.
+      // The placeholder in pendingSetupCommands prevents the auto-resolve effect in
+      // TerminalContainer from firing before startEnvironment returns with real commands.
       if (isLocalEnvironment) {
         setSetupCommandsResolved(environmentId, false);
+        setPendingSetupCommands(environmentId, []);
       }
 
       try {
