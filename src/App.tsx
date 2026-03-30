@@ -4,6 +4,7 @@ import { exit } from "@tauri-apps/plugin-process";
 import { AppShell } from "@/components/layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TerminalContainer } from "@/components/terminal";
+import { KanbanBoard } from "@/components/kanban";
 import { TerminalProvider } from "@/contexts";
 import { useUIStore, useEnvironmentStore, useConfigStore, useClaudeOptionsStore } from "@/stores";
 import { cn } from "@/lib/utils";
@@ -374,6 +375,8 @@ function App() {
                 );
               })}
             </div>
+          ) : selectedProjectId ? (
+            <KanbanBoard projectId={selectedProjectId} />
           ) : (
             <div className="flex h-full items-center justify-center bg-background">
               <div className="text-center text-muted-foreground">

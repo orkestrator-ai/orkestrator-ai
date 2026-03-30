@@ -35,6 +35,7 @@ import {
   ChevronRight,
   Plus,
   Settings2,
+  LayoutGrid,
 } from "lucide-react";
 import type { Project, Environment } from "@/types";
 import { cn } from "@/lib/utils";
@@ -46,6 +47,7 @@ interface SortableProjectGroupProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   selectedEnvironmentId: string | null;
+  onSelectProject: () => void;
   onSelectEnvironment: (environmentId: string, modifiers?: { shiftKey?: boolean; metaKey?: boolean }) => void;
   onDeleteProject: (projectId: string) => void;
   onOpenSettings: () => void;
@@ -65,6 +67,7 @@ export function SortableProjectGroup({
   isCollapsed,
   onToggleCollapse,
   selectedEnvironmentId,
+  onSelectProject,
   onSelectEnvironment,
   onDeleteProject,
   onOpenSettings,
@@ -130,43 +133,51 @@ export function SortableProjectGroup({
                 onMouseEnter={() => setIsHovered(true)}
                 onMouseLeave={() => setIsHovered(false)}
               >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <CollapsibleTrigger asChild>
-                      <button
+                <div className="flex flex-1 items-center gap-0 rounded-md text-sm text-foreground">
+                  <CollapsibleTrigger asChild>
+                    <button
+                      className="shrink-0 p-1 rounded hover:bg-accent/50 transition-colors"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ChevronRight
                         className={cn(
-                          "flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                          "text-foreground hover:bg-accent/50"
+                          "h-4 w-4 text-muted-foreground transition-transform duration-200",
+                          !isCollapsed && "rotate-90"
                         )}
+                      />
+                    </button>
+                  </CollapsibleTrigger>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="flex flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-accent/50 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectProject();
+                        }}
                       >
-                        <ChevronRight
-                          className={cn(
-                            "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
-                            !isCollapsed && "rotate-90"
-                          )}
-                        />
                         <FolderGit2 className="h-4 w-4 shrink-0" />
                         <span className="truncate font-medium">{project.name}</span>
-                        {/* Environment count badge */}
                         {environments.length > 0 && (
                           <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] bg-zinc-600 text-zinc-300">
                             {environments.length}
                           </span>
                         )}
                       </button>
-                    </CollapsibleTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" align="center">
-                    <p className="font-mono text-xs">{project.gitUrl}</p>
-                    {project.localPath && (
-                      <p className="text-xs text-muted-foreground">{project.localPath}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {environments.length} environment{environments.length !== 1 && "s"}
-                      {runningCount > 0 && ` (${runningCount} running)`}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" align="center">
+                      <p className="font-mono text-xs">{project.gitUrl}</p>
+                      {project.localPath && (
+                        <p className="text-xs text-muted-foreground">{project.localPath}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {environments.length} environment{environments.length !== 1 && "s"}
+                        {runningCount > 0 && ` (${runningCount} running)`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Click to open board</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
 
                 {/* Action buttons - shown on hover */}
                 <div
@@ -197,6 +208,11 @@ export function SortableProjectGroup({
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent>
+              <ContextMenuItem onClick={onSelectProject}>
+                <LayoutGrid className="h-4 w-4 mr-2" />
+                Open Board
+              </ContextMenuItem>
+              <ContextMenuSeparator />
               <ContextMenuItem onClick={onOpenSettings}>
                 <Settings2 className="h-4 w-4 mr-2" />
                 Repository Settings

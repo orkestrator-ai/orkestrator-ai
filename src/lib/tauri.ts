@@ -1040,3 +1040,73 @@ export async function readBinaryFile(path: string): Promise<Uint8Array> {
   }
   return bytes;
 }
+
+// --- Kanban commands ---
+
+export interface KanbanComment {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+export type KanbanStatus = "backlog" | "in-progress" | "review";
+
+export interface KanbanTask {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  status: KanbanStatus;
+  comments: KanbanComment[];
+  createdAt: string;
+  order: number;
+}
+
+export interface ProjectNotes {
+  projectId: string;
+  content: string;
+  updatedAt: string;
+}
+
+export async function getKanbanTasks(projectId: string): Promise<KanbanTask[]> {
+  return invoke<KanbanTask[]>("get_kanban_tasks", { projectId });
+}
+
+export async function addKanbanTask(
+  projectId: string,
+  title: string,
+  description: string
+): Promise<KanbanTask> {
+  return invoke<KanbanTask>("add_kanban_task", { projectId, title, description });
+}
+
+export async function updateKanbanTask(
+  taskId: string,
+  title?: string,
+  description?: string,
+  acceptanceCriteria?: string,
+  status?: KanbanStatus
+): Promise<KanbanTask> {
+  return invoke<KanbanTask>("update_kanban_task", { taskId, title, description, acceptanceCriteria, status });
+}
+
+export async function deleteKanbanTask(taskId: string): Promise<void> {
+  return invoke<void>("delete_kanban_task", { taskId });
+}
+
+export async function addKanbanComment(taskId: string, text: string): Promise<KanbanTask> {
+  return invoke<KanbanTask>("add_kanban_comment", { taskId, text });
+}
+
+export async function deleteKanbanComment(taskId: string, commentId: string): Promise<KanbanTask> {
+  return invoke<KanbanTask>("delete_kanban_comment", { taskId, commentId });
+}
+
+export async function getProjectNotes(projectId: string): Promise<ProjectNotes> {
+  return invoke<ProjectNotes>("get_project_notes", { projectId });
+}
+
+export async function saveProjectNotes(projectId: string, content: string): Promise<ProjectNotes> {
+  return invoke<ProjectNotes>("save_project_notes", { projectId, content });
+}

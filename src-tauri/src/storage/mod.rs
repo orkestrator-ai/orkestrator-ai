@@ -1,7 +1,7 @@
 // JSON file-based storage layer
 // Stores projects, environments, and config in the app data directory
 
-use crate::models::{AppConfig, Environment, Project, Session, SessionStatus};
+use crate::models::{AppConfig, Environment, KanbanComment, KanbanStatus, KanbanTask, Project, ProjectNotes, Session, SessionStatus};
 use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
@@ -22,6 +22,8 @@ pub enum StorageError {
     EnvironmentNotFound(String),
     #[error("Session not found: {0}")]
     SessionNotFound(String),
+    #[error("Kanban task not found: {0}")]
+    KanbanTaskNotFound(String),
     #[error("Duplicate project URL: {0}")]
     DuplicateProject(String),
 }
@@ -72,6 +74,10 @@ impl Storage {
 
     fn buffer_file(&self, session_id: &str) -> PathBuf {
         self.buffers_dir().join(format!("{}.txt", session_id))
+    }
+
+    fn kanban_file(&self) -> PathBuf {
+        self.data_dir.join("kanban.json")
     }
 
     // --- Project Operations ---
@@ -1063,6 +1069,208 @@ impl Storage {
         }
 
         Ok(deleted)
+    }
+
+    // --- Kanban Operations ---
+
+    /// Load all kanban tasks from storage
+    pub fn load_kanban_tasks(&self) -> Result<Vec<KanbanTask>, StorageError> {
+        let path = self.kanban_file();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let contents = fs::read_to_string(&path)?;
+        if contents.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let tasks: Vec<KanbanTask> = serde_json::from_str(&contents)?;
+        Ok(tasks)
+    }
+
+    /// Save all kanban tasks to storage
+    pub fn save_kanban_tasks(&self, tasks: &[KanbanTask]) -> Result<(), StorageError> {
+        let path = self.kanban_file();
+        let contents = serde_json::to_string_pretty(tasks)?;
+        fs::write(path, contents)?;
+        Ok(())
+    }
+
+    /// Add a new kanban task
+    pub fn add_kanban_task(&self, mut task: KanbanTask) -> Result<KanbanTask, StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let max_order = tasks
+            .iter()
+            .filter(|t| t.project_id == task.project_id && t.status == task.status)
+            .map(|t| t.order)
+            .max()
+            .unwrap_or(-1);
+        task.order = max_order + 1;
+        tasks.push(task.clone());
+        self.save_kanban_tasks(&tasks)?;
+        Ok(task)
+    }
+
+    /// Update a kanban task
+    pub fn update_kanban_task(
+        &self,
+        task_id: &str,
+        title: Option<String>,
+        description: Option<String>,
+        acceptance_criteria: Option<String>,
+        status: Option<KanbanStatus>,
+    ) -> Result<KanbanTask, StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let task_index = tasks
+            .iter()
+            .position(|t| t.id == task_id)
+            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+
+        if let Some(title) = title {
+            tasks[task_index].title = title;
+        }
+        if let Some(description) = description {
+            tasks[task_index].description = description;
+        }
+        if let Some(acceptance_criteria) = acceptance_criteria {
+            tasks[task_index].acceptance_criteria = acceptance_criteria;
+        }
+        if let Some(new_status) = status {
+            if tasks[task_index].status != new_status {
+                let project_id = tasks[task_index].project_id.clone();
+                let max_order = tasks
+                    .iter()
+                    .filter(|t| t.project_id == project_id && t.status == new_status && t.id != task_id)
+                    .map(|t| t.order)
+                    .max()
+                    .unwrap_or(-1);
+                tasks[task_index].status = new_status;
+                tasks[task_index].order = max_order + 1;
+            }
+        }
+
+        let updated = tasks[task_index].clone();
+        self.save_kanban_tasks(&tasks)?;
+        Ok(updated)
+    }
+
+    /// Delete a kanban task
+    pub fn delete_kanban_task(&self, task_id: &str) -> Result<(), StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let len_before = tasks.len();
+        tasks.retain(|t| t.id != task_id);
+        if tasks.len() == len_before {
+            return Err(StorageError::KanbanTaskNotFound(task_id.to_string()));
+        }
+        self.save_kanban_tasks(&tasks)?;
+        Ok(())
+    }
+
+    /// Get all kanban tasks for a project
+    pub fn get_kanban_tasks_by_project(&self, project_id: &str) -> Result<Vec<KanbanTask>, StorageError> {
+        let tasks = self.load_kanban_tasks()?;
+        Ok(tasks.into_iter().filter(|t| t.project_id == project_id).collect())
+    }
+
+    /// Add a comment to a kanban task
+    pub fn add_kanban_comment(&self, task_id: &str, text: String) -> Result<KanbanTask, StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let task = tasks
+            .iter_mut()
+            .find(|t| t.id == task_id)
+            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+
+        let comment = KanbanComment {
+            id: uuid::Uuid::new_v4().to_string(),
+            text,
+            created_at: Utc::now(),
+        };
+        task.comments.push(comment);
+        let updated = task.clone();
+        self.save_kanban_tasks(&tasks)?;
+        Ok(updated)
+    }
+
+    /// Delete a comment from a kanban task
+    pub fn delete_kanban_comment(&self, task_id: &str, comment_id: &str) -> Result<KanbanTask, StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let task = tasks
+            .iter_mut()
+            .find(|t| t.id == task_id)
+            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+
+        task.comments.retain(|c| c.id != comment_id);
+        let updated = task.clone();
+        self.save_kanban_tasks(&tasks)?;
+        Ok(updated)
+    }
+
+    // --- Project Notes Operations ---
+
+    fn project_notes_file(&self) -> PathBuf {
+        self.data_dir.join("project-notes.json")
+    }
+
+    /// Load all project notes
+    pub fn load_project_notes(&self) -> Result<Vec<ProjectNotes>, StorageError> {
+        let path = self.project_notes_file();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let contents = fs::read_to_string(&path)?;
+        if contents.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let notes: Vec<ProjectNotes> = serde_json::from_str(&contents)?;
+        Ok(notes)
+    }
+
+    fn save_project_notes(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
+        let path = self.project_notes_file();
+        let contents = serde_json::to_string_pretty(notes)?;
+        fs::write(path, contents)?;
+        Ok(())
+    }
+
+    /// Get notes for a specific project
+    pub fn get_project_notes(&self, project_id: &str) -> Result<ProjectNotes, StorageError> {
+        let notes = self.load_project_notes()?;
+        Ok(notes
+            .into_iter()
+            .find(|n| n.project_id == project_id)
+            .unwrap_or(ProjectNotes {
+                project_id: project_id.to_string(),
+                content: String::new(),
+                updated_at: Utc::now(),
+            }))
+    }
+
+    /// Save notes for a specific project
+    pub fn save_project_notes_for_project(
+        &self,
+        project_id: &str,
+        content: String,
+    ) -> Result<ProjectNotes, StorageError> {
+        let mut all_notes = self.load_project_notes()?;
+        let now = Utc::now();
+
+        if let Some(existing) = all_notes.iter_mut().find(|n| n.project_id == project_id) {
+            existing.content = content;
+            existing.updated_at = now;
+        } else {
+            all_notes.push(ProjectNotes {
+                project_id: project_id.to_string(),
+                content,
+                updated_at: now,
+            });
+        }
+
+        let updated = all_notes
+            .iter()
+            .find(|n| n.project_id == project_id)
+            .unwrap()
+            .clone();
+        self.save_project_notes(&all_notes)?;
+        Ok(updated)
     }
 }
 
