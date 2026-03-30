@@ -171,6 +171,7 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
     const lastMentionsRef = useRef(mentions);
     const isComposingRef = useRef(false);
     const pendingCursorRef = useRef<number | null>(null);
+    const initializedRef = useRef(false);
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
@@ -201,14 +202,20 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
     useEffect(() => {
       if (!inputRef.current) return;
 
-      if (value === lastValueRef.current && areMentionsEqual(mentions, lastMentionsRef.current)) {
+      // On first render, always sync the DOM with the store value (restores draft text)
+      const isFirstRender = !initializedRef.current;
+      if (isFirstRender) {
+        initializedRef.current = true;
+      }
+
+      if (!isFirstRender && value === lastValueRef.current && areMentionsEqual(mentions, lastMentionsRef.current)) {
         return;
       }
 
       lastValueRef.current = value;
       lastMentionsRef.current = mentions;
 
-      const cursorPos = getCursorOffset(inputRef.current);
+      const cursorPos = isFirstRender ? value.length : getCursorOffset(inputRef.current);
       inputRef.current.innerHTML = renderContent(value, mentions);
       setCursorOffset(inputRef.current, cursorPos);
     }, [value, mentions]);
