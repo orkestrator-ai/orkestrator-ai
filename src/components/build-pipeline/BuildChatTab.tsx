@@ -94,6 +94,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const isInitializedRef = useRef(false);
   const pipelineAdvancingRef = useRef(false);
   const [advanceTick, setAdvanceTick] = useState(0);
+  const handledErrorIdsRef = useRef(new Set<string>());
 
   const pipeline = useBuildPipelineStore((s) => s.pipelines.get(pipelineId));
   const {
@@ -328,6 +329,24 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setContextUsage, addMessage]
   );
 
+  // Check if a session ended with an error, avoiding re-handling of already-processed errors
+  const checkSessionError = useCallback(
+    (sessionState: { messages: ClaudeMessageType[] }, fallbackMessage: string): boolean => {
+      const lastMessage = sessionState.messages.at(-1);
+      if (
+        lastMessage?.id.startsWith(ERROR_MESSAGE_PREFIX) &&
+        !handledErrorIdsRef.current.has(lastMessage.id)
+      ) {
+        handledErrorIdsRef.current.add(lastMessage.id);
+        const errorContent = lastMessage.content || fallbackMessage;
+        setPipelineError(pipelineId, errorContent);
+        return true;
+      }
+      return false;
+    },
+    [pipelineId, setPipelineError]
+  );
+
   // Pipeline advancement logic - watches for session idle transitions
   // Skips when in "addressing" phase (handled by separate effect below)
   useEffect(() => {
@@ -340,13 +359,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     const sessionState = sessionsMap.get(currentSession.sessionKey);
     if (!sessionState || sessionState.isLoading) return;
 
-    // Check if the session ended with an error (error messages have a specific ID prefix)
-    const lastMessage = sessionState.messages.at(-1);
-    if (lastMessage?.id.startsWith(ERROR_MESSAGE_PREFIX)) {
-      const errorContent = lastMessage.content || "Session encountered an error";
-      setPipelineError(pipelineId, errorContent);
-      return;
-    }
+    if (checkSessionError(sessionState, "Session encountered an error")) return;
 
     // Session just went idle - advance the pipeline
     if (currentSession.status === "running") {
@@ -360,7 +373,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeline?.currentSessionIndex, pipeline?.sessions, pipeline?.phase, sessionsMap, connectionState, client, advanceTick]);
+  }, [pipeline?.currentSessionIndex, pipeline?.sessions, pipeline?.phase, sessionsMap, connectionState, client, advanceTick, checkSessionError]);
 
   // Core pipeline advancement logic
   const advancePipeline = useCallback(
@@ -492,13 +505,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     const sessionState = sessionsMap.get(currentSession.sessionKey);
     if (!sessionState || sessionState.isLoading) return;
 
-    // Check if the session ended with an error
-    const lastMessage = sessionState.messages.at(-1);
-    if (lastMessage?.id.startsWith(ERROR_MESSAGE_PREFIX)) {
-      const errorContent = lastMessage.content || "Session encountered an error during addressing";
-      setPipelineError(pipelineId, errorContent);
-      return;
-    }
+    if (checkSessionError(sessionState, "Session encountered an error during addressing")) return;
 
     // The addressing is done - start verification
     if (currentSession.status === "running") {
@@ -511,7 +518,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap, connectionState, client, advanceTick]);
+  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap, connectionState, client, advanceTick, checkSessionError]);
 
   // Create a new Claude session and register it in the store
   const createPipelineSession = useCallback(
