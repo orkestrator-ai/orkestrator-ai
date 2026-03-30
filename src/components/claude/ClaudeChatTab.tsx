@@ -10,6 +10,7 @@ import {
   createClient,
   getModels,
   createSession,
+  getSession,
   getSessionMessages,
   sendPrompt,
   abortSession,
@@ -227,6 +228,25 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           if (!hasActiveEventSubscription(environmentId)) {
             startSharedEventSubscription(existingClient);
           }
+
+          // Re-sync session state from the server in the background.
+          // If SSE events were missed while this tab was inactive (e.g. due to
+          // an EventSource error killing the subscription), messages and loading
+          // state can be stale. Fetching the current session status and messages
+          // ensures the UI reflects reality when switching back.
+          getSession(existingClient, existingSession.sessionId).then(async (serverSession) => {
+            if (!mounted || !serverSession) return;
+            const messages = await getSessionMessages(existingClient, existingSession.sessionId);
+            if (!mounted) return;
+            setMessages(sessionKey, messages);
+            // Reconcile loading state with server - if the server says idle/error
+            // but we still show loading, correct it.
+            if (serverSession.status !== "running" && existingSession.isLoading) {
+              setSessionLoading(sessionKey, false);
+            }
+          }).catch((err) => {
+            console.debug("[ClaudeChatTab] Background session re-sync failed:", err);
+          });
 
           // Non-blocking background health check - if server crashed while we were
           // on another env, fall through to full init
