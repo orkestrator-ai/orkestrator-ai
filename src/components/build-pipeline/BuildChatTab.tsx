@@ -29,7 +29,9 @@ import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
 import type { BuildTabData } from "@/types/paneLayout";
 import { extractContextUsage } from "@/lib/context-usage";
 import { cn } from "@/lib/utils";
+import { buildPRPrompt } from "@/lib/pr-prompts";
 import { useKanbanStore } from "@/stores/kanbanStore";
+import { usePrMonitorStore } from "@/stores/prMonitorStore";
 
 // Reference to kanban store for non-reactive reads
 const kanbanStoreRef = useKanbanStore;
@@ -49,6 +51,7 @@ const PHASE_LABELS: Record<BuildPhase, string> = {
   addressing: "Addressing Issues",
   verifying: "Verifying",
   fixing: "Fixing Issues",
+  "creating-pr": "Creating PR",
   complete: "Complete",
   failed: "Failed",
 };
@@ -61,6 +64,7 @@ const PHASE_COLORS: Record<BuildPhase, string> = {
   addressing: "text-amber-400",
   verifying: "text-purple-400",
   fixing: "text-red-400",
+  "creating-pr": "text-cyan-400",
   complete: "text-green-400",
   failed: "text-red-500",
 };
@@ -70,6 +74,7 @@ const SESSION_PHASE_LABELS: Record<string, string> = {
   review: "Review Session",
   verify: "Verification Session",
   fix: "Fix Session",
+  pr: "PR Creation Session",
 };
 
 function SessionDivider({ session, index }: { session: PipelineSession; index: number }) {
@@ -418,6 +423,11 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             await startReviewSession(currentPipeline);
             break;
 
+          case "pr":
+            // PR creation complete -> pipeline is done
+            setPhase(pipelineId, "complete");
+            break;
+
           case "verify": {
             // Fetch fresh messages from the bridge to ensure we have the complete response
             // (the debounced SSE message fetch may not have completed yet)
@@ -462,7 +472,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             setVerificationResult(pipelineId, result.verdict, result.feedback);
 
             if (result.verdict === "pass") {
-              setPhase(pipelineId, "complete");
+              await startPRSession(currentPipeline);
             } else {
               // Check max iterations
               if (currentPipeline.iteration >= currentPipeline.maxIterations) {
@@ -772,6 +782,50 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       }
     },
     [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
+  );
+
+  // Start PR creation session (auto-launched after verification passes)
+  const startPRSession = useCallback(
+    async (currentPipeline: NonNullable<typeof pipeline>) => {
+      if (!client) return;
+
+      setPhase(pipelineId, "creating-pr");
+
+      // Activate PR monitoring for faster detection
+      const { setMonitoringMode, monitoredEnvironments } = usePrMonitorStore.getState();
+      if (monitoredEnvironments[environmentId]) {
+        setMonitoringMode(environmentId, "create-pending");
+      }
+
+      const result = await createPipelineSession("pr", currentPipeline.iteration, "PR Creation Session");
+      if (!result) {
+        setPipelineError(pipelineId, "Failed to create PR session");
+        return;
+      }
+
+      const repoConfig = config.repositories[currentPipeline.projectId];
+      const targetBranch = repoConfig?.prBaseBranch || "main";
+      const prPrompt = buildPRPrompt(targetBranch);
+
+      const userMessage: ClaudeMessageType = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: prPrompt,
+        parts: [{ type: "text", content: prPrompt }],
+        timestamp: new Date().toISOString(),
+      };
+
+      addMessage(result.sessionKey, userMessage);
+
+      const success = await sendPrompt(client, result.sdkSessionId, prPrompt, {
+        permissionMode: "bypassPermissions",
+      });
+
+      if (!success) {
+        setPipelineError(pipelineId, "Failed to send PR creation prompt");
+      }
+    },
+    [client, pipelineId, environmentId, config.repositories, createPipelineSession, addMessage, setPhase, setPipelineError]
   );
 
   // Stop the pipeline - abort all sessions to ensure nothing keeps running
