@@ -66,6 +66,7 @@ export function HierarchicalSidebar() {
 
   const {
     selectedEnvironmentId,
+    selectProject,
     selectProjectAndEnvironment,
     collapsedProjects,
     toggleProjectCollapse,
@@ -611,6 +612,7 @@ export function HierarchicalSidebar() {
                     isCollapsed={collapsedProjects.includes(project.id)}
                     onToggleCollapse={() => toggleProjectCollapse(project.id)}
                     selectedEnvironmentId={selectedEnvironmentId}
+                    onSelectProject={() => selectProject(project.id)}
                     onSelectEnvironment={handleSelectEnvironment}
                     onDeleteProject={handleDeleteProject}
                     onOpenSettings={() => handleOpenSettings(project.id)}

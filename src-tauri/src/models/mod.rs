@@ -392,6 +392,70 @@ impl Environment {
 }
 
 // ============================================================================
+// Kanban Models - Task board for project management
+// ============================================================================
+
+/// Status of a kanban task
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum KanbanStatus {
+    Backlog,
+    InProgress,
+    Review,
+    Done,
+}
+
+/// A comment on a kanban task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanComment {
+    pub id: String,
+    pub text: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A kanban task/ticket
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanTask {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub description: String,
+    #[serde(default)]
+    pub acceptance_criteria: String,
+    pub status: KanbanStatus,
+    pub comments: Vec<KanbanComment>,
+    pub created_at: DateTime<Utc>,
+    pub order: i32,
+}
+
+impl KanbanTask {
+    pub fn new(project_id: String, title: String, description: String) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_id,
+            title,
+            description,
+            acceptance_criteria: String::new(),
+            status: KanbanStatus::Backlog,
+            comments: Vec::new(),
+            created_at: Utc::now(),
+            order: 0,
+        }
+    }
+}
+
+/// Project-level notes stored alongside kanban data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectNotes {
+    pub project_id: String,
+    pub content: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ============================================================================
 // Session Models - Terminal session tracking for environments
 // ============================================================================
 

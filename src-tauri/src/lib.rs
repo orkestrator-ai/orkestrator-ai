@@ -384,6 +384,15 @@ pub fn run() {
             stop_local_codex_server_cmd,
             get_local_codex_server_status,
             cleanup_stale_local_servers_cmd,
+            // Kanban commands
+            get_kanban_tasks,
+            add_kanban_task,
+            update_kanban_task,
+            delete_kanban_task,
+            add_kanban_comment,
+            delete_kanban_comment,
+            get_project_notes,
+            save_project_notes,
             // Local terminal commands (for local/worktree environments)
             create_local_terminal_session,
             start_local_terminal_session,
