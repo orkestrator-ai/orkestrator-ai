@@ -67,6 +67,15 @@ describe("parseVerificationResult", () => {
     expect(result.feedback).toBe("All good.");
   });
 
+  test("falls back to legacy parsing on malformed JSON", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage('```json\n{"complete": true, "rationale": }\n```'),
+    ]);
+    // Malformed JSON can't be parsed, falls through to legacy YES/NO check.
+    // First line is a code fence, not YES/NO, so verdict is fail.
+    expect(result.verdict).toBe("fail");
+  });
+
   // --- Legacy YES/NO fallback tests ---
 
   test("falls back to YES parsing for legacy format", () => {

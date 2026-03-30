@@ -419,11 +419,22 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             if (lastAssistantIdx >= 0) {
               const updatedMessages = verifyMessages.map((m, i) => {
                 if (i !== lastAssistantIdx) return m;
-                const nonTextParts = m.parts.filter((p) => p.type !== "text");
+                // Replace text parts with formatted content while preserving part order
+                let replaced = false;
+                const updatedParts = m.parts.reduce<typeof m.parts>((acc, p) => {
+                  if (p.type !== "text") {
+                    acc.push(p);
+                  } else if (!replaced) {
+                    acc.push({ type: "text" as const, content: formattedContent });
+                    replaced = true;
+                  }
+                  // Drop subsequent text parts (merged into the first)
+                  return acc;
+                }, []);
                 return {
                   ...m,
                   content: formattedContent,
-                  parts: [...nonTextParts, { type: "text" as const, content: formattedContent }],
+                  parts: updatedParts,
                 };
               });
               setMessages(completedSession.sessionKey, updatedMessages);
@@ -1043,13 +1054,17 @@ export function parseVerificationResult(messages: ClaudeMessageType[]): { verdic
 
   // Try JSON format first: { "complete": true/false, "rationale": "..." }
   try {
-    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/) ?? text.match(/(\{[\s\S]*?"complete"[\s\S]*?\})/);
+    // Prefer ```json block, then bare ``` block, then raw JSON object
+    const jsonMatch =
+      text.match(/```json\s*\n([\s\S]*?)\n\s*```/) ??
+      text.match(/```\s*\n([\s\S]*?)\n\s*```/) ??
+      text.match(/(\{"complete"\s*:\s*(?:true|false)\s*,\s*"rationale"\s*:\s*"[\s\S]*?"\s*\})/);
     if (jsonMatch?.[1]) {
       const parsed = JSON.parse(jsonMatch[1]);
       if (typeof parsed.complete === "boolean") {
         return {
           verdict: parsed.complete ? "pass" : "fail",
-          feedback: parsed.rationale ?? text,
+          feedback: typeof parsed.rationale === "string" ? parsed.rationale : text,
         };
       }
     }
