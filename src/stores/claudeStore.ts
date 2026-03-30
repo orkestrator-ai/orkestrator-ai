@@ -11,6 +11,7 @@ import {
   type SessionInitData,
   type ClaudeSessionKey,
   type ClaudeSdkSessionId,
+  type ClaudeEffortLevel,
 } from "@/lib/claude-client";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { createSessionKey } from "@/lib/utils";
@@ -23,7 +24,7 @@ import type { FileMention } from "@/types";
 export const createClaudeSessionKey = createSessionKey;
 
 // Re-export types for convenience
-export type { ClaudeSessionKey, ClaudeSdkSessionId };
+export type { ClaudeSessionKey, ClaudeSdkSessionId, ClaudeEffortLevel };
 
 /** Shared event subscription state per environment */
 export interface ClaudeEventSubscriptionState {
@@ -61,7 +62,7 @@ export interface QueuedMessage {
   id: string;
   text: string;
   attachments: ClaudeAttachment[];
-  thinkingEnabled: boolean;
+  effort: ClaudeEffortLevel;
   planModeEnabled: boolean;
 }
 
@@ -78,7 +79,7 @@ interface ClaudeState {
   draftText: Map<ClaudeSessionKey, string>;
   draftMentions: Map<ClaudeSessionKey, FileMention[]>;
   isComposing: Map<ClaudeSessionKey, boolean>;
-  thinkingEnabled: Map<ClaudeSessionKey, boolean>;
+  effort: Map<ClaudeSessionKey, ClaudeEffortLevel>;
   planMode: Map<ClaudeSessionKey, boolean>;
   selectedModel: Map<ClaudeSessionKey, string>;
   messageQueue: Map<ClaudeSessionKey, QueuedMessage[]>;
@@ -112,7 +113,7 @@ interface ClaudeState {
   setDraftText: (sessionKey: ClaudeSessionKey, text: string) => void;
   setDraftMentions: (sessionKey: ClaudeSessionKey, mentions: FileMention[]) => void;
   setComposing: (sessionKey: ClaudeSessionKey, isComposing: boolean) => void;
-  setThinkingEnabled: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
+  setEffort: (sessionKey: ClaudeSessionKey, effort: ClaudeEffortLevel) => void;
   setPlanMode: (sessionKey: ClaudeSessionKey, enabled: boolean) => void;
   setSessionInitData: (environmentId: string, initData: SessionInitData | null) => void;
   setContextUsage: (sessionKey: ClaudeSessionKey, usage: ContextUsageSnapshot | null) => void;
@@ -146,7 +147,7 @@ interface ClaudeState {
   getDraftText: (sessionKey: ClaudeSessionKey) => string;
   getDraftMentions: (sessionKey: ClaudeSessionKey) => FileMention[];
   isComposingFor: (sessionKey: ClaudeSessionKey) => boolean;
-  isThinkingEnabled: (sessionKey: ClaudeSessionKey) => boolean;
+  getEffort: (sessionKey: ClaudeSessionKey) => ClaudeEffortLevel;
   isPlanMode: (sessionKey: ClaudeSessionKey) => boolean;
   getSessionInitData: (environmentId: string) => SessionInitData | undefined;
   getContextUsage: (sessionKey: ClaudeSessionKey) => ContextUsageSnapshot | undefined;
@@ -182,7 +183,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
   pendingQuestions: new Map(),
   pendingPlanApprovals: new Map(),
   eventSubscriptions: new Map(),
-  thinkingEnabled: new Map(),
+  effort: new Map(),
   planMode: new Map(),
   messageQueue: new Map(),
   sessionInitData: new Map(),
@@ -384,11 +385,11 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       return { isComposing: newMap };
     }),
 
-  setThinkingEnabled: (sessionKey, enabled) =>
+  setEffort: (sessionKey, effortLevel) =>
     set((state) => {
-      const newMap = new Map(state.thinkingEnabled);
-      newMap.set(sessionKey, enabled);
-      return { thinkingEnabled: newMap };
+      const newMap = new Map(state.effort);
+      newMap.set(sessionKey, effortLevel);
+      return { effort: newMap };
     }),
 
   setPlanMode: (sessionKey, enabled) =>
@@ -457,7 +458,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       const newDraftText = new Map(state.draftText);
       const newDraftMentions = new Map(state.draftMentions);
       const newIsComposing = new Map(state.isComposing);
-      const newThinkingEnabled = new Map(state.thinkingEnabled);
+      const newEffort = new Map(state.effort);
       const newPlanMode = new Map(state.planMode);
       const newMessageQueue = new Map(state.messageQueue);
       const newContextUsage = new Map(state.contextUsage);
@@ -489,8 +490,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       for (const key of newIsComposing.keys()) {
         if (key.startsWith(sessionKeyPrefix)) newIsComposing.delete(key);
       }
-      for (const key of newThinkingEnabled.keys()) {
-        if (key.startsWith(sessionKeyPrefix)) newThinkingEnabled.delete(key);
+      for (const key of newEffort.keys()) {
+        if (key.startsWith(sessionKeyPrefix)) newEffort.delete(key);
       }
       for (const key of newPlanMode.keys()) {
         if (key.startsWith(sessionKeyPrefix)) newPlanMode.delete(key);
@@ -529,7 +530,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         pendingQuestions: newPendingQuestions,
         pendingPlanApprovals: newPendingPlanApprovals,
         eventSubscriptions: newEventSubscriptions,
-        thinkingEnabled: newThinkingEnabled,
+        effort: newEffort,
         planMode: newPlanMode,
         messageQueue: newMessageQueue,
         sessionInitData: newSessionInitData,
@@ -699,8 +700,8 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
 
   isComposingFor: (sessionKey) => get().isComposing.get(sessionKey) || false,
 
-  // Default to true (thinking enabled) if not explicitly set
-  isThinkingEnabled: (sessionKey) => get().thinkingEnabled.get(sessionKey) ?? true,
+  // Default to "high" effort if not explicitly set
+  getEffort: (sessionKey) => get().effort.get(sessionKey) ?? "high",
 
   // Default to false (plan mode disabled) - uses bypassPermissions by default
   isPlanMode: (sessionKey) => get().planMode.get(sessionKey) ?? false,

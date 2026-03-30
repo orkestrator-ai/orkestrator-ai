@@ -122,11 +122,16 @@ function withLatestTodoSnapshot(messages: ClaudeMessage[]): ClaudeMessage[] {
   }));
 }
 
+/** Effort level for controlling Claude's thinking depth */
+export type ClaudeEffortLevel = "low" | "medium" | "high" | "max";
+
 export interface ClaudeModel {
   id: string;
   name: string;
   description?: string;
   supportsFastMode?: boolean;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: ClaudeEffortLevel[];
 }
 
 /** Question option for AskUserQuestion tool */
@@ -394,7 +399,7 @@ export async function sendPrompt(
   options?: {
     model?: string;
     attachments?: ClaudeAttachment[];
-    thinking?: boolean;
+    effort?: ClaudeEffortLevel;
     permissionMode?: PermissionMode;
   }
 ): Promise<boolean> {
@@ -404,7 +409,7 @@ export async function sendPrompt(
       promptLength: prompt.length,
       model: options?.model,
       attachmentsCount: options?.attachments?.length ?? 0,
-      thinking: options?.thinking,
+      effort: options?.effort,
       permissionMode: options?.permissionMode,
     });
     const response = await fetch(`${client.baseUrl}/session/${sessionId}/prompt`, {
@@ -414,7 +419,7 @@ export async function sendPrompt(
         prompt,
         model: options?.model,
         attachments: options?.attachments,
-        thinking: options?.thinking,
+        effort: options?.effort,
         permissionMode: options?.permissionMode,
       }),
     });
