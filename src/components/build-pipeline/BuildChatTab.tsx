@@ -93,6 +93,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const isInitializedRef = useRef(false);
   const pipelineAdvancingRef = useRef(false);
+  const [advanceTick, setAdvanceTick] = useState(0);
 
   const pipeline = useBuildPipelineStore((s) => s.pipelines.get(pipelineId));
   const {
@@ -339,6 +340,14 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     const sessionState = sessionsMap.get(currentSession.sessionKey);
     if (!sessionState || sessionState.isLoading) return;
 
+    // Check if the session ended with an error (error messages have a specific ID prefix)
+    const lastMessage = sessionState.messages.at(-1);
+    if (lastMessage?.id.startsWith(ERROR_MESSAGE_PREFIX)) {
+      const errorContent = lastMessage.content || "Session encountered an error";
+      setPipelineError(pipelineId, errorContent);
+      return;
+    }
+
     // Session just went idle - advance the pipeline
     if (currentSession.status === "running") {
       markSessionIdle(pipelineId, currentSession.sdkSessionId);
@@ -346,10 +355,12 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       advancePipeline(pipeline, currentSession).finally(() => {
         pipelineAdvancingRef.current = false;
+        // Force effect re-evaluation in case session.idle arrived while advancing
+        setAdvanceTick((t) => t + 1);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeline?.currentSessionIndex, pipeline?.sessions, pipeline?.phase, sessionsMap, connectionState, client]);
+  }, [pipeline?.currentSessionIndex, pipeline?.sessions, pipeline?.phase, sessionsMap, connectionState, client, advanceTick]);
 
   // Core pipeline advancement logic
   const advancePipeline = useCallback(
@@ -374,9 +385,16 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             break;
 
           case "verify": {
-            // Check verification result
-            const sessionState = sessionsMap.get(completedSession.sessionKey);
-            const result = parseVerificationResult(sessionState?.messages ?? []);
+            // Fetch fresh messages from the bridge to ensure we have the complete response
+            // (the debounced SSE message fetch may not have completed yet)
+            const freshMessages = await getSessionMessages(client, completedSession.sdkSessionId);
+            if (freshMessages.length > 0) {
+              setMessages(completedSession.sessionKey, freshMessages);
+            }
+            const verifyMessages = freshMessages.length > 0
+              ? freshMessages
+              : (useClaudeStore.getState().sessions.get(completedSession.sessionKey)?.messages ?? []);
+            const result = parseVerificationResult(verifyMessages);
 
             setVerificationResult(pipelineId, result.verdict, result.feedback);
 
@@ -400,7 +418,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [client, pipelineId, sessionsMap]
+    [client, pipelineId]
   );
 
   // Send "address issues" as a follow-up in the review session, then start verify
@@ -474,16 +492,26 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     const sessionState = sessionsMap.get(currentSession.sessionKey);
     if (!sessionState || sessionState.isLoading) return;
 
+    // Check if the session ended with an error
+    const lastMessage = sessionState.messages.at(-1);
+    if (lastMessage?.id.startsWith(ERROR_MESSAGE_PREFIX)) {
+      const errorContent = lastMessage.content || "Session encountered an error during addressing";
+      setPipelineError(pipelineId, errorContent);
+      return;
+    }
+
     // The addressing is done - start verification
     if (currentSession.status === "running") {
       markSessionIdle(pipelineId, currentSession.sdkSessionId);
       pipelineAdvancingRef.current = true;
       startVerifySession(pipeline).finally(() => {
         pipelineAdvancingRef.current = false;
+        // Force effect re-evaluation in case session.idle arrived while advancing
+        setAdvanceTick((t) => t + 1);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap, connectionState, client]);
+  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap, connectionState, client, advanceTick]);
 
   // Create a new Claude session and register it in the store
   const createPipelineSession = useCallback(
@@ -499,7 +527,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       setSession(sessionKey, {
         sessionId: newSession.sessionId,
         messages: [],
-        isLoading: false,
+        isLoading: true,
       });
 
       const pSession: PipelineSession = {
@@ -541,7 +569,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, taskDescription, {
         permissionMode: "bypassPermissions",
@@ -579,7 +606,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, reviewPrompt, {
         permissionMode: "bypassPermissions",
@@ -625,7 +651,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, verifyPrompt, {
         permissionMode: "bypassPermissions",
@@ -670,7 +695,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, fixPrompt, {
         permissionMode: "bypassPermissions",
