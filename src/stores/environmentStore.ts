@@ -18,6 +18,8 @@ interface EnvironmentState {
   pendingSetupCommands: Map<string, string[]>;
   /** Runtime state: tracks whether setup commands have been resolved for an environment (true = we know if there are commands or not) */
   setupCommandsResolved: Set<string>;
+  /** Runtime state: tracks environments where setup scripts are currently executing in a terminal */
+  setupScriptsRunning: Set<string>;
 
   // Actions
   setEnvironments: (environments: Environment[]) => void;
@@ -48,6 +50,8 @@ interface EnvironmentState {
   consumePendingSetupCommands: (environmentId: string) => string[] | undefined;
   /** Mark setup commands as resolved for an environment (we know if there are commands or not) */
   setSetupCommandsResolved: (environmentId: string, resolved: boolean) => void;
+  /** Mark whether setup scripts are currently running for an environment */
+  setSetupScriptsRunning: (environmentId: string, isRunning: boolean) => void;
 
   // Selectors
   getEnvironmentById: (environmentId: string) => Environment | undefined;
@@ -58,6 +62,8 @@ interface EnvironmentState {
   isDeleting: (environmentId: string) => boolean;
   /** Check if setup commands have been resolved for an environment */
   isSetupCommandsResolved: (environmentId: string) => boolean;
+  /** Check if setup scripts are currently running for an environment */
+  isSetupScriptsRunning: (environmentId: string) => boolean;
 }
 
 export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
@@ -69,6 +75,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
   deletingEnvironments: new Set<string>(),
   pendingSetupCommands: new Map<string, string[]>(),
   setupCommandsResolved: new Set<string>(),
+  setupScriptsRunning: new Set<string>(),
 
   // Actions
   setEnvironments: (environments) => set({ environments: sortByOrder(environments) }),
@@ -100,12 +107,16 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
       const newSetupResolved = new Set(state.setupCommandsResolved);
       newSetupResolved.delete(environmentId);
 
+      const newSetupRunning = new Set(state.setupScriptsRunning);
+      newSetupRunning.delete(environmentId);
+
       return {
         environments: state.environments.filter((e) => e.id !== environmentId),
         workspaceReadyEnvironments: newWorkspaceReady,
         deletingEnvironments: newDeleting,
         pendingSetupCommands: newPendingCommands,
         setupCommandsResolved: newSetupResolved,
+        setupScriptsRunning: newSetupRunning,
       };
     }),
 
@@ -216,6 +227,21 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
       return { setupCommandsResolved: newSet };
     }),
 
+  setSetupScriptsRunning: (environmentId, isRunning) =>
+    set((state) => {
+      const isCurrentlyRunning = state.setupScriptsRunning.has(environmentId);
+      if (isCurrentlyRunning === isRunning) {
+        return state;
+      }
+      const newSet = new Set(state.setupScriptsRunning);
+      if (isRunning) {
+        newSet.add(environmentId);
+      } else {
+        newSet.delete(environmentId);
+      }
+      return { setupScriptsRunning: newSet };
+    }),
+
   // Selectors
   getEnvironmentById: (environmentId) =>
     get().environments.find((e) => e.id === environmentId),
@@ -231,4 +257,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   isSetupCommandsResolved: (environmentId) =>
     get().setupCommandsResolved.has(environmentId),
+
+  isSetupScriptsRunning: (environmentId) =>
+    get().setupScriptsRunning.has(environmentId),
 }));

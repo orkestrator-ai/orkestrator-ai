@@ -24,6 +24,7 @@ import {
   ENVIRONMENT_READY_MARKER_ALT_TILDE,
   ENVIRONMENT_READY_MARKER_ALT_DASH,
   SETUP_COMPLETE_MARKER,
+  SETUP_SCRIPTS_DONE_MARKER,
 } from "@/lib/terminal-utils";
 import {
   forceTerminalVisibilityRedraw,
@@ -59,7 +60,9 @@ interface PersistentTerminalProps {
   initialPrompt?: string;
   initialCommands?: string[];
   paneId: string;
+  isSetupTab?: boolean;
   onReady?: () => void;
+  onSetupComplete?: () => void;
   onWrite?: (write: (data: string) => Promise<void>) => void;
 }
 
@@ -84,7 +87,9 @@ export function PersistentTerminal({
   initialPrompt,
   initialCommands,
   paneId,
+  isSetupTab,
   onReady,
+  onSetupComplete,
   onWrite,
 }: PersistentTerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -94,6 +99,8 @@ export function PersistentTerminal({
   const [isComposeBarOpen, setIsComposeBarOpen] = useState(false);
   const composeBarOpenRef = useRef(false); // Ref for synchronous access in key handler
   const dataBufferRef = useRef<string>("");
+  const setupBufferRef = useRef<string>("");
+  const setupCompleteRef = useRef(false);
   const hasLaunchedCommandRef = useRef(false);
   const hasInitiatedConnectionRef = useRef(false);
   const previousContainerIdRef = useRef<string>(containerId);
@@ -362,8 +369,24 @@ export function PersistentTerminal({
           dataBufferRef.current = dataBufferRef.current.slice(-512);
         }
       }
+
+      // For setup tabs: detect when setup scripts have finished executing
+      if (isSetupTab && !setupCompleteRef.current) {
+        setupBufferRef.current += text;
+        const strippedSetup = stripAnsi(setupBufferRef.current);
+        if (strippedSetup.includes(SETUP_SCRIPTS_DONE_MARKER)) {
+          console.log("[PersistentTerminal] Setup scripts completed for tab:", tabId);
+          setupCompleteRef.current = true;
+          setupBufferRef.current = "";
+          onSetupComplete?.();
+        }
+        // Keep buffer from growing indefinitely
+        if (setupBufferRef.current.length > 4096) {
+          setupBufferRef.current = setupBufferRef.current.slice(-2048);
+        }
+      }
     },
-    [terminal, isFirstTab, isLocalEnvironment, isEnvironmentReady, tabId, onReady]
+    [terminal, isFirstTab, isLocalEnvironment, isEnvironmentReady, tabId, onReady, isSetupTab, onSetupComplete]
   );
 
   // Determine user based on tab type - root tabs connect as orkroot
@@ -1047,7 +1070,12 @@ export function PersistentTerminal({
           console.debug("[PersistentTerminal] Executing initial commands for tab:", tabId, "commands:", initialCommands);
           // Join all commands with && to run sequentially
           const combinedCommand = initialCommands.join(" && ");
-          writeRef.current(combinedCommand + "\n");
+          if (isSetupTab) {
+            // Wrap in subshell so the completion marker always echoes, even on failure
+            writeRef.current(`(${combinedCommand}); echo "${SETUP_SCRIPTS_DONE_MARKER}"\n`);
+          } else {
+            writeRef.current(combinedCommand + "\n");
+          }
         }
       }, 300);
     }

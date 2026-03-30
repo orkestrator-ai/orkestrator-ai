@@ -35,6 +35,9 @@ export const ENVIRONMENT_READY_MARKER_ALT_DASH = "--- Workspace Ready ---";
 /** Marker that appears right before "Workspace Ready" in setup scripts */
 export const SETUP_COMPLETE_MARKER = "Container setup completed successfully!";
 
+/** Marker echoed after setup scripts finish (local environments) */
+export const SETUP_SCRIPTS_DONE_MARKER = "__ORKESTRATOR_SETUP_DONE__";
+
 /** Patterns that indicate a shell prompt is ready */
 export const SHELL_PROMPT_PATTERNS: (string | RegExp)[] = [
   "=== Container Ready ===",

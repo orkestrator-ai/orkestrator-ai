@@ -101,6 +101,8 @@ export interface TabInfo {
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */
   initialCommands?: string[];
+  /** Whether this tab runs setup scripts (used to track completion) */
+  isSetupTab?: boolean;
 }
 
 // A leaf pane contains tabs and content
