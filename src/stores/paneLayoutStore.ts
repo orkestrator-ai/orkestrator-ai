@@ -13,6 +13,7 @@ import {
 import { useTerminalSessionStore, createSessionKey } from "./terminalSessionStore";
 import { useSessionStore } from "./sessionStore";
 import { useTerminalPortalStore } from "./terminalPortalStore";
+import { useEnvironmentStore } from "./environmentStore";
 import * as tauri from "@/lib/tauri";
 
 /**
@@ -355,6 +356,12 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
 
     // Dispose the terminal instance from portal store
     terminalPortalStore.disposeTerminal(envId, tabId);
+
+    // If this was a setup tab, clear the setupScriptsRunning flag so the play button isn't stuck disabled
+    const closedTab = leaf.tabs.find((t) => t.id === tabId);
+    if (closedTab?.isSetupTab) {
+      useEnvironmentStore.getState().setSetupScriptsRunning(envId, false);
+    }
 
     const remainingTabs = leaf.tabs.filter((t) => t.id !== tabId);
 

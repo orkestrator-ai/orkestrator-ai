@@ -1079,7 +1079,7 @@ export function PersistentTerminal({
         }
       }, 300);
     }
-  }, [isEnvironmentReady, isConnected, tabType, tabId, initialPrompt, initialCommands, sessionKey, setHasLaunchedCommandStore]);
+  }, [isEnvironmentReady, isConnected, tabType, tabId, initialPrompt, initialCommands, isSetupTab, sessionKey, setHasLaunchedCommandStore]);
 
   // Focus when active
   useEffect(() => {
