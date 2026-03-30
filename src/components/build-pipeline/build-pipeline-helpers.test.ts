@@ -3,6 +3,7 @@ import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import {
   parseVerificationResult,
   buildBuildPrompt,
+  buildReviewPrompt,
   buildVerificationPrompt,
   buildFixPrompt,
 } from "./BuildChatTab";
@@ -94,6 +95,44 @@ describe("parseVerificationResult", () => {
     const result = parseVerificationResult(messages);
     expect(result.verdict).toBe("fail");
     expect(result.feedback).toContain("Missing tests.");
+  });
+});
+
+// --- buildReviewPrompt ---
+
+describe("buildReviewPrompt", () => {
+  test("includes commit step", () => {
+    const result = buildReviewPrompt("main");
+    expect(result).toContain("## Step 1: Commit Changes");
+    expect(result).toContain("conventional commit format");
+    expect(result).toContain("Do NOT reference Claude");
+  });
+
+  test("includes code review step with git diff against target branch", () => {
+    const result = buildReviewPrompt("main");
+    expect(result).toContain("## Step 2: Code Review");
+    expect(result).toContain("git diff origin/main...HEAD");
+  });
+
+  test("includes all review categories", () => {
+    const result = buildReviewPrompt("main");
+    expect(result).toContain("Logic and correctness");
+    expect(result).toContain("Readability");
+    expect(result).toContain("Performance");
+    expect(result).toContain("Test coverage");
+  });
+
+  test("includes structured output format", () => {
+    const result = buildReviewPrompt("main");
+    expect(result).toContain("## Output Format");
+    expect(result).toContain("File and line number(s)");
+    expect(result).toContain("Code snippet");
+    expect(result).toContain("Potential solution(s)");
+  });
+
+  test("uses the provided target branch", () => {
+    const result = buildReviewPrompt("develop");
+    expect(result).toContain("git diff origin/develop...HEAD");
   });
 });
 

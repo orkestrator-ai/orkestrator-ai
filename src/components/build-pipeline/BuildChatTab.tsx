@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
+import { useConfigStore } from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import type { BuildPhase, PipelineSession } from "@/stores/buildPipelineStore";
 import {
@@ -95,6 +96,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const pipelineAdvancingRef = useRef(false);
 
   const pipeline = useBuildPipelineStore((s) => s.pipelines.get(pipelineId));
+  const { config } = useConfigStore();
   const {
     setPhase,
     addSession: addPipelineSession,
@@ -568,7 +570,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      const reviewPrompt = "Review the changes made in this codebase. Look for bugs, issues, code quality problems, missing edge cases, and anything that doesn't match best practices. Be thorough.";
+      const projectId = currentPipeline.projectId;
+      const repoConfig = config.repositories[projectId];
+      const targetBranch = repoConfig?.prBaseBranch || "main";
+      const reviewPrompt = buildReviewPrompt(targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -589,7 +594,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         setPipelineError(pipelineId, "Failed to send review prompt");
       }
     },
-    [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
+    [client, pipelineId, config.repositories, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
 
   // Start verification session (with ticket context)
@@ -848,6 +853,48 @@ function getKanbanTaskSnapshot(taskId: string) {
   // Read directly from store to avoid stale closures
   const { tasks } = kanbanStoreRef.getState();
   return tasks.find((t) => t.id === taskId) ?? null;
+}
+
+export function buildReviewPrompt(targetBranch: string): string {
+  return `You are performing a commit and code review workflow. Execute these steps in order:
+
+## Step 1: Commit Changes
+
+Based on the current git status and diff, create a single git commit:
+1. Run \`git status --porcelain\` and \`git diff HEAD\` to see all changes
+2. Add any untracked files that should be committed: \`git add <files>\`
+3. Create a commit with a well-formatted message following conventional commit format
+4. Do NOT reference Claude or add Claude as a contributor
+5. Use this format for the commit message:
+   - First line: type(scope): brief description
+   - Blank line
+   - Bullet points describing the changes
+
+## Step 2: Code Review
+
+Compare the current branch against the remote \`${targetBranch}\` branch and conduct a thorough code review:
+1. Run \`git diff origin/${targetBranch}...HEAD\` to see all changes since branching
+2. Review the diff focusing on:
+   - **Logic and correctness**: Check for bugs, edge cases, and potential issues
+   - **Readability**: Is the code clear and maintainable? Does it follow repository patterns?
+   - **Performance**: Are there obvious performance concerns or optimizations?
+   - **Test coverage**: If the repo has testing patterns, are there adequate tests?
+3. Ask clarifying questions if needed about unclear changes
+
+## Output Format
+
+After completing both steps:
+1. Confirm the commit was created with its message
+2. Provide a summary overview of the general code quality
+3. List any identified issues in numbered sections with:
+   - Title
+   - File and line number(s)
+   - Description of the issue
+   - Code snippet (if relevant)
+   - Potential solution(s)
+4. If no issues found, state that the code meets best practices
+
+Begin by running the git commands to understand the current state.`;
 }
 
 export function buildBuildPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
