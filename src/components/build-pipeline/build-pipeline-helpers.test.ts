@@ -162,6 +162,7 @@ describe("buildReviewPrompt", () => {
     const result = buildReviewPrompt(null, "");
     expect(result).not.toContain("**Title**:");
     expect(result).not.toContain("**Acceptance Criteria**:");
+    expect(result).not.toContain("**Project Notes**:");
   });
 
   test("includes project notes even when task is null", () => {

@@ -574,7 +574,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
         projectNotes = notes.content;
-      } catch { /* ignore */ }
+      } catch (e) { console.debug("Failed to load project notes for review:", e); }
 
       const reviewPrompt = buildReviewPrompt(task, projectNotes);
 
@@ -620,7 +620,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
         projectNotes = notes.content;
-      } catch { /* ignore */ }
+      } catch (e) { console.debug("Failed to load project notes for verification:", e); }
 
       const verifyPrompt = buildVerificationPrompt(task, projectNotes);
 
@@ -665,7 +665,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
         projectNotes = notes.content;
-      } catch { /* ignore */ }
+      } catch (e) { console.debug("Failed to load project notes for fix:", e); }
 
       const fixPrompt = buildFixPrompt(task, projectNotes, feedback);
 
@@ -852,13 +852,20 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
 // --- Helper functions (exported for testing) ---
 
+export type TaskSnapshot = {
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  comments: Array<{ text: string }>;
+};
+
 function getKanbanTaskSnapshot(taskId: string) {
   // Read directly from store to avoid stale closures
   const { tasks } = kanbanStoreRef.getState();
   return tasks.find((t) => t.id === taskId) ?? null;
 }
 
-export function buildReviewPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   const parts: string[] = [];
 
   if (task) {
@@ -906,7 +913,7 @@ Begin by running git commands to understand what changed.`);
   return parts.join("\n");
 }
 
-export function buildBuildPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildBuildPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   if (!task) return "Build the feature as described.";
 
   const parts = [
@@ -930,7 +937,7 @@ export function buildBuildPrompt(task: { title: string; description: string; acc
   return parts.join("\n");
 }
 
-export function buildVerificationPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildVerificationPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   if (!task) return "Do the changes satisfy the acceptance criteria?";
 
   const parts = [
@@ -954,7 +961,7 @@ export function buildVerificationPrompt(task: { title: string; description: stri
   return parts.join("\n");
 }
 
-export function buildFixPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string, feedback: string): string {
+export function buildFixPrompt(task: TaskSnapshot | null, projectNotes: string, feedback: string): string {
   if (!task) return `Fix the following issues:\n\n${feedback}\n\nDo not ask any questions.`;
 
   const parts = [
