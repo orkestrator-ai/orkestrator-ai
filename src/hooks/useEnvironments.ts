@@ -186,12 +186,15 @@ export function useEnvironments(
   );
 
   const startEnvironment = useCallback(
-    async (environmentId: string, initialPrompt?: string) => {
+    async (environmentId: string, initialPrompt?: string, options?: { silent?: boolean }) => {
       console.log("[useEnvironments] startEnvironment called:", environmentId);
       // Read from store directly to avoid stale closure over `environments`.
       // When called from handleCreateEnvironment, the useCallback closure may
       // capture an older environments array that doesn't include the new env.
       const existingEnv = useEnvironmentStore.getState().environments.find((env) => env.id === environmentId);
+      if (!existingEnv) {
+        console.warn("[useEnvironments] startEnvironment called for unknown environment:", environmentId);
+      }
       const isLocal = existingEnv?.environmentType === "local";
       if (existingEnv) {
         console.info("[useEnvironments] startEnvironment snapshot:", {
@@ -247,7 +250,9 @@ export function useEnvironments(
           setSetupCommandsResolved(environmentId, true);
         }
 
-        toast.success("Environment started");
+        if (!options?.silent) {
+          toast.success("Environment started");
+        }
         return result.setupCommands;
       } catch (err) {
         // Unblock TerminalContainer on error so it doesn't hang
@@ -405,8 +410,9 @@ export function useEnvironments(
         // Disconnect all sessions since container is stopped
         await disconnectEnvironmentSessions(environmentId);
 
-        // Re-use startEnvironment which handles setup commands centrally
-        await startEnvironment(environmentId);
+        // Re-use startEnvironment which handles setup commands centrally.
+        // Pass silent to suppress the "started" toast; we show "restarted" instead.
+        await startEnvironment(environmentId, undefined, { silent: true });
         toast.success("Environment restarted");
       } catch (err) {
         console.error("[useEnvironments] Error restarting environment:", err);
