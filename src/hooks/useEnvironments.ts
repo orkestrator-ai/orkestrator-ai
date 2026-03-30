@@ -64,6 +64,8 @@ export function useEnvironments(
     setError,
     getEnvironmentsByProjectId,
     setDeleting,
+    setPendingSetupCommands,
+    setSetupCommandsResolved,
   } = useEnvironmentStore();
 
   const {
@@ -184,9 +186,16 @@ export function useEnvironments(
   );
 
   const startEnvironment = useCallback(
-    async (environmentId: string, initialPrompt?: string) => {
+    async (environmentId: string, initialPrompt?: string, options?: { silent?: boolean }) => {
       console.log("[useEnvironments] startEnvironment called:", environmentId);
-      const existingEnv = environments.find((env) => env.id === environmentId);
+      // Read from store directly to avoid stale closure over `environments`.
+      // When called from handleCreateEnvironment, the useCallback closure may
+      // capture an older environments array that doesn't include the new env.
+      const existingEnv = useEnvironmentStore.getState().environments.find((env) => env.id === environmentId);
+      if (!existingEnv) {
+        console.warn("[useEnvironments] startEnvironment called for unknown environment:", environmentId);
+      }
+      const isLocal = existingEnv?.environmentType === "local";
       if (existingEnv) {
         console.info("[useEnvironments] startEnvironment snapshot:", {
           environmentId,
@@ -198,13 +207,31 @@ export function useEnvironments(
         });
       }
       setError(null);
+
+      // For local environments, block TerminalContainer init and prevent auto-resolve
+      // by placing a placeholder in pendingSetupCommands BEFORE the async call.
+      // This prevents the race where updateEnvironmentInStore (which sets worktreePath)
+      // triggers isLocalEnvironmentReady=true and the auto-resolve fires before
+      // real setup commands are stored.
+      if (isLocal) {
+        setSetupCommandsResolved(environmentId, false);
+        setPendingSetupCommands(environmentId, []);
+      }
+
       try {
         console.log("[useEnvironments] Setting status to creating...");
         updateStatusInStore(environmentId, "creating");
         console.log("[useEnvironments] Calling tauri.startEnvironment...");
         const result = await tauri.startEnvironment(environmentId);
         console.log("[useEnvironments] tauri.startEnvironment completed, refreshing environment...", { setupCommands: result.setupCommands });
-        // Refresh the full environment data (including containerId)
+
+        // Store real setup commands BEFORE updating the environment store
+        // (which sets worktreePath and triggers isLocalEnvironmentReady).
+        if (isLocal && result.setupCommands && result.setupCommands.length > 0) {
+          setPendingSetupCommands(environmentId, result.setupCommands);
+        }
+
+        // Refresh the full environment data (including containerId / worktreePath)
         const updatedEnv = await tauri.getEnvironment(environmentId);
         if (updatedEnv) {
           console.log("[useEnvironments] Got updated environment:", updatedEnv);
@@ -217,10 +244,21 @@ export function useEnvironments(
           }
           updateEnvironmentInStore(environmentId, updatedEnv);
         }
-        toast.success("Environment started");
-        // Return setup commands if present (for local environments with orkestrator-ai.json)
+
+        // Allow TerminalContainer init to proceed now that commands and environment are stored
+        if (isLocal) {
+          setSetupCommandsResolved(environmentId, true);
+        }
+
+        if (!options?.silent) {
+          toast.success("Environment started");
+        }
         return result.setupCommands;
       } catch (err) {
+        // Unblock TerminalContainer on error so it doesn't hang
+        if (isLocal) {
+          setSetupCommandsResolved(environmentId, true);
+        }
         console.error("[useEnvironments] Error starting environment:", err);
         const message = getErrorMessage(err, "Failed to start environment");
         setError(message);
@@ -235,7 +273,7 @@ export function useEnvironments(
         throw new Error(message);
       }
     },
-    [updateStatusInStore, updateEnvironmentInStore, setError, showError]
+    [updateStatusInStore, updateEnvironmentInStore, setError, showError, setPendingSetupCommands, setSetupCommandsResolved]
   );
 
   const stopEnvironment = useCallback(
@@ -372,15 +410,9 @@ export function useEnvironments(
         // Disconnect all sessions since container is stopped
         await disconnectEnvironmentSessions(environmentId);
 
-        // Start it again
-        updateStatusInStore(environmentId, "creating");
-        await tauri.startEnvironment(environmentId);
-
-        // Refresh the full environment data
-        const updatedEnv = await tauri.getEnvironment(environmentId);
-        if (updatedEnv) {
-          updateEnvironmentInStore(environmentId, updatedEnv);
-        }
+        // Re-use startEnvironment which handles setup commands centrally.
+        // Pass silent to suppress the "started" toast; we show "restarted" instead.
+        await startEnvironment(environmentId, undefined, { silent: true });
         toast.success("Environment restarted");
       } catch (err) {
         console.error("[useEnvironments] Error restarting environment:", err);
@@ -397,7 +429,7 @@ export function useEnvironments(
         throw new Error(message);
       }
     },
-    [updateStatusInStore, updateEnvironmentInStore, setError, disconnectEnvironmentSessions, showError]
+    [updateStatusInStore, setError, disconnectEnvironmentSessions, startEnvironment, showError]
   );
 
   // Get environments for the current project

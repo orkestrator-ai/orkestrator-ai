@@ -29,8 +29,6 @@ function App() {
   const { selectedEnvironmentId, selectedProjectId, zoomLevel, zoomIn, zoomOut, resetZoom } = useUIStore();
   const environments = useEnvironmentStore((state) => state.environments);
   const getEnvironmentById = useEnvironmentStore((state) => state.getEnvironmentById);
-  const setPendingSetupCommands = useEnvironmentStore((state) => state.setPendingSetupCommands);
-  const setSetupCommandsResolved = useEnvironmentStore((state) => state.setSetupCommandsResolved);
   const setConfig = useConfigStore((state) => state.setConfig);
   const config = useConfigStore((state) => state.config);
   const setClaudeOptions = useClaudeOptionsStore((state) => state.setOptions);
@@ -284,39 +282,22 @@ function App() {
 
   const handleStartEnvironmentFromOverlay = useCallback(
     async (environmentId: string, initialPrompt?: string): Promise<boolean> => {
-      const environment = getEnvironmentById(environmentId);
-      const isLocalEnvironment = environment?.environmentType === "local";
-
       // Clear any stale queued agent launch for normal starts.
       if (!initialPrompt) {
         clearClaudeOptions(environmentId);
       }
 
-      // For local environments, block terminal initialization until setup commands are resolved.
-      if (isLocalEnvironment) {
-        setSetupCommandsResolved(environmentId, false);
-      }
-
       try {
-        const setupCommands = await startEnvironment(environmentId, initialPrompt);
-
-        if (isLocalEnvironment) {
-          if (setupCommands && setupCommands.length > 0) {
-            setPendingSetupCommands(environmentId, setupCommands);
-          }
-          setSetupCommandsResolved(environmentId, true);
-        }
-
+        // Setup command handling (blocking, placeholder, resolve) is centralized
+        // in useEnvironments.startEnvironment() for all code paths.
+        await startEnvironment(environmentId, initialPrompt);
         return true;
       } catch (error) {
-        if (isLocalEnvironment) {
-          setSetupCommandsResolved(environmentId, true);
-        }
         console.error("[App] Failed to start environment from terminal overlay:", error);
         return false;
       }
     },
-    [clearClaudeOptions, getEnvironmentById, setPendingSetupCommands, setSetupCommandsResolved, startEnvironment]
+    [clearClaudeOptions, startEnvironment]
   );
 
   const handleCreateScriptFromOverlay = useCallback(

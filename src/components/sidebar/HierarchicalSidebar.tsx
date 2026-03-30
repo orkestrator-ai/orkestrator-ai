@@ -77,7 +77,7 @@ export function HierarchicalSidebar() {
     collapseEmptyProjects,
   } = useUIStore();
 
-  const { setPendingSetupCommands, setSetupCommandsResolved } = useEnvironmentStore();
+  const { setSetupCommandsResolved } = useEnvironmentStore();
 
   const isMultiSelectMode = selectedEnvironmentIds.length >= 1;
 
@@ -296,27 +296,13 @@ export function HierarchicalSidebar() {
       // Always select the newly created environment
       selectProjectAndEnvironment(createEnvProjectId, configuredEnvironment.id);
 
-      // Always auto-start the environment after creation
-      // The tab type (plain terminal vs agent) is determined by agentOptions.launchAgent
+      // Always auto-start the environment after creation.
+      // Setup command handling is centralized in useEnvironments.startEnvironment().
       try {
-        const setupCommands = await startEnvironment(configuredEnvironment.id, options.initialPrompt);
-        // If setup commands were returned (local env with orkestrator-ai.json), store them
-        // IMPORTANT: Store commands BEFORE marking as resolved to avoid race condition
-        if (setupCommands && setupCommands.length > 0) {
-          console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
-            environmentId: configuredEnvironment.id,
-            commandCount: setupCommands.length,
-          });
-          setPendingSetupCommands(configuredEnvironment.id, setupCommands);
-        }
-        // Mark setup commands as resolved (whether or not there are any)
-        // This tells TerminalContainer it can proceed with tab creation
-        setSetupCommandsResolved(configuredEnvironment.id, true);
+        await startEnvironment(configuredEnvironment.id, options.initialPrompt);
       } catch (startErr) {
         console.error("Failed to auto-start environment:", startErr);
         // Environment was created successfully, user can manually start it
-        // Mark as resolved even on error so TerminalContainer can proceed
-        setSetupCommandsResolved(configuredEnvironment.id, true);
       }
 
       setShowCreateEnvDialog(false);
@@ -404,24 +390,11 @@ export function HierarchicalSidebar() {
             status: environment.status,
             worktreePath: environment.worktreePath,
           });
+          // Setup command handling (blocking, placeholder, resolve) is centralized
+          // in useEnvironments.startEnvironment() for all code paths.
           startEnvironment(environment.id)
-            .then((setupCommands) => {
-              // If setup commands were returned, store them for TerminalContainer to pick up
-              // IMPORTANT: Store commands BEFORE marking as resolved to avoid race condition
-              if (setupCommands && setupCommands.length > 0) {
-                console.info("[HierarchicalSidebar] Storing pending setup commands for local environment:", {
-                  environmentId: environment.id,
-                  commandCount: setupCommands.length,
-                });
-                setPendingSetupCommands(environment.id, setupCommands);
-              }
-              // Mark setup commands as resolved
-              setSetupCommandsResolved(environment.id, true);
-            })
             .catch((err) => {
               console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);
-              // Mark as resolved even on error
-              setSetupCommandsResolved(environment.id, true);
             });
         } else if (shouldResolveSetupCommandsOnSelection(environment)) {
           // Already-started local environment: mark setup commands as resolved
