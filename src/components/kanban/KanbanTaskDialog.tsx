@@ -80,13 +80,22 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
 
   const handleCreate = () => {
     if (editTitle.trim() && createForProjectId) {
-      void addTaskStore(createForProjectId, editTitle.trim(), editDescription.trim()).then((newTaskId) => {
-        // Save acceptance criteria if provided
-        if (editAC.trim() && newTaskId) {
-          void updateTask(newTaskId, { acceptanceCriteria: editAC.trim() });
+      // Capture values before closing to avoid stale state in the .then() closure
+      const title = editTitle.trim();
+      const description = editDescription.trim();
+      const ac = editAC.trim();
+      handleOpenChange(false);
+      void addTaskStore(createForProjectId, title, description).then((newTaskId) => {
+        if (ac && newTaskId) {
+          void updateTask(newTaskId, { acceptanceCriteria: ac });
         }
       });
-      handleOpenChange(false);
+    }
+  };
+
+  const handleCreateKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleCreate();
     }
   };
 
@@ -144,6 +153,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
               <Input
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={handleCreateKeyDown}
                 placeholder="Task title..."
                 className="text-lg font-semibold"
                 autoFocus
