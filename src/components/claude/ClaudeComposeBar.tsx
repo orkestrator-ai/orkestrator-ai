@@ -23,6 +23,12 @@ import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type QueuedMessage, type ClaudeEffortLevel } from "@/stores/claudeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import type { ClaudeModel } from "@/lib/claude-client";
+import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
+import { FileMentionMenu } from "./FileMentionMenu";
+import { MentionableInput, type MentionableInputRef } from "./MentionableInput";
+import { useFileSearch } from "@/hooks/useFileSearch";
+import { useFileMentions } from "@/hooks/useFileMentions";
+import type { FileMention, FileCandidate } from "@/types";
 
 const EFFORT_LABELS: Record<ClaudeEffortLevel, string> = {
   low: "Low",
@@ -36,12 +42,6 @@ const EFFORT_DESCRIPTIONS: Record<ClaudeEffortLevel, string> = {
   high: "Deep reasoning for complex problems",
   max: "Maximum effort (Opus only)",
 };
-import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
-import { FileMentionMenu } from "./FileMentionMenu";
-import { MentionableInput, type MentionableInputRef } from "./MentionableInput";
-import { useFileSearch } from "@/hooks/useFileSearch";
-import { useFileMentions } from "@/hooks/useFileMentions";
-import type { FileMention, FileCandidate } from "@/types";
 
 interface ClaudeComposeBarProps {
   environmentId: string;

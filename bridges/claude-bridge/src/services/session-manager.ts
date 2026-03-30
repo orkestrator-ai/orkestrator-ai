@@ -828,8 +828,8 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
 
   try {
     // Create the query with Claude Agent SDK
-    // Determine effort level: use explicit effort option, fall back to thinking boolean for backwards compat
-    const effortLevel = options?.effort ?? (options?.thinking === false ? undefined : "high");
+    // Determine effort level: default to "high" if not specified
+    const effortLevel = options?.effort ?? "high";
     // Use CWD env var if set (for local environments where bridge runs from its own dir)
     // This allows the Claude SDK to operate on the actual project directory
     const cwd = process.env.CWD || process.cwd();

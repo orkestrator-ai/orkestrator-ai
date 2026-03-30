@@ -214,8 +214,6 @@ export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "
 /** Prompt options */
 export interface PromptOptions {
   model?: string;
-  /** @deprecated Use `effort` instead */
-  thinking?: boolean;
   effort?: EffortLevel;
   permissionMode?: PermissionMode;
   attachments?: Array<{
