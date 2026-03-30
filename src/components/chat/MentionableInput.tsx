@@ -31,6 +31,11 @@ export interface MentionableInputRef {
   insertMention: (mention: FileMention) => void;
 }
 
+function isBlockElement(el: HTMLElement): boolean {
+  const tag = el.tagName;
+  return tag === "DIV" || tag === "P" || tag === "BLOCKQUOTE";
+}
+
 function extractText(element: HTMLElement): string {
   let text = "";
   for (const node of element.childNodes) {
@@ -41,6 +46,13 @@ function extractText(element: HTMLElement): string {
         text += node.textContent || "";
       } else if (node.tagName === "BR") {
         text += "\n";
+      } else if (isBlockElement(node)) {
+        // Block elements created by contenteditable (e.g. <div> on Enter)
+        // need a newline separator unless we're at the start
+        if (text.length > 0 && !text.endsWith("\n")) {
+          text += "\n";
+        }
+        text += extractText(node);
       } else {
         text += extractText(node);
       }
