@@ -872,11 +872,11 @@ export function buildReviewPrompt(task: { title: string; description: string; ac
       task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
     }
 
-    if (projectNotes) {
-      parts.push(`\n**Project Notes**:\n${projectNotes}`);
-    }
-
     parts.push("");
+  }
+
+  if (projectNotes) {
+    parts.push(`**Project Notes**:\n${projectNotes}\n`);
   }
 
   parts.push(`## Code Review

@@ -163,6 +163,12 @@ describe("buildReviewPrompt", () => {
     expect(result).not.toContain("**Title**:");
     expect(result).not.toContain("**Acceptance Criteria**:");
   });
+
+  test("includes project notes even when task is null", () => {
+    const result = buildReviewPrompt(null, "We use Tailwind for styling");
+    expect(result).toContain("**Project Notes**:");
+    expect(result).toContain("We use Tailwind for styling");
+  });
 });
 
 // --- buildBuildPrompt ---
