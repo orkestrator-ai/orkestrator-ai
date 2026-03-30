@@ -554,7 +554,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
 
-  // Start a review session (no ticket context)
+  // Start a review session (with ticket context and comprehensive review)
   const startReviewSession = useCallback(
     async (currentPipeline: NonNullable<typeof pipeline>) => {
       if (!client) return;
@@ -568,7 +568,15 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      const reviewPrompt = "Review the changes made in this codebase. Look for bugs, issues, code quality problems, missing edge cases, and anything that doesn't match best practices. Be thorough.";
+      // Fetch ticket context for review
+      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      let projectNotes = "";
+      try {
+        const notes = await getProjectNotes(currentPipeline.projectId);
+        projectNotes = notes.content;
+      } catch { /* ignore */ }
+
+      const reviewPrompt = buildReviewPrompt(task, projectNotes);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -848,6 +856,54 @@ function getKanbanTaskSnapshot(taskId: string) {
   // Read directly from store to avoid stale closures
   const { tasks } = kanbanStoreRef.getState();
   return tasks.find((t) => t.id === taskId) ?? null;
+}
+
+export function buildReviewPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+  const parts: string[] = [];
+
+  if (task) {
+    parts.push("You are reviewing changes for the following ticket:\n");
+    parts.push(`**Title**: ${task.title}`);
+    if (task.description) parts.push(`\n**Description**: ${task.description}`);
+    if (task.acceptanceCriteria) parts.push(`\n**Acceptance Criteria**:\n${task.acceptanceCriteria}`);
+
+    if (task.comments.length > 0) {
+      parts.push("\n**Comments**:");
+      task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
+    }
+
+    if (projectNotes) {
+      parts.push(`\n**Project Notes**:\n${projectNotes}`);
+    }
+
+    parts.push("");
+  }
+
+  parts.push(`## Code Review
+
+Conduct a thorough code review of the changes made in this codebase:
+1. Run \`git diff HEAD~1\` (or appropriate range) to see all changes made
+2. Review the diff focusing on:
+   - **Logic and correctness**: Check for bugs, edge cases, and potential issues
+   - **Readability**: Is the code clear and maintainable? Does it follow repository patterns?
+   - **Performance**: Are there obvious performance concerns or optimizations?
+   - **Test coverage**: If the repo has testing patterns, are there adequate tests?
+
+## Output Format
+
+Provide your review as follows:
+1. A summary overview of the general code quality
+2. List any identified issues in numbered sections with:
+   - Title
+   - File and line number(s)
+   - Description of the issue
+   - Code snippet (if relevant)
+   - Potential solution(s)
+3. If no issues found, state that the code meets best practices
+
+Begin by running git commands to understand what changed.`);
+
+  return parts.join("\n");
 }
 
 export function buildBuildPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {

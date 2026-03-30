@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import {
   parseVerificationResult,
+  buildReviewPrompt,
   buildBuildPrompt,
   buildVerificationPrompt,
   buildFixPrompt,
@@ -94,6 +95,73 @@ describe("parseVerificationResult", () => {
     const result = parseVerificationResult(messages);
     expect(result.verdict).toBe("fail");
     expect(result.feedback).toContain("Missing tests.");
+  });
+});
+
+// --- buildReviewPrompt ---
+
+describe("buildReviewPrompt", () => {
+  const baseTask = {
+    title: "Add dark mode",
+    description: "Implement dark mode toggle",
+    acceptanceCriteria: "- Toggle switch exists\n- Theme persists",
+    comments: [] as Array<{ text: string }>,
+  };
+
+  test("includes review instructions when task is null", () => {
+    const result = buildReviewPrompt(null, "");
+    expect(result).toContain("Code Review");
+    expect(result).toContain("Logic and correctness");
+    expect(result).toContain("Readability");
+    expect(result).toContain("Performance");
+    expect(result).toContain("Test coverage");
+  });
+
+  test("includes structured output format", () => {
+    const result = buildReviewPrompt(baseTask, "");
+    expect(result).toContain("Output Format");
+    expect(result).toContain("File and line number");
+    expect(result).toContain("Code snippet");
+    expect(result).toContain("Potential solution");
+  });
+
+  test("includes ticket context when task is provided", () => {
+    const result = buildReviewPrompt(baseTask, "");
+    expect(result).toContain("**Title**: Add dark mode");
+    expect(result).toContain("**Description**: Implement dark mode toggle");
+    expect(result).toContain("**Acceptance Criteria**:");
+    expect(result).toContain("Toggle switch exists");
+  });
+
+  test("includes comments when present", () => {
+    const task = { ...baseTask, comments: [{ text: "Use CSS variables" }, { text: "Support system preference" }] };
+    const result = buildReviewPrompt(task, "");
+    expect(result).toContain("**Comments**:");
+    expect(result).toContain("1. Use CSS variables");
+    expect(result).toContain("2. Support system preference");
+  });
+
+  test("includes project notes when provided", () => {
+    const result = buildReviewPrompt(baseTask, "We use Tailwind for styling");
+    expect(result).toContain("**Project Notes**:");
+    expect(result).toContain("We use Tailwind for styling");
+  });
+
+  test("omits empty description", () => {
+    const task = { ...baseTask, description: "" };
+    const result = buildReviewPrompt(task, "");
+    expect(result).not.toContain("**Description**:");
+  });
+
+  test("includes git diff instruction", () => {
+    const result = buildReviewPrompt(baseTask, "");
+    expect(result).toContain("git diff");
+  });
+
+  test("does not include ticket context when task is null", () => {
+    const result = buildReviewPrompt(null, "");
+    expect(result).not.toContain("**Title**:");
+    expect(result).not.toContain("**Acceptance Criteria**:");
   });
 });
 
