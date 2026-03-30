@@ -171,6 +171,9 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     } else if (phase === "complete") {
       // Build pipeline finished → move to review
       void moveTask(pipeline.taskId, "review");
+    } else if (phase === "failed") {
+      // Build failed → move back to backlog for retry
+      void moveTask(pipeline.taskId, "backlog");
     }
   }, [pipeline?.phase, pipeline?.taskId]);
 

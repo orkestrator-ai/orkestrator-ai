@@ -15,6 +15,7 @@ import { Plus, StickyNote } from "lucide-react";
 import { useKanbanStore, type KanbanStatus, type KanbanTask } from "@/stores/kanbanStore";
 import { useProjectStore } from "@/stores";
 import { useBuildPipelineStore, type BuildPhase } from "@/stores/buildPipelineStore";
+import { useShallow } from "zustand/react/shallow";
 import { KanbanCard } from "./KanbanCard";
 import { KanbanTaskDialog } from "./KanbanTaskDialog";
 import { ProjectNotesView } from "./ProjectNotesView";
@@ -100,7 +101,22 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
   const loadTasks = useKanbanStore((s) => s.loadTasks);
   const moveTask = useKanbanStore((s) => s.moveTask);
   const getProjectById = useProjectStore((s) => s.getProjectById);
-  const pipelines = useBuildPipelineStore((s) => s.pipelines);
+  const buildPhaseRecord = useBuildPipelineStore(
+    useShallow((s) => {
+      const record: Record<string, BuildPhase> = {};
+      for (const pipeline of s.pipelines.values()) {
+        if (pipeline.projectId === projectId) {
+          record[pipeline.taskId] = pipeline.phase;
+        }
+      }
+      return record;
+    })
+  );
+
+  const buildPhaseByTaskId = useMemo(
+    () => new Map(Object.entries(buildPhaseRecord)),
+    [buildPhaseRecord]
+  );
 
   const project = getProjectById(projectId);
 
@@ -136,17 +152,6 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
     }
     return grouped;
   }, [projectTasks]);
-
-  // Build a map of taskId -> BuildPhase for all tasks with active pipelines
-  const buildPhaseByTaskId = useMemo(() => {
-    const map = new Map<string, BuildPhase>();
-    for (const pipeline of pipelines.values()) {
-      if (pipeline.projectId === projectId) {
-        map.set(pipeline.taskId, pipeline.phase);
-      }
-    }
-    return map;
-  }, [pipelines, projectId]);
 
   const activeTask = useMemo(
     () => (activeTaskId ? projectTasks.find((t) => t.id === activeTaskId) ?? null : null),

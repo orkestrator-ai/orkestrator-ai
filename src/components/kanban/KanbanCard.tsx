@@ -27,8 +27,10 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
 
+  const isFailed = buildPhase === "failed";
   const isBuilding = buildPhase && !["complete", "failed"].includes(buildPhase);
   const isComplete = buildPhase === "complete";
+  const hasBuildStatus = isBuilding || isComplete || isFailed;
 
   return (
     <div
@@ -40,9 +42,11 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
         // Build status borders
         isBuilding && "border-yellow-500 ring-2 ring-yellow-500/40",
         isComplete && "border-green-500 ring-2 ring-green-500/40",
-        !isBuilding && !isComplete && "border-border hover:border-primary/50",
+        isFailed && "border-red-500 ring-2 ring-red-500/40",
+        !hasBuildStatus && "border-border hover:border-primary/50",
         isDragging && "opacity-30",
-        isDragOverlay && "shadow-lg border-primary/50 rotate-2"
+        isDragOverlay && !hasBuildStatus && "shadow-lg border-primary/50 rotate-2",
+        isDragOverlay && hasBuildStatus && "shadow-lg rotate-2"
       )}
       onClick={onClick}
     >
