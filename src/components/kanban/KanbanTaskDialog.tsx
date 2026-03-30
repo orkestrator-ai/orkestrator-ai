@@ -309,54 +309,51 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
           return (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                {!task.environmentId ? (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 flex-1"
-                      disabled={isBuildStarting || !!hasActiveBuild}
-                      onClick={async () => {
-                        setIsBuildStarting(true);
-                        try {
-                          await startBuild(task, "containerized");
-                          handleOpenChange(false);
-                        } finally {
-                          setIsBuildStarting(false);
-                        }
-                      }}
-                    >
-                      {isBuildStarting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Container className="h-3.5 w-3.5" />
-                      )}
-                      Build Container
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 flex-1"
-                      disabled={isBuildStarting || !!hasActiveBuild}
-                      onClick={async () => {
-                        setIsBuildStarting(true);
-                        try {
-                          await startBuild(task, "local");
-                          handleOpenChange(false);
-                        } finally {
-                          setIsBuildStarting(false);
-                        }
-                      }}
-                    >
-                      {isBuildStarting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <FolderGit2 className="h-3.5 w-3.5" />
-                      )}
-                      Build Local
-                    </Button>
-                  </>
-                ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 flex-1"
+                  disabled={isBuildStarting || !!hasActiveBuild}
+                  onClick={async () => {
+                    setIsBuildStarting(true);
+                    try {
+                      await startBuild(task, "containerized");
+                      handleOpenChange(false);
+                    } finally {
+                      setIsBuildStarting(false);
+                    }
+                  }}
+                >
+                  {isBuildStarting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Container className="h-3.5 w-3.5" />
+                  )}
+                  Build Container
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 flex-1"
+                  disabled={isBuildStarting || !!hasActiveBuild}
+                  onClick={async () => {
+                    setIsBuildStarting(true);
+                    try {
+                      await startBuild(task, "local");
+                      handleOpenChange(false);
+                    } finally {
+                      setIsBuildStarting(false);
+                    }
+                  }}
+                >
+                  {isBuildStarting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <FolderGit2 className="h-3.5 w-3.5" />
+                  )}
+                  Build Local
+                </Button>
+                {task.environmentId && (
                   <Button
                     size="sm"
                     variant="outline"
