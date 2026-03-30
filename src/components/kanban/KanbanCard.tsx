@@ -1,5 +1,6 @@
+import { useRef, useEffect } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { GripVertical, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import type { KanbanTask } from "@/stores/kanbanStore";
 import type { BuildPhase } from "@/stores/buildPipelineStore";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,29 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
     data: { type: "task", task },
   });
 
+  const wasDraggingRef = useRef(false);
+
+  useEffect(() => {
+    if (isDragging) {
+      wasDraggingRef.current = true;
+    } else if (wasDraggingRef.current) {
+      // Reset after a short delay so the synchronous click event
+      // on mouseup can still see the flag before it's cleared
+      const timer = setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isDragging]);
+
+  const handleClick = () => {
+    if (wasDraggingRef.current) {
+      wasDraggingRef.current = false;
+      return;
+    }
+    onClick();
+  };
+
   const style = transform
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
@@ -37,7 +61,7 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group rounded-lg border bg-card p-3 shadow-sm cursor-pointer",
+        "group rounded-lg border bg-card p-3 shadow-sm cursor-grab active:cursor-grabbing",
         "hover:shadow-md transition-[border-color,box-shadow,ring-color]",
         // Build status borders
         isBuilding && "border-yellow-500 ring-2 ring-yellow-500/40",
@@ -48,31 +72,23 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
         isDragOverlay && !hasBuildStatus && "shadow-lg border-primary/50 rotate-2",
         isDragOverlay && hasBuildStatus && "shadow-lg rotate-2"
       )}
-      onClick={onClick}
+      {...attributes}
+      {...listeners}
+      onClick={handleClick}
     >
-      <div className="flex items-start gap-2">
-        <button
-          className="mt-0.5 shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-          {...attributes}
-          {...listeners}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h4 className="text-sm font-medium text-foreground truncate">{task.title}</h4>
-          {task.description && (
-            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
-              {task.description}
-            </p>
-          )}
-          {task.comments.length > 0 && (
-            <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-              <MessageSquare className="h-3 w-3" />
-              <span>{task.comments.length}</span>
-            </div>
-          )}
-        </div>
+      <div className="flex-1 min-w-0">
+        <h4 className="text-sm font-medium text-foreground truncate">{task.title}</h4>
+        {task.description && (
+          <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+            {task.description}
+          </p>
+        )}
+        {task.comments.length > 0 && (
+          <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+            <MessageSquare className="h-3 w-3" />
+            <span>{task.comments.length}</span>
+          </div>
+        )}
       </div>
     </div>
   );
