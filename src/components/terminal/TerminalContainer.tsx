@@ -138,6 +138,7 @@ export function TerminalContainer({
   const consumePendingSetupCommands = useEnvironmentStore((state) => state.consumePendingSetupCommands);
   const isSetupCommandsResolved = useEnvironmentStore((state) => state.isSetupCommandsResolved);
   const setSetupCommandsResolved = useEnvironmentStore((state) => state.setSetupCommandsResolved);
+  const setSetupScriptsRunning = useEnvironmentStore((state) => state.setSetupScriptsRunning);
   // Subscribe to setup commands resolved state - needed for local environments to know when we can create tabs
   const setupCommandsResolved = isSetupCommandsResolved(environmentId);
   const workspaceReady = isWorkspaceReady(environmentId);
@@ -304,12 +305,14 @@ export function TerminalContainer({
         if (hasSetupCommands && launchAgent) {
           // Local + Claude ON + setup commands: create setup tab first, then agent tab (active)
           console.log("[TerminalContainer] Local environment with setup commands and agent - creating setup tab then agent tab");
+          setSetupScriptsRunning(environmentId, true);
 
           // Create setup tab first
           const setupTab: TabInfo = {
             id: "setup-" + Date.now(),
             type: "plain",
             initialCommands: setupCommands,
+            isSetupTab: true,
           };
           addTab("default", setupTab, environmentId);
 
@@ -350,10 +353,12 @@ export function TerminalContainer({
         } else if (hasSetupCommands && !launchAgent) {
           // Local + Claude OFF + setup commands: single terminal with setup commands
           console.log("[TerminalContainer] Local environment with setup commands, no agent - creating terminal with setup commands");
+          setSetupScriptsRunning(environmentId, true);
           const initialTab: TabInfo = {
             id: "default",
             type: "plain",
             initialCommands: setupCommands,
+            isSetupTab: true,
           };
           addTab("default", initialTab, environmentId);
         } else if (useNativeOpenCode || useNativeClaude || useNativeCodex) {
@@ -426,7 +431,7 @@ export function TerminalContainer({
         addTab("default", initialTab, environmentId);
       }
     }
-  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady, consumePendingSetupCommands]);
+  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning]);
 
   // Reset pane layout when container changes within the same environment
   // (e.g., container was stopped and restarted with a new ID)

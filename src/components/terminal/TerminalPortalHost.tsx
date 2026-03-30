@@ -60,8 +60,9 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     hasTerminal,
   } = useTerminalPortalStore();
 
-  // Get workspace ready setter from environment store
+  // Get workspace ready and setup scripts running setters from environment store
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
+  const setSetupScriptsRunning = useEnvironmentStore((state) => state.setSetupScriptsRunning);
 
   const terminalAppearance = useConfigStore(
     (state) => state.config.global.terminalAppearance
@@ -86,6 +87,12 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     console.log("[TerminalPortalHost] handleWorkspaceReady called - setting workspace ready for environment:", environmentId);
     setWorkspaceReady(environmentId, true);
   }, [environmentId, setWorkspaceReady]);
+
+  // Handle setup scripts completion - fires when setup tab's marker is detected
+  const handleSetupComplete = useCallback(() => {
+    console.log("[TerminalPortalHost] handleSetupComplete called - clearing setupScriptsRunning for environment:", environmentId);
+    setSetupScriptsRunning(environmentId, false);
+  }, [environmentId, setSetupScriptsRunning]);
 
   // Build a map of tabId -> paneId for all terminal tabs
   // Memoize to prevent new Map on every render
@@ -195,7 +202,9 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
           initialPrompt={tab.initialPrompt}
           initialCommands={tab.initialCommands}
           paneId={paneId}
+          isSetupTab={tab.isSetupTab}
           onReady={handleWorkspaceReady}
+          onSetupComplete={tab.isSetupTab ? handleSetupComplete : undefined}
         />,
         portalTarget,
         `terminal-portal-${environmentId}::${tabId}`

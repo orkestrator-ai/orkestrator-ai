@@ -225,11 +225,12 @@ Begin by fetching the latest changes.`;
 
 export function ActionBar() {
   const { selectedEnvironmentId, selectedProjectId } = useUIStore();
-  const { getEnvironmentById, updateEnvironment, isWorkspaceReady, setEnvironmentPR } = useEnvironmentStore(
+  const { getEnvironmentById, updateEnvironment, isWorkspaceReady, isSetupScriptsRunning, setEnvironmentPR } = useEnvironmentStore(
     useShallow((state) => ({
       getEnvironmentById: state.getEnvironmentById,
       updateEnvironment: state.updateEnvironment,
       isWorkspaceReady: state.isWorkspaceReady,
+      isSetupScriptsRunning: state.isSetupScriptsRunning,
       setEnvironmentPR: state.setEnvironmentPR,
     }))
   );
@@ -272,6 +273,7 @@ export function ActionBar() {
   const isLocalReady = isLocalEnvironment && !!selectedEnvironment?.worktreePath;
   const isRunning = isLocalReady || selectedEnvironment?.status === "running";
   const workspaceReady = selectedEnvironmentId ? isWorkspaceReady(selectedEnvironmentId) : false;
+  const setupRunning = selectedEnvironmentId ? isSetupScriptsRunning(selectedEnvironmentId) : false;
 
   const { prUrl, prState, hasMergeConflicts, viewPR, setModeCreatePending } = usePullRequest({
     environmentId: selectedEnvironmentId,
@@ -410,7 +412,7 @@ export function ActionBar() {
   }, [createTab, canCreateTab, isRunning, isLocalEnvironment, defaultAgent]);
 
   const hasRunCommands = runCommands && runCommands.length > 0;
-  const canRunCommands = canCreateTab && !isLoadingRunCommands && !!hasRunCommands;
+  const canRunCommands = canCreateTab && !isLoadingRunCommands && !!hasRunCommands && !setupRunning;
 
   const handleRunButtonClick = useCallback(() => {
     if (!canRunCommands) {
@@ -529,7 +531,7 @@ export function ActionBar() {
           }
           break;
         case "p":
-          if (canCreateTab && !isLoadingRunCommands && hasRunCommands) {
+          if (canRunCommands) {
             e.preventDefault();
             handleRun();
           }
@@ -570,8 +572,7 @@ export function ActionBar() {
     selectedEnvironment,
     selectedProjectId,
     handleReview,
-    isLoadingRunCommands,
-    hasRunCommands,
+    canRunCommands,
     handleRun,
     toggleFilesPanel,
   ]);
@@ -906,7 +907,7 @@ export function ActionBar() {
                           onClick={handleRunButtonClick}
                           aria-disabled={!canRunCommands}
                         >
-                          {isLoadingRunCommands ? (
+                          {isLoadingRunCommands || setupRunning ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <Play className="h-4 w-4" />
@@ -918,9 +919,11 @@ export function ActionBar() {
                   <TooltipContent>
                     <p>Run Commands</p>
                     <p className="text-xs text-muted-foreground">
-                      {hasRunCommands
-                        ? "Execute run commands from orkestrator-ai.json"
-                        : "Add 'run' array to orkestrator-ai.json to enable"}
+                      {setupRunning
+                        ? "Waiting for setup scripts to finish..."
+                        : hasRunCommands
+                          ? "Execute run commands from orkestrator-ai.json"
+                          : "Add 'run' array to orkestrator-ai.json to enable"}
                     </p>
                     <p className="text-xs text-muted-foreground">⌘P · Right-click for script menu</p>
                   </TooltipContent>
