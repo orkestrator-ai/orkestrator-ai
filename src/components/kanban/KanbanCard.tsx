@@ -27,6 +27,13 @@ export function KanbanCard({ task, onClick, isDragOverlay }: KanbanCardProps) {
   useEffect(() => {
     if (isDragging) {
       wasDraggingRef.current = true;
+    } else if (wasDraggingRef.current) {
+      // Reset after a short delay so the synchronous click event
+      // on mouseup can still see the flag before it's cleared
+      const timer = setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [isDragging]);
 
@@ -52,9 +59,9 @@ export function KanbanCard({ task, onClick, isDragOverlay }: KanbanCardProps) {
         isDragging && "opacity-30",
         isDragOverlay && "shadow-lg border-primary/50 rotate-2"
       )}
-      onClick={handleClick}
       {...attributes}
       {...listeners}
+      onClick={handleClick}
     >
       <div className="flex-1 min-w-0">
         <h4 className="text-sm font-medium text-foreground truncate">{task.title}</h4>
