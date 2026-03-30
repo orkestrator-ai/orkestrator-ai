@@ -415,7 +415,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             const formattedContent = result.verdict === "pass"
               ? `### Verification: Passed\n\n${result.feedback}`
               : `### Verification: Failed\n\n${result.feedback}`;
-            const lastAssistantIdx = verifyMessages.findLastIndex((m) => m.role === "assistant");
+            let lastAssistantIdx = -1;
+            for (let i = verifyMessages.length - 1; i >= 0; i--) {
+              if (verifyMessages[i]?.role === "assistant") { lastAssistantIdx = i; break; }
+            }
             if (lastAssistantIdx >= 0) {
               const updatedMessages = verifyMessages.map((m, i) => {
                 if (i !== lastAssistantIdx) return m;
