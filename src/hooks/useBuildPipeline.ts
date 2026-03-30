@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useKanbanStore } from "@/stores/kanbanStore";
+import { useEnvironmentStore } from "@/stores";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useUIStore } from "@/stores/uiStore";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
@@ -9,12 +10,12 @@ import { useEnvironments } from "@/hooks/useEnvironments";
 import * as tauri from "@/lib/tauri";
 import type { EnvironmentType } from "@/types";
 import type { KanbanTask } from "@/lib/tauri";
+import type { PaneNode } from "@/types/paneLayout";
 
 export function useBuildPipeline() {
   const { createEnvironment, startEnvironment } = useEnvironments(null, { listenForRenameEvents: false });
   const { createPipeline, setPipelineEnvironment, setPhase, setPipelineError } = useBuildPipelineStore();
   const { updateTask } = useKanbanStore();
-  const { addTab } = usePaneLayoutStore();
   const { selectProjectAndEnvironment } = useUIStore();
   const { setOptions } = useClaudeOptionsStore();
 
@@ -53,10 +54,7 @@ export function useBuildPipeline() {
         );
 
         // Update environment in store
-        const { updateEnvironment } = await import("@/stores/environmentStore").then(m => ({
-          updateEnvironment: m.useEnvironmentStore.getState().updateEnvironment,
-        }));
-        updateEnvironment(environment.id, configuredEnvironment);
+        useEnvironmentStore.getState().updateEnvironment(environment.id, configuredEnvironment);
 
         // Store agent options (needed for Claude bridge server to be started)
         setOptions(configuredEnvironment.id, {
@@ -85,26 +83,17 @@ export function useBuildPipeline() {
         }
 
         // 8. Create build tab in the pane layout
-        // Wait a tick for the environment pane to be initialized
-        setTimeout(() => {
-          const paneState = usePaneLayoutStore.getState();
-          const envState = paneState.environments.get(configuredEnvironment.id);
-          const activePaneId = envState?.activePaneId ?? "default";
+        // Wait for the environment pane to be initialized (poll with backoff)
+        const buildTabId = `build-${pipelineId}`;
+        const isLocal = environmentType === "local";
+        const buildTabData = {
+          environmentId: configuredEnvironment.id,
+          pipelineId,
+          taskId: task.id,
+          isLocal,
+        };
 
-          const buildTabId = `build-${pipelineId}`;
-          const isLocal = environmentType === "local";
-
-          addTab(activePaneId, {
-            id: buildTabId,
-            type: "claude-build",
-            buildTabData: {
-              environmentId: configuredEnvironment.id,
-              pipelineId,
-              taskId: task.id,
-              isLocal,
-            },
-          }, configuredEnvironment.id);
-        }, 500);
+        await waitForPaneAndAddTab(configuredEnvironment.id, buildTabId, buildTabData);
 
         toast.success("Build pipeline started");
       } catch (error) {
@@ -114,43 +103,78 @@ export function useBuildPipeline() {
         });
       }
     },
-    [createPipeline, createEnvironment, setPipelineEnvironment, setPhase, setPipelineError, updateTask, addTab, selectProjectAndEnvironment, setOptions, startEnvironment]
+    [createPipeline, createEnvironment, setPipelineEnvironment, setPhase, setPipelineError, updateTask, selectProjectAndEnvironment, setOptions, startEnvironment]
   );
 
   const navigateToBuild = useCallback(
-    (task: KanbanTask) => {
+    async (task: KanbanTask) => {
       if (!task.environmentId) return;
 
       selectProjectAndEnvironment(task.projectId, task.environmentId);
 
-      // Find and activate the build tab
-      setTimeout(() => {
+      // Poll for the pane state to be available, then find and activate the build tab
+      const maxAttempts = 20;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const paneState = usePaneLayoutStore.getState();
         const envState = paneState.environments.get(task.environmentId!);
-        if (!envState) return;
-
-        // Search all panes for the build tab
-        const findBuildTab = (node: import("@/types/paneLayout").PaneNode): { paneId: string; tabId: string } | null => {
-          if (node.kind === "leaf") {
-            const tab = node.tabs.find((t) => t.type === "claude-build" && t.buildTabData?.taskId === task.id);
-            if (tab) return { paneId: node.id, tabId: tab.id };
-            return null;
+        if (envState) {
+          const result = findBuildTabInTree(envState.root, task.id);
+          if (result) {
+            paneState.setActiveTab(result.paneId, result.tabId);
+            return;
           }
-          for (const child of node.children) {
-            const result = findBuildTab(child);
-            if (result) return result;
-          }
-          return null;
-        };
-
-        const result = findBuildTab(envState.root);
-        if (result) {
-          paneState.setActiveTab(result.paneId, result.tabId);
         }
-      }, 100);
+        await new Promise((r) => setTimeout(r, 50));
+      }
     },
     [selectProjectAndEnvironment]
   );
 
   return { startBuild, navigateToBuild };
+}
+
+/** Search pane tree for a build tab matching a task ID */
+function findBuildTabInTree(node: PaneNode, taskId: string): { paneId: string; tabId: string } | null {
+  if (node.kind === "leaf") {
+    const tab = node.tabs.find((t) => t.type === "claude-build" && t.buildTabData?.taskId === taskId);
+    if (tab) return { paneId: node.id, tabId: tab.id };
+    return null;
+  }
+  for (const child of node.children) {
+    const result = findBuildTabInTree(child, taskId);
+    if (result) return result;
+  }
+  return null;
+}
+
+/** Wait for the environment pane to be initialized, then add the build tab */
+async function waitForPaneAndAddTab(
+  environmentId: string,
+  buildTabId: string,
+  buildTabData: import("@/types/paneLayout").BuildTabData,
+) {
+  const maxAttempts = 20;
+  const { addTab } = usePaneLayoutStore.getState();
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const paneState = usePaneLayoutStore.getState();
+    const envState = paneState.environments.get(environmentId);
+    if (envState) {
+      const activePaneId = envState.activePaneId ?? "default";
+      addTab(activePaneId, {
+        id: buildTabId,
+        type: "claude-build",
+        buildTabData,
+      }, environmentId);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  // Fallback: add to default pane even if env pane not found
+  addTab("default", {
+    id: buildTabId,
+    type: "claude-build",
+    buildTabData,
+  }, environmentId);
 }

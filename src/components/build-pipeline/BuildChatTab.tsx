@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import { useKanbanStore } from "@/stores/kanbanStore";
 
 // Reference to kanban store for non-reactive reads
-const useKanbanStoreRef = useKanbanStore;
+const kanbanStoreRef = useKanbanStore;
 
 interface BuildChatTabProps {
   data: BuildTabData;
@@ -116,7 +116,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     getOrCreateEventSubscription,
     setEventStream,
     hasActiveEventSubscription,
-    getSessionKeyBySdkSessionId,
     clients: clientsMap,
     sessions: sessionsMap,
   } = useClaudeStore();
@@ -325,7 +324,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         setEventStream(environmentId, null);
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setContextUsage, addMessage, getSessionKeyBySdkSessionId]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setContextUsage, addMessage]
   );
 
   // Pipeline advancement logic - watches for session idle transitions
@@ -611,7 +610,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       }
 
       // Fetch ticket context for verification
-      const task = useKanbanStoreSnapshot(currentPipeline.taskId);
+      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -657,7 +656,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      const task = useKanbanStoreSnapshot(currentPipeline.taskId);
+      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -719,7 +718,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     if (pipeline.sessions.length > 0) return;
 
     // Pipeline is ready and waiting for build to start
-    const task = useKanbanStoreSnapshot(pipeline.taskId);
+    const task = getKanbanTaskSnapshot(pipeline.taskId);
     if (!task) {
       setPipelineError(pipelineId, "Task not found");
       return;
@@ -813,7 +812,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
                     key={message.id}
                     message={message}
                     previousMessage={messageIndex > 0 ? sessionData.messages[messageIndex - 1] ?? null : null}
-                    isStreaming={sessionData.isLoading}
+                    isStreaming={sessionData.isLoading && messageIndex === sessionData.messages.length - 1}
                   />
                 ))}
                 {sessionData.isLoading && (
@@ -848,15 +847,15 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   );
 }
 
-// --- Helper functions ---
+// --- Helper functions (exported for testing) ---
 
-function useKanbanStoreSnapshot(taskId: string) {
+function getKanbanTaskSnapshot(taskId: string) {
   // Read directly from store to avoid stale closures
-  const { tasks } = useKanbanStoreRef.getState();
+  const { tasks } = kanbanStoreRef.getState();
   return tasks.find((t) => t.id === taskId) ?? null;
 }
 
-function buildBuildPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildBuildPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
   if (!task) return "Build the feature as described.";
 
   const parts = [
@@ -880,7 +879,7 @@ function buildBuildPrompt(task: { title: string; description: string; acceptance
   return parts.join("\n");
 }
 
-function buildVerificationPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildVerificationPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
   if (!task) return "Do the changes satisfy the acceptance criteria?";
 
   const parts = [
@@ -904,7 +903,7 @@ function buildVerificationPrompt(task: { title: string; description: string; acc
   return parts.join("\n");
 }
 
-function buildFixPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string, feedback: string): string {
+export function buildFixPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string, feedback: string): string {
   if (!task) return `Fix the following issues:\n\n${feedback}\n\nDo not ask any questions.`;
 
   const parts = [
@@ -929,7 +928,7 @@ function buildFixPrompt(task: { title: string; description: string; acceptanceCr
   return parts.join("\n");
 }
 
-function parseVerificationResult(messages: ClaudeMessageType[]): { verdict: "pass" | "fail"; feedback: string } {
+export function parseVerificationResult(messages: ClaudeMessageType[]): { verdict: "pass" | "fail"; feedback: string } {
   const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
   if (!lastAssistant) return { verdict: "fail", feedback: "No verification response received" };
 

@@ -1150,10 +1150,10 @@ impl Storage {
             }
         }
         if let Some(environment_id) = environment_id {
-            tasks[task_index].environment_id = Some(environment_id);
+            tasks[task_index].environment_id = if environment_id.is_empty() { None } else { Some(environment_id) };
         }
         if let Some(build_pipeline_id) = build_pipeline_id {
-            tasks[task_index].build_pipeline_id = Some(build_pipeline_id);
+            tasks[task_index].build_pipeline_id = if build_pipeline_id.is_empty() { None } else { Some(build_pipeline_id) };
         }
 
         let updated = tasks[task_index].clone();
