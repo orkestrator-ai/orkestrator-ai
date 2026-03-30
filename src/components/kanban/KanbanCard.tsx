@@ -1,15 +1,17 @@
 import { useDraggable } from "@dnd-kit/core";
 import { GripVertical, MessageSquare } from "lucide-react";
 import type { KanbanTask } from "@/stores/kanbanStore";
+import type { BuildPhase } from "@/stores/buildPipelineStore";
 import { cn } from "@/lib/utils";
 
 interface KanbanCardProps {
   task: KanbanTask;
   onClick: () => void;
   isDragOverlay?: boolean;
+  buildPhase?: BuildPhase;
 }
 
-export function KanbanCard({ task, onClick, isDragOverlay }: KanbanCardProps) {
+export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanCardProps) {
   const {
     attributes,
     listeners,
@@ -25,13 +27,20 @@ export function KanbanCard({ task, onClick, isDragOverlay }: KanbanCardProps) {
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
 
+  const isBuilding = buildPhase && !["complete", "failed"].includes(buildPhase);
+  const isComplete = buildPhase === "complete";
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group rounded-lg border border-border bg-card p-3 shadow-sm cursor-pointer",
-        "hover:border-primary/50 hover:shadow-md transition-[border-color,box-shadow]",
+        "group rounded-lg border bg-card p-3 shadow-sm cursor-pointer",
+        "hover:shadow-md transition-[border-color,box-shadow,ring-color]",
+        // Build status borders
+        isBuilding && "border-yellow-500 ring-2 ring-yellow-500/40",
+        isComplete && "border-green-500 ring-2 ring-green-500/40",
+        !isBuilding && !isComplete && "border-border hover:border-primary/50",
         isDragging && "opacity-30",
         isDragOverlay && "shadow-lg border-primary/50 rotate-2"
       )}

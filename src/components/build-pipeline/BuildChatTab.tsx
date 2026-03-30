@@ -152,6 +152,28 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     persistKey: `build-${pipelineId}`,
   });
 
+  // Auto-move kanban card when pipeline phase changes
+  const prevPhaseRef = useRef<BuildPhase | null>(null);
+  useEffect(() => {
+    if (!pipeline) return;
+    const { phase } = pipeline;
+    const prevPhase = prevPhaseRef.current;
+    prevPhaseRef.current = phase;
+
+    // Skip on first render or if phase hasn't changed
+    if (prevPhase === null || prevPhase === phase) return;
+
+    const { moveTask } = kanbanStoreRef.getState();
+
+    if (phase === "building") {
+      // Card sent to build → move to in-progress
+      void moveTask(pipeline.taskId, "in-progress");
+    } else if (phase === "complete") {
+      // Build pipeline finished → move to review
+      void moveTask(pipeline.taskId, "review");
+    }
+  }, [pipeline?.phase, pipeline?.taskId]);
+
   // Initialize bridge server connection
   useEffect(() => {
     if (!isActive || isInitializedRef.current || !pipeline) return;
