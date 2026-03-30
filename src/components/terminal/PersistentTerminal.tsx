@@ -302,16 +302,17 @@ export function PersistentTerminal({
         if (isLocalEnvironment) {
           // Local environments: detect shell prompt readiness (no Docker markers exist)
           const hasShellPrompt = strippedBuffer.includes("➜") || strippedBuffer.includes("❯");
-          const hasGenericPrompt = strippedBuffer.includes("$ ") || strippedBuffer.includes("% ");
+          // Match "$ " or "% " only at line start or after whitespace to avoid false positives on command output
+          const hasGenericPrompt = /(?:^|\n)\s*[$%] /m.test(strippedBuffer);
+          // Length fallback: only trigger if buffer ends with a newline (prompt line fully rendered)
+          const hasLengthFallback = strippedBuffer.length > 500 && strippedBuffer.trimEnd().endsWith("\n");
 
-          if (hasShellPrompt || hasGenericPrompt || strippedBuffer.length > 100) {
+          if (hasShellPrompt || hasGenericPrompt || hasLengthFallback) {
             console.log("[PersistentTerminal] Local environment ready detected for first tab:", tabId);
             setIsEnvironmentReady(true);
             dataBufferRef.current = "";
             onReady?.();
-          }
-
-          if (dataBufferRef.current.length > 1024) {
+          } else if (dataBufferRef.current.length > 1024) {
             dataBufferRef.current = dataBufferRef.current.slice(-512);
           }
         } else {
