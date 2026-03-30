@@ -411,6 +411,35 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
               : (useClaudeStore.getState().sessions.get(completedSession.sessionKey)?.messages ?? []);
             const result = parseVerificationResult(verifyMessages);
 
+            // Replace raw JSON in the last assistant message with formatted content
+            const formattedContent = result.verdict === "pass"
+              ? `### Verification: Passed\n\n${result.feedback}`
+              : `### Verification: Failed\n\n${result.feedback}`;
+            const lastAssistantIdx = verifyMessages.findLastIndex((m) => m.role === "assistant");
+            if (lastAssistantIdx >= 0) {
+              const updatedMessages = verifyMessages.map((m, i) => {
+                if (i !== lastAssistantIdx) return m;
+                // Replace text parts with formatted content while preserving part order
+                let replaced = false;
+                const updatedParts = m.parts.reduce<typeof m.parts>((acc, p) => {
+                  if (p.type !== "text") {
+                    acc.push(p);
+                  } else if (!replaced) {
+                    acc.push({ type: "text" as const, content: formattedContent });
+                    replaced = true;
+                  }
+                  // Drop subsequent text parts (merged into the first)
+                  return acc;
+                }, []);
+                return {
+                  ...m,
+                  content: formattedContent,
+                  parts: updatedParts,
+                };
+              });
+              setMessages(completedSession.sessionKey, updatedMessages);
+            }
+
             setVerificationResult(pipelineId, result.verdict, result.feedback);
 
             if (result.verdict === "pass") {
@@ -726,15 +755,19 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
 
-  // Stop the pipeline
+  // Stop the pipeline - abort all sessions to ensure nothing keeps running
   const handleStop = useCallback(async () => {
     if (!client || !pipeline) return;
 
-    const currentSession = pipeline.sessions[pipeline.currentSessionIndex];
-    if (currentSession) {
-      await abortSession(client, currentSession.sdkSessionId);
-      setSessionLoading(currentSession.sessionKey, false);
-    }
+    const abortPromises = pipeline.sessions.map(async (session) => {
+      try {
+        await abortSession(client, session.sdkSessionId);
+        setSessionLoading(session.sessionKey, false);
+      } catch {
+        // Best effort - continue aborting remaining sessions
+      }
+    });
+    await Promise.all(abortPromises);
 
     setPipelineError(pipelineId, "Pipeline stopped by user");
   }, [client, pipeline, pipelineId, setSessionLoading, setPipelineError]);
@@ -1005,7 +1038,15 @@ export function buildVerificationPrompt(task: TaskSnapshot | null, projectNotes:
     parts.push(`\n**Project Notes**:\n${projectNotes}`);
   }
 
-  parts.push("\n\nDo the changes implemented satisfy ALL acceptance criteria according to the context above? Answer with YES or NO on the first line, then explain your reasoning.");
+  parts.push(`\n\nDo the changes implemented satisfy ALL acceptance criteria according to the context above?
+
+Respond with ONLY a JSON object in the following format (no other text before or after):
+
+\`\`\`json
+{"complete": true, "rationale": "Your explanation here"}
+\`\`\`
+
+Set "complete" to true if ALL acceptance criteria are satisfied, or false if any are not met. In "rationale", provide a detailed explanation of your reasoning.`);
 
   return parts.join("\n");
 }
@@ -1045,6 +1086,27 @@ export function parseVerificationResult(messages: ClaudeMessageType[]): { verdic
     .join("\n")
     .trim();
 
+  // Try JSON format first: { "complete": true/false, "rationale": "..." }
+  try {
+    // Prefer ```json block, then bare ``` block, then raw JSON object
+    const jsonMatch =
+      text.match(/```json\s*\n([\s\S]*?)\n\s*```/) ??
+      text.match(/```\s*\n([\s\S]*?)\n\s*```/) ??
+      text.match(/(\{"complete"\s*:\s*(?:true|false)\s*,\s*"rationale"\s*:\s*"[\s\S]*?"\s*\})/);
+    if (jsonMatch?.[1]) {
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (typeof parsed.complete === "boolean") {
+        return {
+          verdict: parsed.complete ? "pass" : "fail",
+          feedback: typeof parsed.rationale === "string" ? parsed.rationale : text,
+        };
+      }
+    }
+  } catch {
+    // Fall through to legacy parsing
+  }
+
+  // Legacy fallback: check for YES/NO on first line
   const firstLine = text.split("\n")[0]?.trim().toUpperCase() ?? "";
   const verdict = firstLine.startsWith("YES") ? "pass" : "fail";
 

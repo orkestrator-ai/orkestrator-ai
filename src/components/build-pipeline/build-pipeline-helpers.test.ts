@@ -22,40 +22,92 @@ describe("parseVerificationResult", () => {
     };
   }
 
-  test("returns pass when last assistant message starts with YES", () => {
+  // --- JSON format tests ---
+
+  test("returns pass when JSON has complete: true in code block", () => {
     const messages: ClaudeMessage[] = [
       { id: "1", role: "user", content: "verify", parts: [{ type: "text", content: "verify" }], timestamp: "" },
-      makeAssistantMessage("YES\nAll criteria are satisfied."),
+      makeAssistantMessage('```json\n{"complete": true, "rationale": "All criteria are satisfied."}\n```'),
     ];
 
     const result = parseVerificationResult(messages);
     expect(result.verdict).toBe("pass");
-    expect(result.feedback).toContain("YES");
+    expect(result.feedback).toBe("All criteria are satisfied.");
   });
 
-  test("returns pass when YES is followed by punctuation", () => {
+  test("returns fail when JSON has complete: false in code block", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage('```json\n{"complete": false, "rationale": "Missing error handling for edge cases."}\n```'),
+    ]);
+    expect(result.verdict).toBe("fail");
+    expect(result.feedback).toBe("Missing error handling for edge cases.");
+  });
+
+  test("parses raw JSON without code block", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage('{"complete": true, "rationale": "Everything looks good."}'),
+    ]);
+    expect(result.verdict).toBe("pass");
+    expect(result.feedback).toBe("Everything looks good.");
+  });
+
+  test("parses JSON from code block without json language tag", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage('```\n{"complete": false, "rationale": "Tests are missing."}\n```'),
+    ]);
+    expect(result.verdict).toBe("fail");
+    expect(result.feedback).toBe("Tests are missing.");
+  });
+
+  test("handles JSON with extra whitespace in code block", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage('```json\n{\n  "complete": true,\n  "rationale": "All good."\n}\n```'),
+    ]);
+    expect(result.verdict).toBe("pass");
+    expect(result.feedback).toBe("All good.");
+  });
+
+  test("falls back to legacy parsing on malformed JSON", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage('```json\n{"complete": true, "rationale": }\n```'),
+    ]);
+    // Malformed JSON can't be parsed, falls through to legacy YES/NO check.
+    // First line is a code fence, not YES/NO, so verdict is fail.
+    expect(result.verdict).toBe("fail");
+  });
+
+  // --- Legacy YES/NO fallback tests ---
+
+  test("falls back to YES parsing for legacy format", () => {
+    const result = parseVerificationResult([
+      makeAssistantMessage("YES\nAll criteria are satisfied."),
+    ]);
+    expect(result.verdict).toBe("pass");
+  });
+
+  test("falls back to YES with punctuation for legacy format", () => {
     const result = parseVerificationResult([
       makeAssistantMessage("YES, everything looks good.\nAll acceptance criteria met."),
     ]);
     expect(result.verdict).toBe("pass");
   });
 
-  test("returns fail when last assistant message starts with NO", () => {
-    const messages: ClaudeMessage[] = [
+  test("returns fail for legacy NO format", () => {
+    const result = parseVerificationResult([
       makeAssistantMessage("NO\nThe following criteria are not met:\n- Missing error handling"),
-    ];
-
-    const result = parseVerificationResult(messages);
+    ]);
     expect(result.verdict).toBe("fail");
     expect(result.feedback).toContain("Missing error handling");
   });
 
-  test("returns fail when response is ambiguous (not YES/NO)", () => {
+  test("returns fail when response is ambiguous", () => {
     const result = parseVerificationResult([
       makeAssistantMessage("I'm not sure if the criteria are met. Let me explain..."),
     ]);
     expect(result.verdict).toBe("fail");
   });
+
+  // --- Common tests ---
 
   test("returns fail with descriptive feedback when no assistant messages", () => {
     const result = parseVerificationResult([]);
@@ -65,36 +117,30 @@ describe("parseVerificationResult", () => {
 
   test("uses the last assistant message when multiple exist", () => {
     const messages: ClaudeMessage[] = [
-      makeAssistantMessage("NO\nFirst check failed."),
+      makeAssistantMessage('```json\n{"complete": false, "rationale": "First check failed."}\n```'),
       { id: "2", role: "user", content: "check again", parts: [{ type: "text", content: "check again" }], timestamp: "" },
-      makeAssistantMessage("YES\nAll good now."),
+      makeAssistantMessage('```json\n{"complete": true, "rationale": "All good now."}\n```'),
     ];
 
     const result = parseVerificationResult(messages);
     expect(result.verdict).toBe("pass");
+    expect(result.feedback).toBe("All good now.");
   });
 
-  test("handles case-insensitive YES", () => {
-    const result = parseVerificationResult([
-      makeAssistantMessage("yes\nAll good."),
-    ]);
-    expect(result.verdict).toBe("pass");
-  });
-
-  test("concatenates multiple text parts", () => {
+  test("concatenates multiple text parts and finds JSON", () => {
     const messages: ClaudeMessage[] = [{
       id: "1",
       role: "assistant",
-      content: "NO",
+      content: "",
       parts: [
-        { type: "text", content: "NO" },
-        { type: "text", content: "Missing tests." },
+        { type: "text", content: "Let me check the criteria..." },
+        { type: "text", content: '```json\n{"complete": false, "rationale": "Missing tests."}\n```' },
       ],
       timestamp: "",
     }];
     const result = parseVerificationResult(messages);
     expect(result.verdict).toBe("fail");
-    expect(result.feedback).toContain("Missing tests.");
+    expect(result.feedback).toBe("Missing tests.");
   });
 });
 
@@ -261,9 +307,11 @@ describe("buildVerificationPrompt", () => {
     expect(result).toContain("acceptance criteria");
   });
 
-  test("asks for YES/NO answer", () => {
+  test("asks for JSON response format", () => {
     const result = buildVerificationPrompt(baseTask, "");
-    expect(result).toContain("YES or NO");
+    expect(result).toContain('"complete"');
+    expect(result).toContain('"rationale"');
+    expect(result).toContain("JSON");
   });
 
   test("includes ticket context", () => {
