@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
+import { useConfigStore } from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import type { BuildPhase, PipelineSession } from "@/stores/buildPipelineStore";
 import {
@@ -93,8 +94,11 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const isInitializedRef = useRef(false);
   const pipelineAdvancingRef = useRef(false);
+  const [advanceTick, setAdvanceTick] = useState(0);
+  const handledErrorIdsRef = useRef(new Set<string>());
 
   const pipeline = useBuildPipelineStore((s) => s.pipelines.get(pipelineId));
+  const { config } = useConfigStore();
   const {
     setPhase,
     addSession: addPipelineSession,
@@ -327,6 +331,24 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setContextUsage, addMessage]
   );
 
+  // Check if a session ended with an error, avoiding re-handling of already-processed errors
+  const checkSessionError = useCallback(
+    (sessionState: { messages: ClaudeMessageType[] }, fallbackMessage: string): boolean => {
+      const lastMessage = sessionState.messages.at(-1);
+      if (
+        lastMessage?.id.startsWith(ERROR_MESSAGE_PREFIX) &&
+        !handledErrorIdsRef.current.has(lastMessage.id)
+      ) {
+        handledErrorIdsRef.current.add(lastMessage.id);
+        const errorContent = lastMessage.content || fallbackMessage;
+        setPipelineError(pipelineId, errorContent);
+        return true;
+      }
+      return false;
+    },
+    [pipelineId, setPipelineError]
+  );
+
   // Pipeline advancement logic - watches for session idle transitions
   // Skips when in "addressing" phase (handled by separate effect below)
   useEffect(() => {
@@ -339,6 +361,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     const sessionState = sessionsMap.get(currentSession.sessionKey);
     if (!sessionState || sessionState.isLoading) return;
 
+    if (checkSessionError(sessionState, "Session encountered an error")) return;
+
     // Session just went idle - advance the pipeline
     if (currentSession.status === "running") {
       markSessionIdle(pipelineId, currentSession.sdkSessionId);
@@ -346,10 +370,12 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       advancePipeline(pipeline, currentSession).finally(() => {
         pipelineAdvancingRef.current = false;
+        // Force effect re-evaluation in case session.idle arrived while advancing
+        setAdvanceTick((t) => t + 1);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeline?.currentSessionIndex, pipeline?.sessions, pipeline?.phase, sessionsMap, connectionState, client]);
+  }, [pipeline?.currentSessionIndex, pipeline?.sessions, pipeline?.phase, sessionsMap, connectionState, client, advanceTick, checkSessionError]);
 
   // Core pipeline advancement logic
   const advancePipeline = useCallback(
@@ -374,9 +400,16 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             break;
 
           case "verify": {
-            // Check verification result
-            const sessionState = sessionsMap.get(completedSession.sessionKey);
-            const result = parseVerificationResult(sessionState?.messages ?? []);
+            // Fetch fresh messages from the bridge to ensure we have the complete response
+            // (the debounced SSE message fetch may not have completed yet)
+            const freshMessages = await getSessionMessages(client, completedSession.sdkSessionId);
+            if (freshMessages.length > 0) {
+              setMessages(completedSession.sessionKey, freshMessages);
+            }
+            const verifyMessages = freshMessages.length > 0
+              ? freshMessages
+              : (useClaudeStore.getState().sessions.get(completedSession.sessionKey)?.messages ?? []);
+            const result = parseVerificationResult(verifyMessages);
 
             setVerificationResult(pipelineId, result.verdict, result.feedback);
 
@@ -400,7 +433,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [client, pipelineId, sessionsMap]
+    [client, pipelineId]
   );
 
   // Send "address issues" as a follow-up in the review session, then start verify
@@ -474,16 +507,20 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     const sessionState = sessionsMap.get(currentSession.sessionKey);
     if (!sessionState || sessionState.isLoading) return;
 
+    if (checkSessionError(sessionState, "Session encountered an error during addressing")) return;
+
     // The addressing is done - start verification
     if (currentSession.status === "running") {
       markSessionIdle(pipelineId, currentSession.sdkSessionId);
       pipelineAdvancingRef.current = true;
       startVerifySession(pipeline).finally(() => {
         pipelineAdvancingRef.current = false;
+        // Force effect re-evaluation in case session.idle arrived while advancing
+        setAdvanceTick((t) => t + 1);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap, connectionState, client]);
+  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap, connectionState, client, advanceTick, checkSessionError]);
 
   // Create a new Claude session and register it in the store
   const createPipelineSession = useCallback(
@@ -499,7 +536,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       setSession(sessionKey, {
         sessionId: newSession.sessionId,
         messages: [],
-        isLoading: false,
+        isLoading: true,
       });
 
       const pSession: PipelineSession = {
@@ -541,7 +578,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, taskDescription, {
         permissionMode: "bypassPermissions",
@@ -576,7 +612,9 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         projectNotes = notes.content;
       } catch (e) { console.debug("Failed to load project notes for review:", e); }
 
-      const reviewPrompt = buildReviewPrompt(task, projectNotes);
+      const repoConfig = config.repositories[currentPipeline.projectId];
+      const targetBranch = repoConfig?.prBaseBranch || "main";
+      const reviewPrompt = buildReviewPrompt(task, projectNotes, targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -587,7 +625,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, reviewPrompt, {
         permissionMode: "bypassPermissions",
@@ -597,7 +634,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         setPipelineError(pipelineId, "Failed to send review prompt");
       }
     },
-    [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
+    [client, pipelineId, config.repositories, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
 
   // Start verification session (with ticket context)
@@ -633,7 +670,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, verifyPrompt, {
         permissionMode: "bypassPermissions",
@@ -678,7 +714,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       };
 
       addMessage(result.sessionKey, userMessage);
-      setSessionLoading(result.sessionKey, true);
 
       const success = await sendPrompt(client, result.sdkSessionId, fixPrompt, {
         permissionMode: "bypassPermissions",
@@ -865,7 +900,7 @@ function getKanbanTaskSnapshot(taskId: string) {
   return tasks.find((t) => t.id === taskId) ?? null;
 }
 
-export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: string): string {
+export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
   const parts: string[] = [];
 
   if (task) {
@@ -886,29 +921,43 @@ export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: strin
     parts.push(`**Project Notes**:\n${projectNotes}\n`);
   }
 
-  parts.push(`## Code Review
+  parts.push(`## Step 1: Commit Changes
 
-Conduct a thorough code review of the changes made in this codebase:
-1. Run \`git diff HEAD~1\` (or appropriate range) to see all changes made
+Based on the current git status and diff, create a single git commit:
+1. Run \`git status --porcelain\` and \`git diff HEAD\` to see all changes
+2. Add any untracked files that should be committed: \`git add <files>\`
+3. Create a commit with a well-formatted message following conventional commit format
+4. Do NOT reference Claude or add Claude as a contributor
+5. Use this format for the commit message:
+   - First line: type(scope): brief description
+   - Blank line
+   - Bullet points describing the changes
+
+## Step 2: Code Review
+
+Compare the current branch against the remote \`${targetBranch}\` branch and conduct a thorough code review:
+1. Run \`git diff origin/${targetBranch}...HEAD\` to see all changes since branching
 2. Review the diff focusing on:
    - **Logic and correctness**: Check for bugs, edge cases, and potential issues
    - **Readability**: Is the code clear and maintainable? Does it follow repository patterns?
    - **Performance**: Are there obvious performance concerns or optimizations?
    - **Test coverage**: If the repo has testing patterns, are there adequate tests?
+3. Ask clarifying questions if needed about unclear changes
 
 ## Output Format
 
-Provide your review as follows:
-1. A summary overview of the general code quality
-2. List any identified issues in numbered sections with:
+After completing both steps:
+1. Confirm the commit was created with its message
+2. Provide a summary overview of the general code quality
+3. List any identified issues in numbered sections with:
    - Title
    - File and line number(s)
    - Description of the issue
    - Code snippet (if relevant)
    - Potential solution(s)
-3. If no issues found, state that the code meets best practices
+4. If no issues found, state that the code meets best practices
 
-Begin by running git commands to understand what changed.`);
+Begin by running the git commands to understand the current state.`);
 
   return parts.join("\n");
 }

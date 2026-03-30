@@ -108,9 +108,26 @@ describe("buildReviewPrompt", () => {
     comments: [] as Array<{ text: string }>,
   };
 
+  test("includes commit step", () => {
+    const result = buildReviewPrompt(null, "");
+    expect(result).toContain("## Step 1: Commit Changes");
+    expect(result).toContain("conventional commit format");
+    expect(result).toContain("Do NOT reference Claude");
+  });
+
+  test("includes code review step with git diff against target branch", () => {
+    const result = buildReviewPrompt(null, "", "main");
+    expect(result).toContain("## Step 2: Code Review");
+    expect(result).toContain("git diff origin/main...HEAD");
+  });
+
   test("includes review instructions when task is null", () => {
     const result = buildReviewPrompt(null, "");
     expect(result).toContain("Code Review");
+  });
+
+  test("includes all review categories", () => {
+    const result = buildReviewPrompt(null, "");
     expect(result).toContain("Logic and correctness");
     expect(result).toContain("Readability");
     expect(result).toContain("Performance");
@@ -119,10 +136,10 @@ describe("buildReviewPrompt", () => {
 
   test("includes structured output format", () => {
     const result = buildReviewPrompt(baseTask, "");
-    expect(result).toContain("Output Format");
-    expect(result).toContain("File and line number");
+    expect(result).toContain("## Output Format");
+    expect(result).toContain("File and line number(s)");
     expect(result).toContain("Code snippet");
-    expect(result).toContain("Potential solution");
+    expect(result).toContain("Potential solution(s)");
   });
 
   test("includes ticket context when task is provided", () => {
@@ -162,13 +179,17 @@ describe("buildReviewPrompt", () => {
     const result = buildReviewPrompt(null, "");
     expect(result).not.toContain("**Title**:");
     expect(result).not.toContain("**Acceptance Criteria**:");
-    expect(result).not.toContain("**Project Notes**:");
   });
 
   test("includes project notes even when task is null", () => {
     const result = buildReviewPrompt(null, "We use Tailwind for styling");
     expect(result).toContain("**Project Notes**:");
     expect(result).toContain("We use Tailwind for styling");
+  });
+
+  test("uses the provided target branch", () => {
+    const result = buildReviewPrompt(null, "", "develop");
+    expect(result).toContain("git diff origin/develop...HEAD");
   });
 });
 
