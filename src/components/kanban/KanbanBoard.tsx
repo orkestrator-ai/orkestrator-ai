@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Plus, StickyNote } from "lucide-react";
 import { useKanbanStore, type KanbanStatus, type KanbanTask } from "@/stores/kanbanStore";
 import { useProjectStore } from "@/stores";
+import { useBuildPipelineStore, type BuildPhase } from "@/stores/buildPipelineStore";
+import { useShallow } from "zustand/react/shallow";
 import { KanbanCard } from "./KanbanCard";
 import { KanbanTaskDialog } from "./KanbanTaskDialog";
 import { ProjectNotesView } from "./ProjectNotesView";
@@ -34,11 +36,13 @@ function DroppableColumn({
   tasks,
   onClickTask,
   onAddTask,
+  buildPhaseByTaskId,
 }: {
   column: (typeof COLUMNS)[number];
   tasks: KanbanTask[];
   onClickTask: (task: KanbanTask) => void;
   onAddTask?: () => void;
+  buildPhaseByTaskId: Map<string, BuildPhase>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
@@ -78,6 +82,7 @@ function DroppableColumn({
               key={task.id}
               task={task}
               onClick={() => onClickTask(task)}
+              buildPhase={buildPhaseByTaskId.get(task.id)}
             />
           ))}
         </div>
@@ -96,6 +101,22 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
   const loadTasks = useKanbanStore((s) => s.loadTasks);
   const moveTask = useKanbanStore((s) => s.moveTask);
   const getProjectById = useProjectStore((s) => s.getProjectById);
+  const buildPhaseRecord = useBuildPipelineStore(
+    useShallow((s) => {
+      const record: Record<string, BuildPhase> = {};
+      for (const pipeline of s.pipelines.values()) {
+        if (pipeline.projectId === projectId) {
+          record[pipeline.taskId] = pipeline.phase;
+        }
+      }
+      return record;
+    })
+  );
+
+  const buildPhaseByTaskId = useMemo(
+    () => new Map(Object.entries(buildPhaseRecord)),
+    [buildPhaseRecord]
+  );
 
   const project = getProjectById(projectId);
 
@@ -221,6 +242,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
                     ? () => setCreateDialogOpen(true)
                     : undefined
                 }
+                buildPhaseByTaskId={buildPhaseByTaskId}
               />
             ))}
           </div>
@@ -231,6 +253,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
                 task={activeTask}
                 onClick={() => {}}
                 isDragOverlay
+                buildPhase={buildPhaseByTaskId.get(activeTask.id)}
               />
             )}
           </DragOverlay>
