@@ -5,6 +5,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,6 +51,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
   const { startBuild, navigateToBuild } = useBuildPipeline();
   const getPipelineByTaskId = useBuildPipelineStore((s) => s.getPipelineByTaskId);
   const [isBuildStarting, setIsBuildStarting] = useState(false);
+  const [confirmBuildType, setConfirmBuildType] = useState<"containerized" | "local" | null>(null);
 
   const isCreateMode = !!createForProjectId;
 
@@ -141,6 +152,17 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleAddComment();
+    }
+  };
+
+  const handleStartBuild = async (type: "containerized" | "local") => {
+    if (!task) return;
+    setIsBuildStarting(true);
+    try {
+      await startBuild(task, type);
+      handleOpenChange(false);
+    } finally {
+      setIsBuildStarting(false);
     }
   };
 
@@ -314,13 +336,11 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
                   variant="outline"
                   className="gap-1.5 flex-1"
                   disabled={isBuildStarting || !!hasActiveBuild}
-                  onClick={async () => {
-                    setIsBuildStarting(true);
-                    try {
-                      await startBuild(task, "containerized");
-                      handleOpenChange(false);
-                    } finally {
-                      setIsBuildStarting(false);
+                  onClick={() => {
+                    if (task.environmentId) {
+                      setConfirmBuildType("containerized");
+                    } else {
+                      void handleStartBuild("containerized");
                     }
                   }}
                 >
@@ -336,13 +356,11 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
                   variant="outline"
                   className="gap-1.5 flex-1"
                   disabled={isBuildStarting || !!hasActiveBuild}
-                  onClick={async () => {
-                    setIsBuildStarting(true);
-                    try {
-                      await startBuild(task, "local");
-                      handleOpenChange(false);
-                    } finally {
-                      setIsBuildStarting(false);
+                  onClick={() => {
+                    if (task.environmentId) {
+                      setConfirmBuildType("local");
+                    } else {
+                      void handleStartBuild("local");
                     }
                   }}
                 >
@@ -431,6 +449,34 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
           </Button>
         </div>
       </DialogContent>
+
+      <AlertDialog open={!!confirmBuildType} onOpenChange={(open) => { if (!open) setConfirmBuildType(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Environment Already Exists</AlertDialogTitle>
+            <AlertDialogDescription>
+              This task already has an environment linked to it. Starting a new build will create an additional environment.
+              <span className="block mt-2">
+                Are you sure you want to start a new{" "}
+                <strong>{confirmBuildType === "containerized" ? "container" : "local"}</strong> build?
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmBuildType) {
+                  void handleStartBuild(confirmBuildType);
+                }
+                setConfirmBuildType(null);
+              }}
+            >
+              Start Build
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
