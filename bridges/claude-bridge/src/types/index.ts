@@ -119,12 +119,17 @@ export interface SessionState {
   initData?: SessionInitData;
 }
 
+/** Effort level for controlling how much thinking/reasoning Claude applies */
+export type EffortLevel = "low" | "medium" | "high" | "max";
+
 /** Model info */
 export interface ModelInfo {
   id: string;
   name: string;
   description?: string;
   supportsFastMode?: boolean;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: EffortLevel[];
 }
 
 /** Question option for AskUserQuestion tool */
@@ -209,7 +214,7 @@ export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "
 /** Prompt options */
 export interface PromptOptions {
   model?: string;
-  thinking?: boolean;
+  effort?: EffortLevel;
   permissionMode?: PermissionMode;
   attachments?: Array<{
     type: "file" | "image";

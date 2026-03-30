@@ -72,7 +72,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const initialPromptSentRef = useRef(false);
   const isProcessingQueueRef = useRef(false);
   const slashCmdCleanupRef = useRef<(() => void) | null>(null);
-  const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => Promise<void>) | null>(null);
+  const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => Promise<void>) | null>(null);
 
   const {
     setClient,
@@ -94,7 +94,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     getOrCreateEventSubscription,
     setEventStream,
     hasActiveEventSubscription,
-    isThinkingEnabled,
+    getEffort,
     isPlanMode,
     setPlanMode,
     getSessionKeyBySdkSessionId,
@@ -558,7 +558,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
             // Send the prompt to the server
             const selectedModel = getSelectedModel(sessionKey);
-            const thinkingEnabled = isThinkingEnabled(sessionKey);
+            const effortLevel = getEffort(sessionKey);
             const planModeEnabled = isPlanMode(sessionKey);
             const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
 
@@ -568,7 +568,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             // Now send the prompt
             const success = await sendPrompt(bridgeClient, newSession.sessionId, initialPrompt, {
               model: selectedModel,
-              thinking: thinkingEnabled,
+              effort: effortLevel,
               permissionMode,
             });
 
@@ -916,7 +916,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   );
 
   const handleSend = useCallback(
-    async (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => {
+    async (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => {
       if (!client || !session) return;
 
       const selectedModel = getSelectedModel(sessionKey);
@@ -946,7 +946,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       const success = await sendPrompt(client, session.sessionId, text, {
         model: selectedModel,
         attachments: sdkAttachments.length > 0 ? sdkAttachments : undefined,
-        thinking: thinkingEnabled,
+        effort,
         permissionMode,
       });
 
@@ -962,12 +962,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   // Handle adding a message to the queue when Claude is busy
   const handleQueue = useCallback(
-    (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => {
+    (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => {
       addToQueue(sessionKey, {
         id: crypto.randomUUID(),
         text,
         attachments,
-        thinkingEnabled,
+        effort,
         planModeEnabled,
       });
     },
@@ -1027,8 +1027,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     };
   }, [handleStop, isActive, session?.isLoading]);
 
-  // Compute thinking and plan mode values outside useEffect to avoid function reference dependencies
-  const thinkingEnabledValue = isThinkingEnabled(sessionKey);
+  // Compute effort and plan mode values outside useEffect to avoid function reference dependencies
+  const effortValue = getEffort(sessionKey);
   const planModeEnabledValue = isPlanMode(sessionKey);
 
   // Send initial prompt on RECONNECTION to existing session only.
@@ -1051,9 +1051,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       // Also clear the initialPrompt from the pane store to prevent re-submission on remount
       clearTabInitialPrompt(tabId, environmentId);
       console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
-      handleSendRef.current?.(initialPrompt, [], thinkingEnabledValue, planModeEnabledValue);
+      handleSendRef.current?.(initialPrompt, [], effortValue, planModeEnabledValue);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, thinkingEnabledValue, planModeEnabledValue, clearTabInitialPrompt, environmentId]);
+  }, [connectionState, client, session, initialPrompt, tabId, effortValue, planModeEnabledValue, clearTabInitialPrompt, environmentId]);
 
   // Process queued messages when session becomes idle
   useEffect(() => {
@@ -1079,7 +1079,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         const sendPromise = handleSendRef.current?.(
           nextMessage.text,
           nextMessage.attachments,
-          nextMessage.thinkingEnabled,
+          nextMessage.effort,
           nextMessage.planModeEnabled
         );
 

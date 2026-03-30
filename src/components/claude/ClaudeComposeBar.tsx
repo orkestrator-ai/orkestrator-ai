@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ChevronUp, ArrowUp, Brain, MapPlus, Check, Square } from "lucide-react";
+import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ChevronUp, ArrowUp, Check, Square } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +20,7 @@ import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
 import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type QueuedMessage } from "@/stores/claudeStore";
+import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type QueuedMessage, type ClaudeEffortLevel } from "@/stores/claudeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import type { ClaudeModel } from "@/lib/claude-client";
 import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
@@ -30,6 +30,19 @@ import { useFileSearch } from "@/hooks/useFileSearch";
 import { useFileMentions } from "@/hooks/useFileMentions";
 import type { FileMention, FileCandidate } from "@/types";
 
+const EFFORT_LABELS: Record<ClaudeEffortLevel, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  max: "Max",
+};
+const EFFORT_DESCRIPTIONS: Record<ClaudeEffortLevel, string> = {
+  low: "Minimal thinking, fastest responses",
+  medium: "Moderate thinking for everyday tasks",
+  high: "Deep reasoning for complex problems",
+  max: "Maximum effort (Opus only)",
+};
+
 interface ClaudeComposeBarProps {
   environmentId: string;
   /** Tab ID for multi-tab support */
@@ -37,7 +50,7 @@ interface ClaudeComposeBarProps {
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: ClaudeModel[];
-  onSend: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => void;
+  onSend: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean) => void;
   disabled?: boolean;
   /** Whether Claude is currently processing a query */
   isLoading?: boolean;
@@ -46,7 +59,7 @@ interface ClaudeComposeBarProps {
   /** Callback when stop button is clicked */
   onStop?: () => void;
   /** Callback when a message should be added to the queue */
-  onQueue?: (text: string, attachments: ClaudeAttachment[], thinkingEnabled: boolean, planModeEnabled: boolean) => void;
+  onQueue?: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean) => void;
 }
 
 const MAX_LINES = 12;
@@ -95,8 +108,8 @@ export function ClaudeComposeBar({
     setDraftMentions,
     getSelectedModel,
     setSelectedModel,
-    isThinkingEnabled,
-    setThinkingEnabled,
+    getEffort,
+    setEffort,
     isPlanMode,
     setPlanMode,
     getQueuedMessages,
@@ -117,7 +130,7 @@ export function ClaudeComposeBar({
   const text = getDraftText(sessionKey);
   const mentions = getDraftMentions(sessionKey);
   const selectedModel = getSelectedModel(sessionKey);
-  const thinkingEnabled = isThinkingEnabled(sessionKey);
+  const effort = getEffort(sessionKey);
   const planModeEnabled = isPlanMode(sessionKey);
   const queuedMessages = getQueuedMessages(sessionKey);
 
@@ -460,7 +473,7 @@ export function ClaudeComposeBar({
     setIsSending(true);
     try {
       // Read current values directly from store to avoid stale closures
-      const currentThinkingEnabled = isThinkingEnabled(sessionKey);
+      const currentEffort = getEffort(sessionKey);
       const currentPlanModeEnabled = isPlanMode(sessionKey);
 
       // Serialize mentions: replace @filename with full relative path
@@ -468,9 +481,9 @@ export function ClaudeComposeBar({
 
       // If loading and onQueue is provided, add to queue instead of sending immediately
       if (isLoading && onQueue) {
-        onQueue(serializedText, attachments, currentThinkingEnabled, currentPlanModeEnabled);
+        onQueue(serializedText, attachments, currentEffort, currentPlanModeEnabled);
       } else {
-        onSend(serializedText, attachments, currentThinkingEnabled, currentPlanModeEnabled);
+        onSend(serializedText, attachments, currentEffort, currentPlanModeEnabled);
       }
       setText("");
       setMentions([]);
@@ -509,12 +522,12 @@ export function ClaudeComposeBar({
       }
       setDraftText(sessionKey, message.text);
       setDraftMentions(sessionKey, []);
-      setThinkingEnabled(sessionKey, message.thinkingEnabled);
+      setEffort(sessionKey, message.effort);
       setPlanMode(sessionKey, message.planModeEnabled);
       setQueueDialogOpen(false);
       inputRef.current?.focus();
     },
-    [removeQueueItem, sessionKey, clearAttachments, addAttachment, setDraftText, setDraftMentions, setThinkingEnabled, setPlanMode]
+    [removeQueueItem, sessionKey, clearAttachments, addAttachment, setDraftText, setDraftMentions, setEffort, setPlanMode]
   );
 
   const handleRemoveAttachment = (id: string) => {
@@ -669,35 +682,70 @@ export function ClaudeComposeBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Plan mode toggle */}
-        <button
-          onClick={() => setPlanMode(sessionKey, !planModeEnabled)}
-          disabled={disabled}
-          className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
-            planModeEnabled
-              ? "text-primary hover:text-primary/80 hover:bg-primary/10"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-          )}
-          title={planModeEnabled ? "Plan mode (Shift+Tab to toggle)" : "Edit mode (Shift+Tab to toggle)"}
-        >
-          <MapPlus className="w-3.5 h-3.5" />
-        </button>
+        {/* Plan/Build mode dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              disabled={disabled}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="Choose mode (Shift+Tab to toggle)"
+            >
+              <ChevronDown className="w-3 h-3" />
+              <span>{planModeEnabled ? "Plan" : "Build"}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => setPlanMode(sessionKey, false)}>
+              <div className="w-4 h-4 shrink-0 mr-2">
+                {!planModeEnabled && <Check className="w-4 h-4 text-primary" />}
+              </div>
+              Build
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setPlanMode(sessionKey, true)}>
+              <div className="w-4 h-4 shrink-0 mr-2">
+                {planModeEnabled && <Check className="w-4 h-4 text-primary" />}
+              </div>
+              Plan
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-        {/* Thinking toggle */}
-        <button
-          onClick={() => setThinkingEnabled(sessionKey, !thinkingEnabled)}
-          disabled={disabled}
-          className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
-            thinkingEnabled
-              ? "text-primary hover:text-primary/80 hover:bg-primary/10"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-          )}
-          title={thinkingEnabled ? "Extended thinking enabled" : "Extended thinking disabled"}
-        >
-          <Brain className="w-3.5 h-3.5" />
-        </button>
+        {/* Effort level dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              disabled={disabled}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="Choose effort level"
+            >
+              <ChevronDown className="w-3 h-3" />
+              <span>{EFFORT_LABELS[effort]}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[340px]">
+            {(selectedModelObj?.supportedEffortLevels ?? (["low", "medium", "high"] as ClaudeEffortLevel[])).map((level) => (
+              <DropdownMenuItem
+                key={level}
+                onClick={() => setEffort(sessionKey, level)}
+                className="flex items-start gap-2 py-2"
+              >
+                <div className="w-4 h-4 shrink-0 mt-0.5">
+                  {effort === level && <Check className="w-4 h-4 text-primary" />}
+                </div>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm font-medium">
+                    {EFFORT_LABELS[level]}
+                    {level === "high" ? " (default)" : ""}
+                    {effort === level && level !== "high" ? " (current)" : ""}
+                  </span>
+                  <span className="text-xs text-muted-foreground line-clamp-2">
+                    {EFFORT_DESCRIPTIONS[level]}
+                  </span>
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <ContextUsageWheel usage={contextUsage} className="ml-1" />
 
@@ -785,7 +833,7 @@ export function ClaudeComposeBar({
                           {message.text}
                         </p>
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                          {message.thinkingEnabled && <span>Thinking</span>}
+                          <span>Effort: {EFFORT_LABELS[message.effort]}</span>
                           {message.planModeEnabled && <span>Plan mode</span>}
                           {message.attachments.length > 0 && (
                             <span>
