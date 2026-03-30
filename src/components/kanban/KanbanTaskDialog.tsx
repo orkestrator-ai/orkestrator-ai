@@ -25,31 +25,50 @@ interface KanbanTaskDialogProps {
   task: KanbanTask | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When set, dialog opens in create mode for this project */
+  createForProjectId?: string;
 }
 
-export function KanbanTaskDialog({ task, open, onOpenChange }: KanbanTaskDialogProps) {
+export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId }: KanbanTaskDialogProps) {
   const updateTask = useKanbanStore((s) => s.updateTask);
   const deleteTask = useKanbanStore((s) => s.deleteTask);
+  const addTaskStore = useKanbanStore((s) => s.addTask);
   const addComment = useKanbanStore((s) => s.addComment);
   const deleteComment = useKanbanStore((s) => s.deleteComment);
+
+  const isCreateMode = !!createForProjectId;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editAC, setEditAC] = useState("");
   const [commentText, setCommentText] = useState("");
   const [isEditingAC, setIsEditingAC] = useState(false);
-  const [editAC, setEditAC] = useState("");
 
-  if (!task) return null;
+  // Reset create mode fields when dialog opens in create mode
+  const handleOpenChange = (newOpen: boolean) => {
+    if (!newOpen) {
+      setEditTitle("");
+      setEditDescription("");
+      setEditAC("");
+      setIsEditing(false);
+      setIsEditingAC(false);
+    }
+    onOpenChange(newOpen);
+  };
+
+  if (!task && !isCreateMode) return null;
 
   const handleStartEdit = () => {
-    setEditTitle(task.title);
-    setEditDescription(task.description);
+    if (task) {
+      setEditTitle(task.title);
+      setEditDescription(task.description);
+    }
     setIsEditing(true);
   };
 
   const handleSaveEdit = () => {
-    if (editTitle.trim()) {
+    if (editTitle.trim() && task) {
       void updateTask(task.id, { title: editTitle.trim(), description: editDescription.trim() });
     }
     setIsEditing(false);
@@ -59,13 +78,38 @@ export function KanbanTaskDialog({ task, open, onOpenChange }: KanbanTaskDialogP
     setIsEditing(false);
   };
 
+  const handleCreate = () => {
+    if (editTitle.trim() && createForProjectId) {
+      // Capture values before closing to avoid stale state in the .then() closure
+      const title = editTitle.trim();
+      const description = editDescription.trim();
+      const ac = editAC.trim();
+      handleOpenChange(false);
+      void addTaskStore(createForProjectId, title, description).then((newTaskId) => {
+        if (ac && newTaskId) {
+          void updateTask(newTaskId, { acceptanceCriteria: ac });
+        }
+      });
+    }
+  };
+
+  const handleCreateKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleCreate();
+    }
+  };
+
   const handleStartEditAC = () => {
-    setEditAC(task.acceptanceCriteria);
+    if (task) {
+      setEditAC(task.acceptanceCriteria);
+    }
     setIsEditingAC(true);
   };
 
   const handleSaveAC = () => {
-    void updateTask(task.id, { acceptanceCriteria: editAC.trim() });
+    if (task) {
+      void updateTask(task.id, { acceptanceCriteria: editAC.trim() });
+    }
     setIsEditingAC(false);
   };
 
@@ -74,12 +118,14 @@ export function KanbanTaskDialog({ task, open, onOpenChange }: KanbanTaskDialogP
   };
 
   const handleDelete = () => {
-    void deleteTask(task.id);
-    onOpenChange(false);
+    if (task) {
+      void deleteTask(task.id);
+    }
+    handleOpenChange(false);
   };
 
   const handleAddComment = () => {
-    if (commentText.trim()) {
+    if (commentText.trim() && task) {
       void addComment(task.id, commentText.trim());
       setCommentText("");
     }
@@ -92,8 +138,69 @@ export function KanbanTaskDialog({ task, open, onOpenChange }: KanbanTaskDialogP
     }
   };
 
+  if (isCreateMode) {
+    return (
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-[560px] max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+                Backlog
+              </span>
+            </div>
+            <div className="space-y-2 pt-1">
+              <DialogTitle className="sr-only">New Task</DialogTitle>
+              <Input
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={handleCreateKeyDown}
+                placeholder="Task title..."
+                className="text-lg font-semibold"
+                autoFocus
+              />
+              <Textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                placeholder="Description..."
+                rows={3}
+              />
+            </div>
+          </DialogHeader>
+
+          <Separator />
+
+          {/* Acceptance Criteria */}
+          <div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
+              <h4 className="text-sm font-medium">Acceptance Criteria</h4>
+            </div>
+            <Textarea
+              value={editAC}
+              onChange={(e) => setEditAC(e.target.value)}
+              placeholder="Define what 'done' looks like..."
+              rows={4}
+            />
+          </div>
+
+          {/* Create Actions */}
+          <div className="flex gap-2 pt-2">
+            <Button size="sm" onClick={handleCreate} disabled={!editTitle.trim()}>
+              Create Task
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => handleOpenChange(false)}>
+              Cancel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (!task) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[560px] max-h-[85vh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center justify-between pr-6">

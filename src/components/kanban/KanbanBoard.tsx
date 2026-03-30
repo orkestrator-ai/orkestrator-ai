@@ -11,7 +11,6 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Plus, StickyNote } from "lucide-react";
 import { useKanbanStore, type KanbanStatus, type KanbanTask } from "@/stores/kanbanStore";
 import { useProjectStore } from "@/stores";
@@ -95,7 +94,6 @@ function DroppableColumn({
 export function KanbanBoard({ projectId }: KanbanBoardProps) {
   const tasks = useKanbanStore((s) => s.tasks);
   const loadTasks = useKanbanStore((s) => s.loadTasks);
-  const addTask = useKanbanStore((s) => s.addTask);
   const moveTask = useKanbanStore((s) => s.moveTask);
   const getProjectById = useProjectStore((s) => s.getProjectById);
 
@@ -108,8 +106,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
 
   const [selectedTask, setSelectedTask] = useState<KanbanTask | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -177,23 +174,6 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
     setDialogOpen(true);
   }, []);
 
-  const handleAddTask = () => {
-    if (newTitle.trim()) {
-      void addTask(projectId, newTitle.trim(), "");
-      setNewTitle("");
-      setShowAddForm(false);
-    }
-  };
-
-  const handleAddKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleAddTask();
-    } else if (e.key === "Escape") {
-      setShowAddForm(false);
-      setNewTitle("");
-    }
-  };
-
   if (showNotes) {
     return <ProjectNotesView projectId={projectId} onBack={() => setShowNotes(false)} />;
   }
@@ -221,34 +201,6 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
         </div>
       </div>
 
-      {/* Add Task Form */}
-      {showAddForm && (
-        <div className="px-6 py-3 border-b border-border bg-muted/30">
-          <div className="flex items-center gap-2 max-w-md">
-            <Input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={handleAddKeyDown}
-              placeholder="Task title..."
-              autoFocus
-            />
-            <Button size="sm" onClick={handleAddTask} disabled={!newTitle.trim()}>
-              Add
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setShowAddForm(false);
-                setNewTitle("");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* Columns */}
       <div className="flex-1 overflow-x-auto p-6">
         <DndContext
@@ -266,7 +218,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
                 onClickTask={handleClickTask}
                 onAddTask={
                   column.id === "backlog"
-                    ? () => setShowAddForm(true)
+                    ? () => setCreateDialogOpen(true)
                     : undefined
                 }
               />
@@ -290,6 +242,14 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
         task={currentSelectedTask}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+      />
+
+      {/* Create Task Dialog */}
+      <KanbanTaskDialog
+        task={null}
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        createForProjectId={projectId}
       />
     </div>
   );

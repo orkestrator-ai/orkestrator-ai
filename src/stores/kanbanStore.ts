@@ -26,7 +26,7 @@ interface KanbanState {
 
   // Task actions
   loadTasks: (projectId: string) => Promise<void>;
-  addTask: (projectId: string, title: string, description: string) => Promise<void>;
+  addTask: (projectId: string, title: string, description: string) => Promise<string | undefined>;
   updateTask: (taskId: string, updates: Partial<Pick<KanbanTask, "title" | "description" | "acceptanceCriteria" | "status">>) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   moveTask: (taskId: string, newStatus: KanbanStatus) => Promise<void>;
@@ -66,8 +66,10 @@ export const useKanbanStore = create<KanbanState>()((set, get) => ({
     try {
       const task = await addKanbanTask(projectId, title, description);
       set((state) => ({ tasks: [...state.tasks, task] }));
+      return task.id;
     } catch (error) {
       console.error("[KanbanStore] Failed to add task:", error);
+      return undefined;
     }
   },
 
