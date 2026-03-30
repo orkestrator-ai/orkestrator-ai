@@ -1,5 +1,6 @@
+import { useRef, useEffect } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { GripVertical, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import type { KanbanTask } from "@/stores/kanbanStore";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,22 @@ export function KanbanCard({ task, onClick, isDragOverlay }: KanbanCardProps) {
     data: { type: "task", task },
   });
 
+  const wasDraggingRef = useRef(false);
+
+  useEffect(() => {
+    if (isDragging) {
+      wasDraggingRef.current = true;
+    }
+  }, [isDragging]);
+
+  const handleClick = () => {
+    if (wasDraggingRef.current) {
+      wasDraggingRef.current = false;
+      return;
+    }
+    onClick();
+  };
+
   const style = transform
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
@@ -30,36 +47,28 @@ export function KanbanCard({ task, onClick, isDragOverlay }: KanbanCardProps) {
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group rounded-lg border border-border bg-card p-3 shadow-sm cursor-pointer",
+        "group rounded-lg border border-border bg-card p-3 shadow-sm cursor-grab active:cursor-grabbing",
         "hover:border-primary/50 hover:shadow-md transition-[border-color,box-shadow]",
         isDragging && "opacity-30",
         isDragOverlay && "shadow-lg border-primary/50 rotate-2"
       )}
-      onClick={onClick}
+      onClick={handleClick}
+      {...attributes}
+      {...listeners}
     >
-      <div className="flex items-start gap-2">
-        <button
-          className="mt-0.5 shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-          {...attributes}
-          {...listeners}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h4 className="text-sm font-medium text-foreground truncate">{task.title}</h4>
-          {task.description && (
-            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
-              {task.description}
-            </p>
-          )}
-          {task.comments.length > 0 && (
-            <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-              <MessageSquare className="h-3 w-3" />
-              <span>{task.comments.length}</span>
-            </div>
-          )}
-        </div>
+      <div className="flex-1 min-w-0">
+        <h4 className="text-sm font-medium text-foreground truncate">{task.title}</h4>
+        {task.description && (
+          <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+            {task.description}
+          </p>
+        )}
+        {task.comments.length > 0 && (
+          <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+            <MessageSquare className="h-3 w-3" />
+            <span>{task.comments.length}</span>
+          </div>
+        )}
       </div>
     </div>
   );
