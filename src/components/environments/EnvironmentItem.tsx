@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/context-menu";
 import { Trash2, Play, Square, Container, Laptop, Shield, Globe, Settings2, RotateCw, Loader2 } from "lucide-react";
 import type { Environment } from "@/types";
-import { useClaudeActivityStore, useEnvironmentStore } from "@/stores";
+import { useClaudeActivityStore, useEnvironmentStore, useEnvironmentDiffStore } from "@/stores";
 import { EnvironmentSettingsDialog } from "./EnvironmentSettingsDialog";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
@@ -66,6 +66,9 @@ export function EnvironmentItem({
 
   // Check if this environment is being deleted
   const isEnvironmentDeleting = useEnvironmentStore((s) => s.isDeleting(environment.id));
+
+  // Get diff stats for this environment
+  const diffStats = useEnvironmentDiffStore((s) => s.stats.get(environment.id));
 
   const isLocalEnvironment = environment.environmentType === "local";
   // Local environments are always considered "running" - they exist or they don't
@@ -186,6 +189,19 @@ export function EnvironmentItem({
                   )
                 )}
                 <span className="flex-1 truncate">{environment.name}</span>
+                {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0 || diffStats.filesChanged > 0) && (
+                  <span className="ml-1 flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums">
+                    {diffStats.additions > 0 && (
+                      <span className="text-green-500">+{diffStats.additions}</span>
+                    )}
+                    {diffStats.deletions > 0 && (
+                      <span className="text-red-500">-{diffStats.deletions}</span>
+                    )}
+                    {diffStats.additions === 0 && diffStats.deletions === 0 && diffStats.filesChanged > 0 && (
+                      <span className="text-muted-foreground">{diffStats.filesChanged}F</span>
+                    )}
+                  </span>
+                )}
               </div>
             </ContextMenuTrigger>
           </TooltipTrigger>
@@ -212,6 +228,21 @@ export function EnvironmentItem({
                     </>
                   )}
                 </p>
+              )}
+              {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0 || diffStats.filesChanged > 0) && (
+                <div className="border-t border-border/50 pt-1 mt-1">
+                  <p className="text-xs text-muted-foreground">
+                    {diffStats.filesChanged} file{diffStats.filesChanged !== 1 ? "s" : ""} changed
+                  </p>
+                  <div className="flex items-center gap-2 font-mono text-xs tabular-nums">
+                    {diffStats.additions > 0 && (
+                      <span className="text-green-500">+{diffStats.additions} added</span>
+                    )}
+                    {diffStats.deletions > 0 && (
+                      <span className="text-red-500">-{diffStats.deletions} removed</span>
+                    )}
+                  </div>
+                </div>
               )}
               {environment.prUrl && (
                 <p className="text-xs text-blue-400">PR: {environment.prUrl}</p>

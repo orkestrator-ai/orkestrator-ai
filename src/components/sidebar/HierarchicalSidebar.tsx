@@ -38,9 +38,12 @@ import { useUIStore, useClaudeOptionsStore, useConfigStore, useEnvironmentStore 
 import { RepositorySettings } from "@/components/settings/RepositorySettings";
 import { shouldResolveSetupCommandsOnSelection } from "@/lib/setup-commands";
 import { updateEnvironmentAgentSettings } from "@/lib/tauri";
+import { useEnvironmentDiffStats } from "@/hooks/useEnvironmentDiffStats";
 import type { Environment, Project } from "@/types";
 
 export function HierarchicalSidebar() {
+  // Poll git diff stats for all environments
+  useEnvironmentDiffStats();
   const [showAddProjectDialog, setShowAddProjectDialog] = useState(false);
   const [showCreateEnvDialog, setShowCreateEnvDialog] = useState(false);
   const [createEnvProjectId, setCreateEnvProjectId] = useState<string | null>(null);
