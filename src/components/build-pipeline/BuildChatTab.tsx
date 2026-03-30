@@ -590,7 +590,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
 
-  // Start a review session (no ticket context)
+  // Start a review session (with ticket context and comprehensive review)
   const startReviewSession = useCallback(
     async (currentPipeline: NonNullable<typeof pipeline>) => {
       if (!client) return;
@@ -604,10 +604,17 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      const projectId = currentPipeline.projectId;
-      const repoConfig = config.repositories[projectId];
+      // Fetch ticket context for review
+      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      let projectNotes = "";
+      try {
+        const notes = await getProjectNotes(currentPipeline.projectId);
+        projectNotes = notes.content;
+      } catch (e) { console.debug("Failed to load project notes for review:", e); }
+
+      const repoConfig = config.repositories[currentPipeline.projectId];
       const targetBranch = repoConfig?.prBaseBranch || "main";
-      const reviewPrompt = buildReviewPrompt(targetBranch);
+      const reviewPrompt = buildReviewPrompt(task, projectNotes, targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -650,7 +657,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
         projectNotes = notes.content;
-      } catch { /* ignore */ }
+      } catch (e) { console.debug("Failed to load project notes for verification:", e); }
 
       const verifyPrompt = buildVerificationPrompt(task, projectNotes);
 
@@ -694,7 +701,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
         projectNotes = notes.content;
-      } catch { /* ignore */ }
+      } catch (e) { console.debug("Failed to load project notes for fix:", e); }
 
       const fixPrompt = buildFixPrompt(task, projectNotes, feedback);
 
@@ -880,16 +887,41 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
 // --- Helper functions (exported for testing) ---
 
+export type TaskSnapshot = {
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  comments: Array<{ text: string }>;
+};
+
 function getKanbanTaskSnapshot(taskId: string) {
   // Read directly from store to avoid stale closures
   const { tasks } = kanbanStoreRef.getState();
   return tasks.find((t) => t.id === taskId) ?? null;
 }
 
-export function buildReviewPrompt(targetBranch: string): string {
-  return `You are performing a commit and code review workflow. Execute these steps in order:
+export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
+  const parts: string[] = [];
 
-## Step 1: Commit Changes
+  if (task) {
+    parts.push("You are reviewing changes for the following ticket:\n");
+    parts.push(`**Title**: ${task.title}`);
+    if (task.description) parts.push(`\n**Description**: ${task.description}`);
+    if (task.acceptanceCriteria) parts.push(`\n**Acceptance Criteria**:\n${task.acceptanceCriteria}`);
+
+    if (task.comments.length > 0) {
+      parts.push("\n**Comments**:");
+      task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
+    }
+
+    parts.push("");
+  }
+
+  if (projectNotes) {
+    parts.push(`**Project Notes**:\n${projectNotes}\n`);
+  }
+
+  parts.push(`## Step 1: Commit Changes
 
 Based on the current git status and diff, create a single git commit:
 1. Run \`git status --porcelain\` and \`git diff HEAD\` to see all changes
@@ -925,10 +957,12 @@ After completing both steps:
    - Potential solution(s)
 4. If no issues found, state that the code meets best practices
 
-Begin by running the git commands to understand the current state.`;
+Begin by running the git commands to understand the current state.`);
+
+  return parts.join("\n");
 }
 
-export function buildBuildPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildBuildPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   if (!task) return "Build the feature as described.";
 
   const parts = [
@@ -952,7 +986,7 @@ export function buildBuildPrompt(task: { title: string; description: string; acc
   return parts.join("\n");
 }
 
-export function buildVerificationPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string): string {
+export function buildVerificationPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   if (!task) return "Do the changes satisfy the acceptance criteria?";
 
   const parts = [
@@ -976,7 +1010,7 @@ export function buildVerificationPrompt(task: { title: string; description: stri
   return parts.join("\n");
 }
 
-export function buildFixPrompt(task: { title: string; description: string; acceptanceCriteria: string; comments: Array<{ text: string }> } | null, projectNotes: string, feedback: string): string {
+export function buildFixPrompt(task: TaskSnapshot | null, projectNotes: string, feedback: string): string {
   if (!task) return `Fix the following issues:\n\n${feedback}\n\nDo not ask any questions.`;
 
   const parts = [
