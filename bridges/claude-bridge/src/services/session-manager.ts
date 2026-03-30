@@ -828,8 +828,8 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
 
   try {
     // Create the query with Claude Agent SDK
-    // Extended thinking is enabled by default (thinking !== false)
-    const thinkingEnabled = options?.thinking !== false;
+    // Determine effort level: use explicit effort option, fall back to thinking boolean for backwards compat
+    const effortLevel = options?.effort ?? (options?.thinking === false ? undefined : "high");
     // Use CWD env var if set (for local environments where bridge runs from its own dir)
     // This allows the Claude SDK to operate on the actual project directory
     const cwd = process.env.CWD || process.cwd();
@@ -855,7 +855,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
       cwd,
       model: options?.model,
       resume: session.sdkSessionId ?? null,
-      thinkingEnabled,
+      effortLevel,
       permissionMode,
       mcpServerCount,
       mcpServerNames: Array.from(mcpServerNames),
@@ -870,8 +870,8 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         cwd,
         model: options?.model,
         permissionMode,
-        // Enable extended thinking with up to 16K tokens (if enabled)
-        ...(thinkingEnabled && { maxThinkingTokens: 16000 }),
+        // Use effort level to control thinking depth (replaces maxThinkingTokens)
+        ...(effortLevel && { effort: effortLevel }),
         allowedTools: [
           "Read",
           "Edit",
@@ -1397,7 +1397,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
       // set to prevent infinite recursion if this re-prompt also gets rejected.
       const repromptOptions: PromptOptions = {
         model: options?.model,
-        thinking: options?.thinking,
+        effort: options?.effort,
         permissionMode: "plan",
         _isReprompt: true,
       };
@@ -1577,6 +1577,8 @@ export async function getAvailableModels(): Promise<Array<{
   name: string;
   description?: string;
   supportsFastMode?: boolean;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: ("low" | "medium" | "high" | "max")[];
 }>> {
   try {
     const cwd = process.env.CWD || process.cwd();
@@ -1600,11 +1602,13 @@ export async function getAvailableModels(): Promise<Array<{
       await q.return();
     }
 
-    return models.map((model: { value: string; displayName: string; description?: string; supportsFastMode?: boolean }) => ({
+    return models.map((model: { value: string; displayName: string; description?: string; supportsFastMode?: boolean; supportsEffort?: boolean; supportedEffortLevels?: ("low" | "medium" | "high" | "max")[] }) => ({
       id: model.value,
       name: model.displayName,
       description: model.description,
       supportsFastMode: model.supportsFastMode,
+      supportsEffort: model.supportsEffort,
+      supportedEffortLevels: model.supportedEffortLevels,
     }));
   } catch (error) {
     console.error("[session-manager] Error fetching supported models:", error);
@@ -1615,6 +1619,8 @@ export async function getAvailableModels(): Promise<Array<{
         name: "Claude Sonnet 4.6",
         description: "Latest and most capable model",
         supportsFastMode: true,
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high"],
       },
     ];
   }
