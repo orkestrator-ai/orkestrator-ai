@@ -1049,7 +1049,7 @@ export interface KanbanComment {
   createdAt: string;
 }
 
-export type KanbanStatus = "backlog" | "in-progress" | "review";
+export type KanbanStatus = "backlog" | "in-progress" | "review" | "done";
 
 export interface KanbanTask {
   id: string;

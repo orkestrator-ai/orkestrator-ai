@@ -20,6 +20,10 @@ export function ProjectNotesView({ projectId, onBack }: ProjectNotesViewProps) {
   const [draft, setDraft] = useState(notes);
   const [isDirty, setIsDirty] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftRef = useRef(draft);
+  const isDirtyRef = useRef(isDirty);
+  draftRef.current = draft;
+  isDirtyRef.current = isDirty;
 
   useEffect(() => {
     void loadNotes(projectId);
@@ -56,14 +60,17 @@ export function ProjectNotesView({ projectId, onBack }: ProjectNotesViewProps) {
     setIsDirty(false);
   };
 
-  // Clean up timeout on unmount and save if dirty
+  // Clean up timeout on unmount and flush save if dirty
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
+      if (isDirtyRef.current) {
+        void saveNotes(projectId, draftRef.current);
+      }
     };
-  }, []);
+  }, [projectId, saveNotes]);
 
   return (
     <div className="flex flex-col h-full bg-background">

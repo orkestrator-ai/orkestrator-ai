@@ -23,6 +23,7 @@ const COLUMNS: { id: KanbanStatus; label: string; color: string }[] = [
   { id: "backlog", label: "Backlog", color: "bg-zinc-500" },
   { id: "in-progress", label: "In Progress", color: "bg-blue-500" },
   { id: "review", label: "Review", color: "bg-amber-500" },
+  { id: "done", label: "Done", color: "bg-green-500" },
 ];
 
 interface KanbanBoardProps {
@@ -122,6 +123,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
       backlog: [],
       "in-progress": [],
       review: [],
+      done: [],
     };
     for (const task of projectTasks) {
       grouped[task.status].push(task);

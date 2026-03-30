@@ -402,6 +402,7 @@ pub enum KanbanStatus {
     Backlog,
     InProgress,
     Review,
+    Done,
 }
 
 /// A comment on a kanban task

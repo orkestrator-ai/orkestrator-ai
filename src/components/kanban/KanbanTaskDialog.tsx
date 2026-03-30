@@ -18,6 +18,7 @@ const STATUS_LABELS: Record<KanbanStatus, string> = {
   backlog: "Backlog",
   "in-progress": "In Progress",
   review: "Review",
+  done: "Done",
 };
 
 interface KanbanTaskDialogProps {

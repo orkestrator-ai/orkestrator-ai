@@ -70,6 +70,7 @@ export const useUIStore = create<UIState>()(
         set({
           selectedProjectId: projectId,
           selectedEnvironmentId: null,
+          selectedEnvironmentIds: [],
         }),
 
       selectEnvironment: (environmentId) =>

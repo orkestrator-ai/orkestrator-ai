@@ -19,8 +19,10 @@ export type { KanbanTask, KanbanStatus, KanbanComment, ProjectNotes };
 interface KanbanState {
   tasks: KanbanTask[];
   isLoading: boolean;
+  currentProjectId: string | null;
   notes: string;
   notesLoading: boolean;
+  currentNotesProjectId: string | null;
 
   // Task actions
   loadTasks: (projectId: string) => Promise<void>;
@@ -39,17 +41,24 @@ interface KanbanState {
 export const useKanbanStore = create<KanbanState>()((set, get) => ({
   tasks: [],
   isLoading: false,
+  currentProjectId: null,
   notes: "",
   notesLoading: false,
+  currentNotesProjectId: null,
 
   loadTasks: async (projectId) => {
-    set({ isLoading: true });
+    set({ isLoading: true, currentProjectId: projectId });
     try {
       const tasks = await getKanbanTasks(projectId);
-      set({ tasks, isLoading: false });
+      // Guard: only update if the user hasn't navigated to a different project
+      if (get().currentProjectId === projectId) {
+        set({ tasks, isLoading: false });
+      }
     } catch (error) {
       console.error("[KanbanStore] Failed to load tasks:", error);
-      set({ isLoading: false });
+      if (get().currentProjectId === projectId) {
+        set({ isLoading: false });
+      }
     }
   },
 
@@ -91,6 +100,15 @@ export const useKanbanStore = create<KanbanState>()((set, get) => ({
   moveTask: async (taskId, newStatus) => {
     const task = get().tasks.find((t) => t.id === taskId);
     if (!task || task.status === newStatus) return;
+
+    // Optimistic update: immediately move the card in the UI
+    const previousStatus = task.status;
+    set((state) => ({
+      tasks: state.tasks.map((t) =>
+        t.id === taskId ? { ...t, status: newStatus } : t
+      ),
+    }));
+
     try {
       const updated = await updateKanbanTask(taskId, undefined, undefined, undefined, newStatus);
       set((state) => ({
@@ -98,6 +116,12 @@ export const useKanbanStore = create<KanbanState>()((set, get) => ({
       }));
     } catch (error) {
       console.error("[KanbanStore] Failed to move task:", error);
+      // Rollback on failure
+      set((state) => ({
+        tasks: state.tasks.map((t) =>
+          t.id === taskId ? { ...t, status: previousStatus } : t
+        ),
+      }));
     }
   },
 
@@ -124,13 +148,17 @@ export const useKanbanStore = create<KanbanState>()((set, get) => ({
   },
 
   loadNotes: async (projectId) => {
-    set({ notesLoading: true });
+    set({ notesLoading: true, currentNotesProjectId: projectId });
     try {
       const result = await getProjectNotes(projectId);
-      set({ notes: result.content, notesLoading: false });
+      if (get().currentNotesProjectId === projectId) {
+        set({ notes: result.content, notesLoading: false });
+      }
     } catch (error) {
       console.error("[KanbanStore] Failed to load notes:", error);
-      set({ notesLoading: false });
+      if (get().currentNotesProjectId === projectId) {
+        set({ notesLoading: false });
+      }
     }
   },
 
