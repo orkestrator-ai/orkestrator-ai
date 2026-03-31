@@ -193,10 +193,6 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   }, [environmentId, removeContainerState]);
 
   useEffect(() => {
-    if (!isActive) {
-      return;
-    }
-
     const now = Date.now();
     const timeSinceLastInit = now - lastInitTimeRef.current;
     if (timeSinceLastInit < INIT_DEBOUNCE_MS && isInitializedRef.current) {
@@ -636,7 +632,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       slashCmdCleanupRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, environmentId, tabId, isActive, isLocal]);
+  }, [containerId, environmentId, tabId, isLocal]);
 
   const startSharedEventSubscription = useCallback(
     async (bridgeClient: ReturnType<typeof createClient>) => {
