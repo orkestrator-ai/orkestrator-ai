@@ -11,10 +11,11 @@ export type BuildPhase =
   | "verifying"
   | "fixing"
   | "creating-pr"
+  | "resolving-conflicts"
   | "complete"
   | "failed";
 
-export type PipelineSessionPhase = "build" | "review" | "verify" | "fix" | "pr";
+export type PipelineSessionPhase = "build" | "review" | "verify" | "fix" | "pr" | "resolve-conflicts";
 
 export interface PipelineSession {
   phase: PipelineSessionPhase;

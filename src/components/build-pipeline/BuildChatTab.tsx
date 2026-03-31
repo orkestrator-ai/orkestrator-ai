@@ -31,6 +31,7 @@ import { extractContextUsage } from "@/lib/context-usage";
 import { cn } from "@/lib/utils";
 import {
   createPRPrompt,
+  createResolveConflictsPrompt,
   createBuildReviewPrompt,
   createBuildPrompt,
   createVerificationPrompt,
@@ -39,6 +40,8 @@ import {
 import { parseVerificationResult } from "@/lib/parse-verification-result";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
+import { useEnvironmentStore } from "@/stores";
+import * as tauri from "@/lib/tauri";
 
 // Reference to kanban store for non-reactive reads
 const kanbanStoreRef = useKanbanStore;
@@ -59,6 +62,7 @@ const PHASE_LABELS: Record<BuildPhase, string> = {
   verifying: "Verifying",
   fixing: "Fixing Issues",
   "creating-pr": "Creating PR",
+  "resolving-conflicts": "Resolving Conflicts",
   complete: "Complete",
   failed: "Failed",
 };
@@ -72,6 +76,7 @@ const PHASE_COLORS: Record<BuildPhase, string> = {
   verifying: "text-purple-400",
   fixing: "text-red-400",
   "creating-pr": "text-cyan-400",
+  "resolving-conflicts": "text-yellow-400",
   complete: "text-green-400",
   failed: "text-red-500",
 };
@@ -82,6 +87,7 @@ const SESSION_PHASE_LABELS: Record<string, string> = {
   verify: "Verification Session",
   fix: "Fix Session",
   pr: "PR Creation Session",
+  "resolve-conflicts": "Conflict Resolution Session",
 };
 
 function SessionDivider({ session, index }: { session: PipelineSession; index: number }) {
@@ -431,7 +437,19 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             break;
 
           case "pr":
-            // PR creation complete -> pipeline is done
+            // PR creation complete -> check for merge conflicts before completing
+            {
+              const hasConflicts = await checkPRMergeConflicts();
+              if (hasConflicts) {
+                await startResolveConflictsSession(currentPipeline);
+              } else {
+                setPhase(pipelineId, "complete");
+              }
+            }
+            break;
+
+          case "resolve-conflicts":
+            // Conflict resolution complete -> pipeline is done
             setPhase(pipelineId, "complete");
             break;
 
@@ -833,6 +851,79 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       }
     },
     [client, pipelineId, environmentId, config.repositories, createPipelineSession, addMessage, setPhase, setPipelineError]
+  );
+
+  // Check if the PR has merge conflicts after creation
+  const checkPRMergeConflicts = useCallback(
+    async (): Promise<boolean> => {
+      const environment = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+      if (!environment) return false;
+
+      const isLocal = environment.environmentType === "local";
+      const containerId = environment.containerId ?? null;
+
+      try {
+        const result = isLocal
+          ? await tauri.detectPrLocal(environmentId, environment.branch)
+          : containerId
+            ? await tauri.detectPr(containerId, environment.branch)
+            : null;
+
+        if (result) {
+          // Update environment store with latest PR state
+          useEnvironmentStore.getState().setEnvironmentPR(
+            environmentId,
+            result.url,
+            result.state,
+            result.hasMergeConflicts
+          );
+          return result.hasMergeConflicts;
+        }
+      } catch (error) {
+        console.warn("[BuildChatTab] Failed to check PR merge conflicts:", error);
+      }
+
+      return false;
+    },
+    [environmentId]
+  );
+
+  // Start merge conflict resolution session (auto-launched after PR creation detects conflicts)
+  const startResolveConflictsSession = useCallback(
+    async (currentPipeline: NonNullable<typeof pipeline>) => {
+      if (!client) return;
+
+      setPhase(pipelineId, "resolving-conflicts");
+
+      const result = await createPipelineSession("resolve-conflicts", currentPipeline.iteration, "Conflict Resolution Session");
+      if (!result) {
+        setPipelineError(pipelineId, "Failed to create conflict resolution session");
+        return;
+      }
+
+      const repoConfig = config.repositories[currentPipeline.projectId];
+      const targetBranch = repoConfig?.prBaseBranch || "main";
+      const resolvePrompt = createResolveConflictsPrompt(targetBranch);
+
+      const userMessage: ClaudeMessageType = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: resolvePrompt,
+        parts: [{ type: "text", content: resolvePrompt }],
+        timestamp: new Date().toISOString(),
+      };
+
+      addMessage(result.sessionKey, userMessage);
+
+      const success = await sendPrompt(client, result.sdkSessionId, resolvePrompt, {
+        permissionMode: "bypassPermissions",
+      });
+
+      if (!success) {
+        setPipelineError(pipelineId, "Failed to send conflict resolution prompt");
+      }
+    },
+    [client, pipelineId, config.repositories, createPipelineSession, addMessage, setPhase, setPipelineError]
   );
 
   // Stop the pipeline - abort all sessions to ensure nothing keeps running
