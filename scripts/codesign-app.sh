@@ -26,7 +26,7 @@ while IFS= read -r -d '' f; do
   if file "$f" | grep -q "Mach-O"; then
     BINARIES+=("$f")
   fi
-done < <(find "$APP_PATH/Contents" -type f \( -perm +111 -o -name "*.dylib" -o -name "*.node" \) -print0)
+done < <(find "$APP_PATH/Contents" -type f \( -perm /111 -o -name "*.dylib" -o -name "*.node" \) -print0)
 
 echo "Found ${#BINARIES[@]} Mach-O binaries to sign"
 
@@ -44,7 +44,7 @@ done
 while IFS= read -r -d '' fw; do
   echo "  Signing framework: ${fw#"$APP_PATH/"}"
   codesign --force --sign "$IDENTITY" --options runtime "$fw"
-done < <(find "$APP_PATH/Contents/Frameworks" -depth 1 -name "*.framework" -print0 2>/dev/null || true)
+done < <(find "$APP_PATH/Contents/Frameworks" -maxdepth 1 -name "*.framework" -print0 2>/dev/null || true)
 
 # Sign the outer app bundle last (seals everything).
 echo "  Signing app bundle"
@@ -52,3 +52,4 @@ codesign --force --sign "$IDENTITY" --options runtime "$APP_PATH"
 
 echo "Verifying signature..."
 codesign --verify --deep --strict "$APP_PATH" 2>&1 && echo "Signature OK" || echo "Warning: verification reported issues (may be expected for ad-hoc)"
+
