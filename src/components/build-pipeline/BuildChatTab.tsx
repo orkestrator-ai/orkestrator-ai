@@ -449,8 +449,15 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             break;
 
           case "resolve-conflicts":
-            // Conflict resolution complete -> pipeline is done
-            setPhase(pipelineId, "complete");
+            // Conflict resolution complete -> verify conflicts are actually resolved
+            {
+              const stillConflicting = await checkPRMergeConflicts();
+              if (stillConflicting) {
+                setPipelineError(pipelineId, "Merge conflicts could not be fully resolved automatically");
+              } else {
+                setPhase(pipelineId, "complete");
+              }
+            }
             break;
 
           case "verify": {
@@ -862,25 +869,24 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       const isLocal = environment.environmentType === "local";
       const containerId = environment.containerId ?? null;
 
-      try {
-        const result = isLocal
-          ? await tauri.detectPrLocal(environmentId, environment.branch)
-          : containerId
-            ? await tauri.detectPr(containerId, environment.branch)
-            : null;
+      if (!isLocal && !containerId) {
+        console.warn("[BuildChatTab] Container environment missing containerId, cannot check PR conflicts");
+        return false;
+      }
 
-        if (result) {
-          // Update environment store with latest PR state
-          useEnvironmentStore.getState().setEnvironmentPR(
-            environmentId,
-            result.url,
-            result.state,
-            result.hasMergeConflicts
-          );
-          return result.hasMergeConflicts;
-        }
-      } catch (error) {
-        console.warn("[BuildChatTab] Failed to check PR merge conflicts:", error);
+      const result = isLocal
+        ? await tauri.detectPrLocal(environmentId, environment.branch)
+        : await tauri.detectPr(containerId!, environment.branch);
+
+      if (result) {
+        // Update environment store with latest PR state
+        useEnvironmentStore.getState().setEnvironmentPR(
+          environmentId,
+          result.url,
+          result.state,
+          result.hasMergeConflicts
+        );
+        return result.hasMergeConflicts;
       }
 
       return false;
