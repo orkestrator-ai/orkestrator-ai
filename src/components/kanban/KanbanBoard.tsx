@@ -101,6 +101,14 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
   const loadTasks = useKanbanStore((s) => s.loadTasks);
   const moveTask = useKanbanStore((s) => s.moveTask);
   const getProjectById = useProjectStore((s) => s.getProjectById);
+
+  // Force re-evaluation of build phases every 5 seconds to keep pills fresh
+  const [, setPollTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setPollTick((t) => t + 1), 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const buildPhaseRecord = useBuildPipelineStore(
     useShallow((s) => {
       const record: Record<string, BuildPhase> = {};
