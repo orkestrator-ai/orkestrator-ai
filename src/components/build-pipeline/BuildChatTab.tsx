@@ -40,7 +40,6 @@ import {
 import { parseVerificationResult } from "@/lib/parse-verification-result";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
-import { useEnvironmentStore } from "@/stores";
 import * as tauri from "@/lib/tauri";
 
 // Reference to kanban store for non-reactive reads
@@ -205,7 +204,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
   // Initialize bridge server connection
   useEffect(() => {
-    if (!isActive || isInitializedRef.current || !pipeline) return;
+    if (isInitializedRef.current || !pipeline) return;
 
     let mounted = true;
 
@@ -275,7 +274,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     initialize();
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [environmentId, isActive, pipeline?.id, isLocal]);
+  }, [environmentId, pipeline?.id, isLocal]);
 
   // SSE subscription - reuses same pattern as ClaudeChatTab
   const startSharedEventSubscription = useCallback(
@@ -991,10 +990,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
       getProjectNotes(pipeline.projectId).then((notes) => {
-        const prompt = buildBuildPrompt(task, notes.content);
+        const prompt = createBuildPrompt(task, notes.content);
         startBuildSession(prompt);
       }).catch(() => {
-        const prompt = buildBuildPrompt(task, "");
+        const prompt = createBuildPrompt(task, "");
         startBuildSession(prompt);
       });
     }
