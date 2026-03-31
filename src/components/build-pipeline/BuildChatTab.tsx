@@ -29,7 +29,14 @@ import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
 import type { BuildTabData } from "@/types/paneLayout";
 import { extractContextUsage } from "@/lib/context-usage";
 import { cn } from "@/lib/utils";
-import { buildPRPrompt } from "@/lib/pr-prompts";
+import {
+  createPRPrompt,
+  createBuildReviewPrompt,
+  createBuildPrompt,
+  createVerificationPrompt,
+  createFixPrompt,
+} from "@/prompts";
+import { parseVerificationResult } from "@/lib/parse-verification-result";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
 
@@ -672,7 +679,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const repoConfig = config.repositories[currentPipeline.projectId];
       const targetBranch = repoConfig?.prBaseBranch || "main";
-      const reviewPrompt = buildReviewPrompt(task, projectNotes, targetBranch);
+      const reviewPrompt = createBuildReviewPrompt(task, projectNotes, targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -717,7 +724,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         projectNotes = notes.content;
       } catch (e) { console.debug("Failed to load project notes for verification:", e); }
 
-      const verifyPrompt = buildVerificationPrompt(task, projectNotes);
+      const verifyPrompt = createVerificationPrompt(task, projectNotes);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -761,7 +768,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         projectNotes = notes.content;
       } catch (e) { console.debug("Failed to load project notes for fix:", e); }
 
-      const fixPrompt = buildFixPrompt(task, projectNotes, feedback);
+      const fixPrompt = createFixPrompt(task, projectNotes, feedback);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -805,7 +812,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const repoConfig = config.repositories[currentPipeline.projectId];
       const targetBranch = repoConfig?.prBaseBranch || "main";
-      const prPrompt = buildPRPrompt(targetBranch);
+      const prPrompt = createPRPrompt(targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -869,10 +876,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     }
 
     getProjectNotes(pipeline.projectId).then((notes) => {
-      const prompt = buildBuildPrompt(task, notes.content);
+      const prompt = createBuildPrompt(task, notes.content);
       startBuildSession(prompt);
     }).catch(() => {
-      const prompt = buildBuildPrompt(task, "");
+      const prompt = createBuildPrompt(task, "");
       startBuildSession(prompt);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -991,14 +998,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   );
 }
 
-// --- Helper functions (exported for testing) ---
-
-export type TaskSnapshot = {
-  title: string;
-  description: string;
-  acceptanceCriteria: string;
-  comments: Array<{ text: string }>;
-};
+// --- Helper functions ---
 
 function getKanbanTaskSnapshot(taskId: string) {
   // Read directly from store to avoid stale closures
@@ -1006,182 +1006,3 @@ function getKanbanTaskSnapshot(taskId: string) {
   return tasks.find((t) => t.id === taskId) ?? null;
 }
 
-export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
-  const parts: string[] = [];
-
-  if (task) {
-    parts.push("You are reviewing changes for the following ticket:\n");
-    parts.push(`**Title**: ${task.title}`);
-    if (task.description) parts.push(`\n**Description**: ${task.description}`);
-    if (task.acceptanceCriteria) parts.push(`\n**Acceptance Criteria**:\n${task.acceptanceCriteria}`);
-
-    if (task.comments.length > 0) {
-      parts.push("\n**Comments**:");
-      task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
-    }
-
-    parts.push("");
-  }
-
-  if (projectNotes) {
-    parts.push(`**Project Notes**:\n${projectNotes}\n`);
-  }
-
-  parts.push(`## Step 1: Commit Changes
-
-Based on the current git status and diff, create a single git commit:
-1. Run \`git status --porcelain\` and \`git diff HEAD\` to see all changes
-2. Add any untracked files that should be committed: \`git add <files>\`
-3. Create a commit with a well-formatted message following conventional commit format
-4. Do NOT reference Claude or add Claude as a contributor
-5. Use this format for the commit message:
-   - First line: type(scope): brief description
-   - Blank line
-   - Bullet points describing the changes
-
-## Step 2: Code Review
-
-Compare the current branch against the remote \`${targetBranch}\` branch and conduct a thorough code review:
-1. Run \`git diff origin/${targetBranch}...HEAD\` to see all changes since branching
-2. Review the diff focusing on:
-   - **Logic and correctness**: Check for bugs, edge cases, and potential issues
-   - **Readability**: Is the code clear and maintainable? Does it follow repository patterns?
-   - **Performance**: Are there obvious performance concerns or optimizations?
-   - **Test coverage**: If the repo has testing patterns, are there adequate tests?
-3. Ask clarifying questions if needed about unclear changes
-
-## Output Format
-
-After completing both steps:
-1. Confirm the commit was created with its message
-2. Provide a summary overview of the general code quality
-3. List any identified issues in numbered sections with:
-   - Title
-   - File and line number(s)
-   - Description of the issue
-   - Code snippet (if relevant)
-   - Potential solution(s)
-4. If no issues found, state that the code meets best practices
-
-Begin by running the git commands to understand the current state.`);
-
-  return parts.join("\n");
-}
-
-export function buildBuildPrompt(task: TaskSnapshot | null, projectNotes: string): string {
-  if (!task) return "Build the feature as described.";
-
-  const parts = [
-    "You are building a feature. Here is the ticket:\n",
-    `**Title**: ${task.title}`,
-    task.description ? `\n**Description**: ${task.description}` : "",
-    task.acceptanceCriteria ? `\n**Acceptance Criteria**:\n${task.acceptanceCriteria}` : "",
-  ];
-
-  if (task.comments.length > 0) {
-    parts.push("\n**Comments**:");
-    task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
-  }
-
-  if (projectNotes) {
-    parts.push(`\n**Project Notes**:\n${projectNotes}`);
-  }
-
-  parts.push("\n\nBuild this feature completely. Do not ask any questions - make your best judgment for any ambiguous requirements. Just go ahead and implement everything needed.");
-
-  return parts.join("\n");
-}
-
-export function buildVerificationPrompt(task: TaskSnapshot | null, projectNotes: string): string {
-  if (!task) return "Do the changes satisfy the acceptance criteria?";
-
-  const parts = [
-    "Review the current state of the codebase against the following ticket context:\n",
-    `**Title**: ${task.title}`,
-    task.description ? `\n**Description**: ${task.description}` : "",
-    task.acceptanceCriteria ? `\n**Acceptance Criteria**:\n${task.acceptanceCriteria}` : "",
-  ];
-
-  if (task.comments.length > 0) {
-    parts.push("\n**Comments**:");
-    task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
-  }
-
-  if (projectNotes) {
-    parts.push(`\n**Project Notes**:\n${projectNotes}`);
-  }
-
-  parts.push(`\n\nDo the changes implemented satisfy ALL acceptance criteria according to the context above?
-
-Respond with ONLY a JSON object in the following format (no other text before or after):
-
-\`\`\`json
-{"complete": true, "rationale": "Your explanation here"}
-\`\`\`
-
-Set "complete" to true if ALL acceptance criteria are satisfied, or false if any are not met. In "rationale", provide a detailed explanation of your reasoning.`);
-
-  return parts.join("\n");
-}
-
-export function buildFixPrompt(task: TaskSnapshot | null, projectNotes: string, feedback: string): string {
-  if (!task) return `Fix the following issues:\n\n${feedback}\n\nDo not ask any questions.`;
-
-  const parts = [
-    "The following acceptance criteria have NOT been fully satisfied. Here is the ticket context:\n",
-    `**Title**: ${task.title}`,
-    task.description ? `\n**Description**: ${task.description}` : "",
-    task.acceptanceCriteria ? `\n**Acceptance Criteria**:\n${task.acceptanceCriteria}` : "",
-  ];
-
-  if (task.comments.length > 0) {
-    parts.push("\n**Comments**:");
-    task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
-  }
-
-  if (projectNotes) {
-    parts.push(`\n**Project Notes**:\n${projectNotes}`);
-  }
-
-  parts.push(`\n\n**Why the acceptance criteria are not satisfied**:\n${feedback}`);
-  parts.push("\n\nPlease fix the issues above to satisfy the acceptance criteria. Do not ask any questions - make sensible assumptions and go ahead.");
-
-  return parts.join("\n");
-}
-
-export function parseVerificationResult(messages: ClaudeMessageType[]): { verdict: "pass" | "fail"; feedback: string } {
-  const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
-  if (!lastAssistant) return { verdict: "fail", feedback: "No verification response received" };
-
-  const text = lastAssistant.parts
-    .filter((p) => p.type === "text")
-    .map((p) => p.content)
-    .join("\n")
-    .trim();
-
-  // Try JSON format first: { "complete": true/false, "rationale": "..." }
-  try {
-    // Prefer ```json block, then bare ``` block, then raw JSON object
-    const jsonMatch =
-      text.match(/```json\s*\n([\s\S]*?)\n\s*```/) ??
-      text.match(/```\s*\n([\s\S]*?)\n\s*```/) ??
-      text.match(/(\{"complete"\s*:\s*(?:true|false)\s*,\s*"rationale"\s*:\s*"[\s\S]*?"\s*\})/);
-    if (jsonMatch?.[1]) {
-      const parsed = JSON.parse(jsonMatch[1]);
-      if (typeof parsed.complete === "boolean") {
-        return {
-          verdict: parsed.complete ? "pass" : "fail",
-          feedback: typeof parsed.rationale === "string" ? parsed.rationale : text,
-        };
-      }
-    }
-  } catch {
-    // Fall through to legacy parsing
-  }
-
-  // Legacy fallback: check for YES/NO on first line
-  const firstLine = text.split("\n")[0]?.trim().toUpperCase() ?? "";
-  const verdict = firstLine.startsWith("YES") ? "pass" : "fail";
-
-  return { verdict, feedback: text };
-}
