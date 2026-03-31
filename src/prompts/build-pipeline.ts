@@ -3,8 +3,6 @@
  * reviewing changes, verifying acceptance criteria, and fixing issues.
  */
 
-import type { ClaudeMessage } from "@/lib/claude-client";
-
 export type TaskSnapshot = {
   title: string;
   description: string;
@@ -12,7 +10,7 @@ export type TaskSnapshot = {
   comments: Array<{ text: string }>;
 };
 
-export function buildReviewPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
+export function createBuildReviewPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
   const parts: string[] = [];
 
   if (task) {
@@ -74,7 +72,7 @@ Begin by running the git commands to understand the current state.`);
   return parts.join("\n");
 }
 
-export function buildBuildPrompt(task: TaskSnapshot | null, projectNotes: string): string {
+export function createBuildPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   if (!task) return "Build the feature as described.";
 
   const parts = [
@@ -98,7 +96,7 @@ export function buildBuildPrompt(task: TaskSnapshot | null, projectNotes: string
   return parts.join("\n");
 }
 
-export function buildVerificationPrompt(task: TaskSnapshot | null, projectNotes: string): string {
+export function createVerificationPrompt(task: TaskSnapshot | null, projectNotes: string): string {
   if (!task) return "Do the changes satisfy the acceptance criteria?";
 
   const parts = [
@@ -130,7 +128,7 @@ Set "complete" to true if ALL acceptance criteria are satisfied, or false if any
   return parts.join("\n");
 }
 
-export function buildFixPrompt(task: TaskSnapshot | null, projectNotes: string, feedback: string): string {
+export function createFixPrompt(task: TaskSnapshot | null, projectNotes: string, feedback: string): string {
   if (!task) return `Fix the following issues:\n\n${feedback}\n\nDo not ask any questions.`;
 
   const parts = [
@@ -153,41 +151,4 @@ export function buildFixPrompt(task: TaskSnapshot | null, projectNotes: string, 
   parts.push("\n\nPlease fix the issues above to satisfy the acceptance criteria. Do not ask any questions - make sensible assumptions and go ahead.");
 
   return parts.join("\n");
-}
-
-export function parseVerificationResult(messages: ClaudeMessage[]): { verdict: "pass" | "fail"; feedback: string } {
-  const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
-  if (!lastAssistant) return { verdict: "fail", feedback: "No verification response received" };
-
-  const text = lastAssistant.parts
-    .filter((p) => p.type === "text")
-    .map((p) => p.content)
-    .join("\n")
-    .trim();
-
-  // Try JSON format first: { "complete": true/false, "rationale": "..." }
-  try {
-    // Prefer ```json block, then bare ``` block, then raw JSON object
-    const jsonMatch =
-      text.match(/```json\s*\n([\s\S]*?)\n\s*```/) ??
-      text.match(/```\s*\n([\s\S]*?)\n\s*```/) ??
-      text.match(/(\{"complete"\s*:\s*(?:true|false)\s*,\s*"rationale"\s*:\s*"[\s\S]*?"\s*\})/);
-    if (jsonMatch?.[1]) {
-      const parsed = JSON.parse(jsonMatch[1]);
-      if (typeof parsed.complete === "boolean") {
-        return {
-          verdict: parsed.complete ? "pass" : "fail",
-          feedback: typeof parsed.rationale === "string" ? parsed.rationale : text,
-        };
-      }
-    }
-  } catch {
-    // Fall through to legacy parsing
-  }
-
-  // Legacy fallback: check for YES/NO on first line
-  const firstLine = text.split("\n")[0]?.trim().toUpperCase() ?? "";
-  const verdict = firstLine.startsWith("YES") ? "pass" : "fail";
-
-  return { verdict, feedback: text };
 }

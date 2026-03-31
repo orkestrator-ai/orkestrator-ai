@@ -10,7 +10,7 @@
  * Used by both the manual "Create PR" action bar button and the
  * automated build pipeline PR creation session.
  */
-export function buildPRPrompt(targetBranch: string): string {
+export function createPRPrompt(targetBranch: string): string {
   return `You are performing a complete PR creation workflow. Execute these steps in order:
 
 ## Step 1: Stage All Changes

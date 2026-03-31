@@ -30,13 +30,13 @@ import type { BuildTabData } from "@/types/paneLayout";
 import { extractContextUsage } from "@/lib/context-usage";
 import { cn } from "@/lib/utils";
 import {
-  buildPRPrompt,
-  buildReviewPrompt,
-  buildBuildPrompt,
-  buildVerificationPrompt,
-  buildFixPrompt,
-  parseVerificationResult,
+  createPRPrompt,
+  createBuildReviewPrompt,
+  createBuildPrompt,
+  createVerificationPrompt,
+  createFixPrompt,
 } from "@/prompts";
+import { parseVerificationResult } from "@/lib/parse-verification-result";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
 
@@ -679,7 +679,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const repoConfig = config.repositories[currentPipeline.projectId];
       const targetBranch = repoConfig?.prBaseBranch || "main";
-      const reviewPrompt = buildReviewPrompt(task, projectNotes, targetBranch);
+      const reviewPrompt = createBuildReviewPrompt(task, projectNotes, targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -724,7 +724,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         projectNotes = notes.content;
       } catch (e) { console.debug("Failed to load project notes for verification:", e); }
 
-      const verifyPrompt = buildVerificationPrompt(task, projectNotes);
+      const verifyPrompt = createVerificationPrompt(task, projectNotes);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -768,7 +768,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         projectNotes = notes.content;
       } catch (e) { console.debug("Failed to load project notes for fix:", e); }
 
-      const fixPrompt = buildFixPrompt(task, projectNotes, feedback);
+      const fixPrompt = createFixPrompt(task, projectNotes, feedback);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -812,7 +812,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const repoConfig = config.repositories[currentPipeline.projectId];
       const targetBranch = repoConfig?.prBaseBranch || "main";
-      const prPrompt = buildPRPrompt(targetBranch);
+      const prPrompt = createPRPrompt(targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -876,10 +876,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     }
 
     getProjectNotes(pipeline.projectId).then((notes) => {
-      const prompt = buildBuildPrompt(task, notes.content);
+      const prompt = createBuildPrompt(task, notes.content);
       startBuildSession(prompt);
     }).catch(() => {
-      const prompt = buildBuildPrompt(task, "");
+      const prompt = createBuildPrompt(task, "");
       startBuildSession(prompt);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

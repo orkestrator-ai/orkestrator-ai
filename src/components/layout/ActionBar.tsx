@@ -28,7 +28,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useTerminalContext, MAX_TABS } from "@/contexts";
 import { usePullRequest, useProjects, useEnvironments } from "@/hooks";
 import {
-  buildPRPrompt,
+  createPRPrompt,
   createReviewPrompt,
   createPushChangesPrompt,
   createResolveConflictsPrompt,
@@ -399,7 +399,7 @@ export function ActionBar() {
 
     const repoConfig = config.repositories[selectedProjectId];
     const targetBranch = repoConfig?.prBaseBranch || "main";
-    const prPrompt = buildPRPrompt(targetBranch);
+    const prPrompt = createPRPrompt(targetBranch);
 
     // Set monitoring mode to create-pending for faster PR detection (5s intervals)
     setModeCreatePending();
