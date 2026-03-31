@@ -96,7 +96,7 @@ export function createBuildPrompt(task: TaskSnapshot | null, projectNotes: strin
   return parts.join("\n");
 }
 
-export function createVerificationPrompt(task: TaskSnapshot | null, projectNotes: string): string {
+export function createVerificationPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
   if (!task) return "Do the changes satisfy the acceptance criteria?";
 
   const parts = [
@@ -115,7 +115,11 @@ export function createVerificationPrompt(task: TaskSnapshot | null, projectNotes
     parts.push(`\n**Project Notes**:\n${projectNotes}`);
   }
 
-  parts.push(`\n\nDo the changes implemented satisfy ALL acceptance criteria according to the context above?
+  parts.push(`\n\nVerify the changes on the current branch against the target branch \`${targetBranch}\`.
+
+1. Run \`git branch --show-current\` to identify the current branch
+2. Run \`git diff origin/${targetBranch}...HEAD\` to see all changes since branching from \`${targetBranch}\`
+3. Review the diff to determine whether ALL acceptance criteria above are satisfied
 
 Respond with ONLY a JSON object in the following format (no other text before or after):
 
