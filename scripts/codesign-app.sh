@@ -26,12 +26,12 @@ while IFS= read -r -d '' f; do
   if file "$f" | grep -q "Mach-O"; then
     BINARIES+=("$f")
   fi
-done < <(find "$APP_PATH/Contents" -type f \( -perm /111 -o -name "*.dylib" -o -name "*.node" \) -print0)
+done < <(find "$APP_PATH/Contents" -type f \( -perm +111 -o -name "*.dylib" -o -name "*.node" \) -print0)
 
 echo "Found ${#BINARIES[@]} Mach-O binaries to sign"
 
 # Sign each binary individually with hardened runtime.
-for bin in "${BINARIES[@]}"; do
+for bin in "${BINARIES[@]+"${BINARIES[@]}"}"; do
   # Skip the main executable — it gets signed with the outer bundle.
   if [[ "$bin" == "$APP_PATH/Contents/MacOS/"* ]]; then
     continue
