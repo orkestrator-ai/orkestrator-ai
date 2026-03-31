@@ -868,16 +868,34 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     setServerStatus(environmentId, { running: false, hostPort: null });
   }, [environmentId, setClient, setServerStatus]);
 
-  // When the bridge server is connected and environment is starting, transition to waiting-for-setup.
-  // This gates the build until setup scripts (from orkestrator-ai.json) have completed.
+  // When the bridge server is connected and environment is starting, transition phase.
+  // For local environments: move to waiting-for-setup so we gate on setup scripts.
+  // For container environments: setup runs inside the container before the bridge connects,
+  // so skip waiting-for-setup and go straight to building.
   useEffect(() => {
     if (connectionState !== "connected" || !client || !pipeline) return;
     if (pipeline.phase !== "starting-environment") return;
     if (pipeline.sessions.length > 0) return;
 
-    setPhase(pipelineId, "waiting-for-setup");
+    if (isLocal) {
+      setPhase(pipelineId, "waiting-for-setup");
+    } else {
+      // Container setup already completed — start build immediately
+      const task = getKanbanTaskSnapshot(pipeline.taskId);
+      if (!task) {
+        setPipelineError(pipelineId, "Task not found");
+        return;
+      }
+      getProjectNotes(pipeline.projectId).then((notes) => {
+        const prompt = buildBuildPrompt(task, notes.content);
+        startBuildSession(prompt);
+      }).catch(() => {
+        const prompt = buildBuildPrompt(task, "");
+        startBuildSession(prompt);
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionState, client, pipeline?.phase, pipeline?.sessions.length]);
+  }, [connectionState, client, pipeline?.phase, pipeline?.sessions.length, isLocal]);
 
   // Once in waiting-for-setup, start the build only after setup scripts have finished.
   // We check three conditions to handle the race between setup command resolution and execution:
@@ -924,6 +942,20 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         <Loader2 className="w-8 h-8 animate-spin text-yellow-400" />
         <p className="text-sm">Waiting for setup scripts to complete...</p>
         <p className="text-xs">Build will start automatically once setup finishes</p>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-2 text-xs text-muted-foreground"
+          onClick={() => {
+            // Force-resolve setup state so the build-start effect can proceed
+            useEnvironmentStore.getState().setSetupScriptsRunning(environmentId, false);
+            useEnvironmentStore.getState().setSetupCommandsResolved(environmentId, true);
+            // Clear any pending commands so hasPendingSetupCommands becomes false
+            useEnvironmentStore.getState().consumePendingSetupCommands(environmentId);
+          }}
+        >
+          Skip waiting
+        </Button>
       </div>
     );
   }
