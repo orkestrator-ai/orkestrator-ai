@@ -45,6 +45,23 @@ import * as tauri from "@/lib/tauri";
 // Reference to kanban store for non-reactive reads
 const kanbanStoreRef = useKanbanStore;
 
+/**
+ * Determines whether setup is still pending for a given environment type.
+ * Used to gate build start and show the "waiting for setup" UI.
+ */
+export function isSetupPending(params: {
+  isLocal: boolean;
+  setupCommandsResolved: boolean;
+  hasPendingSetupCommands: boolean;
+  setupScriptsRunning: boolean;
+  workspaceReady: boolean;
+}): boolean {
+  if (params.isLocal) {
+    return params.setupScriptsRunning || params.hasPendingSetupCommands || !params.setupCommandsResolved;
+  }
+  return !params.workspaceReady;
+}
+
 interface BuildChatTabProps {
   data: BuildTabData;
   isActive: boolean;
@@ -1005,13 +1022,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     if (pipeline.phase !== "waiting-for-setup") return;
     if (pipeline.sessions.length > 0) return;
 
-    if (isLocal) {
-      // Wait until local setup commands are resolved and not pending/running
-      if (!setupCommandsResolved || hasPendingSetupCommands || setupScriptsRunning) return;
-    } else {
-      // Wait until container workspace setup (workspace-setup.sh) has completed
-      if (!workspaceReady) return;
-    }
+    if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) return;
 
     // Setup is complete (or there were no setup commands) — start the build
     const task = getKanbanTaskSnapshot(pipeline.taskId);
@@ -1039,11 +1050,9 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     );
   }
 
-  const isSetupPending = isLocal
-    ? (setupScriptsRunning || hasPendingSetupCommands || !setupCommandsResolved)
-    : !workspaceReady;
+  const setupPending = isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady });
 
-  if (pipeline?.phase === "waiting-for-setup" && isSetupPending) {
+  if (pipeline?.phase === "waiting-for-setup" && setupPending) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
         <Loader2 className="w-8 h-8 animate-spin text-yellow-400" />
@@ -1054,7 +1063,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
           size="sm"
           className="mt-2 text-xs text-muted-foreground"
           onClick={() => {
-            if (isLocal) {
+            // Re-derive environment type from store at click time to avoid stale closures
+            const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+            const isLocalEnv = env?.environmentType === "local";
+            if (isLocalEnv) {
               // Force-resolve local setup state so the build-start effect can proceed
               useEnvironmentStore.getState().setSetupScriptsRunning(environmentId, false);
               useEnvironmentStore.getState().setSetupCommandsResolved(environmentId, true);
