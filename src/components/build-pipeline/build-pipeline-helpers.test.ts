@@ -6,7 +6,7 @@ import {
   buildBuildPrompt,
   buildVerificationPrompt,
   buildFixPrompt,
-} from "./BuildChatTab";
+} from "@/prompts";
 import type { ClaudeMessage } from "@/lib/claude-client";
 
 // --- parseVerificationResult ---
