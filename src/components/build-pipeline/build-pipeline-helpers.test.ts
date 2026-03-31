@@ -319,6 +319,23 @@ describe("createVerificationPrompt", () => {
     expect(result).toContain("**Title**: Add search");
     expect(result).toContain("Search box visible");
   });
+
+  test("defaults to main as target branch", () => {
+    const result = createVerificationPrompt(baseTask, "");
+    expect(result).toContain("target branch `main`");
+    expect(result).toContain("git diff origin/main...HEAD");
+  });
+
+  test("uses custom target branch when provided", () => {
+    const result = createVerificationPrompt(baseTask, "", "develop");
+    expect(result).toContain("target branch `develop`");
+    expect(result).toContain("git diff origin/develop...HEAD");
+  });
+
+  test("includes instruction to identify current branch", () => {
+    const result = createVerificationPrompt(baseTask, "");
+    expect(result).toContain("git branch --show-current");
+  });
 });
 
 // --- createFixPrompt ---

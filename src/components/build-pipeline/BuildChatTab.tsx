@@ -762,7 +762,9 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         projectNotes = notes.content;
       } catch (e) { console.debug("Failed to load project notes for verification:", e); }
 
-      const verifyPrompt = createVerificationPrompt(task, projectNotes);
+      const repoConfig = config.repositories[currentPipeline.projectId];
+      const targetBranch = repoConfig?.prBaseBranch || "main";
+      const verifyPrompt = createVerificationPrompt(task, projectNotes, targetBranch);
 
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
@@ -782,7 +784,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         setPipelineError(pipelineId, "Failed to send verification prompt");
       }
     },
-    [client, pipelineId, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
+    [client, pipelineId, config.repositories, createPipelineSession, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
 
   // Start fix session (with ticket context + what to fix)
