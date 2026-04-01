@@ -1,7 +1,6 @@
 // Claude Bridge Server client wrapper
 // Provides typed functions for interacting with the Claude bridge server
 
-import { appendLatestTodoSnapshot, getLatestTimestamp } from "./todo-tool";
 
 /**
  * Session key used as the Map key in the Zustand store.
@@ -99,28 +98,6 @@ export interface ClaudeMessage {
   timestamp: string;
 }
 
-function withLatestTodoSnapshot(messages: ClaudeMessage[]): ClaudeMessage[] {
-  return appendLatestTodoSnapshot(messages, ({ message, part, todos }) => ({
-    id: `todo-snapshot-${message.id}`,
-    role: "assistant" as const,
-    content: "",
-    parts: [{
-      type: "tool-invocation" as const,
-      content: "",
-      toolName: part.toolName ?? "TodoWrite",
-      toolArgs: { todos },
-      toolOutput: part.toolOutput,
-      toolState: part.toolState,
-      toolTitle: part.toolTitle ?? "Latest todo list",
-      toolError: part.toolError,
-      toolUseId: part.toolUseId,
-      parentTaskUseId: part.parentTaskUseId,
-      isMcpTool: part.isMcpTool,
-      mcpServerName: part.mcpServerName,
-    }],
-    timestamp: getLatestTimestamp(messages, (m) => m.timestamp),
-  }));
-}
 
 /** Effort level for controlling Claude's thinking depth */
 export type ClaudeEffortLevel = "low" | "medium" | "high" | "max";
@@ -383,7 +360,7 @@ export async function getSessionMessages(
     messageCount: data.messages?.length || 0,
     rawData: data,
   });
-  return withLatestTodoSnapshot(data.messages || []);
+  return data.messages || [];
 }
 
 /** Permission mode for Claude Agent SDK */
