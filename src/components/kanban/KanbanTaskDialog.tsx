@@ -185,8 +185,8 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       const newTask = useKanbanStore.getState().tasks.find((t) => t.id === newTaskId);
       if (!newTask) return;
 
-      handleOpenChange(false);
       await startBuild(newTask, type);
+      handleOpenChange(false);
     } finally {
       setIsBuildStarting(false);
     }
@@ -239,7 +239,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
 
           {/* Create Actions */}
           <div className="flex gap-2 pt-2">
-            <Button size="sm" onClick={handleCreate} disabled={!editTitle.trim()}>
+            <Button size="sm" onClick={handleCreate} disabled={!editTitle.trim() || isBuildStarting}>
               Create Task
             </Button>
             <Button
