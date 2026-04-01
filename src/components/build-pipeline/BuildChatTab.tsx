@@ -130,6 +130,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const isInitializedRef = useRef(false);
   const pipelineAdvancingRef = useRef(false);
+  const buildStartTriggeredRef = useRef(false);
   const [advanceTick, setAdvanceTick] = useState(0);
   const handledErrorIdsRef = useRef(new Set<string>());
 
@@ -1019,20 +1020,60 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   // Container environments: setupContainer commands are run inside the container by
   // workspace-setup.sh. The workspaceReady flag is set when the terminal shell prompt
   // appears, which happens only after workspace-setup.sh (including setupContainer) finishes.
+  //
+  // Guard: buildStartTriggeredRef prevents double-invocation from the fire-and-forget
+  // getProjectNotes async chain. Without this, rapid re-fires of this effect could start
+  // multiple build sessions.
   useEffect(() => {
     if (connectionState !== "connected" || !client || !pipeline) return;
-    if (pipeline.phase !== "waiting-for-setup") return;
+    if (pipeline.phase !== "waiting-for-setup") {
+      // Reset guard when phase transitions away, so a future re-entry works
+      buildStartTriggeredRef.current = false;
+      return;
+    }
     if (pipeline.sessions.length > 0) return;
+    if (buildStartTriggeredRef.current) return;
 
     if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) return;
+
+    // Mark as triggered to prevent double-invocation from effect re-fires
+    buildStartTriggeredRef.current = true;
 
     // Setup is complete (or there were no setup commands) — start the build
     const task = pipeline.taskSnapshot;
 
     getProjectNotes(pipeline.projectId).then((notes) => {
+      // Re-verify setup state from current store before starting the build.
+      // The reactive subscriptions may have been stale when the effect fired.
+      const envStore = useEnvironmentStore.getState();
+      const isLocalEnv = !!isLocal;
+      if (isSetupPending({
+        isLocal: isLocalEnv,
+        setupCommandsResolved: envStore.setupCommandsResolved.has(environmentId),
+        hasPendingSetupCommands: envStore.pendingSetupCommands.has(environmentId),
+        setupScriptsRunning: envStore.setupScriptsRunning.has(environmentId),
+        workspaceReady: envStore.workspaceReadyEnvironments.has(environmentId),
+      })) {
+        // Setup is not actually complete — reset guard and wait for next trigger
+        buildStartTriggeredRef.current = false;
+        return;
+      }
       const prompt = createBuildPrompt(task, notes.content);
       startBuildSession(prompt);
     }).catch(() => {
+      // Re-verify setup state even on failure — same guard as the .then() path
+      const envStore = useEnvironmentStore.getState();
+      const isLocalEnv = !!isLocal;
+      if (isSetupPending({
+        isLocal: isLocalEnv,
+        setupCommandsResolved: envStore.setupCommandsResolved.has(environmentId),
+        hasPendingSetupCommands: envStore.pendingSetupCommands.has(environmentId),
+        setupScriptsRunning: envStore.setupScriptsRunning.has(environmentId),
+        workspaceReady: envStore.workspaceReadyEnvironments.has(environmentId),
+      })) {
+        buildStartTriggeredRef.current = false;
+        return;
+      }
       const prompt = createBuildPrompt(task, "");
       startBuildSession(prompt);
     });
@@ -1146,14 +1187,23 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             allSessionMessages.map((sessionData, sessionIndex) => (
               <div key={sessionData.pipelineSession.sessionKey}>
                 <SessionDivider session={sessionData.pipelineSession} index={sessionIndex} />
-                {sessionData.messages.map((message, messageIndex) => (
-                  <ClaudeMessage
-                    key={message.id}
-                    message={message}
-                    previousMessage={messageIndex > 0 ? sessionData.messages[messageIndex - 1] ?? null : null}
-                    isStreaming={sessionData.isLoading && messageIndex === sessionData.messages.length - 1}
-                  />
-                ))}
+                {sessionData.messages
+                  .filter((message, messageIndex) => {
+                    // Hide the initial prompt (first user message) for review and PR sessions
+                    const phase = sessionData.pipelineSession.phase;
+                    if ((phase === "review" || phase === "pr") && messageIndex === 0 && message.role === "user") {
+                      return false;
+                    }
+                    return true;
+                  })
+                  .map((message, filteredIndex, filteredMessages) => (
+                    <ClaudeMessage
+                      key={message.id}
+                      message={message}
+                      previousMessage={filteredIndex > 0 ? filteredMessages[filteredIndex - 1] ?? null : null}
+                      isStreaming={sessionData.isLoading && filteredIndex === filteredMessages.length - 1}
+                    />
+                  ))}
                 {sessionData.isLoading && (
                   <div className="px-4 py-3">
                     <div className="max-w-3xl mx-auto">

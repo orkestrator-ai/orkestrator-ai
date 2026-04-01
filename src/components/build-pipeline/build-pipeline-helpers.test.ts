@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+import { useEnvironmentStore } from "@/stores";
 import {
   createBuildReviewPrompt,
   createBuildPrompt,
@@ -9,6 +10,7 @@ import {
 import { parseVerificationResult } from "@/lib/parse-verification-result";
 import type { ClaudeMessage } from "@/lib/claude-client";
 import { isSetupPending } from "./BuildChatTab";
+import { waitForSetupInitiation } from "@/hooks/useBuildPipeline";
 
 // --- parseVerificationResult ---
 
@@ -672,5 +674,92 @@ describe("isSetupPending", () => {
       setupScriptsRunning: true,
       workspaceReady: true,
     })).toBe(false);
+  });
+});
+
+// --- waitForSetupInitiation ---
+
+describe("waitForSetupInitiation", () => {
+  const envId = "test-env-id";
+
+  beforeEach(() => {
+    // Reset environment store setup state
+    const store = useEnvironmentStore.getState();
+    store.setSetupCommandsResolved(envId, false);
+    store.setSetupScriptsRunning(envId, false);
+    // Clear any pending setup commands
+    store.consumePendingSetupCommands(envId);
+  });
+
+  test("returns immediately for container environments", async () => {
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "containerized");
+    expect(Date.now() - start).toBeLessThan(100);
+  });
+
+  test("returns when setupScriptsRunning is true (scripts started)", async () => {
+    // Simulate TerminalContainer consuming commands and starting scripts
+    useEnvironmentStore.getState().setSetupScriptsRunning(envId, true);
+
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "local");
+    expect(Date.now() - start).toBeLessThan(100);
+  });
+
+  test("returns when resolved and no pending commands (no setup scripts)", async () => {
+    // Simulate startEnvironment completing with no setup commands
+    useEnvironmentStore.getState().setSetupCommandsResolved(envId, true);
+    // No pending commands (consumed or never set)
+
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "local");
+    expect(Date.now() - start).toBeLessThan(100);
+  });
+
+  test("waits when commands are pending and not yet consumed", async () => {
+    // Simulate startEnvironment storing commands but TerminalContainer hasn't consumed yet
+    useEnvironmentStore.getState().setPendingSetupCommands(envId, ["bun install"]);
+    useEnvironmentStore.getState().setSetupCommandsResolved(envId, true);
+
+    // After a delay, simulate TerminalContainer consuming commands and starting scripts
+    setTimeout(() => {
+      useEnvironmentStore.getState().consumePendingSetupCommands(envId);
+      useEnvironmentStore.getState().setSetupScriptsRunning(envId, true);
+    }, 100);
+
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "local");
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(80); // Waited for the setTimeout
+    expect(elapsed).toBeLessThan(500); // But didn't timeout
+  });
+
+  test("waits when setup commands not yet resolved", async () => {
+    // Simulate startEnvironment hasn't completed yet (awaiting tauri)
+    useEnvironmentStore.getState().setPendingSetupCommands(envId, []);
+
+    // After a delay, resolve with no commands
+    setTimeout(() => {
+      useEnvironmentStore.getState().consumePendingSetupCommands(envId);
+      useEnvironmentStore.getState().setSetupCommandsResolved(envId, true);
+    }, 100);
+
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "local");
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(80);
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  test("resolves after timeout when setup never initiates", async () => {
+    // Nothing will resolve — simulate a stuck state
+    useEnvironmentStore.getState().setPendingSetupCommands(envId, ["bun install"]);
+    // resolved stays false, running stays false, pending stays true
+
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "local", { maxWaitMs: 200, pollMs: 20 });
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(180);
+    expect(elapsed).toBeLessThan(500);
   });
 });
