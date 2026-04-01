@@ -70,8 +70,8 @@ export function EnvironmentItem({
   // Get diff stats for this environment
   const diffStats = useEnvironmentDiffStore((s) => s.stats.get(environment.id));
 
-  // Check if this is a build pipeline environment
-  const isBuildEnvironment = useBuildPipelineStore((s) => s.isBuildEnvironment(environment.id));
+  // Check if this is a build pipeline environment (O(1) Set lookup, stable reference)
+  const isBuildEnvironment = useBuildPipelineStore((s) => s.buildEnvironmentIds.has(environment.id));
 
   const isLocalEnvironment = environment.environmentType === "local";
   // Local environments are always considered "running" - they exist or they don't
@@ -191,7 +191,9 @@ export function EnvironmentItem({
                     )} />
                   )
                 )}
-                <span className={cn("flex-1 truncate", isBuildEnvironment && "text-yellow-400")}>{environment.name}</span>
+                <span className={cn("flex-1 truncate", isBuildEnvironment && "text-yellow-400")}>
+                  {isBuildEnvironment ? environment.name.replace(/^Build:\s*/, "") : environment.name}
+                </span>
                 {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0 || diffStats.filesChanged > 0) && (
                   <span className="ml-1 flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums">
                     {diffStats.additions > 0 && (

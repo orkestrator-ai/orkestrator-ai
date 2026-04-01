@@ -50,6 +50,8 @@ export interface BuildPipeline {
 
 interface BuildPipelineState {
   pipelines: Map<string, BuildPipeline>;
+  /** Derived set of environment IDs associated with any pipeline, for O(1) lookups */
+  buildEnvironmentIds: Set<string>;
 
   // Actions
   createPipeline: (params: {
@@ -73,10 +75,13 @@ interface BuildPipelineState {
   getPipelineById: (id: string) => BuildPipeline | undefined;
   getActivePipelineForEnvironment: (environmentId: string) => BuildPipeline | undefined;
   isBuildEnvironment: (environmentId: string) => boolean;
+  /** Rebuild the buildEnvironmentIds set from current pipelines */
+  _rebuildBuildEnvironmentIds: () => Set<string>;
 }
 
 export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => ({
   pipelines: new Map(),
+  buildEnvironmentIds: new Set<string>(),
 
   createPipeline: ({ taskId, projectId, environmentType, taskTitle, taskSnapshot }) => {
     const id = crypto.randomUUID();
@@ -111,7 +116,7 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
       if (!pipeline) return state;
       const newMap = new Map(state.pipelines);
       newMap.set(pipelineId, { ...pipeline, environmentId });
-      return { pipelines: newMap };
+      return { pipelines: newMap, buildEnvironmentIds: get()._rebuildBuildEnvironmentIds() };
     }),
 
   addSession: (pipelineId, session) =>
@@ -202,12 +207,15 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
     return undefined;
   },
 
-  isBuildEnvironment: (environmentId) => {
+  isBuildEnvironment: (environmentId) => get().buildEnvironmentIds.has(environmentId),
+
+  _rebuildBuildEnvironmentIds: () => {
+    const ids = new Set<string>();
     for (const pipeline of get().pipelines.values()) {
-      if (pipeline.environmentId === environmentId) {
-        return true;
+      if (pipeline.environmentId) {
+        ids.add(pipeline.environmentId);
       }
     }
-    return false;
+    return ids;
   },
 }));
