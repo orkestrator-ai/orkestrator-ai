@@ -1150,12 +1150,21 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             allSessionMessages.map((sessionData, sessionIndex) => (
               <div key={sessionData.pipelineSession.sessionKey}>
                 <SessionDivider session={sessionData.pipelineSession} index={sessionIndex} />
-                {sessionData.messages.map((message, messageIndex) => (
+                {sessionData.messages
+                  .filter((message, messageIndex) => {
+                    // Hide the initial prompt (first user message) for review and PR sessions
+                    const phase = sessionData.pipelineSession.phase;
+                    if ((phase === "review" || phase === "pr") && messageIndex === 0 && message.role === "user") {
+                      return false;
+                    }
+                    return true;
+                  })
+                  .map((message, filteredIndex, filteredMessages) => (
                   <ClaudeMessage
                     key={message.id}
                     message={message}
-                    previousMessage={messageIndex > 0 ? sessionData.messages[messageIndex - 1] ?? null : null}
-                    isStreaming={sessionData.isLoading && messageIndex === sessionData.messages.length - 1}
+                    previousMessage={filteredIndex > 0 ? filteredMessages[filteredIndex - 1] ?? null : null}
+                    isStreaming={sessionData.isLoading && filteredIndex === filteredMessages.length - 1}
                   />
                 ))}
                 {sessionData.isLoading && (
