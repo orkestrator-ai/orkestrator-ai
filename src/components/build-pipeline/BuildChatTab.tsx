@@ -1160,13 +1160,13 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
                     return true;
                   })
                   .map((message, filteredIndex, filteredMessages) => (
-                  <ClaudeMessage
-                    key={message.id}
-                    message={message}
-                    previousMessage={filteredIndex > 0 ? filteredMessages[filteredIndex - 1] ?? null : null}
-                    isStreaming={sessionData.isLoading && filteredIndex === filteredMessages.length - 1}
-                  />
-                ))}
+                    <ClaudeMessage
+                      key={message.id}
+                      message={message}
+                      previousMessage={filteredIndex > 0 ? filteredMessages[filteredIndex - 1] ?? null : null}
+                      isStreaming={sessionData.isLoading && filteredIndex === filteredMessages.length - 1}
+                    />
+                  ))}
                 {sessionData.isLoading && (
                   <div className="px-4 py-3">
                     <div className="max-w-3xl mx-auto">
