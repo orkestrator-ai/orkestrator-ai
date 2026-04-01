@@ -3,13 +3,13 @@ import { getSessionMessages, type ClaudeClient } from "./claude-client";
 
 const originalFetch = globalThis.fetch;
 
-describe("claude-client todo snapshots", () => {
+describe("claude-client getSessionMessages", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     mock.restore();
   });
 
-  test("appends a latest todo snapshot to fetched session messages", async () => {
+  test("returns messages without appending todo snapshots", async () => {
     globalThis.fetch = mock(async () =>
       new Response(JSON.stringify({
         messages: [
@@ -34,14 +34,11 @@ describe("claude-client todo snapshots", () => {
     const client: ClaudeClient = { baseUrl: "http://127.0.0.1:4001" };
     const messages = await getSessionMessages(client, "session-1");
 
-    expect(messages).toHaveLength(2);
-    expect(messages[1]?.id).toBe("todo-snapshot-msg-1");
-    expect(messages[1]?.parts[0]?.toolArgs).toEqual({
-      todos: [{ content: "Claude task", status: "in_progress" }],
-    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe("msg-1");
   });
 
-  test("does not append a snapshot when no TodoWrite parts exist", async () => {
+  test("returns messages as-is when no TodoWrite parts exist", async () => {
     globalThis.fetch = mock(async () =>
       new Response(JSON.stringify({
         messages: [
