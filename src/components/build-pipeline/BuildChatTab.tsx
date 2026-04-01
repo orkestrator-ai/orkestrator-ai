@@ -1026,7 +1026,11 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   // multiple build sessions.
   useEffect(() => {
     if (connectionState !== "connected" || !client || !pipeline) return;
-    if (pipeline.phase !== "waiting-for-setup") return;
+    if (pipeline.phase !== "waiting-for-setup") {
+      // Reset guard when phase transitions away, so a future re-entry works
+      buildStartTriggeredRef.current = false;
+      return;
+    }
     if (pipeline.sessions.length > 0) return;
     if (buildStartTriggeredRef.current) return;
 
@@ -1062,6 +1066,19 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       const prompt = createBuildPrompt(task, notes.content);
       startBuildSession(prompt);
     }).catch(() => {
+      // Re-verify setup state even on failure — same guard as the .then() path
+      const envStore = useEnvironmentStore.getState();
+      const isLocalEnv = !!isLocal;
+      if (isSetupPending({
+        isLocal: isLocalEnv,
+        setupCommandsResolved: envStore.setupCommandsResolved.has(environmentId),
+        hasPendingSetupCommands: envStore.pendingSetupCommands.has(environmentId),
+        setupScriptsRunning: envStore.setupScriptsRunning.has(environmentId),
+        workspaceReady: envStore.workspaceReadyEnvironments.has(environmentId),
+      })) {
+        buildStartTriggeredRef.current = false;
+        return;
+      }
       const prompt = createBuildPrompt(task, "");
       startBuildSession(prompt);
     });

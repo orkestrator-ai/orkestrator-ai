@@ -716,4 +716,16 @@ describe("waitForSetupInitiation", () => {
     expect(elapsed).toBeGreaterThanOrEqual(80);
     expect(elapsed).toBeLessThan(500);
   });
+
+  test("resolves after timeout when setup never initiates", async () => {
+    // Nothing will resolve — simulate a stuck state
+    useEnvironmentStore.getState().setPendingSetupCommands(envId, ["bun install"]);
+    // resolved stays false, running stays false, pending stays true
+
+    const start = Date.now();
+    await waitForSetupInitiation(envId, "local", { maxWaitMs: 200, pollMs: 20 });
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(180);
+    expect(elapsed).toBeLessThan(500);
+  });
 });

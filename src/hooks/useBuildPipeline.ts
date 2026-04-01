@@ -30,11 +30,9 @@ import type { PaneNode } from "@/types/paneLayout";
 export async function waitForSetupInitiation(
   environmentId: string,
   environmentType: EnvironmentType,
+  { maxWaitMs = 30_000, pollMs = 50 }: { maxWaitMs?: number; pollMs?: number } = {},
 ): Promise<void> {
   if (environmentType !== "local") return;
-
-  const maxWaitMs = 30_000;
-  const pollMs = 50;
   const start = Date.now();
 
   while (Date.now() - start < maxWaitMs) {
