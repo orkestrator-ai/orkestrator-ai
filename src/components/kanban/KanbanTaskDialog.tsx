@@ -166,6 +166,32 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
     }
   };
 
+  const handleCreateAndBuild = async (type: "containerized" | "local") => {
+    if (!editTitle.trim() || !createForProjectId) return;
+
+    const title = editTitle.trim();
+    const description = editDescription.trim();
+    const ac = editAC.trim();
+
+    setIsBuildStarting(true);
+    try {
+      const newTaskId = await addTaskStore(createForProjectId, title, description);
+      if (!newTaskId) return;
+
+      if (ac) {
+        await updateTask(newTaskId, { acceptanceCriteria: ac });
+      }
+
+      const newTask = useKanbanStore.getState().tasks.find((t) => t.id === newTaskId);
+      if (!newTask) return;
+
+      handleOpenChange(false);
+      await startBuild(newTask, type);
+    } finally {
+      setIsBuildStarting(false);
+    }
+  };
+
   if (isCreateMode) {
     return (
       <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -215,6 +241,34 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
           <div className="flex gap-2 pt-2">
             <Button size="sm" onClick={handleCreate} disabled={!editTitle.trim()}>
               Create Task
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={!editTitle.trim() || isBuildStarting}
+              onClick={() => void handleCreateAndBuild("containerized")}
+            >
+              {isBuildStarting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Container className="h-3.5 w-3.5" />
+              )}
+              Build Container
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={!editTitle.trim() || isBuildStarting}
+              onClick={() => void handleCreateAndBuild("local")}
+            >
+              {isBuildStarting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <FolderGit2 className="h-3.5 w-3.5" />
+              )}
+              Build Local
             </Button>
             <Button size="sm" variant="ghost" onClick={() => handleOpenChange(false)}>
               Cancel
