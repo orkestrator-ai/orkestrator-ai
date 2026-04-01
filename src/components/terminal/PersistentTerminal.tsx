@@ -370,11 +370,18 @@ export function PersistentTerminal({
         }
       }
 
-      // For setup tabs: detect when setup scripts have finished executing
+      // For setup tabs: detect when setup scripts have finished executing.
+      // The marker must appear on its own line to avoid false positives from the
+      // shell echo of the command (e.g., `$ (cmd); echo "MARKER"` contains the
+      // marker mid-line, but the actual echo output is just `MARKER` on its own line).
       if (isSetupTab && !setupCompleteRef.current) {
         setupBufferRef.current += text;
         const strippedSetup = stripAnsi(setupBufferRef.current);
-        if (strippedSetup.includes(SETUP_SCRIPTS_DONE_MARKER)) {
+        const lines = strippedSetup.split("\n");
+        const markerFound = lines.some(
+          (line) => line.replace(/\r/g, "").trim() === SETUP_SCRIPTS_DONE_MARKER
+        );
+        if (markerFound) {
           console.log("[PersistentTerminal] Setup scripts completed for tab:", tabId);
           setupCompleteRef.current = true;
           setupBufferRef.current = "";
