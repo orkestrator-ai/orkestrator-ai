@@ -88,6 +88,7 @@ Compare the current branch against the remote \`${targetBranch}\` branch and con
    - **Performance**: Are there obvious performance concerns or optimizations?
    - **Test coverage**: If the repo has testing patterns, are there adequate tests?
 3. Ask clarifying questions if needed about unclear changes
+4. Run typechecking and build validation to ensure the changes are valid as appropriate for the project.
 
 ## Output Format
 
@@ -101,6 +102,8 @@ After completing both steps:
    - Code snippet (if relevant)
    - Potential solution(s)
 4. If no issues found, state that the code meets best practices
+
+If issues are found and the user asks to fix them, make sure typechecking and build validation are run to ensure the changes are valid as appropriate for the project.
 
 Begin by running the git commands to understand the current state.`;
 }

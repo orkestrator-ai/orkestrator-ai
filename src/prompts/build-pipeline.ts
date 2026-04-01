@@ -53,6 +53,7 @@ Compare the current branch against the remote \`${targetBranch}\` branch and con
    - **Performance**: Are there obvious performance concerns or optimizations?
    - **Test coverage**: If the repo has testing patterns, are there adequate tests?
 3. Do not ask clarifying questions about unclear changes as this is an automated pipeline. Make your best judgment for any ambiguous points.
+4. Run typechecking and build validation to ensure the changes are valid as appropriate for the project.
 
 ## Output Format
 
