@@ -731,8 +731,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      // Fetch ticket context for review
-      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      // Use task snapshot stored on pipeline (kanban store may have been reloaded for a different project)
+      const task = currentPipeline.taskSnapshot;
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -778,8 +778,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      // Fetch ticket context for verification
-      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      // Use task snapshot stored on pipeline (kanban store may have been reloaded for a different project)
+      const task = currentPipeline.taskSnapshot;
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -825,7 +825,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      const task = currentPipeline.taskSnapshot;
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -1040,12 +1040,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     buildStartTriggeredRef.current = true;
 
     // Setup is complete (or there were no setup commands) — start the build
-    const task = getKanbanTaskSnapshot(pipeline.taskId);
-    if (!task) {
-      buildStartTriggeredRef.current = false;
-      setPipelineError(pipelineId, "Task not found");
-      return;
-    }
+    const task = pipeline.taskSnapshot;
 
     getProjectNotes(pipeline.projectId).then((notes) => {
       // Re-verify setup state from current store before starting the build.
@@ -1239,13 +1234,5 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       )}
     </div>
   );
-}
-
-// --- Helper functions ---
-
-function getKanbanTaskSnapshot(taskId: string) {
-  // Read directly from store to avoid stale closures
-  const { tasks } = kanbanStoreRef.getState();
-  return tasks.find((t) => t.id === taskId) ?? null;
 }
 

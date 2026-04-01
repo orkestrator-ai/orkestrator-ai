@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { ClaudeSessionKey } from "@/lib/claude-client";
 import type { EnvironmentType } from "@/types";
+import type { TaskSnapshot } from "@/prompts";
 
 export type BuildPhase =
   | "creating-environment"
@@ -44,6 +45,7 @@ export interface BuildPipeline {
   error?: string;
   createdAt: string;
   taskTitle: string;
+  taskSnapshot: TaskSnapshot;
 }
 
 interface BuildPipelineState {
@@ -55,6 +57,7 @@ interface BuildPipelineState {
     projectId: string;
     environmentType: EnvironmentType;
     taskTitle: string;
+    taskSnapshot: TaskSnapshot;
   }) => string;
   setPipelineEnvironment: (pipelineId: string, environmentId: string) => void;
   addSession: (pipelineId: string, session: PipelineSession) => void;
@@ -74,7 +77,7 @@ interface BuildPipelineState {
 export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => ({
   pipelines: new Map(),
 
-  createPipeline: ({ taskId, projectId, environmentType, taskTitle }) => {
+  createPipeline: ({ taskId, projectId, environmentType, taskTitle, taskSnapshot }) => {
     const id = crypto.randomUUID();
     const pipeline: BuildPipeline = {
       id,
@@ -89,6 +92,7 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
       maxIterations: 3,
       createdAt: new Date().toISOString(),
       taskTitle,
+      taskSnapshot,
     };
 
     set((state) => {
