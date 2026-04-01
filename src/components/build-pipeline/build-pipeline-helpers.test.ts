@@ -396,6 +396,29 @@ describe("buildPipelineStore", () => {
     expect(pipeline!.maxIterations).toBe(3);
     expect(pipeline!.environmentId).toBe("");
     expect(pipeline!.taskTitle).toBe("My Feature");
+    expect(pipeline!.taskSnapshot).toEqual({ title: "My Feature", description: "", acceptanceCriteria: "", comments: [] });
+  });
+
+  test("createPipeline stores populated taskSnapshot", () => {
+    const store = useBuildPipelineStore.getState();
+    const snapshot = {
+      title: "Dark Mode",
+      description: "Add a dark mode toggle to the settings page",
+      acceptanceCriteria: "- Toggle exists\n- Theme persists across sessions",
+      comments: [{ text: "Use CSS variables" }, { text: "Support system preference" }],
+    };
+    const id = store.createPipeline({
+      taskId: "task-2",
+      projectId: "proj-2",
+      environmentType: "local",
+      taskTitle: "Dark Mode",
+      taskSnapshot: snapshot,
+    });
+
+    const pipeline = useBuildPipelineStore.getState().pipelines.get(id);
+    expect(pipeline!.taskSnapshot).toEqual(snapshot);
+    expect(pipeline!.taskSnapshot.comments).toHaveLength(2);
+    expect(pipeline!.taskSnapshot.comments[0].text).toBe("Use CSS variables");
   });
 
   test("setPipelineEnvironment links environment", () => {
