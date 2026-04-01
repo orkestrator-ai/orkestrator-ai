@@ -7,8 +7,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BINARIES_DIR="$PROJECT_ROOT/binaries"
 
-# Bun version to download
-BUN_VERSION="1.3.8"
+# Fetch the latest Bun version from GitHub
+BUN_VERSION=$(curl -fsSL "https://api.github.com/repos/oven-sh/bun/releases/latest" | grep '"tag_name"' | sed -E 's/.*"bun-v([^"]+)".*/\1/')
+if [ -z "$BUN_VERSION" ]; then
+    echo "Failed to fetch latest Bun version"
+    exit 1
+fi
 
 # Detect architecture
 ARCH=$(uname -m)
