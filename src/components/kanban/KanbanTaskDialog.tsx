@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Trash2, Send, CheckCircle2, Container, FolderGit2, ExternalLink, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import type { KanbanTask, KanbanStatus } from "@/stores/kanbanStore";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
@@ -176,14 +177,25 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
     setIsBuildStarting(true);
     try {
       const newTaskId = await addTaskStore(createForProjectId, title, description);
-      if (!newTaskId) return;
+      if (!newTaskId) {
+        toast.error("Failed to create task");
+        return;
+      }
 
       if (ac) {
-        await updateTask(newTaskId, { acceptanceCriteria: ac });
+        try {
+          await updateTask(newTaskId, { acceptanceCriteria: ac });
+        } catch {
+          toast.error("Task created but acceptance criteria could not be saved");
+        }
       }
 
       const newTask = useKanbanStore.getState().tasks.find((t) => t.id === newTaskId);
-      if (!newTask) return;
+      if (!newTask) {
+        toast.error("Task created but could not start build");
+        handleOpenChange(false);
+        return;
+      }
 
       await startBuild(newTask, type);
       handleOpenChange(false);
