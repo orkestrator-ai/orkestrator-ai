@@ -382,6 +382,7 @@ describe("buildPipelineStore", () => {
       projectId: "proj-1",
       environmentType: "local",
       taskTitle: "My Feature",
+      taskSnapshot: { title: "My Feature", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     const pipeline = useBuildPipelineStore.getState().pipelines.get(id);
@@ -404,6 +405,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "containerized",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineEnvironment(id, "env-123");
@@ -418,6 +420,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().setPhase(id, "building");
@@ -431,6 +434,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     const session = {
@@ -457,6 +461,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().addSession(id, {
@@ -481,6 +486,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().incrementIteration(id);
@@ -497,6 +503,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineError(id, "Something went wrong");
@@ -512,6 +519,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().setVerificationResult(id, "fail", "Missing tests");
@@ -527,6 +535,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     const found = useBuildPipelineStore.getState().getPipelineByTaskId("task-abc");
@@ -546,6 +555,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineEnvironment(id, "env-1");
@@ -563,6 +573,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineEnvironment(id, "env-1");

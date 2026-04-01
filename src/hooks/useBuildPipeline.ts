@@ -28,6 +28,12 @@ export function useBuildPipeline() {
           projectId: task.projectId,
           environmentType,
           taskTitle: task.title,
+          taskSnapshot: {
+            title: task.title,
+            description: task.description,
+            acceptanceCriteria: task.acceptanceCriteria,
+            comments: task.comments.map((c) => ({ text: c.text })),
+          },
         });
 
         // 2. Create environment named after the ticket

@@ -730,8 +730,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      // Fetch ticket context for review
-      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      // Use task snapshot stored on pipeline (kanban store may have been reloaded for a different project)
+      const task = currentPipeline.taskSnapshot;
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -777,8 +777,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      // Fetch ticket context for verification
-      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      // Use task snapshot stored on pipeline (kanban store may have been reloaded for a different project)
+      const task = currentPipeline.taskSnapshot;
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -824,7 +824,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
 
-      const task = getKanbanTaskSnapshot(currentPipeline.taskId);
+      const task = currentPipeline.taskSnapshot;
       let projectNotes = "";
       try {
         const notes = await getProjectNotes(currentPipeline.projectId);
@@ -1027,11 +1027,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) return;
 
     // Setup is complete (or there were no setup commands) — start the build
-    const task = getKanbanTaskSnapshot(pipeline.taskId);
-    if (!task) {
-      setPipelineError(pipelineId, "Task not found");
-      return;
-    }
+    const task = pipeline.taskSnapshot;
 
     getProjectNotes(pipeline.projectId).then((notes) => {
       const prompt = createBuildPrompt(task, notes.content);
@@ -1188,13 +1184,5 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       )}
     </div>
   );
-}
-
-// --- Helper functions ---
-
-function getKanbanTaskSnapshot(taskId: string) {
-  // Read directly from store to avoid stale closures
-  const { tasks } = kanbanStoreRef.getState();
-  return tasks.find((t) => t.id === taskId) ?? null;
 }
 
