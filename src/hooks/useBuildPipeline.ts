@@ -12,6 +12,47 @@ import type { EnvironmentType } from "@/types";
 import type { KanbanTask } from "@/lib/tauri";
 import type { PaneNode } from "@/types/paneLayout";
 
+/**
+ * Wait for setup scripts to be initiated by the TerminalContainer.
+ *
+ * For local environments, this waits until the TerminalContainer has consumed
+ * the pending setup commands and either:
+ *   - set setupScriptsRunning = true (setup scripts are executing), or
+ *   - consumed the commands with no scripts to run (hasPendingSetupCommands = false
+ *     AND setupScriptsRunning = false AND setupCommandsResolved = true)
+ *
+ * For container environments, this returns immediately since setup is handled
+ * inside the container by workspace-setup.sh (gated by workspaceReady).
+ *
+ * This prevents the build tab from being added before the TerminalContainer has
+ * had a chance to consume and start the setup scripts.
+ */
+export async function waitForSetupInitiation(
+  environmentId: string,
+  environmentType: EnvironmentType,
+  { maxWaitMs = 30_000, pollMs = 50 }: { maxWaitMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  if (environmentType !== "local") return;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    const store = useEnvironmentStore.getState();
+    const resolved = store.setupCommandsResolved.has(environmentId);
+    const hasPending = store.pendingSetupCommands.has(environmentId);
+    const running = store.setupScriptsRunning.has(environmentId);
+
+    // Setup scripts are running — TerminalContainer has consumed them
+    if (running) return;
+
+    // No pending commands and resolved — no setup scripts to run
+    if (resolved && !hasPending) return;
+
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+
+  console.warn("[useBuildPipeline] Timed out waiting for setup initiation, proceeding anyway");
+}
+
 export function useBuildPipeline() {
   const { createEnvironment, startEnvironment } = useEnvironments(null, { listenForRenameEvents: false });
   const { createPipeline, setPipelineEnvironment, setPhase, setPipelineError } = useBuildPipelineStore();
@@ -82,7 +123,13 @@ export function useBuildPipeline() {
           return;
         }
 
-        // 8. Create build tab in the pane layout
+        // 8. Wait for setup scripts to be initiated (TerminalContainer consumes them)
+        // This must happen BEFORE the build tab is added, to prevent the build tab
+        // from being added to the pane before TerminalContainer's init effect runs
+        // (which would skip setup command consumption due to currentTabs.length > 0).
+        await waitForSetupInitiation(configuredEnvironment.id, environmentType);
+
+        // 9. Create build tab in the pane layout
         // Wait for the environment pane to be initialized (poll with backoff)
         const buildTabId = `build-${pipelineId}`;
         const isLocal = environmentType === "local";
