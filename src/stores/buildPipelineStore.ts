@@ -72,6 +72,7 @@ interface BuildPipelineState {
   getPipelineByTaskId: (taskId: string) => BuildPipeline | undefined;
   getPipelineById: (id: string) => BuildPipeline | undefined;
   getActivePipelineForEnvironment: (environmentId: string) => BuildPipeline | undefined;
+  isBuildEnvironment: (environmentId: string) => boolean;
 }
 
 export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => ({
@@ -199,5 +200,14 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
       }
     }
     return undefined;
+  },
+
+  isBuildEnvironment: (environmentId) => {
+    for (const pipeline of get().pipelines.values()) {
+      if (pipeline.environmentId === environmentId) {
+        return true;
+      }
+    }
+    return false;
   },
 }));

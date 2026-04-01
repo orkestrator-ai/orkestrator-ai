@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/context-menu";
 import { Trash2, Play, Square, Container, Laptop, Shield, Globe, Settings2, RotateCw, Loader2 } from "lucide-react";
 import type { Environment } from "@/types";
-import { useClaudeActivityStore, useEnvironmentStore, useEnvironmentDiffStore } from "@/stores";
+import { useClaudeActivityStore, useEnvironmentStore, useEnvironmentDiffStore, useBuildPipelineStore } from "@/stores";
 import { EnvironmentSettingsDialog } from "./EnvironmentSettingsDialog";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
@@ -69,6 +69,9 @@ export function EnvironmentItem({
 
   // Get diff stats for this environment
   const diffStats = useEnvironmentDiffStore((s) => s.stats.get(environment.id));
+
+  // Check if this is a build pipeline environment
+  const isBuildEnvironment = useBuildPipelineStore((s) => s.isBuildEnvironment(environment.id));
 
   const isLocalEnvironment = environment.environmentType === "local";
   // Local environments are always considered "running" - they exist or they don't
@@ -188,7 +191,7 @@ export function EnvironmentItem({
                     )} />
                   )
                 )}
-                <span className="flex-1 truncate">{environment.name}</span>
+                <span className={cn("flex-1 truncate", isBuildEnvironment && "text-yellow-400")}>{environment.name}</span>
                 {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0 || diffStats.filesChanged > 0) && (
                   <span className="ml-1 flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums">
                     {diffStats.additions > 0 && (
