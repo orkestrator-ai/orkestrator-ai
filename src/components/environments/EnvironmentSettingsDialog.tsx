@@ -1,13 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,7 +40,11 @@ import {
   Puzzle,
   Server,
   Bot,
+  Terminal,
 } from "lucide-react";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
+import { cn } from "@/lib/utils";
+import { FullscreenSettingsLayout, type SettingsMenuItem } from "@/components/settings/FullscreenSettingsLayout";
 import * as tauri from "@/lib/tauri";
 import { useConfigStore } from "@/stores";
 import { useClaudeStore } from "@/stores/claudeStore";
@@ -498,566 +496,345 @@ export function EnvironmentSettingsDialog({
     (sessionInitData?.plugins?.length ?? 0) > 0 ||
     isLoadingExtensions;
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col">
-        <DialogHeader className="shrink-0">
-          <DialogTitle className="flex items-center gap-2">
-            <Settings2 className="h-5 w-5" />
-            Environment Settings
-          </DialogTitle>
-          <DialogDescription>
-            Configure settings for this environment.
-          </DialogDescription>
-        </DialogHeader>
+  const menuItems: SettingsMenuItem[] = [
+    { id: "general", label: "General", icon: <Settings2 className="h-4 w-4" /> },
+    { id: "agent", label: "Agent", icon: <Bot className="h-4 w-4" /> },
+    ...(!isLocalEnvironment ? [
+      { id: "network", label: "Network", icon: <Shield className="h-4 w-4" /> },
+      { id: "ports", label: "Ports", icon: <Network className="h-4 w-4" /> },
+    ] : []),
+    ...(hasExtensionsToShow ? [
+      { id: "extensions", label: "Extensions", icon: <Puzzle className="h-4 w-4" /> },
+    ] : []),
+  ];
 
-        <div className={`${isLocalEnvironment ? "space-y-6" : "grid grid-cols-2 gap-6"} py-4 overflow-y-auto flex-1 pr-2`}>
-          {/* For local environments: single column, for containerized: two columns */}
-          <div className="space-y-6">
-            {/* Name section */}
+  const renderSection = (section: string) => {
+    switch (section) {
+      case "general":
+        return (
+          <div className="max-w-2xl space-y-6">
             <div className="space-y-2">
               <Label htmlFor="env-name">Name</Label>
-              <Input
-                id="env-name"
-                value={name}
-                onChange={handleNameChange}
-                placeholder="Environment name"
-              />
-              {nameError && (
-                <p className="text-sm text-destructive">{nameError}</p>
-              )}
+              <Input id="env-name" value={name} onChange={handleNameChange} placeholder="Environment name" />
+              {nameError && <p className="text-sm text-destructive">{nameError}</p>}
             </div>
-
-            {/* Local Environment Info */}
             {isLocalEnvironment && (
               <div className="space-y-4">
                 <Label>Environment Type</Label>
-                <div className="flex items-center gap-2 p-3 rounded-md bg-muted border border-input">
+                <div className="flex items-center gap-2 p-3 rounded-md bg-zinc-900">
                   <Laptop className="h-4 w-4 text-blue-500 shrink-0" />
                   <div>
                     <div className="font-medium text-sm">Local Environment</div>
-                    <div className="text-xs text-muted-foreground">
-                      Uses a git worktree on your machine (no Docker container)
-                    </div>
+                    <div className="text-xs text-muted-foreground">Uses a git worktree on your machine (no Docker container)</div>
                   </div>
                 </div>
                 {environment.worktreePath && (
                   <div className="space-y-2">
                     <Label>Worktree Location</Label>
-                    <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50 border border-input">
+                    <div className="flex items-center gap-2 p-2 rounded-md bg-zinc-900">
                       <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="text-sm font-mono truncate">
-                        {environment.worktreePath}
-                      </span>
+                      <span className="text-sm font-mono truncate">{environment.worktreePath}</span>
                     </div>
                   </div>
                 )}
               </div>
-            )}
-
-            {/* Agent Settings */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Bot className="h-4 w-4 text-muted-foreground" />
-                <Label>Agent Settings</Label>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Override global defaults for this environment. "Use global default" inherits from app settings.
-              </p>
-
-              {/* Default Agent */}
-              <div className="space-y-1.5">
-                <Label className="text-sm">Default Agent</Label>
-                <Select value={envDefaultAgent} onValueChange={setEnvDefaultAgent}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="global">
-                      Use global default (
-                      {config.global.defaultAgent === "claude"
-                        ? "Claude"
-                        : config.global.defaultAgent === "codex"
-                          ? "Codex"
-                          : "OpenCode"}
-                      )
-                    </SelectItem>
-                    <SelectItem value="claude">Claude</SelectItem>
-                    <SelectItem value="opencode">OpenCode</SelectItem>
-                    <SelectItem value="codex">Codex</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Claude Mode */}
-              <div className="space-y-1.5">
-                <Label className="text-sm">Claude Mode</Label>
-                <Select value={envClaudeMode} onValueChange={setEnvClaudeMode}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="global">
-                      Use global default ({config.global.claudeMode === "native" ? "Native" : "Terminal"})
-                    </SelectItem>
-                    <SelectItem value="terminal">Terminal</SelectItem>
-                    <SelectItem value="native">Native</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* OpenCode Mode */}
-              <div className="space-y-1.5">
-                <Label className="text-sm">OpenCode Mode</Label>
-                <Select value={envOpencodeMode} onValueChange={setEnvOpencodeMode}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="global">
-                      Use global default ({(config.global.opencodeMode || "terminal") === "native" ? "Native" : "Terminal"})
-                    </SelectItem>
-                    <SelectItem value="terminal">Terminal</SelectItem>
-                    <SelectItem value="native">Native</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Network Access - only for containerized environments */}
-            {!isLocalEnvironment && (
-            <div className="space-y-4">
-              <Label>Network Access</Label>
-              <div className="flex items-center gap-2 p-3 rounded-md bg-muted border border-input">
-                {isFullAccess ? (
-                  <>
-                    <Globe className="h-4 w-4 text-blue-500 shrink-0" />
-                    <div>
-                      <div className="font-medium text-sm">Full Network Access</div>
-                      <div className="text-xs text-muted-foreground">
-                        Unrestricted internet access. Whitelist does not apply.
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <Shield className="h-4 w-4 text-green-500 shrink-0" />
-                    <div>
-                      <div className="font-medium text-sm">Restricted Network Access</div>
-                      <div className="text-xs text-muted-foreground">
-                        Only whitelisted domains are accessible.
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Only show whitelist controls for restricted mode */}
-              {!isFullAccess && (
-                <>
-                  {/* Global defaults toggle */}
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label>Use Global Defaults</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Use default allowed domains
-                      </p>
-                    </div>
-                    <Switch
-                      checked={useGlobalDefaults}
-                      onCheckedChange={setUseGlobalDefaults}
-                    />
-                  </div>
-
-                  {/* Custom domains textarea */}
-                  <div className="space-y-2">
-                    <Label>Allowed Domains</Label>
-                    <Textarea
-                      value={customDomains}
-                      onChange={handleDomainsChange}
-                      disabled={useGlobalDefaults}
-                      placeholder={"github.com\nregistry.npmjs.org\napi.anthropic.com"}
-                      rows={8}
-                      className={`font-mono text-sm ${
-                        domainErrors.length > 0 ? "border-red-500" : ""
-                      } ${useGlobalDefaults ? "opacity-50" : ""}`}
-                    />
-                  </div>
-
-                  {/* Validation errors */}
-                  {domainErrors.length > 0 && (
-                    <div className="text-sm text-red-500 space-y-1">
-                      {domainErrors.map((error, i) => (
-                        <div key={i} className="flex items-center gap-1">
-                          <XCircle className="h-3 w-3" />
-                          {error}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Test button */}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleTestDomains}
-                    disabled={isTesting || domainErrors.length > 0 || useGlobalDefaults}
-                  >
-                    {isTesting ? (
-                      <>
-                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                        Testing...
-                      </>
-                    ) : (
-                      "Test DNS Resolution"
-                    )}
-                  </Button>
-
-                  {/* Test results */}
-                  {testResults && (
-                    <div className="border rounded-md p-3 space-y-2 text-sm max-h-32 overflow-y-auto">
-                      <div className="font-medium">DNS Test Results:</div>
-                      {testResults.map((result, i) => (
-                        <div key={i} className="flex items-start gap-2">
-                          {result.resolvable ? (
-                            <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
-                          ) : result.valid ? (
-                            <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <span className="font-mono text-xs break-all">{result.domain}</span>
-                            {result.error && (
-                              <span className="text-red-500 text-xs block">{result.error}</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Running container note */}
-                  {environment.status === "running" && (
-                    <p className="text-xs text-muted-foreground">
-                      Changes will be applied to the running container immediately.
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
             )}
           </div>
+        );
+      case "agent":
+        return (
+          <div className="max-w-2xl space-y-8">
+            <p className="text-xs text-muted-foreground">Override global defaults for this environment. "Use global default" inherits from app settings.</p>
 
-          {/* RIGHT COLUMN: Port Mappings - only for containerized environments */}
-          {!isLocalEnvironment && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Network className="h-4 w-4" />
-                <Label>Port Mappings</Label>
-              </div>
-              {!showAddPortForm && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowAddPortForm(true)}
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  Add Port
-                </Button>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              Expose container ports to the host machine. Changes require a container restart to take effect.
-            </p>
-
-            {/* Port mappings list */}
-            {portMappings.length > 0 && (
-              <div className="space-y-2">
-                {portMappings.map((mapping, index) => (
-                  <div
-                    key={`port-${index}`}
-                    className="flex items-center justify-between p-2 rounded-md bg-muted/50 border border-input"
+            {/* Default Agent */}
+            <div className="space-y-3">
+              <Label className="text-sm">Default Agent</Label>
+              <div className="grid grid-cols-4 gap-2">
+                {([
+                  { value: "global", label: `Global (${config.global.defaultAgent === "claude" ? "Claude" : config.global.defaultAgent === "codex" ? "Codex" : "OpenCode"})`, icon: <Bot className="h-4 w-4" /> },
+                  { value: "claude", label: "Claude", icon: <ClaudeIcon className="h-4 w-4" /> },
+                  { value: "opencode", label: "OpenCode", icon: <OpenCodeIcon className="h-4 w-4" /> },
+                  { value: "codex", label: "Codex", icon: <CodexIcon className="h-4 w-4 text-emerald-400" /> },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEnvDefaultAgent(opt.value)}
+                    className={cn(
+                      "p-3 rounded-lg border-2 text-left transition-colors",
+                      envDefaultAgent === opt.value
+                        ? "border-primary bg-primary/5"
+                        : "border-zinc-800 hover:border-zinc-600"
+                    )}
                   >
-                    <span className="text-sm font-mono">
-                      {mapping.containerPort}:{mapping.hostPort}/{mapping.protocol}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemovePortMapping(index)}
-                      className="h-7 w-7"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {opt.icon}
+                      {opt.label}
+                    </div>
+                  </button>
                 ))}
               </div>
-            )}
+            </div>
 
-            {/* Port error message */}
-            {portError && (
-              <div className="flex items-center gap-2 p-2 rounded-md bg-destructive/10 text-destructive text-sm">
-                <XCircle className="h-4 w-4 shrink-0" />
-                <span>{portError}</span>
+            {/* Claude Mode */}
+            <div className="space-y-3">
+              <Label className="text-sm">Claude Mode</Label>
+              <div className="grid grid-cols-3 gap-2 max-w-md">
+                {([
+                  { value: "global", label: `Global (${config.global.claudeMode === "native" ? "Native" : "Terminal"})`, icon: <Bot className="h-3.5 w-3.5" /> },
+                  { value: "terminal", label: "Terminal", icon: <Terminal className="h-3.5 w-3.5" /> },
+                  { value: "native", label: "Native", icon: <Bot className="h-3.5 w-3.5" /> },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEnvClaudeMode(opt.value)}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      envClaudeMode === opt.value
+                        ? "border-primary bg-primary/5"
+                        : "border-zinc-800 hover:border-zinc-600"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {opt.icon}
+                      {opt.label}
+                    </div>
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
 
-            {/* No ports message */}
-            {portMappings.length === 0 && !showAddPortForm && (
-              <p className="text-sm text-muted-foreground">
-                No port mappings configured. Click "Add Port" to expose a container port.
-              </p>
-            )}
+            {/* OpenCode Mode */}
+            <div className="space-y-3">
+              <Label className="text-sm">OpenCode Mode</Label>
+              <div className="grid grid-cols-3 gap-2 max-w-md">
+                {([
+                  { value: "global", label: `Global (${(config.global.opencodeMode || "terminal") === "native" ? "Native" : "Terminal"})`, icon: <Bot className="h-3.5 w-3.5" /> },
+                  { value: "terminal", label: "Terminal", icon: <Terminal className="h-3.5 w-3.5" /> },
+                  { value: "native", label: "Native", icon: <Bot className="h-3.5 w-3.5" /> },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEnvOpencodeMode(opt.value)}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      envOpencodeMode === opt.value
+                        ? "border-primary bg-primary/5"
+                        : "border-zinc-800 hover:border-zinc-600"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {opt.icon}
+                      {opt.label}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            {/* Restart warning for running containers with changes */}
+            {/* Codex Mode */}
+            <div className="space-y-3">
+              <Label className="text-sm">Codex Mode</Label>
+              <div className="grid grid-cols-2 gap-2 max-w-xs">
+                <button
+                  type="button"
+                  disabled
+                  className="p-2 rounded-lg border-2 text-left border-zinc-800 opacity-50 cursor-not-allowed"
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Terminal className="h-3.5 w-3.5" />
+                    Terminal
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="p-2 rounded-lg border-2 text-left border-primary bg-primary/5 cursor-not-allowed"
+                >
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Bot className="h-3.5 w-3.5" />
+                    Native
+                  </div>
+                </button>
+              </div>
+              <span className="block text-xs text-muted-foreground/60">
+                Codex only supports native mode
+              </span>
+            </div>
+          </div>
+        );
+      case "network":
+        return (
+          <div className="max-w-2xl space-y-4">
+            <div className="flex items-center gap-2 p-3 rounded-md bg-zinc-800 border border-zinc-700">
+              {isFullAccess ? (
+                <><Globe className="h-4 w-4 text-blue-500 shrink-0" /><div><div className="font-medium text-sm">Full Network Access</div><div className="text-xs text-muted-foreground">Unrestricted internet access. Whitelist does not apply.</div></div></>
+              ) : (
+                <><Shield className="h-4 w-4 text-green-500 shrink-0" /><div><div className="font-medium text-sm">Restricted Network Access</div><div className="text-xs text-muted-foreground">Only whitelisted domains are accessible.</div></div></>
+              )}
+            </div>
+            {!isFullAccess && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5"><Label>Use Global Defaults</Label><p className="text-xs text-muted-foreground">Use default allowed domains</p></div>
+                  <Switch checked={useGlobalDefaults} onCheckedChange={setUseGlobalDefaults} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Allowed Domains</Label>
+                  <Textarea value={customDomains} onChange={handleDomainsChange} disabled={useGlobalDefaults} placeholder={"github.com\nregistry.npmjs.org\napi.anthropic.com"} rows={8} className={`font-mono text-sm ${domainErrors.length > 0 ? "border-red-500" : ""} ${useGlobalDefaults ? "opacity-50" : ""}`} />
+                </div>
+                {domainErrors.length > 0 && (
+                  <div className="text-sm text-red-500 space-y-1">{domainErrors.map((error, i) => (<div key={i} className="flex items-center gap-1"><XCircle className="h-3 w-3" />{error}</div>))}</div>
+                )}
+                <Button type="button" variant="outline" size="sm" onClick={handleTestDomains} disabled={isTesting || domainErrors.length > 0 || useGlobalDefaults}>
+                  {isTesting ? (<><Loader2 className="mr-2 h-3 w-3 animate-spin" />Testing...</>) : "Test DNS Resolution"}
+                </Button>
+                {testResults && (
+                  <div className="border border-zinc-700 rounded-md p-3 space-y-2 text-sm max-h-32 overflow-y-auto">
+                    <div className="font-medium">DNS Test Results:</div>
+                    {testResults.map((result, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        {result.resolvable ? <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" /> : result.valid ? <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" /> : <XCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />}
+                        <div className="min-w-0"><span className="font-mono text-xs break-all">{result.domain}</span>{result.error && <span className="text-red-500 text-xs block">{result.error}</span>}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {environment.status === "running" && <p className="text-xs text-muted-foreground">Changes will be applied to the running container immediately.</p>}
+              </>
+            )}
+          </div>
+        );
+      case "ports":
+        return (
+          <div className="max-w-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">Expose container ports to the host machine. Changes require a container restart.</p>
+              {!showAddPortForm && <Button type="button" variant="outline" size="sm" onClick={() => setShowAddPortForm(true)}><Plus className="h-4 w-4 mr-1" />Add Port</Button>}
+            </div>
+            {portMappings.length > 0 && (
+              <div className="space-y-2">{portMappings.map((mapping, index) => (
+                <div key={`port-${index}`} className="flex items-center justify-between p-2 rounded-md bg-zinc-800/50 border border-zinc-700">
+                  <span className="text-sm font-mono">{mapping.containerPort}:{mapping.hostPort}/{mapping.protocol}</span>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => handleRemovePortMapping(index)} className="h-7 w-7"><Trash2 className="h-4 w-4" /></Button>
+                </div>
+              ))}</div>
+            )}
+            {portError && <div className="flex items-center gap-2 p-2 rounded-md bg-destructive/10 text-destructive text-sm"><XCircle className="h-4 w-4 shrink-0" /><span>{portError}</span></div>}
+            {portMappings.length === 0 && !showAddPortForm && <p className="text-sm text-muted-foreground">No port mappings configured. Click "Add Port" to expose a container port.</p>}
             {portMappingsChanged && environment.status === "running" && (
-              <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 text-sm">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>Port changes require a container restart to take effect.</span>
-              </div>
+              <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 text-sm"><AlertCircle className="h-4 w-4 shrink-0" /><span>Port changes require a container restart to take effect.</span></div>
             )}
-
-            {/* Add new port mapping form */}
             {showAddPortForm && (
-              <div className="space-y-3 p-3 rounded-md border">
+              <div className="space-y-3 p-3 rounded-md border border-zinc-700">
                 <p className="text-sm font-medium">Add Port Mapping</p>
                 <div className="space-y-2">
                   <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Container"
-                      value={newPortMapping.containerPort}
-                      onChange={(e) =>
-                        setNewPortMapping({
-                          ...newPortMapping,
-                          containerPort: parseInt(e.target.value) || 0,
-                        })
-                      }
-                      className="text-sm"
-                      min={1}
-                      max={65535}
-                    />
+                    <Input type="number" placeholder="Container" value={newPortMapping.containerPort} onChange={(e) => setNewPortMapping({ ...newPortMapping, containerPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} />
                     <span className="text-muted-foreground">:</span>
-                    <Input
-                      type="number"
-                      placeholder="Host"
-                      value={newPortMapping.hostPort}
-                      onChange={(e) =>
-                        setNewPortMapping({
-                          ...newPortMapping,
-                          hostPort: parseInt(e.target.value) || 0,
-                        })
-                      }
-                      className="text-sm"
-                      min={1}
-                      max={65535}
-                    />
+                    <Input type="number" placeholder="Host" value={newPortMapping.hostPort} onChange={(e) => setNewPortMapping({ ...newPortMapping, hostPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} />
                   </div>
-                  <Select
-                    value={newPortMapping.protocol}
-                    onValueChange={(value: PortProtocol) =>
-                      setNewPortMapping({ ...newPortMapping, protocol: value })
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="tcp">TCP</SelectItem>
-                      <SelectItem value="udp">UDP</SelectItem>
-                    </SelectContent>
+                  <Select value={newPortMapping.protocol} onValueChange={(value: PortProtocol) => setNewPortMapping({ ...newPortMapping, protocol: value })}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem></SelectContent>
                   </Select>
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowAddPortForm(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleAddPortMapping}
-                    disabled={newPortMapping.containerPort < 1 || newPortMapping.hostPort < 1}
-                  >
-                    Add
-                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setShowAddPortForm(false)}>Cancel</Button>
+                  <Button type="button" size="sm" onClick={handleAddPortMapping} disabled={newPortMapping.containerPort < 1 || newPortMapping.hostPort < 1}>Add</Button>
                 </div>
               </div>
             )}
           </div>
-          )}
-
-          {/* MCP Servers and Plugins - full width section */}
-          {hasExtensionsToShow && (
-            <div className={`${isLocalEnvironment ? "" : "col-span-2"} space-y-4 pt-4 border-t`}>
-              <div className="grid grid-cols-2 gap-4">
-                {/* MCP Servers */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Server className="h-4 w-4 text-muted-foreground" />
-                    <Label>MCP Servers</Label>
-                  </div>
-                  {isLoadingExtensions ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Loading...
-                    </div>
-                  ) : mcpServers.length === 0 && !sessionInitData?.mcpServers.length ? (
-                    <p className="text-sm text-muted-foreground">No MCP servers configured</p>
-                  ) : mcpServers.length > 0 ? (
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {mcpServers.map((server) => {
-                        // Find runtime status if available
-                        const runtimeStatus = sessionInitData?.mcpServers.find(
-                          (s) => s.name === server.name
-                        );
-                        const isConnected = runtimeStatus?.status === "connected";
-                        const hasFailed = runtimeStatus?.status === "failed";
-
-                        return (
-                          <div
-                            key={server.name}
-                            className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${hasFailed ? "border-red-300" : "border-input"}`}
-                            title={hasFailed && runtimeStatus?.error ? runtimeStatus.error : undefined}
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              {runtimeStatus && (
-                                isConnected ? (
-                                  <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
-                                ) : hasFailed ? (
-                                  <XCircle className="h-3 w-3 text-red-500 shrink-0" />
-                                ) : null
-                              )}
-                              <span className={`font-medium truncate ${hasFailed ? "text-red-600" : ""}`}>{server.name}</span>
-                            </div>
-                            <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                              {server.source === "project" ? "project" : "global"}
-                            </span>
+        );
+      case "extensions":
+        return (
+          <div className="max-w-2xl space-y-4">
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2"><Server className="h-4 w-4 text-muted-foreground" /><Label>MCP Servers</Label></div>
+                {isLoadingExtensions ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</div>
+                ) : mcpServers.length === 0 && !sessionInitData?.mcpServers.length ? (
+                  <p className="text-sm text-muted-foreground">No MCP servers configured</p>
+                ) : mcpServers.length > 0 ? (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {mcpServers.map((server) => {
+                      const runtimeStatus = sessionInitData?.mcpServers.find((s) => s.name === server.name);
+                      const isConnected = runtimeStatus?.status === "connected";
+                      const hasFailed = runtimeStatus?.status === "failed";
+                      return (
+                        <div key={server.name} className={`flex items-center justify-between p-2 rounded-md bg-zinc-800/50 border text-sm ${hasFailed ? "border-red-300" : "border-zinc-700"}`} title={hasFailed && runtimeStatus?.error ? runtimeStatus.error : undefined}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            {runtimeStatus && (isConnected ? <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" /> : hasFailed ? <XCircle className="h-3 w-3 text-red-500 shrink-0" /> : null)}
+                            <span className={`font-medium truncate ${hasFailed ? "text-red-600" : ""}`}>{server.name}</span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    // Show runtime servers when no configured servers but sessionInitData has them
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {sessionInitData?.mcpServers.map((server) => (
-                        <RuntimeExtensionItem
-                          key={server.name}
-                          name={server.name}
-                          isSuccess={server.status === "connected"}
-                          isFailed={server.status === "failed"}
-                          error={server.error}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Configure in{" "}
-                    <code className="text-xs bg-muted px-1 rounded">.mcp.json</code> or{" "}
-                    <code className="text-xs bg-muted px-1 rounded">~/.claude.json</code>
-                  </p>
-                </div>
-
-                {/* Plugins */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Puzzle className="h-4 w-4 text-muted-foreground" />
-                    <Label>Plugins</Label>
+                          <span className="text-xs text-muted-foreground shrink-0 ml-2">{server.source === "project" ? "project" : "global"}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  {isLoadingExtensions ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Loading...
-                    </div>
-                  ) : pluginsList.length === 0 && !sessionInitData?.plugins.length ? (
-                    <p className="text-sm text-muted-foreground">No plugins configured</p>
-                  ) : pluginsList.length > 0 ? (
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {pluginsList.map((plugin) => {
-                        // Find runtime status if available
-                        const runtimeStatus = sessionInitData?.plugins.find(
-                          (p) => p.name === plugin.name
-                        );
-                        const isLoaded = runtimeStatus?.status === "loaded";
-                        const hasFailed = runtimeStatus?.status === "failed";
-
-                        return (
-                          <div
-                            key={plugin.path}
-                            className={`flex items-center justify-between p-2 rounded-md bg-muted/50 border text-sm ${hasFailed ? "border-red-300" : "border-input"}`}
-                            title={hasFailed && runtimeStatus?.error ? runtimeStatus.error : undefined}
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              {runtimeStatus && (
-                                isLoaded ? (
-                                  <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
-                                ) : hasFailed ? (
-                                  <XCircle className="h-3 w-3 text-red-500 shrink-0" />
-                                ) : null
-                              )}
-                              <span className={`font-medium truncate ${hasFailed ? "text-red-600" : ""}`}>{plugin.name}</span>
-                            </div>
-                            <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                              {plugin.source}
-                            </span>
+                ) : (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">{sessionInitData?.mcpServers.map((server) => (<RuntimeExtensionItem key={server.name} name={server.name} isSuccess={server.status === "connected"} isFailed={server.status === "failed"} error={server.error} />))}</div>
+                )}
+                <p className="text-xs text-muted-foreground">Configure in <code className="text-xs bg-zinc-800 px-1 rounded">.mcp.json</code> or <code className="text-xs bg-zinc-800 px-1 rounded">~/.claude.json</code></p>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2"><Puzzle className="h-4 w-4 text-muted-foreground" /><Label>Plugins</Label></div>
+                {isLoadingExtensions ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</div>
+                ) : pluginsList.length === 0 && !sessionInitData?.plugins.length ? (
+                  <p className="text-sm text-muted-foreground">No plugins configured</p>
+                ) : pluginsList.length > 0 ? (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {pluginsList.map((plugin) => {
+                      const runtimeStatus = sessionInitData?.plugins.find((p) => p.name === plugin.name);
+                      const isLoaded = runtimeStatus?.status === "loaded";
+                      const hasFailed = runtimeStatus?.status === "failed";
+                      return (
+                        <div key={plugin.path} className={`flex items-center justify-between p-2 rounded-md bg-zinc-800/50 border text-sm ${hasFailed ? "border-red-300" : "border-zinc-700"}`} title={hasFailed && runtimeStatus?.error ? runtimeStatus.error : undefined}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            {runtimeStatus && (isLoaded ? <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" /> : hasFailed ? <XCircle className="h-3 w-3 text-red-500 shrink-0" /> : null)}
+                            <span className={`font-medium truncate ${hasFailed ? "text-red-600" : ""}`}>{plugin.name}</span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    // Show runtime plugins when no configured plugins but sessionInitData has them
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {sessionInitData?.plugins.map((plugin) => (
-                        <RuntimeExtensionItem
-                          key={plugin.name}
-                          name={plugin.name}
-                          isSuccess={plugin.status === "loaded"}
-                          isFailed={plugin.status === "failed"}
-                          error={plugin.error}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Configure in{" "}
-                    <code className="text-xs bg-muted px-1 rounded">.claude/plugins.json</code> or{" "}
-                    <code className="text-xs bg-muted px-1 rounded">~/.claude.json</code>
-                  </p>
-                </div>
+                          <span className="text-xs text-muted-foreground shrink-0 ml-2">{plugin.source}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">{sessionInitData?.plugins.map((plugin) => (<RuntimeExtensionItem key={plugin.name} name={plugin.name} isSuccess={plugin.status === "loaded"} isFailed={plugin.status === "failed"} error={plugin.error} />))}</div>
+                )}
+                <p className="text-xs text-muted-foreground">Configure in <code className="text-xs bg-zinc-800 px-1 rounded">.claude/plugins.json</code> or <code className="text-xs bg-zinc-800 px-1 rounded">~/.claude.json</code></p>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
 
-        <DialogFooter className="shrink-0">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+  return (
+    <>
+    <FullscreenSettingsLayout
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Environment Settings"
+      menuItems={menuItems}
+      footer={
+        <>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleSave} disabled={isSaving || hasErrors}>
+            {isSaving ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving...</>) : "Save Changes"}
           </Button>
-          <Button
-            onClick={handleSave}
-            disabled={isSaving || hasErrors}
-          >
-            {isSaving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              "Save Changes"
-            )}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+        </>
+      }
+    >
+      {renderSection}
+    </FullscreenSettingsLayout>
 
       {/* Restart confirmation dialog */}
       <AlertDialog open={showRestartConfirm} onOpenChange={setShowRestartConfirm}>
@@ -1093,6 +870,6 @@ export function EnvironmentSettingsDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Dialog>
+    </>
   );
 }

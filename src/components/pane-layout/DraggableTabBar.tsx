@@ -175,7 +175,7 @@ export function DraggableTabBar({
     <>
       <div
         className={cn(
-          "flex items-center gap-0.5 border-b border-border bg-[#252526] px-1 min-h-[32px]",
+          "flex items-center gap-0.5 bg-zinc-900/80 min-h-[32px]",
           isDropTarget && "bg-primary/10",
         )}
       >
