@@ -15,7 +15,8 @@
     "build:all": "bun run download:binaries && bun run build:claude-bridge && bun run build:codex-bridge && bun run build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns '**/PersistentTerminal.test*'",
+    "test:all": "bun test --path-ignore-patterns '**/PersistentTerminal.test*' && bun test ./src/components/terminal/PersistentTerminal.test.tsx",
     "docker:build": "docker build -t orkestrator-ai:latest --no-cache -f docker/Dockerfile .",
     "package": "bun run tauri build && ./scripts/codesign-app.sh \"src-tauri/target/release/bundle/macos/Orkestrator AI.app\" && rm -rf \"/Applications/Orkestrator AI.app\" && ditto \"src-tauri/target/release/bundle/macos/Orkestrator AI.app\" \"/Applications/Orkestrator AI.app\""
   },

@@ -21,16 +21,8 @@ mock.module("@/components/ui/tooltip", () => ({
   }) => <div data-testid="tooltip-content">{children}</div>,
 }));
 
-// Mock lucide-react
-mock.module("lucide-react", () => ({
-  Loader2: ({ className }: { className?: string }) => (
-    <span data-testid="loader-icon" className={className}>
-      Loading
-    </span>
-  ),
-}));
-
-// Import component after mocking
+// Import component after mocking (lucide-react is NOT mocked to avoid
+// polluting Bun's module cache for other test files)
 import { StatusIndicator } from "../../../src/components/environments/StatusIndicator";
 
 describe("StatusIndicator", () => {
@@ -55,9 +47,10 @@ describe("StatusIndicator", () => {
   });
 
   test("shows loader icon for creating status", () => {
-    render(<StatusIndicator status="creating" />);
-    const loader = screen.getByTestId("loader-icon");
-    expect(loader).toBeTruthy();
+    const { container } = render(<StatusIndicator status="creating" />);
+    // Loader2 renders an SVG with animate-spin class
+    const spinner = container.querySelector(".animate-spin");
+    expect(spinner).toBeTruthy();
   });
 
   test("shows label when showLabel is true", () => {

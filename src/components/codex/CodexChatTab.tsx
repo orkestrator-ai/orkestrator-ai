@@ -215,11 +215,17 @@ export function CodexChatTab({
     };
   }, [decrementContainerRef, environmentId, incrementContainerRef]);
 
+  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
+  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
   useEffect(() => {
-    setContainerState(
-      environmentId,
-      connectionState === "connected" && session?.isLoading ? "working" : "idle",
-    );
+    if (session?.isLoading) {
+      // Always show working when session is loading, regardless of connection state
+      setContainerState(environmentId, "working");
+    } else if (connectionState === "connected") {
+      // Connected and not loading - idle
+      setContainerState(environmentId, "idle");
+    }
+    // When not connected and not loading, preserve the current state (don't force idle)
   }, [connectionState, environmentId, session?.isLoading, setContainerState]);
 
   const refreshMessages = useCallback(

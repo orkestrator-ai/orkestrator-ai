@@ -182,23 +182,20 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   // Track Claude activity state based on session loading - update the environment icon in sidebar
   // For native Claude mode, we use environmentId as the key (works for both local and containerized)
+  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
+  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
   useEffect(() => {
-    if (connectionState !== "connected") {
-      // Not connected yet, show idle
-      setContainerState(environmentId, "idle");
-      return;
-    }
-
     if (session?.isLoading) {
-      // Claude is working on a response
+      // Claude is working on a response - always show working regardless of connection state
       setContainerState(environmentId, "working");
-    } else if (pendingQuestions.length > 0) {
+    } else if (pendingQuestions.length > 0 && connectionState === "connected") {
       // Claude is waiting for user input (question)
       setContainerState(environmentId, "waiting");
-    } else {
-      // Claude is idle
+    } else if (connectionState === "connected") {
+      // Connected and not loading - Claude is idle
       setContainerState(environmentId, "idle");
     }
+    // When not connected and not loading, preserve the current state (don't force idle)
   }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
 
   // Cleanup activity state when tab unmounts
@@ -927,6 +924,21 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         }
       } finally {
         setEventStream(environmentId, null);
+
+        // Auto-reconnect SSE if the connection dropped unexpectedly (not explicitly aborted).
+        // This ensures inactive environments maintain their event stream and activity state.
+        if (!abortController.signal.aborted) {
+          const reconnectDelay = 3000;
+          console.debug("[ClaudeChatTab] SSE dropped, scheduling reconnect in", reconnectDelay, "ms for", environmentId);
+          setTimeout(() => {
+            // Re-check: only reconnect if there's still a client and no active subscription
+            const currentClient = useClaudeStore.getState().clients.get(environmentId);
+            if (currentClient && !hasActiveEventSubscription(environmentId)) {
+              console.debug("[ClaudeChatTab] Reconnecting SSE for", environmentId);
+              startSharedEventSubscription(currentClient);
+            }
+          }, reconnectDelay);
+        }
       }
     },
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]

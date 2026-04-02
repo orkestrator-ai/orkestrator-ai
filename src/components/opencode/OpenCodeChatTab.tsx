@@ -284,23 +284,20 @@ export function OpenCodeChatTab({
 
   // Track OpenCode activity state based on session loading - update the environment icon in sidebar
   // For native mode, we use environmentId as the key (works for both local and containerized)
+  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
+  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
   useEffect(() => {
-    if (connectionState !== "connected") {
-      // Not connected yet, show idle
-      setContainerState(environmentId, "idle");
-      return;
-    }
-
     if (session?.isLoading) {
-      // OpenCode is working on a response
+      // OpenCode is working on a response - always show working regardless of connection state
       setContainerState(environmentId, "working");
-    } else if (pendingQuestions.length > 0 || pendingPermissions.length > 0) {
+    } else if ((pendingQuestions.length > 0 || pendingPermissions.length > 0) && connectionState === "connected") {
       // OpenCode is waiting for user input (question or permission)
       setContainerState(environmentId, "waiting");
-    } else {
-      // OpenCode is idle
+    } else if (connectionState === "connected") {
+      // Connected and not loading - OpenCode is idle
       setContainerState(environmentId, "idle");
     }
+    // When not connected and not loading, preserve the current state (don't force idle)
   }, [
     connectionState,
     session?.isLoading,
@@ -1020,6 +1017,20 @@ export function OpenCodeChatTab({
       } finally {
         // Clear the stream reference when loop ends
         setEventStream(environmentId, null);
+
+        // Auto-reconnect SSE if the connection dropped unexpectedly (not explicitly aborted).
+        // This ensures inactive environments maintain their event stream and activity state.
+        if (!abortController.signal.aborted) {
+          const reconnectDelay = 3000;
+          console.debug("[OpenCodeChatTab] SSE dropped, scheduling reconnect in", reconnectDelay, "ms for", environmentId);
+          setTimeout(() => {
+            const currentClient = useOpenCodeStore.getState().clients.get(environmentId);
+            if (currentClient && !hasActiveEventSubscription(environmentId)) {
+              console.debug("[OpenCodeChatTab] Reconnecting SSE for", environmentId);
+              startSharedEventSubscription(currentClient);
+            }
+          }, reconnectDelay);
+        }
       }
     },
     [
