@@ -17,7 +17,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
-import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
+import { resizeCanvasIfNeeded, resizeCanvasToMaxDimension, MAX_IMAGE_DIMENSION } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type QueuedMessage, type ClaudeEffortLevel } from "@/stores/claudeStore";
@@ -325,7 +325,8 @@ export function ClaudeComposeBar({
         const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
         ctx.putImageData(imageDataObj, 0, 0);
 
-        // Resize if needed to fit within RGBA size limit
+        // Resize to fit within SDK pixel dimension limit, then RGBA size limit
+        canvas = resizeCanvasToMaxDimension(canvas, MAX_IMAGE_DIMENSION);
         canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
 
         const dataUrl = canvas.toDataURL("image/png");

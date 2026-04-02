@@ -2,6 +2,10 @@
  * Canvas utilities for image processing.
  */
 
+// Claude SDK uses sharp to resize images >2000px — sharp fails in packaged apps (code signing).
+// Pre-resize in the frontend to avoid hitting the SDK's sharp dependency entirely.
+export const MAX_IMAGE_DIMENSION = 2000;
+
 /**
  * Resize a canvas if its RGBA data exceeds the maximum size limit.
  * Maintains aspect ratio while scaling down to fit within the limit.
@@ -38,6 +42,47 @@ export function resizeCanvasIfNeeded(
   }
 
   // Use high-quality image smoothing for better downscaling
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
+
+  // Release original canvas memory
+  canvas.width = 0;
+  canvas.height = 0;
+
+  return resizedCanvas;
+}
+
+/**
+ * Resize a canvas so neither dimension exceeds maxDimension pixels.
+ * Maintains aspect ratio. Returns the original canvas if already within limits.
+ *
+ * @param canvas - The source canvas to potentially resize
+ * @param maxDimension - Maximum allowed width or height in pixels
+ * @returns The original canvas if within limits, or a new resized canvas
+ */
+export function resizeCanvasToMaxDimension(
+  canvas: HTMLCanvasElement,
+  maxDimension: number
+): HTMLCanvasElement {
+  const { width, height } = canvas;
+
+  if (width <= maxDimension && height <= maxDimension) return canvas;
+
+  const scale = Math.min(maxDimension / width, maxDimension / height);
+  const newWidth = Math.floor(width * scale);
+  const newHeight = Math.floor(height * scale);
+
+  const resizedCanvas = document.createElement("canvas");
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  const ctx = resizedCanvas.getContext("2d");
+
+  if (!ctx) {
+    console.error("[canvas-utils] Failed to get 2D context for dimension-resized canvas");
+    return canvas;
+  }
+
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
