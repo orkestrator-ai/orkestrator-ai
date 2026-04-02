@@ -2,6 +2,10 @@
  * Canvas utilities for image processing.
  */
 
+// Claude SDK uses sharp to resize images >2000px — sharp fails in packaged apps (code signing).
+// Pre-resize in the frontend to avoid hitting the SDK's sharp dependency entirely.
+export const MAX_IMAGE_DIMENSION = 2000;
+
 /**
  * Resize a canvas if its RGBA data exceeds the maximum size limit.
  * Maintains aspect ratio while scaling down to fit within the limit.
