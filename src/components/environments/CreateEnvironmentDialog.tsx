@@ -247,7 +247,7 @@ export function CreateEnvironmentDialog({
                   "p-3 rounded-lg border-2 text-left transition-colors",
                   environmentType === "containerized"
                     ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-muted-foreground/50",
+                    : "border-transparent bg-zinc-900 hover:border-zinc-600",
                   isLoading && "opacity-50 cursor-not-allowed"
                 )}
               >
@@ -268,7 +268,7 @@ export function CreateEnvironmentDialog({
                   "p-3 rounded-lg border-2 text-left transition-colors",
                   environmentType === "local"
                     ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-muted-foreground/50",
+                    : "border-transparent bg-zinc-900 hover:border-zinc-600",
                   isLoading && "opacity-50 cursor-not-allowed"
                 )}
               >
@@ -318,7 +318,7 @@ export function CreateEnvironmentDialog({
                       "p-2 rounded-lg border-2 text-left transition-colors",
                       networkAccessMode === "restricted"
                         ? "border-primary bg-primary/5"
-                        : "border-muted hover:border-muted-foreground/50",
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600",
                       isLoading && "opacity-50 cursor-not-allowed"
                     )}
                   >
@@ -336,7 +336,7 @@ export function CreateEnvironmentDialog({
                       "p-2 rounded-lg border-2 text-left transition-colors",
                       networkAccessMode === "full"
                         ? "border-primary bg-primary/5"
-                        : "border-muted hover:border-muted-foreground/50",
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600",
                       isLoading && "opacity-50 cursor-not-allowed"
                     )}
                   >
@@ -409,7 +409,7 @@ export function CreateEnvironmentDialog({
                         "p-2 rounded-lg border-2 text-left transition-colors",
                         (agentType === "claude" ? claudeMode : opencodeMode) === "terminal"
                           ? "border-primary bg-primary/5"
-                          : "border-muted hover:border-muted-foreground/50",
+                          : "border-transparent bg-zinc-900 hover:border-zinc-600",
                         (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
                       )}
                     >
@@ -433,7 +433,7 @@ export function CreateEnvironmentDialog({
                         "p-2 rounded-lg border-2 text-left transition-colors",
                         (agentType === "claude" ? claudeMode : opencodeMode) === "native"
                           ? "border-primary bg-primary/5"
-                          : "border-muted hover:border-muted-foreground/50",
+                          : "border-transparent bg-zinc-900 hover:border-zinc-600",
                         (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
                       )}
                     >
@@ -463,7 +463,7 @@ export function CreateEnvironmentDialog({
                   "p-3 rounded-lg border-2 text-left transition-colors",
                   agentType === "claude"
                     ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-muted-foreground/50",
+                    : "border-transparent bg-zinc-900 hover:border-zinc-600",
                   (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
                 )}
               >
@@ -481,7 +481,7 @@ export function CreateEnvironmentDialog({
                   "p-3 rounded-lg border-2 text-left transition-colors",
                   agentType === "opencode"
                     ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-muted-foreground/50",
+                    : "border-transparent bg-zinc-900 hover:border-zinc-600",
                   (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
                 )}
               >
@@ -499,7 +499,7 @@ export function CreateEnvironmentDialog({
                   "p-3 rounded-lg border-2 text-left transition-colors",
                   agentType === "codex"
                     ? "border-primary bg-primary/5"
-                    : "border-muted hover:border-muted-foreground/50",
+                    : "border-transparent bg-zinc-900 hover:border-zinc-600",
                   (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
                 )}
               >
