@@ -370,7 +370,6 @@ export function PersistentTerminal({
           dataBufferRef.current = dataBufferRef.current.slice(-512);
         }
       }
-
     },
     [terminal, isFirstTab, isLocalEnvironment, isEnvironmentReady, tabId, onReady]
   );

@@ -16,7 +16,7 @@ import {
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { isSetupPending } from "@/components/build-pipeline";
+import { isSetupPending } from "@/lib/setup-commands";
 import {
   createClient,
   getModelsWithDefaults,

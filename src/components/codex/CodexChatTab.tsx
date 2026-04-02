@@ -45,7 +45,7 @@ import {
   resolveReasoningEffort,
 } from "./codex-preferences";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { isSetupPending } from "@/components/build-pipeline";
+import { isSetupPending } from "@/lib/setup-commands";
 import type { CodexNativeData } from "@/types/paneLayout";
 import type { CodexAttachment } from "@/stores/codexStore";
 

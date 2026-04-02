@@ -42,7 +42,7 @@ import { ClaudePlanApprovalCard } from "./ClaudePlanApprovalCard";
 import { ResumeSessionDialog } from "./ResumeSessionDialog";
 import type { ClaudeNativeData } from "@/types/paneLayout";
 import { useEnvironmentStore } from "@/stores/environmentStore";
-import { isSetupPending } from "@/components/build-pipeline";
+import { isSetupPending } from "@/lib/setup-commands";
 import type { ClaudeAttachment } from "@/stores/claudeStore";
 
 interface ClaudeChatTabProps {
