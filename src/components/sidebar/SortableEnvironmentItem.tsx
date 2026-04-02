@@ -52,7 +52,12 @@ export function SortableEnvironmentItem({
         isDragging && "opacity-50 z-50"
       )}
     >
-      <div className="flex items-center group/sortable">
+      <div className={cn(
+        "flex items-center group/sortable transition-colors",
+        isSelected && !isMultiSelectMode
+          ? "bg-zinc-900/80 border-l-2 border-l-blue-500"
+          : "hover:bg-zinc-800/50 border-l-2 border-l-transparent"
+      )}>
         {/* Drag handle - far left */}
         <button
           {...attributes}

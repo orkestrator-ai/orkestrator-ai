@@ -20,11 +20,11 @@
 
 @theme {
   /* Dark theme colors */
-  --color-background: #1e1e1e;
+  --color-background: #000000;
   --color-foreground: #e4e4e7;
   --color-muted: #27272a;
   --color-muted-foreground: #a1a1aa;
-  --color-card: #27272a;
+  --color-card: #18181b;
   --color-card-foreground: #e4e4e7;
   --color-panel-surface: #27272a;
   --color-popover: #27272a;
@@ -88,11 +88,11 @@ body {
 }
 
 .sidebar-glass {
-  background-color: var(--color-panel-surface);
+  background-color: #000000;
 }
 
 .panel-surface {
-  background-color: var(--color-panel-surface);
+  background-color: rgb(24 24 27 / 0.8);
 }
 
 /* Prevent text selection during resize operations */

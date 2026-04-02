@@ -97,11 +97,6 @@ export function SortableProjectGroup({
     transition,
   };
 
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowDeleteDialog(true);
-  };
-
   const confirmDelete = () => {
     onDeleteProject(project.id);
     setShowDeleteDialog(false);
@@ -120,7 +115,7 @@ export function SortableProjectGroup({
       <div
         ref={setNodeRef}
         style={style}
-        className={cn("mb-1", isDragging && "opacity-50 z-50")}
+        className={cn("border-b border-white/10", isDragging && "opacity-50 z-50")}
       >
         <Collapsible open={!isCollapsed} onOpenChange={onToggleCollapse}>
           {/* Project Header with Context Menu */}
@@ -134,23 +129,10 @@ export function SortableProjectGroup({
                 onMouseLeave={() => setIsHovered(false)}
               >
                 <div className="flex flex-1 items-center gap-0 rounded-md text-sm text-foreground">
-                  <CollapsibleTrigger asChild>
-                    <button
-                      className="shrink-0 p-1 rounded hover:bg-accent/50 transition-colors"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <ChevronRight
-                        className={cn(
-                          "h-4 w-4 text-muted-foreground transition-transform duration-200",
-                          !isCollapsed && "rotate-90"
-                        )}
-                      />
-                    </button>
-                  </CollapsibleTrigger>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        className="flex flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-accent/50 transition-colors"
+                        className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/50 transition-colors"
                         onClick={(e) => {
                           e.stopPropagation();
                           onSelectProject();
@@ -179,32 +161,35 @@ export function SortableProjectGroup({
                   </Tooltip>
                 </div>
 
-                {/* Action buttons - shown on hover */}
-                <div
+                {/* Action buttons - shown on hover, replacing chevron */}
+                {/* Add button - shown on hover */}
+                <Button
+                  variant="ghost"
+                  size="icon"
                   className={cn(
-                    "absolute right-1 flex items-center gap-0.5 transition-opacity",
+                    "h-6 w-6 text-muted-foreground hover:text-foreground transition-opacity",
                     isHovered ? "opacity-100" : "opacity-0"
                   )}
+                  onClick={handleAddEnvironment}
+                  title="Create environment"
                 >
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                    onClick={handleAddEnvironment}
-                    title="Create environment"
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+
+                {/* Chevron arrow - far right */}
+                <CollapsibleTrigger asChild>
+                  <button
+                    className="shrink-0 p-1 rounded hover:bg-accent/50 transition-colors"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                    onClick={handleDelete}
-                    title="Delete project"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
+                    <ChevronRight
+                      className={cn(
+                        "h-4 w-4 text-muted-foreground transition-transform duration-200",
+                        !isCollapsed && "rotate-90"
+                      )}
+                    />
+                  </button>
+                </CollapsibleTrigger>
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent>
@@ -232,12 +217,8 @@ export function SortableProjectGroup({
 
           {/* Environments List */}
           <CollapsibleContent>
-            <div className="ml-5 pl-2 border-l border-border/50">
-              {environments.length === 0 ? (
-                <div className="py-2 px-2 text-xs text-muted-foreground">
-                  No environments yet
-                </div>
-              ) : (
+            <div>
+              {environments.length > 0 && (
                 <SortableContext
                   items={environments.map((e) => e.id)}
                   strategy={verticalListSortingStrategy}

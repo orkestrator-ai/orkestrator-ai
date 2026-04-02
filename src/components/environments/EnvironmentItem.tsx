@@ -150,11 +150,11 @@ export function EnvironmentItem({
                 onClick={handleClick}
                 onKeyDown={handleKeyDown}
                 className={cn(
-                  "group flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                  "group flex w-full cursor-pointer items-center gap-2 py-1.5 pr-2 text-left text-sm transition-colors",
                   isSelected && !isMultiSelectMode
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                  isChecked && isMultiSelectMode && "bg-accent/30",
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                  isChecked && isMultiSelectMode && "bg-zinc-800/50",
                   (isStopping || isEnvironmentDeleting) && "opacity-60"
                 )}
               >
