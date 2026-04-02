@@ -26,7 +26,8 @@ import { getMcpServersForSdk, getMcpServerNames } from "./mcp-config.js";
 import { getPluginsForSdk } from "./plugin-config.js";
 import type { McpToolMetadata } from "../types/mcp.js";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -768,10 +769,10 @@ function getImageMediaType(filePath: string): "image/jpeg" | "image/png" | "imag
  * For text-only prompts (or prompts with only file attachments), returns a
  * plain string as before.
  */
-function buildSdkPrompt(
+async function buildSdkPrompt(
   finalPrompt: string,
   attachments?: PromptOptions["attachments"]
-): string | AsyncIterable<SDKUserMessage> {
+): Promise<string | AsyncIterable<SDKUserMessage>> {
   const imageAttachments = attachments?.filter((att) => att.type === "image") ?? [];
   if (imageAttachments.length === 0) {
     return finalPrompt;
@@ -790,8 +791,9 @@ function buildSdkPrompt(
       const commaIdx = att.dataUrl.indexOf(",");
       base64Data = commaIdx !== -1 ? att.dataUrl.slice(commaIdx + 1) : att.dataUrl;
     } else if (att.path && existsSync(att.path)) {
-      // Fall back to reading from disk
-      base64Data = readFileSync(att.path).toString("base64");
+      // Fall back to reading from disk (async to avoid blocking the event loop)
+      const buffer = await readFile(att.path);
+      base64Data = buffer.toString("base64");
     }
 
     if (base64Data) {
@@ -890,7 +892,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
 </system-reminder>
 
 `;
-    finalPrompt = planModeInstruction + displayPrompt;
+    finalPrompt = planModeInstruction + sdkTextPrompt;
   }
 
   // Add user message with displayPrompt (what the user sees, without planning mode instruction).
@@ -961,7 +963,7 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
     });
     const envPath = process.env.PATH;
     console.log("[session-manager] SDK env PATH", { path: envPath });
-    const sdkPrompt = buildSdkPrompt(finalPrompt, options?.attachments);
+    const sdkPrompt = await buildSdkPrompt(finalPrompt, options?.attachments);
     const queryIterator = query({
       prompt: sdkPrompt,
       options: {
