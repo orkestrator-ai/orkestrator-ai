@@ -319,6 +319,11 @@ export function OpenCodeChatTab({
   // Track last initialization time to prevent rapid re-initialization
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000; // Don't re-initialize within 1 second
+  const sseReconnectAttemptsRef = useRef<number>(0);
+  const startSharedEventSubscriptionRef = useRef<((client: ReturnType<typeof createClient>) => void) | null>(null);
+  const MAX_SSE_RECONNECT_ATTEMPTS = 10;
+  const SSE_RECONNECT_BASE_DELAY = 3000;
+  const SSE_RECONNECT_MAX_DELAY = 60000;
 
   // Hydrate pending permission/question requests in case SSE events were missed
   const syncPendingRequests = useCallback(
@@ -846,6 +851,9 @@ export function OpenCodeChatTab({
         };
 
         for await (const event of eventStream) {
+          // Reset reconnect backoff on first successful event
+          sseReconnectAttemptsRef.current = 0;
+
           if (abortController.signal.aborted) {
             // Clean up pending reloads on abort
             for (const timeout of pendingReloads.values()) {
@@ -1019,17 +1027,26 @@ export function OpenCodeChatTab({
         setEventStream(environmentId, null);
 
         // Auto-reconnect SSE if the connection dropped unexpectedly (not explicitly aborted).
-        // This ensures inactive environments maintain their event stream and activity state.
+        // Uses exponential backoff capped at 60s, with a maximum retry count.
         if (!abortController.signal.aborted) {
-          const reconnectDelay = 3000;
-          console.debug("[OpenCodeChatTab] SSE dropped, scheduling reconnect in", reconnectDelay, "ms for", environmentId);
-          setTimeout(() => {
-            const currentClient = useOpenCodeStore.getState().clients.get(environmentId);
-            if (currentClient && !hasActiveEventSubscription(environmentId)) {
-              console.debug("[OpenCodeChatTab] Reconnecting SSE for", environmentId);
-              startSharedEventSubscription(currentClient);
-            }
-          }, reconnectDelay);
+          const attempt = sseReconnectAttemptsRef.current;
+          if (attempt >= MAX_SSE_RECONNECT_ATTEMPTS) {
+            console.warn("[OpenCodeChatTab] SSE reconnect limit reached for", environmentId);
+          } else {
+            const reconnectDelay = Math.min(SSE_RECONNECT_BASE_DELAY * Math.pow(2, attempt), SSE_RECONNECT_MAX_DELAY);
+            sseReconnectAttemptsRef.current = attempt + 1;
+            console.debug("[OpenCodeChatTab] SSE dropped, reconnect attempt", attempt + 1, "in", reconnectDelay, "ms for", environmentId);
+            setTimeout(() => {
+              const currentClient = useOpenCodeStore.getState().clients.get(environmentId);
+              if (currentClient && !hasActiveEventSubscription(environmentId)) {
+                console.debug("[OpenCodeChatTab] Reconnecting SSE for", environmentId);
+                startSharedEventSubscriptionRef.current?.(currentClient);
+              }
+            }, reconnectDelay);
+          }
+        } else {
+          // Explicit abort — reset reconnect counter
+          sseReconnectAttemptsRef.current = 0;
         }
       }
     },
@@ -1048,6 +1065,7 @@ export function OpenCodeChatTab({
       removePendingQuestion,
     ],
   );
+  startSharedEventSubscriptionRef.current = startSharedEventSubscription;
 
   // Handle sending a message
   const handleSend = useCallback(

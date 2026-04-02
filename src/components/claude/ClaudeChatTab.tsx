@@ -179,6 +179,11 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
+  const sseReconnectAttemptsRef = useRef<number>(0);
+  const startSharedEventSubscriptionRef = useRef<((client: ReturnType<typeof createClient>) => void) | null>(null);
+  const MAX_SSE_RECONNECT_ATTEMPTS = 10;
+  const SSE_RECONNECT_BASE_DELAY = 3000;
+  const SSE_RECONNECT_MAX_DELAY = 60000;
 
   // Track Claude activity state based on session loading - update the environment icon in sidebar
   // For native Claude mode, we use environmentId as the key (works for both local and containerized)
@@ -705,6 +710,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         };
 
         for await (const event of eventStream) {
+          // Reset reconnect backoff on first successful event
+          sseReconnectAttemptsRef.current = 0;
+
           if (abortController.signal.aborted) {
             for (const timeout of pendingReloads.values()) {
               clearTimeout(timeout);
@@ -926,23 +934,32 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setEventStream(environmentId, null);
 
         // Auto-reconnect SSE if the connection dropped unexpectedly (not explicitly aborted).
-        // This ensures inactive environments maintain their event stream and activity state.
+        // Uses exponential backoff capped at 60s, with a maximum retry count.
         if (!abortController.signal.aborted) {
-          const reconnectDelay = 3000;
-          console.debug("[ClaudeChatTab] SSE dropped, scheduling reconnect in", reconnectDelay, "ms for", environmentId);
-          setTimeout(() => {
-            // Re-check: only reconnect if there's still a client and no active subscription
-            const currentClient = useClaudeStore.getState().clients.get(environmentId);
-            if (currentClient && !hasActiveEventSubscription(environmentId)) {
-              console.debug("[ClaudeChatTab] Reconnecting SSE for", environmentId);
-              startSharedEventSubscription(currentClient);
-            }
-          }, reconnectDelay);
+          const attempt = sseReconnectAttemptsRef.current;
+          if (attempt >= MAX_SSE_RECONNECT_ATTEMPTS) {
+            console.warn("[ClaudeChatTab] SSE reconnect limit reached for", environmentId);
+          } else {
+            const reconnectDelay = Math.min(SSE_RECONNECT_BASE_DELAY * Math.pow(2, attempt), SSE_RECONNECT_MAX_DELAY);
+            sseReconnectAttemptsRef.current = attempt + 1;
+            console.debug("[ClaudeChatTab] SSE dropped, reconnect attempt", attempt + 1, "in", reconnectDelay, "ms for", environmentId);
+            setTimeout(() => {
+              const currentClient = useClaudeStore.getState().clients.get(environmentId);
+              if (currentClient && !hasActiveEventSubscription(environmentId)) {
+                console.debug("[ClaudeChatTab] Reconnecting SSE for", environmentId);
+                startSharedEventSubscriptionRef.current?.(currentClient);
+              }
+            }, reconnectDelay);
+          }
+        } else {
+          // Explicit abort — reset reconnect counter
+          sseReconnectAttemptsRef.current = 0;
         }
       }
     },
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
   );
+  startSharedEventSubscriptionRef.current = startSharedEventSubscription;
 
   const handleSend = useCallback(
     async (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => {
