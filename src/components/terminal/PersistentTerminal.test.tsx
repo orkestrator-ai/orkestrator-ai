@@ -27,10 +27,13 @@ mock.module("@/hooks/useClaudeState", () => ({
 
 mock.module("@/hooks/useClipboardImagePaste", () => ({
   useClipboardImagePaste: () => {},
+  processClipboardPaste: mock(async () => false),
+  processLocalClipboardPaste: mock(async () => false),
 }));
 
 mock.module("@/lib/terminal-paste", () => ({
   handleTerminalPaste: mock(async () => {}),
+  escapePathForTerminalInput: (p: string) => p,
 }));
 
 const sessionStoreState = {
@@ -71,8 +74,30 @@ const paneLayoutState = {
 };
 
 const environmentState = {
+  environments: [] as unknown[],
+  isLoading: false,
+  error: null,
   getEnvironmentById: () => ({ environmentType: "container" as const }),
+  setEnvironmentPR: mock(() => {}),
+  setupCommandsResolved: new Set<string>(),
+  pendingSetupCommands: new Map<string, string[]>(),
+  setupScriptsRunning: new Set<string>(),
+  workspaceReadyEnvironments: new Set<string>(),
+  isSetupCommandsResolved: () => false,
+  isWorkspaceReady: () => false,
+  setWorkspaceReady: mock(() => {}),
+  setSetupScriptsRunning: mock(() => {}),
+  setSetupCommandsResolved: mock(() => {}),
+  consumePendingSetupCommands: () => undefined,
+  updateEnvironment: mock(() => {}),
+  isDeleting: () => false,
 };
+
+// Mock @/stores barrel — includes stubs for ALL re-exports to prevent polluting the
+// Bun module cache for subsequent test files in the same process.
+const noopStore = () => ({});
+const noopStoreWithSelector = <T,>(selector?: (s: Record<string, unknown>) => T) =>
+  selector ? selector({}) : {};
 
 mock.module("@/stores", () => ({
   useTerminalSessionStore: useTerminalSessionStoreMock,
@@ -80,7 +105,34 @@ mock.module("@/stores", () => ({
     `${containerId ?? environmentId}:${tabId}`,
   useConfigStore: <T,>(selector: (state: typeof configState) => T) => selector(configState),
   usePaneLayoutStore: <T,>(selector: (state: typeof paneLayoutState) => T) => selector(paneLayoutState),
-  useEnvironmentStore: <T,>(selector: (state: typeof environmentState) => T) => selector(environmentState),
+  useEnvironmentStore: Object.assign(
+    <T,>(selector: (state: typeof environmentState) => T) => selector(environmentState),
+    {
+      getState: () => environmentState,
+      setState: (partial: Partial<typeof environmentState>) => Object.assign(environmentState, partial),
+      subscribe: () => () => {},
+    }
+  ),
+  // Stubs for stores not used by this test but required by other files
+  useUIStore: noopStoreWithSelector,
+  useProjectStore: Object.assign(noopStoreWithSelector, { getState: noopStore, setState: noopStore, subscribe: () => () => {} }),
+  useClaudeActivityStore: noopStoreWithSelector,
+  useClaudeOptionsStore: noopStore,
+  useFilesPanelStore: noopStoreWithSelector,
+  useTerminalPortalStore: noopStoreWithSelector,
+  useErrorDialogStore: noopStore,
+  useFileDirtyStore: noopStoreWithSelector,
+  useKanbanStore: noopStoreWithSelector,
+  usePrMonitorStore: noopStoreWithSelector,
+  useBuildPipelineStore: Object.assign(noopStoreWithSelector, { getState: noopStore, setState: noopStore, subscribe: () => () => {} }),
+  useEnvironmentDiffStore: noopStoreWithSelector,
+  useCodexStore: noopStoreWithSelector,
+  createCodexSessionKey: () => "",
+  getAllLeaves: () => [],
+  PR_MONITOR_INTERVALS: {},
+  PR_MONITOR_TIMEOUTS: {},
+  PR_MONITOR_BACKOFF: {},
+  getEffectiveInterval: () => 0,
 }));
 
 const persistentSessionStore = {

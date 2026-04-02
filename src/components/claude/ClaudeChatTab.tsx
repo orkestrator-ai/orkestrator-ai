@@ -179,26 +179,28 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   const lastInitTimeRef = useRef<number>(0);
   const INIT_DEBOUNCE_MS = 1000;
+  const sseReconnectAttemptsRef = useRef<number>(0);
+  const startSharedEventSubscriptionRef = useRef<((client: ReturnType<typeof createClient>) => void) | null>(null);
+  const MAX_SSE_RECONNECT_ATTEMPTS = 10;
+  const SSE_RECONNECT_BASE_DELAY = 3000;
+  const SSE_RECONNECT_MAX_DELAY = 60000;
 
   // Track Claude activity state based on session loading - update the environment icon in sidebar
   // For native Claude mode, we use environmentId as the key (works for both local and containerized)
+  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
+  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
   useEffect(() => {
-    if (connectionState !== "connected") {
-      // Not connected yet, show idle
-      setContainerState(environmentId, "idle");
-      return;
-    }
-
     if (session?.isLoading) {
-      // Claude is working on a response
+      // Claude is working on a response - always show working regardless of connection state
       setContainerState(environmentId, "working");
-    } else if (pendingQuestions.length > 0) {
+    } else if (pendingQuestions.length > 0 && connectionState === "connected") {
       // Claude is waiting for user input (question)
       setContainerState(environmentId, "waiting");
-    } else {
-      // Claude is idle
+    } else if (connectionState === "connected") {
+      // Connected and not loading - Claude is idle
       setContainerState(environmentId, "idle");
     }
+    // When not connected and not loading, preserve the current state (don't force idle)
   }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
 
   // Cleanup activity state when tab unmounts
@@ -708,6 +710,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         };
 
         for await (const event of eventStream) {
+          // Reset reconnect backoff on first successful event
+          sseReconnectAttemptsRef.current = 0;
+
           if (abortController.signal.aborted) {
             for (const timeout of pendingReloads.values()) {
               clearTimeout(timeout);
@@ -927,10 +932,34 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         }
       } finally {
         setEventStream(environmentId, null);
+
+        // Auto-reconnect SSE if the connection dropped unexpectedly (not explicitly aborted).
+        // Uses exponential backoff capped at 60s, with a maximum retry count.
+        if (!abortController.signal.aborted) {
+          const attempt = sseReconnectAttemptsRef.current;
+          if (attempt >= MAX_SSE_RECONNECT_ATTEMPTS) {
+            console.warn("[ClaudeChatTab] SSE reconnect limit reached for", environmentId);
+          } else {
+            const reconnectDelay = Math.min(SSE_RECONNECT_BASE_DELAY * Math.pow(2, attempt), SSE_RECONNECT_MAX_DELAY);
+            sseReconnectAttemptsRef.current = attempt + 1;
+            console.debug("[ClaudeChatTab] SSE dropped, reconnect attempt", attempt + 1, "in", reconnectDelay, "ms for", environmentId);
+            setTimeout(() => {
+              const currentClient = useClaudeStore.getState().clients.get(environmentId);
+              if (currentClient && !hasActiveEventSubscription(environmentId)) {
+                console.debug("[ClaudeChatTab] Reconnecting SSE for", environmentId);
+                startSharedEventSubscriptionRef.current?.(currentClient);
+              }
+            }, reconnectDelay);
+          }
+        } else {
+          // Explicit abort — reset reconnect counter
+          sseReconnectAttemptsRef.current = 0;
+        }
       }
     },
     [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
   );
+  startSharedEventSubscriptionRef.current = startSharedEventSubscription;
 
   const handleSend = useCallback(
     async (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => {

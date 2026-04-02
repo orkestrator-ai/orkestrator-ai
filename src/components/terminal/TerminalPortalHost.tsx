@@ -6,11 +6,16 @@ import { useConfigStore, useEnvironmentStore } from "@/stores";
 import { useTerminalPortalStore } from "@/stores/terminalPortalStore";
 import { PersistentTerminal } from "./PersistentTerminal";
 import type { TabInfo, PaneLeaf } from "@/types/paneLayout";
+import type { TerminalTabType } from "@/contexts";
 import {
   DEFAULT_TERMINAL_APPEARANCE,
   DEFAULT_TERMINAL_SCROLLBACK,
   resolveTerminalBackgroundColor,
 } from "@/constants/terminal";
+
+// Terminal tab types that need PersistentTerminal instances.
+// Using an allowlist ensures new non-terminal TabType variants don't accidentally spawn PTY sessions.
+const TERMINAL_TAB_TYPES: ReadonlySet<string> = new Set<TerminalTabType>(["plain", "claude", "opencode", "codex", "root"]);
 
 // Default fallback for environments not yet in the store
 const DEFAULT_ROOT: PaneLeaf = { kind: "leaf", id: "default", tabs: [], activeTabId: null };
@@ -101,8 +106,10 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
     const map = new Map<string, { tab: TabInfo; paneId: string }>();
     for (const leaf of leaves) {
       for (const tab of leaf.tabs) {
-        // Only handle terminal tabs (not file, native, or build tabs)
-        if (tab.type !== "file" && tab.type !== "claude-build") {
+        // Only handle terminal tabs — native agent and file tabs are rendered
+        // directly by PaneLeafContainer; creating PersistentTerminals for them
+        // would spawn unnecessary PTY sessions and useClaudeState polling.
+        if (TERMINAL_TAB_TYPES.has(tab.type)) {
           map.set(tab.id, { tab, paneId: leaf.id });
         }
       }
