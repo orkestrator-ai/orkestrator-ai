@@ -17,7 +17,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { writeContainerFile, writeLocalFile } from "@/lib/tauri";
-import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
+import { resizeCanvasIfNeeded, resizeCanvasToMaxDimension } from "@/lib/canvas-utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type QueuedMessage, type ClaudeEffortLevel } from "@/stores/claudeStore";
@@ -66,6 +66,9 @@ const MAX_LINES = 12;
 const LINE_HEIGHT = 20;
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
 const MAX_RGBA_SIZE = 32 * 1024 * 1024;
+// Claude SDK uses sharp to resize images >2000px — sharp fails in packaged apps (code signing).
+// Pre-resize in the frontend to avoid hitting the SDK's sharp dependency entirely.
+const MAX_IMAGE_DIMENSION = 2000;
 
 function generateImageFilename(): string {
   const timestamp = new Date()
@@ -325,7 +328,8 @@ export function ClaudeComposeBar({
         const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
         ctx.putImageData(imageDataObj, 0, 0);
 
-        // Resize if needed to fit within RGBA size limit
+        // Resize to fit within SDK pixel dimension limit, then RGBA size limit
+        canvas = resizeCanvasToMaxDimension(canvas, MAX_IMAGE_DIMENSION);
         canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
 
         const dataUrl = canvas.toDataURL("image/png");

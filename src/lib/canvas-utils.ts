@@ -50,6 +50,47 @@ export function resizeCanvasIfNeeded(
 }
 
 /**
+ * Resize a canvas so neither dimension exceeds maxDimension pixels.
+ * Maintains aspect ratio. Returns the original canvas if already within limits.
+ *
+ * @param canvas - The source canvas to potentially resize
+ * @param maxDimension - Maximum allowed width or height in pixels
+ * @returns The original canvas if within limits, or a new resized canvas
+ */
+export function resizeCanvasToMaxDimension(
+  canvas: HTMLCanvasElement,
+  maxDimension: number
+): HTMLCanvasElement {
+  const { width, height } = canvas;
+
+  if (width <= maxDimension && height <= maxDimension) return canvas;
+
+  const scale = Math.min(maxDimension / width, maxDimension / height);
+  const newWidth = Math.floor(width * scale);
+  const newHeight = Math.floor(height * scale);
+
+  const resizedCanvas = document.createElement("canvas");
+  resizedCanvas.width = newWidth;
+  resizedCanvas.height = newHeight;
+  const ctx = resizedCanvas.getContext("2d");
+
+  if (!ctx) {
+    console.error("[canvas-utils] Failed to get 2D context for dimension-resized canvas");
+    return canvas;
+  }
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
+
+  // Release original canvas memory
+  canvas.width = 0;
+  canvas.height = 0;
+
+  return resizedCanvas;
+}
+
+/**
  * Release canvas memory by setting dimensions to zero.
  * Call this when done with a canvas to help garbage collection.
  */
