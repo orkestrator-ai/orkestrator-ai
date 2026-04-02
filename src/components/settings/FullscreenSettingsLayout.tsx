@@ -28,16 +28,17 @@ export function FullscreenSettingsLayout({
   children,
   footer,
 }: FullscreenSettingsLayoutProps) {
-  const [activeSection, setActiveSection] = useState(defaultSection ?? menuItems[0]?.id ?? "");
+  const defaultId = defaultSection ?? menuItems[0]?.id ?? "";
+  const [activeSection, setActiveSection] = useState(defaultId);
 
   // Reset to default only when transitioning from closed to open
   const prevOpenRef = useRef(open);
   useEffect(() => {
     if (open && !prevOpenRef.current) {
-      setActiveSection(defaultSection ?? menuItems[0]?.id ?? "");
+      setActiveSection(defaultId);
     }
     prevOpenRef.current = open;
-  }, [open, defaultSection, menuItems]);
+  }, [open, defaultId]);
 
   // Handle Escape key
   useEffect(() => {

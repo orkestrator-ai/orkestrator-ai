@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -564,7 +562,7 @@ export function EnvironmentSettingsDialog({
                       "p-3 rounded-lg border-2 text-left transition-colors",
                       envDefaultAgent === opt.value
                         ? "border-primary bg-primary/5"
-                        : "border-zinc-800 hover:border-zinc-600"
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600"
                     )}
                   >
                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -593,7 +591,7 @@ export function EnvironmentSettingsDialog({
                       "p-2 rounded-lg border-2 text-left transition-colors",
                       envClaudeMode === opt.value
                         ? "border-primary bg-primary/5"
-                        : "border-zinc-800 hover:border-zinc-600"
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600"
                     )}
                   >
                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -622,7 +620,7 @@ export function EnvironmentSettingsDialog({
                       "p-2 rounded-lg border-2 text-left transition-colors",
                       envOpencodeMode === opt.value
                         ? "border-primary bg-primary/5"
-                        : "border-zinc-800 hover:border-zinc-600"
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600"
                     )}
                   >
                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -641,7 +639,7 @@ export function EnvironmentSettingsDialog({
                 <button
                   type="button"
                   disabled
-                  className="p-2 rounded-lg border-2 text-left border-zinc-800 opacity-50 cursor-not-allowed"
+                  className="p-2 rounded-lg border-2 text-left border-transparent bg-zinc-900 opacity-50 cursor-not-allowed"
                 >
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <Terminal className="h-3.5 w-3.5" />
@@ -760,7 +758,7 @@ export function EnvironmentSettingsDialog({
                 ) : mcpServers.length === 0 && !sessionInitData?.mcpServers.length ? (
                   <p className="text-sm text-muted-foreground">No MCP servers configured</p>
                 ) : mcpServers.length > 0 ? (
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                  <div className="space-y-1 space-y-1">
                     {mcpServers.map((server) => {
                       const runtimeStatus = sessionInitData?.mcpServers.find((s) => s.name === server.name);
                       const isConnected = runtimeStatus?.status === "connected";
@@ -777,7 +775,7 @@ export function EnvironmentSettingsDialog({
                     })}
                   </div>
                 ) : (
-                  <div className="space-y-1 max-h-48 overflow-y-auto">{sessionInitData?.mcpServers.map((server) => (<RuntimeExtensionItem key={server.name} name={server.name} isSuccess={server.status === "connected"} isFailed={server.status === "failed"} error={server.error} />))}</div>
+                  <div className="space-y-1 space-y-1">{sessionInitData?.mcpServers.map((server) => (<RuntimeExtensionItem key={server.name} name={server.name} isSuccess={server.status === "connected"} isFailed={server.status === "failed"} error={server.error} />))}</div>
                 )}
                 <p className="text-xs text-muted-foreground">Configure in <code className="text-xs bg-zinc-800 px-1 rounded">.mcp.json</code> or <code className="text-xs bg-zinc-800 px-1 rounded">~/.claude.json</code></p>
               </div>
@@ -788,7 +786,7 @@ export function EnvironmentSettingsDialog({
                 ) : pluginsList.length === 0 && !sessionInitData?.plugins.length ? (
                   <p className="text-sm text-muted-foreground">No plugins configured</p>
                 ) : pluginsList.length > 0 ? (
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                  <div className="space-y-1 space-y-1">
                     {pluginsList.map((plugin) => {
                       const runtimeStatus = sessionInitData?.plugins.find((p) => p.name === plugin.name);
                       const isLoaded = runtimeStatus?.status === "loaded";
@@ -805,7 +803,7 @@ export function EnvironmentSettingsDialog({
                     })}
                   </div>
                 ) : (
-                  <div className="space-y-1 max-h-48 overflow-y-auto">{sessionInitData?.plugins.map((plugin) => (<RuntimeExtensionItem key={plugin.name} name={plugin.name} isSuccess={plugin.status === "loaded"} isFailed={plugin.status === "failed"} error={plugin.error} />))}</div>
+                  <div className="space-y-1 space-y-1">{sessionInitData?.plugins.map((plugin) => (<RuntimeExtensionItem key={plugin.name} name={plugin.name} isSuccess={plugin.status === "loaded"} isFailed={plugin.status === "failed"} error={plugin.error} />))}</div>
                 )}
                 <p className="text-xs text-muted-foreground">Configure in <code className="text-xs bg-zinc-800 px-1 rounded">.claude/plugins.json</code> or <code className="text-xs bg-zinc-800 px-1 rounded">~/.claude.json</code></p>
               </div>

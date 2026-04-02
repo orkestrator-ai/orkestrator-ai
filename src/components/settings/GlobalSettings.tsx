@@ -323,7 +323,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
               "p-3 rounded-lg border-2 text-left transition-colors",
               preferredEditor === "vscode"
                 ? "border-primary bg-primary/5"
-                : "border-zinc-800 hover:border-zinc-600"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600"
             )}
           >
             <div className="flex items-center gap-2 font-medium text-sm">
@@ -338,7 +338,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
               "p-3 rounded-lg border-2 text-left transition-colors",
               preferredEditor === "cursor"
                 ? "border-primary bg-primary/5"
-                : "border-zinc-800 hover:border-zinc-600"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600"
             )}
           >
             <div className="flex items-center gap-2 font-medium text-sm">
@@ -369,7 +369,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
               "p-3 rounded-lg border-2 text-left transition-colors",
               defaultAgent === "claude"
                 ? "border-primary bg-primary/5"
-                : "border-zinc-800 hover:border-zinc-600"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600"
             )}
           >
             <div className="flex items-center gap-2 font-medium text-sm">
@@ -384,7 +384,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
               "p-3 rounded-lg border-2 text-left transition-colors",
               defaultAgent === "opencode"
                 ? "border-primary bg-primary/5"
-                : "border-zinc-800 hover:border-zinc-600"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600"
             )}
           >
             <div className="flex items-center gap-2 font-medium text-sm">
@@ -399,7 +399,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
               "p-3 rounded-lg border-2 text-left transition-colors",
               defaultAgent === "codex"
                 ? "border-primary bg-primary/5"
-                : "border-zinc-800 hover:border-zinc-600"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600"
             )}
           >
             <div className="flex items-center gap-2 font-medium text-sm">
@@ -477,7 +477,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
             "p-3 rounded-lg border-2 text-left transition-colors",
             mode === "terminal"
               ? "border-primary bg-primary/5"
-              : "border-zinc-800 hover:border-zinc-600"
+              : "border-transparent bg-zinc-900 hover:border-zinc-600"
           )}
         >
           <div className="flex items-center gap-2 text-sm font-medium">
@@ -492,7 +492,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
             "p-3 rounded-lg border-2 text-left transition-colors",
             mode === "native"
               ? "border-primary bg-primary/5"
-              : "border-zinc-800 hover:border-zinc-600"
+              : "border-transparent bg-zinc-900 hover:border-zinc-600"
           )}
         >
           <div className="flex items-center gap-2 text-sm font-medium">
@@ -561,7 +561,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         <button
           type="button"
           disabled
-          className="p-3 rounded-lg border-2 text-left border-zinc-800 opacity-50 cursor-not-allowed"
+          className="p-3 rounded-lg border-2 text-left border-transparent bg-zinc-900 opacity-50 cursor-not-allowed"
         >
           <div className="flex items-center gap-2 text-sm font-medium">
             <Terminal className="h-4 w-4" />
@@ -814,7 +814,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
           "max-w-xs w-full p-3 rounded-lg border-2 text-left transition-colors",
           debugLogging
             ? "border-primary bg-primary/5"
-            : "border-zinc-800 hover:border-zinc-600"
+            : "border-transparent bg-zinc-900 hover:border-zinc-600"
         )}
       >
         <div className="flex items-center justify-between">
