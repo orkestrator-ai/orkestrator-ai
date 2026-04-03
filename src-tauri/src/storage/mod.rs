@@ -7,6 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, info, warn};
+use base64::Engine;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -24,6 +25,10 @@ pub enum StorageError {
     SessionNotFound(String),
     #[error("Kanban task not found: {0}")]
     KanbanTaskNotFound(String),
+    #[error("Kanban image not found: {0}")]
+    KanbanImageNotFound(String),
+    #[error("Image processing error: {0}")]
+    ImageProcessing(String),
     #[error("Duplicate project URL: {0}")]
     DuplicateProject(String),
 }
@@ -78,6 +83,14 @@ impl Storage {
 
     fn kanban_file(&self) -> PathBuf {
         self.data_dir.join("kanban.json")
+    }
+
+    fn kanban_images_dir(&self) -> PathBuf {
+        self.data_dir.join("kanban-images")
+    }
+
+    fn kanban_image_file(&self, image_id: &str) -> PathBuf {
+        self.kanban_images_dir().join(format!("{}.webp", image_id))
     }
 
     // --- Project Operations ---
@@ -1161,14 +1174,16 @@ impl Storage {
         Ok(updated)
     }
 
-    /// Delete a kanban task
+    /// Delete a kanban task and its associated image files
     pub fn delete_kanban_task(&self, task_id: &str) -> Result<(), StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
-        let len_before = tasks.len();
+        // Find the task first so we can clean up its images
+        let task = tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+        self.cleanup_kanban_task_images(task);
         tasks.retain(|t| t.id != task_id);
-        if tasks.len() == len_before {
-            return Err(StorageError::KanbanTaskNotFound(task_id.to_string()));
-        }
         self.save_kanban_tasks(&tasks)?;
         Ok(())
     }
@@ -1212,7 +1227,33 @@ impl Storage {
         Ok(updated)
     }
 
-    /// Add an image to a kanban task
+    /// Convert image bytes to WebP format, resizing so no dimension exceeds 2000px.
+    fn convert_to_webp(&self, raw_bytes: &[u8]) -> Result<Vec<u8>, StorageError> {
+        use image::ImageFormat;
+        use std::io::Cursor;
+
+        const MAX_DIMENSION: u32 = 2000;
+
+        let mut img = image::ImageReader::new(Cursor::new(raw_bytes))
+            .with_guessed_format()
+            .map_err(|e| StorageError::ImageProcessing(format!("Failed to detect image format: {}", e)))?
+            .decode()
+            .map_err(|e| StorageError::ImageProcessing(format!("Failed to decode image: {}", e)))?;
+
+        // Resize if either dimension exceeds the limit, preserving aspect ratio
+        if img.width() > MAX_DIMENSION || img.height() > MAX_DIMENSION {
+            img = img.resize(MAX_DIMENSION, MAX_DIMENSION, image::imageops::FilterType::Lanczos3);
+        }
+
+        let mut webp_data = Vec::new();
+        img.write_to(&mut Cursor::new(&mut webp_data), ImageFormat::WebP)
+            .map_err(|e| StorageError::ImageProcessing(format!("Failed to encode as WebP: {}", e)))?;
+
+        Ok(webp_data)
+    }
+
+    /// Add an image to a kanban task. Accepts base64-encoded image data (any supported format),
+    /// converts to WebP, and stores the binary file on disk.
     pub fn add_kanban_image(&self, task_id: &str, filename: String, data: String) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task = tasks
@@ -1220,10 +1261,30 @@ impl Storage {
             .find(|t| t.id == task_id)
             .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
+        // Decode base64 input
+        let raw_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&data)
+            .map_err(|e| StorageError::ImageProcessing(format!("Invalid base64 data: {}", e)))?;
+
+        // Convert to WebP
+        let webp_bytes = self.convert_to_webp(&raw_bytes)?;
+
+        // Ensure images directory exists
+        let images_dir = self.kanban_images_dir();
+        if !images_dir.exists() {
+            fs::create_dir_all(&images_dir)?;
+        }
+
+        // Write WebP file to disk
+        let image_id = uuid::Uuid::new_v4().to_string();
+        let image_path = self.kanban_image_file(&image_id);
+        fs::write(&image_path, &webp_bytes)?;
+
+        debug!(image_id = %image_id, path = %image_path.display(), size_bytes = webp_bytes.len(), "Saved kanban image as WebP");
+
         let image = KanbanImage {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: image_id,
             filename,
-            data,
             created_at: Utc::now(),
         };
         task.images.push(image);
@@ -1232,7 +1293,7 @@ impl Storage {
         Ok(updated)
     }
 
-    /// Delete an image from a kanban task
+    /// Delete an image from a kanban task and remove the file from disk.
     pub fn delete_kanban_image(&self, task_id: &str, image_id: &str) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task = tasks
@@ -1243,7 +1304,38 @@ impl Storage {
         task.images.retain(|i| i.id != image_id);
         let updated = task.clone();
         self.save_kanban_tasks(&tasks)?;
+
+        // Remove the file from disk (best-effort)
+        let image_path = self.kanban_image_file(image_id);
+        if image_path.exists() {
+            if let Err(e) = fs::remove_file(&image_path) {
+                warn!(image_id = %image_id, error = %e, "Failed to delete kanban image file");
+            }
+        }
+
         Ok(updated)
+    }
+
+    /// Read a kanban image file from disk and return its data as base64-encoded WebP.
+    pub fn get_kanban_image_data(&self, image_id: &str) -> Result<String, StorageError> {
+        let image_path = self.kanban_image_file(image_id);
+        if !image_path.exists() {
+            return Err(StorageError::KanbanImageNotFound(image_id.to_string()));
+        }
+        let bytes = fs::read(&image_path)?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+    }
+
+    /// Delete all image files for a kanban task (used when deleting a task).
+    fn cleanup_kanban_task_images(&self, task: &KanbanTask) {
+        for image in &task.images {
+            let image_path = self.kanban_image_file(&image.id);
+            if image_path.exists() {
+                if let Err(e) = fs::remove_file(&image_path) {
+                    warn!(image_id = %image.id, error = %e, "Failed to delete kanban image file during task cleanup");
+                }
+            }
+        }
     }
 
     // --- Project Notes Operations ---

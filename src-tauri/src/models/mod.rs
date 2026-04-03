@@ -414,14 +414,15 @@ pub struct KanbanComment {
     pub created_at: DateTime<Utc>,
 }
 
-/// An image attached to a kanban task
+/// An image attached to a kanban task.
+/// Image data is stored as a WebP file on disk at `{data_dir}/kanban-images/{id}.webp`.
+/// The JSON only stores this reference metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanImage {
     pub id: String,
+    /// Original filename before conversion
     pub filename: String,
-    /// Base64-encoded image data (PNG)
-    pub data: String,
     pub created_at: DateTime<Utc>,
 }
 

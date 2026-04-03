@@ -113,6 +113,16 @@ pub async fn delete_kanban_image(
         .map_err(storage_error_to_string)
 }
 
+/// Get kanban image data as base64-encoded WebP (for on-demand loading)
+#[tauri::command]
+pub async fn get_kanban_image_data(image_id: String) -> Result<String, String> {
+    debug!(image_id = %image_id, "Loading kanban image data");
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    storage
+        .get_kanban_image_data(&image_id)
+        .map_err(storage_error_to_string)
+}
+
 /// Get project notes
 #[tauri::command]
 pub async fn get_project_notes(project_id: String) -> Result<ProjectNotes, String> {

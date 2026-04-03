@@ -27,7 +27,7 @@ import { useKanbanStore } from "@/stores/kanbanStore";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useBuildPipeline } from "@/hooks/useBuildPipeline";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readFileBase64 } from "@/lib/tauri";
+import { readFileBase64, getKanbanImageData } from "@/lib/tauri";
 
 const STATUS_LABELS: Record<KanbanStatus, string> = {
   backlog: "Backlog",
@@ -99,6 +99,33 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
   const [previewImage, setPreviewImage] = useState<{ url: string; filename: string } | null>(null);
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
+  // Cache of loaded image data URLs keyed by image ID (for on-demand loading from disk)
+  const [imageUrlCache, setImageUrlCache] = useState<Record<string, string>>({});
+
+  // Load image data on demand when dialog opens with a task that has images
+  useEffect(() => {
+    if (!open || !task || task.images.length === 0) return;
+
+    const imageIds = task.images.map((img) => img.id);
+    const missingIds = imageIds.filter((id) => !imageUrlCache[id]);
+    if (missingIds.length === 0) return;
+
+    let cancelled = false;
+    void Promise.all(
+      missingIds.map(async (id) => {
+        try {
+          const base64 = await getKanbanImageData(id);
+          if (!cancelled) {
+            setImageUrlCache((prev) => ({ ...prev, [id]: `data:image/webp;base64,${base64}` }));
+          }
+        } catch {
+          // Image file may have been deleted; ignore
+        }
+      })
+    );
+    return () => { cancelled = true; };
+  }, [open, task, task?.images.length]);
+
   // Reset create mode fields when dialog opens in create mode
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
@@ -109,6 +136,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       setIsEditingAC(false);
       setPendingImages([]);
       setPreviewImage(null);
+      setImageUrlCache({});
     }
     onOpenChange(newOpen);
   };
@@ -388,7 +416,19 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
               {allImages.map((img) => {
                 const previewUrl = "previewUrl" in img
                   ? (img as PendingImage).previewUrl
-                  : `data:image/png;base64,${img.data}`;
+                  : imageUrlCache[img.id];
+                if (!previewUrl) {
+                  // Still loading from disk
+                  return (
+                    <div
+                      key={img.id}
+                      className="rounded-md border border-border overflow-hidden flex items-center justify-center bg-muted/30"
+                      style={{ width: 80, height: 80 }}
+                    >
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={img.id}

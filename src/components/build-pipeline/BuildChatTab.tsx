@@ -48,23 +48,14 @@ import * as tauri from "@/lib/tauri";
 // Reference to kanban store for non-reactive reads
 const kanbanStoreRef = useKanbanStore;
 
-/** Infer MIME type from a filename extension */
-function mimeFromFilename(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase() || "png";
-  const mimeMap: Record<string, string> = {
-    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-    gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
-  };
-  return mimeMap[ext] || "image/png";
-}
-
-/** Convert task snapshot images to ClaudeAttachment array for sending with prompts */
+/** Convert task snapshot images to ClaudeAttachment array for sending with prompts.
+ * Images are always stored as WebP on disk regardless of the original filename. */
 function taskImagesToAttachments(images: TaskSnapshotImage[]): ClaudeAttachment[] | undefined {
   if (images.length === 0) return undefined;
   return images.map((img) => ({
     type: "image" as const,
     path: img.filename,
-    dataUrl: `data:${mimeFromFilename(img.filename)};base64,${img.data}`,
+    dataUrl: `data:image/webp;base64,${img.data}`,
     filename: img.filename,
   }));
 }

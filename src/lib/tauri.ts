@@ -1051,9 +1051,8 @@ export interface KanbanComment {
 
 export interface KanbanImage {
   id: string;
+  /** Original filename before WebP conversion */
   filename: string;
-  /** Base64-encoded image data (PNG) */
-  data: string;
   createdAt: string;
 }
 
@@ -1124,6 +1123,11 @@ export async function addKanbanImage(taskId: string, filename: string, data: str
 
 export async function deleteKanbanImage(taskId: string, imageId: string): Promise<KanbanTask> {
   return invoke<KanbanTask>("delete_kanban_image", { taskId, imageId });
+}
+
+/** Load kanban image data on demand. Returns base64-encoded WebP data. */
+export async function getKanbanImageData(imageId: string): Promise<string> {
+  return invoke<string>("get_kanban_image_data", { imageId });
 }
 
 export async function getProjectNotes(projectId: string): Promise<ProjectNotes> {
