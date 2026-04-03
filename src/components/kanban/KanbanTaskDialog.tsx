@@ -168,7 +168,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
     const el = dialogContentRef.current;
     if (!el) return;
 
-    const listener = handlePaste as unknown as EventListener;
+    const listener = (e: Event) => { void handlePaste(e as ClipboardEvent); };
     el.addEventListener("paste", listener);
     return () => el.removeEventListener("paste", listener);
   }, [open, handlePaste]);
@@ -188,6 +188,11 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
         const filename = path.split("/").pop() || path.split("\\").pop() || "image.png";
         try {
           const data = await readFileBase64(path);
+          // Validate size (base64 encodes 3 bytes as 4 chars)
+          if (data.length * 0.75 > MAX_IMAGE_SIZE) {
+            toast.error(`${filename} is too large (max 5 MB)`);
+            continue;
+          }
           // Determine mime type from extension
           const ext = filename.split(".").pop()?.toLowerCase() || "png";
           const mimeMap: Record<string, string> = {
@@ -239,14 +244,16 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       const ac = editAC.trim();
       const imagesToSave = [...pendingImages];
       handleOpenChange(false);
-      void addTaskStore(createForProjectId, title, description).then((newTaskId) => {
+      void addTaskStore(createForProjectId, title, description).then(async (newTaskId) => {
         if (!newTaskId) return;
         if (ac) {
           void updateTask(newTaskId, { acceptanceCriteria: ac });
         }
         // Save pending images to the newly created task
-        for (const img of imagesToSave) {
-          void addImage(newTaskId, img.filename, img.data);
+        const results = await Promise.allSettled(imagesToSave.map((img) => addImage(newTaskId, img.filename, img.data)));
+        const failed = results.filter((r) => r.status === "rejected").length;
+        if (failed > 0) {
+          toast.error(`Failed to save ${failed} image${failed > 1 ? "s" : ""}`);
         }
       });
     }
@@ -332,14 +339,8 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
         }
       }
 
-      // Save pending images
-      for (const img of imagesToSave) {
-        try {
-          await addImage(newTaskId, img.filename, img.data);
-        } catch {
-          // continue saving other images
-        }
-      }
+      // Save pending images in parallel
+      await Promise.allSettled(imagesToSave.map((img) => addImage(newTaskId, img.filename, img.data)));
 
       const newTask = useKanbanStore.getState().tasks.find((t) => t.id === newTaskId);
       if (!newTask) {
@@ -359,9 +360,9 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
   const displayImages = task ? task.images : [];
   const allImages = isCreateMode ? pendingImages : displayImages;
 
-  // Image thumbnails component
+  // Image thumbnails component — show in create mode always, in edit mode only when images exist
   const renderImageSection = () => {
-    if (allImages.length === 0 && !isCreateMode && !task) return null;
+    if (!isCreateMode && allImages.length === 0) return null;
 
     return (
       <>
