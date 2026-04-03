@@ -93,6 +93,7 @@ export function ClaudeComposeBar({
   const [queueDialogOpen, setQueueDialogOpen] = useState(false);
   const inputRef = useRef<MentionableInputRef>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
 
   // Create sessionKey for store lookups (format: "env-{environmentId}:{tabId}")
   const sessionKey = createClaudeSessionKey(environmentId, tabId);
@@ -306,9 +307,9 @@ export function ClaudeComposeBar({
   // Note: For MentionableInput (contenteditable), the activeElement is the div inside the component
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
-      // Check if focus is within our input area (contenteditable div)
+      // Check if focus is within THIS compose bar's input area (not any other instance)
       const activeEl = document.activeElement;
-      if (!activeEl || !activeEl.closest("[data-mentionable-input]")) return;
+      if (!activeEl || !inputContainerRef.current?.contains(activeEl)) return;
 
       try {
         const image = await readImage();
@@ -576,7 +577,7 @@ export function ClaudeComposeBar({
       )}
 
       {/* Text input area container with menus */}
-      <div className="relative" data-mentionable-input>
+      <div className="relative" data-mentionable-input ref={inputContainerRef}>
         {/* Slash command menu - appears above input */}
         {slashMenuOpen && filteredSlashCommands.length > 0 && (
           <SlashCommandMenu

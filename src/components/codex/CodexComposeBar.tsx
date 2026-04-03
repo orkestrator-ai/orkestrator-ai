@@ -113,6 +113,7 @@ export function CodexComposeBar({
   const [isSending, setIsSending] = useState(false);
   const inputRef = useRef<MentionableInputRef>(null);
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
   const prevFileMentionMenuOpen = useRef(false);
   const [queueDialogOpen, setQueueDialogOpen] = useState(false);
   const text = useCodexStore((state) => state.draftText.get(sessionKey) ?? "");
@@ -330,8 +331,9 @@ export function CodexComposeBar({
 
   const handlePaste = useCallback(
     async (event: ClipboardEvent) => {
+      // Check if focus is within THIS compose bar's input area (not any other instance)
       const activeEl = document.activeElement;
-      if (!activeEl || !activeEl.closest("[data-mentionable-input]")) return;
+      if (!activeEl || !inputContainerRef.current?.contains(activeEl)) return;
 
       try {
         const image = await readImage();
@@ -475,7 +477,7 @@ export function CodexComposeBar({
         </div>
       ) : null}
 
-      <div className="relative" data-mentionable-input>
+      <div className="relative" data-mentionable-input ref={inputContainerRef}>
         {slashMenuOpen && filteredSlashCommands.length > 0 ? (
           <OpenCodeSlashCommandMenu
             commands={filteredSlashCommands}
