@@ -19,7 +19,9 @@ import {
   checkHealth,
   ERROR_MESSAGE_PREFIX,
   type ClaudeMessage as ClaudeMessageType,
+  type ClaudeAttachment,
 } from "@/lib/claude-client";
+import type { TaskSnapshotImage } from "@/prompts";
 import {
   startLocalClaudeServer,
   getLocalClaudeServerStatus,
@@ -45,6 +47,17 @@ import * as tauri from "@/lib/tauri";
 
 // Reference to kanban store for non-reactive reads
 const kanbanStoreRef = useKanbanStore;
+
+/** Convert task snapshot images to ClaudeAttachment array for sending with prompts */
+function taskImagesToAttachments(images: TaskSnapshotImage[]): ClaudeAttachment[] | undefined {
+  if (images.length === 0) return undefined;
+  return images.map((img) => ({
+    type: "image" as const,
+    path: img.filename,
+    dataUrl: `data:image/png;base64,${img.data}`,
+    filename: img.filename,
+  }));
+}
 
 interface BuildChatTabProps {
   data: BuildTabData;
@@ -669,7 +682,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
   // Start the initial build session
   const startBuildSession = useCallback(
-    async (taskDescription: string) => {
+    async (taskDescription: string, attachments?: ClaudeAttachment[]) => {
       if (!client) return;
 
       setPhase(pipelineId, "building");
@@ -692,6 +705,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const success = await sendPrompt(client, result.sdkSessionId, taskDescription, {
         permissionMode: "bypassPermissions",
+        attachments,
       });
 
       if (!success) {
@@ -739,6 +753,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const success = await sendPrompt(client, result.sdkSessionId, reviewPrompt, {
         permissionMode: "bypassPermissions",
+        attachments: taskImagesToAttachments(task.images),
       });
 
       if (!success) {
@@ -786,6 +801,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const success = await sendPrompt(client, result.sdkSessionId, verifyPrompt, {
         permissionMode: "bypassPermissions",
+        attachments: taskImagesToAttachments(task.images),
       });
 
       if (!success) {
@@ -830,6 +846,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       const success = await sendPrompt(client, result.sdkSessionId, fixPrompt, {
         permissionMode: "bypassPermissions",
+        attachments: taskImagesToAttachments(task.images),
       });
 
       if (!success) {
@@ -1043,7 +1060,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
       const prompt = createBuildPrompt(task, notes.content);
-      startBuildSession(prompt);
+      startBuildSession(prompt, taskImagesToAttachments(task.images));
     }).catch(() => {
       // Re-verify setup state even on failure — same guard as the .then() path
       const envStore = useEnvironmentStore.getState();
@@ -1059,7 +1076,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         return;
       }
       const prompt = createBuildPrompt(task, "");
-      startBuildSession(prompt);
+      startBuildSession(prompt, taskImagesToAttachments(task.images));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionState, client, pipeline?.phase, pipeline?.sessions.length, isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady]);

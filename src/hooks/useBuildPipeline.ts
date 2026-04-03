@@ -74,6 +74,7 @@ export function useBuildPipeline() {
             description: task.description,
             acceptanceCriteria: task.acceptanceCriteria,
             comments: task.comments.map((c) => ({ text: c.text })),
+            images: (task.images ?? []).map((img) => ({ filename: img.filename, data: img.data })),
           },
         });
 

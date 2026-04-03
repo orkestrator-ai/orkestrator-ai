@@ -414,6 +414,17 @@ pub struct KanbanComment {
     pub created_at: DateTime<Utc>,
 }
 
+/// An image attached to a kanban task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanImage {
+    pub id: String,
+    pub filename: String,
+    /// Base64-encoded image data (PNG)
+    pub data: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// A kanban task/ticket
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -426,6 +437,8 @@ pub struct KanbanTask {
     pub acceptance_criteria: String,
     pub status: KanbanStatus,
     pub comments: Vec<KanbanComment>,
+    #[serde(default)]
+    pub images: Vec<KanbanImage>,
     pub created_at: DateTime<Utc>,
     pub order: i32,
     /// Linked build environment ID
@@ -446,6 +459,7 @@ impl KanbanTask {
             acceptance_criteria: String::new(),
             status: KanbanStatus::Backlog,
             comments: Vec::new(),
+            images: Vec::new(),
             created_at: Utc::now(),
             order: 0,
             environment_id: None,

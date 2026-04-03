@@ -1,7 +1,7 @@
 // JSON file-based storage layer
 // Stores projects, environments, and config in the app data directory
 
-use crate::models::{AppConfig, Environment, KanbanComment, KanbanStatus, KanbanTask, Project, ProjectNotes, Session, SessionStatus};
+use crate::models::{AppConfig, Environment, KanbanComment, KanbanImage, KanbanStatus, KanbanTask, Project, ProjectNotes, Session, SessionStatus};
 use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
@@ -1207,6 +1207,40 @@ impl Storage {
             .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
         task.comments.retain(|c| c.id != comment_id);
+        let updated = task.clone();
+        self.save_kanban_tasks(&tasks)?;
+        Ok(updated)
+    }
+
+    /// Add an image to a kanban task
+    pub fn add_kanban_image(&self, task_id: &str, filename: String, data: String) -> Result<KanbanTask, StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let task = tasks
+            .iter_mut()
+            .find(|t| t.id == task_id)
+            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+
+        let image = KanbanImage {
+            id: uuid::Uuid::new_v4().to_string(),
+            filename,
+            data,
+            created_at: Utc::now(),
+        };
+        task.images.push(image);
+        let updated = task.clone();
+        self.save_kanban_tasks(&tasks)?;
+        Ok(updated)
+    }
+
+    /// Delete an image from a kanban task
+    pub fn delete_kanban_image(&self, task_id: &str, image_id: &str) -> Result<KanbanTask, StorageError> {
+        let mut tasks = self.load_kanban_tasks()?;
+        let task = tasks
+            .iter_mut()
+            .find(|t| t.id == task_id)
+            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+
+        task.images.retain(|i| i.id != image_id);
         let updated = task.clone();
         self.save_kanban_tasks(&tasks)?;
         Ok(updated)

@@ -391,6 +391,8 @@ pub fn run() {
             delete_kanban_task,
             add_kanban_comment,
             delete_kanban_comment,
+            add_kanban_image,
+            delete_kanban_image,
             get_project_notes,
             save_project_notes,
             // Local terminal commands (for local/worktree environments)

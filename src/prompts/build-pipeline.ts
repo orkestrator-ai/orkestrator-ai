@@ -3,11 +3,18 @@
  * reviewing changes, verifying acceptance criteria, and fixing issues.
  */
 
+export type TaskSnapshotImage = {
+  filename: string;
+  /** Base64-encoded image data */
+  data: string;
+};
+
 export type TaskSnapshot = {
   title: string;
   description: string;
   acceptanceCriteria: string;
   comments: Array<{ text: string }>;
+  images: TaskSnapshotImage[];
 };
 
 export function createBuildReviewPrompt(task: TaskSnapshot | null, projectNotes: string, targetBranch: string = "main"): string {
@@ -22,6 +29,11 @@ export function createBuildReviewPrompt(task: TaskSnapshot | null, projectNotes:
     if (task.comments.length > 0) {
       parts.push("\n**Comments**:");
       task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
+    }
+
+    if (task.images.length > 0) {
+      parts.push(`\n**Attached Images** (${task.images.length}): ${task.images.map((img) => img.filename).join(", ")}`);
+      parts.push("These images are included as visual context with this message.");
     }
 
     parts.push("");
@@ -88,6 +100,11 @@ export function createBuildPrompt(task: TaskSnapshot | null, projectNotes: strin
     task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
   }
 
+  if (task.images.length > 0) {
+    parts.push(`\n**Attached Images** (${task.images.length}): ${task.images.map((img) => img.filename).join(", ")}`);
+    parts.push("These images are included as visual context with this message. Refer to them when implementing the feature.");
+  }
+
   if (projectNotes) {
     parts.push(`\n**Project Notes**:\n${projectNotes}`);
   }
@@ -110,6 +127,11 @@ export function createVerificationPrompt(task: TaskSnapshot | null, projectNotes
   if (task.comments.length > 0) {
     parts.push("\n**Comments**:");
     task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
+  }
+
+  if (task.images.length > 0) {
+    parts.push(`\n**Attached Images** (${task.images.length}): ${task.images.map((img) => img.filename).join(", ")}`);
+    parts.push("These images are included as visual context with this message.");
   }
 
   if (projectNotes) {
@@ -146,6 +168,11 @@ export function createFixPrompt(task: TaskSnapshot | null, projectNotes: string,
   if (task.comments.length > 0) {
     parts.push("\n**Comments**:");
     task.comments.forEach((c, i) => parts.push(`${i + 1}. ${c.text}`));
+  }
+
+  if (task.images.length > 0) {
+    parts.push(`\n**Attached Images** (${task.images.length}): ${task.images.map((img) => img.filename).join(", ")}`);
+    parts.push("These images are included as visual context with this message.");
   }
 
   if (projectNotes) {
