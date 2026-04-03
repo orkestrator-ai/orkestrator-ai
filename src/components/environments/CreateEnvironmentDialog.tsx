@@ -60,15 +60,21 @@ interface CreateEnvironmentDialogProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (options: ClaudeOptions) => Promise<void>;
   isLoading?: boolean;
+  /** Project ID for persisting draft prompt text */
+  projectId?: string | null;
   /** Default port mappings from repository settings */
   defaultPortMappings?: PortMapping[];
 }
+
+// Persist draft prompt text per project across dialog open/close within the session
+const draftPrompts = new Map<string, string>();
 
 export function CreateEnvironmentDialog({
   open,
   onOpenChange,
   onCreate,
   isLoading = false,
+  projectId,
   defaultPortMappings = EMPTY_PORT_MAPPINGS,
 }: CreateEnvironmentDialogProps) {
   const { config } = useConfigStore();
@@ -91,16 +97,24 @@ export function CreateEnvironmentDialog({
   const formRef = useRef<HTMLFormElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
-  // Focus the initial prompt textarea when dialog opens
+  // Restore draft prompt when dialog opens, focus the textarea
   useEffect(() => {
-    if (open && launchAgent) {
-      // Small delay to ensure the dialog is fully rendered
-      const timer = setTimeout(() => {
-        promptRef.current?.focus();
-      }, 50);
-      return () => clearTimeout(timer);
+    if (open) {
+      if (projectId) {
+        const draft = draftPrompts.get(projectId);
+        if (draft) {
+          setInitialPrompt(draft);
+        }
+      }
+      if (launchAgent) {
+        // Small delay to ensure the dialog is fully rendered
+        const timer = setTimeout(() => {
+          promptRef.current?.focus();
+        }, 50);
+        return () => clearTimeout(timer);
+      }
     }
-  }, [open, launchAgent]);
+  }, [open, launchAgent, projectId]);
 
   const resetForm = useCallback(() => {
     setEnvironmentType("containerized");
@@ -153,11 +167,20 @@ export function CreateEnvironmentDialog({
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
       if (!isOpen) {
+        // Save draft prompt before resetting, so it can be restored next time
+        if (projectId) {
+          const trimmed = initialPrompt.trim();
+          if (trimmed) {
+            draftPrompts.set(projectId, trimmed);
+          } else {
+            draftPrompts.delete(projectId);
+          }
+        }
         resetForm();
       }
       onOpenChange(isOpen);
     },
-    [onOpenChange, resetForm]
+    [onOpenChange, resetForm, projectId, initialPrompt]
   );
 
   // Validate port mappings - returns true if all valid
@@ -195,12 +218,18 @@ export function CreateEnvironmentDialog({
           networkAccessMode,
           portMappings,
         });
-        handleOpenChange(false);
+        // Clear the draft on successful creation and close directly
+        // (bypass handleOpenChange which would re-save the draft)
+        if (projectId) {
+          draftPrompts.delete(projectId);
+        }
+        resetForm();
+        onOpenChange(false);
       } catch (err) {
         console.error("Failed to create environment:", err);
       }
     },
-    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, initialPrompt, networkAccessMode, portMappings, onCreate, handleOpenChange, validatePortMappings]
+    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, initialPrompt, networkAccessMode, portMappings, onCreate, resetForm, onOpenChange, projectId, validatePortMappings]
   );
 
   const handlePromptKeyDown = useCallback(
@@ -228,6 +257,7 @@ export function CreateEnvironmentDialog({
       <DialogContent
         className="sm:max-w-[700px] max-h-[85vh] flex flex-col"
         onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
       >
         <DialogHeader>
           <DialogTitle>Create Ork (Environment)</DialogTitle>

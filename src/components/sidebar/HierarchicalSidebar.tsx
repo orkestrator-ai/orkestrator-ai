@@ -641,6 +641,7 @@ export function HierarchicalSidebar() {
         onOpenChange={setShowCreateEnvDialog}
         onCreate={handleCreateEnvironment}
         isLoading={isCreatingEnv}
+        projectId={createEnvProjectId}
         defaultPortMappings={
           createEnvProjectId
             ? config.repositories[createEnvProjectId]?.defaultPortMappings
