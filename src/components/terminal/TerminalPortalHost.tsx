@@ -108,7 +108,7 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
       for (const tab of leaf.tabs) {
         // Only handle terminal tabs — native agent and file tabs are rendered
         // directly by PaneLeafContainer; creating PersistentTerminals for them
-        // would spawn unnecessary PTY sessions and useClaudeState polling.
+        // would spawn unnecessary PTY sessions and useAgentState polling.
         if (TERMINAL_TAB_TYPES.has(tab.type)) {
           map.set(tab.id, { tab, paneId: leaf.id });
         }

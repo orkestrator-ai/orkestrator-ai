@@ -14,7 +14,6 @@ import {
   createOpenCodeSessionKey,
 } from "@/stores/openCodeStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
-import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { isSetupPending } from "@/lib/setup-commands";
 import {
@@ -164,10 +163,6 @@ export function OpenCodeChatTab({
     pendingQuestions: pendingQuestionsMap,
   } = useOpenCodeStore();
 
-  // Activity state tracking - use environmentId as key for both local and container environments
-  // Use reference counting to handle multiple tabs for the same environment
-  const { setContainerState, incrementContainerRef, decrementContainerRef } =
-    useClaudeActivityStore();
   const { clearTabInitialPrompt } = usePaneLayoutStore();
 
   // Create a unique session key that combines environmentId and tabId
@@ -282,39 +277,8 @@ export function OpenCodeChatTab({
     ),
   );
 
-  // Track OpenCode activity state based on session loading - update the environment icon in sidebar
-  // For native mode, we use environmentId as the key (works for both local and containerized)
-  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
-  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
-  useEffect(() => {
-    if (session?.isLoading) {
-      // OpenCode is working on a response - always show working regardless of connection state
-      setContainerState(environmentId, "working");
-    } else if ((pendingQuestions.length > 0 || pendingPermissions.length > 0) && connectionState === "connected") {
-      // OpenCode is waiting for user input (question or permission)
-      setContainerState(environmentId, "waiting");
-    } else if (connectionState === "connected") {
-      // Connected and not loading - OpenCode is idle
-      setContainerState(environmentId, "idle");
-    }
-    // When not connected and not loading, preserve the current state (don't force idle)
-  }, [
-    connectionState,
-    session?.isLoading,
-    pendingQuestions.length,
-    pendingPermissions.length,
-    environmentId,
-    setContainerState,
-  ]);
-
-  // Track container reference count for activity state management
-  // Increment on mount, decrement on unmount - state is only removed when last tab closes
-  useEffect(() => {
-    incrementContainerRef(environmentId);
-    return () => {
-      decrementContainerRef(environmentId);
-    };
-  }, [environmentId, incrementContainerRef, decrementContainerRef]);
+  // Activity state tracking is handled globally by useGlobalActivityMonitor
+  // (in App.tsx), which derives state from this store's session data.
 
   // Track last initialization time to prevent rapid re-initialization
   const lastInitTimeRef = useRef<number>(0);

@@ -21,8 +21,8 @@ mock.module("@/hooks/useTerminal", () => ({
   }),
 }));
 
-mock.module("@/hooks/useClaudeState", () => ({
-  useClaudeState: () => {},
+mock.module("@/hooks/useAgentState", () => ({
+  useAgentState: () => {},
 }));
 
 mock.module("@/hooks/useClipboardImagePaste", () => ({
@@ -116,7 +116,7 @@ mock.module("@/stores", () => ({
   // Stubs for stores not used by this test but required by other files
   useUIStore: noopStoreWithSelector,
   useProjectStore: Object.assign(noopStoreWithSelector, { getState: noopStore, setState: noopStore, subscribe: () => () => {} }),
-  useClaudeActivityStore: noopStoreWithSelector,
+  useAgentActivityStore: noopStoreWithSelector,
   useClaudeOptionsStore: noopStore,
   useFilesPanelStore: noopStoreWithSelector,
   useTerminalPortalStore: noopStoreWithSelector,
