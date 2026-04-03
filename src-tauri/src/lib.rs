@@ -250,6 +250,7 @@ pub fn run() {
             set_environment_pr,
             set_environment_debug_mode,
             rename_environment,
+            rename_environment_from_prompt,
             get_environment_status,
             start_environment,
             stop_environment,

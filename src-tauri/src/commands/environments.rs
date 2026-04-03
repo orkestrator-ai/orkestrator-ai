@@ -390,6 +390,112 @@ async fn list_repo_git_branches(
     }
 }
 
+/// Safely rename a git branch in a local worktree.
+///
+/// This is careful about the agent potentially doing git operations concurrently:
+/// 1. Verifies the actual current branch in the worktree (the stored name may be stale)
+/// 2. If the current branch matches the expected old branch, uses `git branch -m <new>`
+///    which is the safest form (renames HEAD's branch without needing the old name)
+/// 3. If the current branch differs (agent switched branches), renames the old branch
+///    by explicit name so we don't accidentally rename an unrelated branch
+/// 4. Retries once after a brief delay if the rename fails (handles momentary ref locks
+///    from concurrent git operations like commits)
+async fn rename_local_worktree_branch(
+    environment_id: &str,
+    worktree_path: &str,
+    old_branch: &str,
+    new_branch: &str,
+) {
+    // Get the actual current branch in the worktree
+    let current_branch = match tokio::process::Command::new("git")
+        .args(["-C", worktree_path, "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => String::new(),
+    };
+
+    // Build the rename command based on whether the agent is still on the original branch
+    let on_old_branch = current_branch == old_branch;
+    let args: Vec<&str> = if on_old_branch {
+        // Current branch IS the old branch — safest form: rename HEAD's branch directly
+        vec!["-C", worktree_path, "branch", "-m", new_branch]
+    } else {
+        // Agent switched branches — rename the old branch by explicit name
+        vec![
+            "-C",
+            worktree_path,
+            "branch",
+            "-m",
+            "--",
+            old_branch,
+            new_branch,
+        ]
+    };
+
+    // First attempt
+    match tokio::process::Command::new("git")
+        .args(&args)
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            debug!(environment_id = %environment_id, "Git branch renamed in local worktree");
+            return;
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            debug!(
+                environment_id = %environment_id,
+                stderr = %stderr,
+                "First branch rename attempt failed, retrying after delay"
+            );
+        }
+        Err(e) => {
+            debug!(
+                environment_id = %environment_id,
+                error = %e,
+                "First branch rename attempt errored, retrying after delay"
+            );
+        }
+    }
+
+    // Wait briefly then retry — handles momentary ref locks from concurrent git operations
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    match tokio::process::Command::new("git")
+        .args(&args)
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            debug!(environment_id = %environment_id, "Git branch renamed in local worktree (retry)");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                environment_id = %environment_id,
+                old_branch = %old_branch,
+                new_branch = %new_branch,
+                stderr = %stderr,
+                "Failed to rename git branch in local worktree after retry"
+            );
+        }
+        Err(e) => {
+            warn!(
+                environment_id = %environment_id,
+                old_branch = %old_branch,
+                new_branch = %new_branch,
+                error = %e,
+                "Failed to execute git branch rename command after retry"
+            );
+        }
+    }
+}
+
 /// Background task to generate a name via Claude CLI and rename the environment
 async fn background_rename_environment(
     app_handle: tauri::AppHandle,
@@ -470,44 +576,13 @@ async fn background_rename_environment(
             if let Some(worktree_path) = &env.worktree_path {
                 debug!(environment_id = %environment_id, worktree_path = %worktree_path, "Renaming git branch in local worktree");
 
-                // Use tokio Command to run git branch rename
-                match tokio::process::Command::new("git")
-                    .args([
-                        "-C",
-                        worktree_path,
-                        "branch",
-                        "-m",
-                        "--",
-                        &old_branch,
-                        &unique_branch,
-                    ])
-                    .output()
-                    .await
-                {
-                    Ok(output) => {
-                        if output.status.success() {
-                            debug!(environment_id = %environment_id, "Git branch renamed in local worktree");
-                        } else {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            warn!(
-                                environment_id = %environment_id,
-                                old_branch = %old_branch,
-                                new_branch = %unique_branch,
-                                stderr = %stderr,
-                                "Failed to rename git branch in local worktree"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            old_branch = %old_branch,
-                            new_branch = %unique_branch,
-                            error = %e,
-                            "Failed to execute git branch rename command"
-                        );
-                    }
-                }
+                rename_local_worktree_branch(
+                    &environment_id,
+                    worktree_path,
+                    &old_branch,
+                    &unique_branch,
+                )
+                .await;
             }
         } else if env.status == EnvironmentStatus::Running {
             // Containerized environment: rename branch inside the container
@@ -938,8 +1013,19 @@ pub async fn rename_environment(
         )
         .map_err(storage_error_to_string)?;
 
-    // If container exists and is running, rename git branch and container
-    if let Some(container_id) = &environment.container_id {
+    // Rename git branch based on environment type
+    if environment.is_local() {
+        // Local environment: rename branch in the worktree
+        if let Some(worktree_path) = &environment.worktree_path {
+            rename_local_worktree_branch(
+                &environment_id,
+                worktree_path,
+                &old_branch,
+                &unique_name,
+            )
+            .await;
+        }
+    } else if let Some(container_id) = &environment.container_id {
         if environment.status == EnvironmentStatus::Running {
             if let Ok(docker) = get_docker_client() {
                 // Rename the git branch inside the container
@@ -995,6 +1081,37 @@ pub async fn rename_environment(
     }
 
     Ok(updated_env)
+}
+
+/// Rename an environment using an AI-generated name from a prompt.
+/// This is used by native mode chat tabs to rename timestamp-named environments
+/// after the first user message, mirroring the initial-prompt naming behavior.
+#[tauri::command]
+pub async fn rename_environment_from_prompt(
+    app_handle: tauri::AppHandle,
+    environment_id: String,
+    prompt: String,
+) -> Result<(), String> {
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err("Prompt cannot be empty".to_string());
+    }
+
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    let environment = storage
+        .get_environment(&environment_id)
+        .map_err(storage_error_to_string)?
+        .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    let old_branch = environment.branch.clone();
+
+    debug!(environment_id = %environment_id, "Running naming task from first prompt (blocking until complete)");
+
+    // Run inline — the frontend awaits this so the prompt is only sent after
+    // the branch has been renamed, avoiding git conflicts with the agent.
+    background_rename_environment(app_handle, environment_id, old_branch, prompt).await;
+
+    Ok(())
 }
 
 /// Get the current status of an environment
