@@ -226,7 +226,7 @@ export function CreateEnvironmentDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="sm:max-w-[700px]"
+        className="sm:max-w-[700px] max-h-[85vh] flex flex-col"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader>
@@ -236,7 +236,7 @@ export function CreateEnvironmentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
           {/* Environment Type Selector */}
           <div className="space-y-2">
             <Label>Environment Type</Label>
@@ -651,7 +651,7 @@ export function CreateEnvironmentDialog({
                 onKeyDown={handlePromptKeyDown}
                 disabled={isLoading}
                 rows={3}
-                className="resize-none"
+                className="resize-y max-h-[calc(15*1.5em)] overflow-y-auto"
               />
             </div>
           )}
