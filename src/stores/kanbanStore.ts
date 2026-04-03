@@ -6,15 +6,18 @@ import {
   deleteKanbanTask,
   addKanbanComment,
   deleteKanbanComment,
+  addKanbanImage,
+  deleteKanbanImage,
   getProjectNotes,
   saveProjectNotes,
   type KanbanTask,
   type KanbanStatus,
   type KanbanComment,
+  type KanbanImage,
   type ProjectNotes,
 } from "@/lib/tauri";
 
-export type { KanbanTask, KanbanStatus, KanbanComment, ProjectNotes };
+export type { KanbanTask, KanbanStatus, KanbanComment, KanbanImage, ProjectNotes };
 
 interface KanbanState {
   tasks: KanbanTask[];
@@ -32,6 +35,8 @@ interface KanbanState {
   moveTask: (taskId: string, newStatus: KanbanStatus) => Promise<void>;
   addComment: (taskId: string, text: string) => Promise<void>;
   deleteComment: (taskId: string, commentId: string) => Promise<void>;
+  addImage: (taskId: string, filename: string, data: string) => Promise<void>;
+  deleteImage: (taskId: string, imageId: string) => Promise<void>;
 
   // Notes actions
   loadNotes: (projectId: string) => Promise<void>;
@@ -148,6 +153,28 @@ export const useKanbanStore = create<KanbanState>()((set, get) => ({
       }));
     } catch (error) {
       console.error("[KanbanStore] Failed to delete comment:", error);
+    }
+  },
+
+  addImage: async (taskId, filename, data) => {
+    try {
+      const updated = await addKanbanImage(taskId, filename, data);
+      set((state) => ({
+        tasks: state.tasks.map((t) => (t.id === taskId ? updated : t)),
+      }));
+    } catch (error) {
+      console.error("[KanbanStore] Failed to add image:", error);
+    }
+  },
+
+  deleteImage: async (taskId, imageId) => {
+    try {
+      const updated = await deleteKanbanImage(taskId, imageId);
+      set((state) => ({
+        tasks: state.tasks.map((t) => (t.id === taskId ? updated : t)),
+      }));
+    } catch (error) {
+      console.error("[KanbanStore] Failed to delete image:", error);
     }
   },
 

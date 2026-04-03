@@ -63,7 +63,19 @@ export function useBuildPipeline() {
   const startBuild = useCallback(
     async (task: KanbanTask, environmentType: EnvironmentType) => {
       try {
-        // 1. Create pipeline
+        // 1. Load image data from disk for the task snapshot
+        const snapshotImages = await Promise.all(
+          (task.images ?? []).map(async (img) => {
+            try {
+              const data = await tauri.getKanbanImageData(img.id);
+              return { filename: img.filename, data };
+            } catch {
+              return null;
+            }
+          })
+        ).then((results) => results.filter((r): r is { filename: string; data: string } => r !== null));
+
+        // 2. Create pipeline
         const pipelineId = createPipeline({
           taskId: task.id,
           projectId: task.projectId,
@@ -74,6 +86,7 @@ export function useBuildPipeline() {
             description: task.description,
             acceptanceCriteria: task.acceptanceCriteria,
             comments: task.comments.map((c) => ({ text: c.text })),
+            images: snapshotImages,
           },
         });
 

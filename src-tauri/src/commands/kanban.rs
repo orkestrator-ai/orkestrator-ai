@@ -86,6 +86,43 @@ pub async fn delete_kanban_comment(
         .map_err(storage_error_to_string)
 }
 
+/// Add an image to a kanban task
+#[tauri::command]
+pub async fn add_kanban_image(
+    task_id: String,
+    filename: String,
+    data: String,
+) -> Result<KanbanTask, String> {
+    debug!(task_id = %task_id, filename = %filename, "Adding image to kanban task");
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    storage
+        .add_kanban_image(&task_id, filename, data)
+        .map_err(storage_error_to_string)
+}
+
+/// Delete an image from a kanban task
+#[tauri::command]
+pub async fn delete_kanban_image(
+    task_id: String,
+    image_id: String,
+) -> Result<KanbanTask, String> {
+    debug!(task_id = %task_id, image_id = %image_id, "Deleting kanban image");
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    storage
+        .delete_kanban_image(&task_id, &image_id)
+        .map_err(storage_error_to_string)
+}
+
+/// Get kanban image data as base64-encoded WebP (for on-demand loading)
+#[tauri::command]
+pub async fn get_kanban_image_data(image_id: String) -> Result<String, String> {
+    debug!(image_id = %image_id, "Loading kanban image data");
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    storage
+        .get_kanban_image_data(&image_id)
+        .map_err(storage_error_to_string)
+}
+
 /// Get project notes
 #[tauri::command]
 pub async fn get_project_notes(project_id: String) -> Result<ProjectNotes, String> {

@@ -1049,6 +1049,13 @@ export interface KanbanComment {
   createdAt: string;
 }
 
+export interface KanbanImage {
+  id: string;
+  /** Original filename before WebP conversion */
+  filename: string;
+  createdAt: string;
+}
+
 export type KanbanStatus = "backlog" | "in-progress" | "review" | "done";
 
 export interface KanbanTask {
@@ -1059,6 +1066,7 @@ export interface KanbanTask {
   acceptanceCriteria: string;
   status: KanbanStatus;
   comments: KanbanComment[];
+  images: KanbanImage[];
   createdAt: string;
   order: number;
   /** Linked build environment ID */
@@ -1107,6 +1115,19 @@ export async function addKanbanComment(taskId: string, text: string): Promise<Ka
 
 export async function deleteKanbanComment(taskId: string, commentId: string): Promise<KanbanTask> {
   return invoke<KanbanTask>("delete_kanban_comment", { taskId, commentId });
+}
+
+export async function addKanbanImage(taskId: string, filename: string, data: string): Promise<KanbanTask> {
+  return invoke<KanbanTask>("add_kanban_image", { taskId, filename, data });
+}
+
+export async function deleteKanbanImage(taskId: string, imageId: string): Promise<KanbanTask> {
+  return invoke<KanbanTask>("delete_kanban_image", { taskId, imageId });
+}
+
+/** Load kanban image data on demand. Returns base64-encoded WebP data. */
+export async function getKanbanImageData(imageId: string): Promise<string> {
+  return invoke<string>("get_kanban_image_data", { imageId });
 }
 
 export async function getProjectNotes(projectId: string): Promise<ProjectNotes> {

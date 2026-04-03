@@ -155,6 +155,7 @@ describe("createBuildReviewPrompt", () => {
     description: "Implement dark mode toggle",
     acceptanceCriteria: "- Toggle switch exists\n- Theme persists",
     comments: [] as Array<{ text: string }>,
+    images: [],
   };
 
   test("includes commit step", () => {
@@ -250,6 +251,7 @@ describe("createBuildPrompt", () => {
     description: "Implement dark mode toggle",
     acceptanceCriteria: "- Toggle switch exists\n- Theme persists",
     comments: [] as Array<{ text: string }>,
+    images: [],
   };
 
   test("returns fallback when task is null", () => {
@@ -303,6 +305,7 @@ describe("createVerificationPrompt", () => {
     description: "Full-text search",
     acceptanceCriteria: "- Search box visible\n- Results load in <1s",
     comments: [] as Array<{ text: string }>,
+    images: [],
   };
 
   test("returns fallback when task is null", () => {
@@ -349,6 +352,7 @@ describe("createFixPrompt", () => {
     description: "Login page broken",
     acceptanceCriteria: "- Login works with email\n- Error shown on bad password",
     comments: [] as Array<{ text: string }>,
+    images: [],
   };
 
   test("returns fallback with feedback when task is null", () => {
@@ -384,7 +388,7 @@ describe("buildPipelineStore", () => {
       projectId: "proj-1",
       environmentType: "local",
       taskTitle: "My Feature",
-      taskSnapshot: { title: "My Feature", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "My Feature", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     const pipeline = useBuildPipelineStore.getState().pipelines.get(id);
@@ -398,7 +402,7 @@ describe("buildPipelineStore", () => {
     expect(pipeline!.maxIterations).toBe(3);
     expect(pipeline!.environmentId).toBe("");
     expect(pipeline!.taskTitle).toBe("My Feature");
-    expect(pipeline!.taskSnapshot).toEqual({ title: "My Feature", description: "", acceptanceCriteria: "", comments: [] });
+    expect(pipeline!.taskSnapshot).toEqual({ title: "My Feature", description: "", acceptanceCriteria: "", comments: [], images: [] });
   });
 
   test("createPipeline stores populated taskSnapshot", () => {
@@ -408,6 +412,7 @@ describe("buildPipelineStore", () => {
       description: "Add a dark mode toggle to the settings page",
       acceptanceCriteria: "- Toggle exists\n- Theme persists across sessions",
       comments: [{ text: "Use CSS variables" }, { text: "Support system preference" }],
+      images: [],
     };
     const id = store.createPipeline({
       taskId: "task-2",
@@ -430,7 +435,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "containerized",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineEnvironment(id, "env-123");
@@ -445,7 +450,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().setPhase(id, "building");
@@ -459,7 +464,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     const session = {
@@ -486,7 +491,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().addSession(id, {
@@ -511,7 +516,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().incrementIteration(id);
@@ -528,7 +533,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineError(id, "Something went wrong");
@@ -544,7 +549,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().setVerificationResult(id, "fail", "Missing tests");
@@ -560,7 +565,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     const found = useBuildPipelineStore.getState().getPipelineByTaskId("task-abc");
@@ -580,7 +585,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineEnvironment(id, "env-1");
@@ -598,7 +603,7 @@ describe("buildPipelineStore", () => {
       projectId: "p1",
       environmentType: "local",
       taskTitle: "Test",
-      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [] },
+      taskSnapshot: { title: "Test", description: "", acceptanceCriteria: "", comments: [], images: [] },
     });
 
     useBuildPipelineStore.getState().setPipelineEnvironment(id, "env-1");
