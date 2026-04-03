@@ -124,6 +124,9 @@ export function useGlobalActivityMonitor(): void {
   // The SSE subscriptions persist when components unmount, so the session
   // store keeps receiving updates. We subscribe here to reactively derive
   // the activity state for the sidebar.
+  // Only update when a client exists for the environment (i.e. connected).
+  // When disconnected, preserve the last-known state to avoid flashing
+  // the sidebar icon to idle during transient SSE reconnections.
   useEffect(() => {
     const unsubscribe = useClaudeStore.subscribe((state, prevState) => {
       // Quick bailout: skip if nothing relevant changed
@@ -137,6 +140,11 @@ export function useGlobalActivityMonitor(): void {
       for (const [sessionKey, session] of state.sessions) {
         const envId = extractEnvironmentId(sessionKey);
         if (!envId) continue;
+
+        // Only derive state when connected (client exists). When the
+        // client is absent the SSE connection is down — preserve the
+        // last-known activity state to avoid flashing idle.
+        if (!state.clients.has(envId)) continue;
 
         let desiredState: AgentActivityState;
         if (session.isLoading) {
@@ -174,6 +182,8 @@ export function useGlobalActivityMonitor(): void {
       for (const [sessionKey, session] of state.sessions) {
         const envId = extractEnvironmentId(sessionKey);
         if (!envId) continue;
+
+        if (!state.clients.has(envId)) continue;
 
         let desiredState: AgentActivityState;
         if (session.isLoading) {
@@ -213,6 +223,8 @@ export function useGlobalActivityMonitor(): void {
       for (const [sessionKey, session] of state.sessions) {
         const envId = extractEnvironmentId(sessionKey);
         if (!envId) continue;
+
+        if (!state.clients.has(envId)) continue;
 
         const desiredState: AgentActivityState = session.isLoading
           ? "working"
