@@ -29,6 +29,7 @@ import {
   abortSession,
   subscribeToEvents,
   ERROR_MESSAGE_PREFIX,
+  SYSTEM_MESSAGE_PREFIX,
   type PermissionRequest,
   type QuestionRequest,
   type OpenCodeConversationMode,
@@ -136,6 +137,7 @@ export function OpenCodeChatTab({
     getSession,
     setSession,
     addMessage,
+    removeMessage,
     setMessages,
     setSessionLoading,
     setServerStatus,
@@ -1067,8 +1069,9 @@ export function OpenCodeChatTab({
       if (!session.messages.length) {
         const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
         if (env && /^\d{8}-\d{6}$/.test(env.name)) {
+          const namingMsgId = `${SYSTEM_MESSAGE_PREFIX}naming-${Date.now()}`;
           addMessage(sessionKey, {
-            id: `system-naming-${Date.now()}`,
+            id: namingMsgId,
             role: "assistant" as const,
             content: "Naming environment...",
             parts: [{ type: "text" as const, content: "Naming environment..." }],
@@ -1079,6 +1082,7 @@ export function OpenCodeChatTab({
           } catch (e) {
             console.warn("[OpenCodeChatTab] Failed to rename environment from prompt:", e);
           }
+          removeMessage(sessionKey, namingMsgId);
         }
       }
 
@@ -1121,6 +1125,7 @@ export function OpenCodeChatTab({
       getSelectedVariant,
       getSelectedMode,
       addMessage,
+      removeMessage,
       setSessionLoading,
     ],
   );

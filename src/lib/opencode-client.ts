@@ -222,6 +222,9 @@ export type PermissionReply = "once" | "always" | "reject";
 /** Prefix for client-side error message IDs (used to preserve errors across message refreshes) */
 export const ERROR_MESSAGE_PREFIX = "error-";
 
+/** Prefix for client-side system message IDs (used to preserve system messages across message refreshes) */
+export const SYSTEM_MESSAGE_PREFIX = "system-";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }

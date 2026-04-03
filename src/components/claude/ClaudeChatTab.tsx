@@ -82,6 +82,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setModels,
     setSession,
     addMessage,
+    removeMessage,
     setMessages,
     setSessionLoading,
     setServerStatus,
@@ -958,8 +959,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       if (!session.messages.length) {
         const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
         if (env && /^\d{8}-\d{6}$/.test(env.name)) {
+          const namingMsgId = `${SYSTEM_MESSAGE_PREFIX}naming-${crypto.randomUUID()}`;
           addMessage(sessionKey, {
-            id: `${SYSTEM_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+            id: namingMsgId,
             role: "system" as const,
             content: "Naming environment...",
             parts: [{ type: "text" as const, content: "Naming environment..." }],
@@ -970,6 +972,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           } catch (e) {
             console.warn("[ClaudeChatTab] Failed to rename environment from prompt:", e);
           }
+          removeMessage(sessionKey, namingMsgId);
         }
       }
 
@@ -997,7 +1000,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setSessionLoading(sessionKey, false);
       }
     },
-    [client, session, sessionKey, environmentId, getSelectedModel, addMessage, setSessionLoading]
+    [client, session, sessionKey, environmentId, getSelectedModel, addMessage, removeMessage, setSessionLoading]
   );
 
   handleSendRef.current = handleSend;
