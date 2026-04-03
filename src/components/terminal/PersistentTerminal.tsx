@@ -40,6 +40,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ComposeBar, type ImageAttachment } from "@/components/terminal/ComposeBar";
+import { CheckCircle2 } from "lucide-react";
 
 // Threshold for detecting intermediate/cleared buffer state during React mount cycles.
 // If new buffer is less than 50% of stored buffer size, it likely represents a cleared
@@ -1104,8 +1105,29 @@ export function PersistentTerminal({
     }
   }, [isActive, terminal, paneId, setActivePane]);
 
+  const [manuallyCompleted, setManuallyCompleted] = useState(false);
+  const handleMarkSetupComplete = useCallback(() => {
+    if (!setupCompleteRef.current) {
+      console.log("[PersistentTerminal] Manually marking setup complete for tab:", tabId);
+      setupCompleteRef.current = true;
+      setManuallyCompleted(true);
+      onSetupComplete?.();
+    }
+  }, [tabId, onSetupComplete]);
+
   return (
     <>
+      {isSetupTab && isActive && !manuallyCompleted && !setupCompleteRef.current && (
+        <div className="absolute top-1 right-2 z-10">
+          <button
+            onClick={handleMarkSetupComplete}
+            className="flex items-center gap-1.5 rounded-md bg-zinc-800/90 px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 border border-zinc-700/50 transition-colors shadow-md backdrop-blur-sm"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Mark setup complete
+          </button>
+        </div>
+      )}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div

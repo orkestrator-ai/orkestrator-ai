@@ -116,7 +116,14 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
       if (!pipeline) return state;
       const newMap = new Map(state.pipelines);
       newMap.set(pipelineId, { ...pipeline, environmentId });
-      return { pipelines: newMap, buildEnvironmentIds: get()._rebuildBuildEnvironmentIds() };
+      // Rebuild from the NEW map — get() still points at the old state inside set()
+      const ids = new Set<string>();
+      for (const p of newMap.values()) {
+        if (p.environmentId) {
+          ids.add(p.environmentId);
+        }
+      }
+      return { pipelines: newMap, buildEnvironmentIds: ids };
     }),
 
   addSession: (pipelineId, session) =>
