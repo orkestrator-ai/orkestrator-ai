@@ -124,7 +124,8 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       })
     );
     return () => { cancelled = true; };
-  }, [open, task, task?.images.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- imageUrlCache intentionally excluded to avoid re-fetch loop
+  }, [open, task]);
 
   // Reset create mode fields when dialog opens in create mode
   const handleOpenChange = (newOpen: boolean) => {
