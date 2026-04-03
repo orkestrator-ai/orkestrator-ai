@@ -12,6 +12,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
 import { checkDocker, checkClaudeCli, checkClaudeConfig, checkCodexCli, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
 import { usePrMonitorService } from "@/hooks/usePrMonitorService";
+import { useGlobalActivityMonitor } from "@/hooks/useGlobalActivityMonitor";
 import { useEnvironments } from "@/hooks";
 import {
   AlertDialog,
@@ -39,6 +40,8 @@ function App() {
 
   // Initialize centralized PR monitoring service
   usePrMonitorService();
+  // Monitor agent activity for ALL environments (regardless of selected project)
+  useGlobalActivityMonitor();
   const [claudeCliAvailable, setClaudeCliAvailable] = useState<boolean | null>(null);
   const [claudeConfigAvailable, setClaudeConfigAvailable] = useState<boolean | null>(null);
   const [opencodeCliAvailable, setOpencodeCliAvailable] = useState<boolean | null>(null);

@@ -1,54 +1,50 @@
 import { create } from "zustand";
 
-export type ClaudeActivityState = "idle" | "working" | "waiting";
+export type AgentActivityState = "idle" | "working" | "waiting";
 
 /** Callback type for state transitions */
-export type ClaudeStateCallback = (
+export type AgentStateCallback = (
   containerId: string,
-  previousState: ClaudeActivityState,
-  newState: ClaudeActivityState
+  previousState: AgentActivityState,
+  newState: AgentActivityState
 ) => void;
 
 /** Unique identifier for registered callbacks */
 type CallbackId = string;
 
-interface ClaudeActivityStoreState {
+interface AgentActivityStoreState {
   // State: Map of tabId -> activity state
-  tabStates: Record<string, ClaudeActivityState>;
-  // State: Map of containerId -> activity state (for sidebar display)
-  containerStates: Record<string, ClaudeActivityState>;
+  tabStates: Record<string, AgentActivityState>;
+  // State: Map of containerId/environmentId -> activity state (for sidebar display)
+  containerStates: Record<string, AgentActivityState>;
   // Reference counts: Map of containerId -> number of tabs using it
   containerRefCounts: Record<string, number>;
   // Callbacks: Map of callbackId -> callback function
-  stateChangeCallbacks: Map<CallbackId, ClaudeStateCallback>;
+  stateChangeCallbacks: Map<CallbackId, AgentStateCallback>;
 
   // Actions
-  setTabState: (tabId: string, state: ClaudeActivityState) => void;
+  setTabState: (tabId: string, state: AgentActivityState) => void;
   removeTabState: (tabId: string) => void;
-  setContainerState: (containerId: string, state: ClaudeActivityState) => void;
-  /**
-   * @deprecated Use decrementContainerRef instead to properly handle multiple tabs.
-   * This is kept for backward compatibility but directly removes the state.
-   */
+  setContainerState: (containerId: string, state: AgentActivityState) => void;
   removeContainerState: (containerId: string) => void;
   /** Increment the reference count for a container (call when tab mounts) */
   incrementContainerRef: (containerId: string) => void;
-  /** Decrement the reference count and remove state when it reaches 0 (call when tab unmounts) */
+  /** Decrement the reference count (call when tab unmounts) */
   decrementContainerRef: (containerId: string) => void;
 
   // Callback registration
-  registerStateCallback: (callback: ClaudeStateCallback) => CallbackId;
+  registerStateCallback: (callback: AgentStateCallback) => CallbackId;
   unregisterStateCallback: (callbackId: CallbackId) => void;
 
   // Selectors
-  getTabState: (tabId: string) => ClaudeActivityState;
-  getContainerState: (containerId: string) => ClaudeActivityState;
+  getTabState: (tabId: string) => AgentActivityState;
+  getContainerState: (containerId: string) => AgentActivityState;
 }
 
 // Counter for generating unique callback IDs
 let callbackIdCounter = 0;
 
-export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
+export const useAgentActivityStore = create<AgentActivityStoreState>()(
   (set, get) => ({
     // Initial state
     tabStates: {},
@@ -85,7 +81,7 @@ export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
             try {
               callback(containerId, previousState, state);
             } catch (e) {
-              console.error("[claudeActivityStore] Callback error:", e);
+              console.error("[agentActivityStore] Callback error:", e);
             }
           });
         });
@@ -113,10 +109,11 @@ export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
         const newCount = Math.max(0, currentCount - 1);
 
         if (newCount === 0) {
-          // No more tabs using this container, remove state
-          const { [containerId]: _, ...restStates } = prev.containerStates;
-          const { [containerId]: __, ...restCounts } = prev.containerRefCounts;
-          return { containerStates: restStates, containerRefCounts: restCounts };
+          // No more tabs using this container — remove ref count but preserve
+          // activity state so the sidebar icon keeps showing the correct color
+          // even when the user navigates to a different project.
+          const { [containerId]: _, ...restCounts } = prev.containerRefCounts;
+          return { containerRefCounts: restCounts };
         }
 
         // Still have tabs, just decrement count
@@ -136,7 +133,7 @@ export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
         newCallbacks.set(callbackId, callback);
         return { stateChangeCallbacks: newCallbacks };
       });
-      console.log("[claudeActivityStore] Registered state callback:", callbackId);
+      console.log("[agentActivityStore] Registered state callback:", callbackId);
       return callbackId;
     },
 
@@ -146,7 +143,7 @@ export const useClaudeActivityStore = create<ClaudeActivityStoreState>()(
         newCallbacks.delete(callbackId);
         return { stateChangeCallbacks: newCallbacks };
       });
-      console.log("[claudeActivityStore] Unregistered state callback:", callbackId);
+      console.log("[agentActivityStore] Unregistered state callback:", callbackId);
     },
 
     // Selectors

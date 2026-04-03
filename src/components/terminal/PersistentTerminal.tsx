@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useTerminal } from "@/hooks/useTerminal";
-import { useClaudeState } from "@/hooks/useClaudeState";
+import { useAgentState } from "@/hooks/useAgentState";
 import { useClipboardImagePaste } from "@/hooks/useClipboardImagePaste";
 import { escapePathForTerminalInput, handleTerminalPaste } from "@/lib/terminal-paste";
 import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore, useEnvironmentStore } from "@/stores";
@@ -609,7 +609,7 @@ export function PersistentTerminal({
   }, [isReconnecting, isConnected, hasReconnected, tabId, environmentId, onReady, serializedBuffer, existingHasLaunchedCommand, terminal, fitAddon, isFirstTab]);
 
   // Monitor Claude activity state
-  useClaudeState(containerId, tabId);
+  useAgentState(containerId, tabId);
 
   const scheduleFit = useCallback(() => {
     if (!fitAddon || !terminal) return;

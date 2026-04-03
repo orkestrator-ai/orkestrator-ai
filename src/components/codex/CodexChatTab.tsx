@@ -3,7 +3,6 @@ import { AlertCircle, ArrowDown, History, Loader2, RefreshCw } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useScrollLock } from "@/hooks";
-import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useCodexStore, createCodexSessionKey, useConfigStore } from "@/stores";
 import {
@@ -124,8 +123,6 @@ export function CodexChatTab({
     slashCommands: slashCommandsMap,
   } = useCodexStore();
 
-  const { incrementContainerRef, decrementContainerRef, setContainerState } =
-    useClaudeActivityStore();
   const { clearTabInitialPrompt } = usePaneLayoutStore();
 
   const client = useMemo(
@@ -208,25 +205,8 @@ export function CodexChatTab({
     persistKey: sessionKey,
   });
 
-  useEffect(() => {
-    incrementContainerRef(environmentId);
-    return () => {
-      decrementContainerRef(environmentId);
-    };
-  }, [decrementContainerRef, environmentId, incrementContainerRef]);
-
-  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
-  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
-  useEffect(() => {
-    if (session?.isLoading) {
-      // Always show working when session is loading, regardless of connection state
-      setContainerState(environmentId, "working");
-    } else if (connectionState === "connected") {
-      // Connected and not loading - idle
-      setContainerState(environmentId, "idle");
-    }
-    // When not connected and not loading, preserve the current state (don't force idle)
-  }, [connectionState, environmentId, session?.isLoading, setContainerState]);
+  // Activity state tracking is handled globally by useGlobalActivityMonitor
+  // (in App.tsx), which derives state from this store's session data.
 
   const refreshMessages = useCallback(
     async (activeClient = client, sessionId = session?.sessionId) => {

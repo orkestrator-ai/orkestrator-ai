@@ -4,7 +4,6 @@ import { useScrollLock, clearPersistedScrollState } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
-import { useClaudeActivityStore } from "@/stores/claudeActivityStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import {
   createClient,
@@ -109,9 +108,6 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     pendingPlanApprovals: pendingPlanApprovalsMap,
   } = useClaudeStore();
 
-  // Activity state tracking - use environmentId as key for both local and container environments
-  const { setContainerState, removeContainerState } = useClaudeActivityStore();
-
   // Pane layout store - for clearing initialPrompt after it's been sent
   const { clearTabInitialPrompt } = usePaneLayoutStore();
 
@@ -185,30 +181,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const SSE_RECONNECT_BASE_DELAY = 3000;
   const SSE_RECONNECT_MAX_DELAY = 60000;
 
-  // Track Claude activity state based on session loading - update the environment icon in sidebar
-  // For native Claude mode, we use environmentId as the key (works for both local and containerized)
-  // Prioritize session.isLoading over connectionState so the indicator stays "working" during
-  // transient connection drops (SSE reconnection, health check failures) for non-active environments.
-  useEffect(() => {
-    if (session?.isLoading) {
-      // Claude is working on a response - always show working regardless of connection state
-      setContainerState(environmentId, "working");
-    } else if (pendingQuestions.length > 0 && connectionState === "connected") {
-      // Claude is waiting for user input (question)
-      setContainerState(environmentId, "waiting");
-    } else if (connectionState === "connected") {
-      // Connected and not loading - Claude is idle
-      setContainerState(environmentId, "idle");
-    }
-    // When not connected and not loading, preserve the current state (don't force idle)
-  }, [connectionState, session?.isLoading, pendingQuestions.length, environmentId, setContainerState]);
-
-  // Cleanup activity state when tab unmounts
-  useEffect(() => {
-    return () => {
-      removeContainerState(environmentId);
-    };
-  }, [environmentId, removeContainerState]);
+  // Activity state tracking is handled globally by useGlobalActivityMonitor
+  // (in App.tsx), which derives state from this store's session data.
 
   useEffect(() => {
     // Block initialization until setup scripts finish (local environments with orkestrator-ai.json)

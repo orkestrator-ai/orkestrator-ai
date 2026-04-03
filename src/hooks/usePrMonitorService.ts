@@ -17,7 +17,7 @@ import {
   PR_MONITOR_TIMEOUTS,
   getEffectiveInterval,
 } from "@/stores/prMonitorStore";
-import { useEnvironmentStore, useUIStore, useClaudeActivityStore } from "@/stores";
+import { useEnvironmentStore, useUIStore, useAgentActivityStore } from "@/stores";
 import * as tauri from "@/lib/tauri";
 import type { PrDetectionResult } from "@/lib/tauri";
 import type { PrState } from "@/types";
@@ -137,7 +137,7 @@ export function usePrMonitorService(): void {
     _incrementErrors,
   } = usePrMonitorStore();
 
-  const { registerStateCallback, unregisterStateCallback } = useClaudeActivityStore();
+  const { registerStateCallback, unregisterStateCallback } = useAgentActivityStore();
 
   /**
    * Perform a single PR check for an environment.

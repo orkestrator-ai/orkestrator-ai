@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/context-menu";
 import { Trash2, Play, Square, Container, Laptop, Shield, Globe, Settings2, RotateCw, Loader2 } from "lucide-react";
 import type { Environment } from "@/types";
-import { useClaudeActivityStore, useEnvironmentStore, useEnvironmentDiffStore, useBuildPipelineStore } from "@/stores";
+import { useAgentActivityStore, useEnvironmentStore, useEnvironmentDiffStore, useBuildPipelineStore } from "@/stores";
 import { EnvironmentSettingsDialog } from "./EnvironmentSettingsDialog";
 import { cn } from "@/lib/utils";
 import * as tauri from "@/lib/tauri";
@@ -58,8 +58,8 @@ export function EnvironmentItem({
   // Get Claude activity state for this environment
   // For terminal-based Claude, state is keyed by containerId
   // For native Claude mode, state is keyed by environmentId
-  const containerStates = useClaudeActivityStore((s) => s.containerStates);
-  const claudeActivityState =
+  const containerStates = useAgentActivityStore((s) => s.containerStates);
+  const agentActivityState =
     containerStates[environment.id] ||  // Check by environmentId first (native mode)
     (environment.containerId ? containerStates[environment.containerId] : null) ||  // Then by containerId (terminal mode)
     "idle";
@@ -177,17 +177,17 @@ export function EnvironmentItem({
                     <Laptop className={cn(
                       "h-4 w-4 shrink-0 transition-colors",
                       !isRunning && "text-muted-foreground",
-                      isRunning && claudeActivityState === "waiting" && "text-amber-500 animate-pulse",
-                      isRunning && claudeActivityState === "working" && "text-blue-500 animate-pulse",
-                      isRunning && claudeActivityState === "idle" && "text-green-500"
+                      isRunning && agentActivityState === "waiting" && "text-amber-500 animate-pulse",
+                      isRunning && agentActivityState === "working" && "text-blue-500 animate-pulse",
+                      isRunning && agentActivityState === "idle" && "text-green-500"
                     )} />
                   ) : (
                     <Container className={cn(
                       "h-4 w-4 shrink-0 transition-colors",
                       !isRunning && "text-muted-foreground",
-                      isRunning && claudeActivityState === "waiting" && "text-amber-500 animate-pulse",
-                      isRunning && claudeActivityState === "working" && "text-blue-500 animate-pulse",
-                      isRunning && claudeActivityState === "idle" && "text-green-500"
+                      isRunning && agentActivityState === "waiting" && "text-amber-500 animate-pulse",
+                      isRunning && agentActivityState === "working" && "text-blue-500 animate-pulse",
+                      isRunning && agentActivityState === "idle" && "text-green-500"
                     )} />
                   )
                 )}

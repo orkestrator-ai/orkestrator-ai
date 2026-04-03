@@ -5,16 +5,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { ClaudeActivityState } from "@/stores/claudeActivityStore";
+import type { AgentActivityState } from "@/stores/agentActivityStore";
 
-interface ClaudeActivityIndicatorProps {
-  state: ClaudeActivityState;
+interface AgentActivityIndicatorProps {
+  state: AgentActivityState;
   showLabel?: boolean;
   className?: string;
 }
 
 const stateConfig: Record<
-  ClaudeActivityState,
+  AgentActivityState,
   { color: string; textColor: string; label: string }
 > = {
   working: {
@@ -34,11 +34,11 @@ const stateConfig: Record<
   },
 };
 
-export function ClaudeActivityIndicator({
+export function AgentActivityIndicator({
   state,
   showLabel = false,
   className,
-}: ClaudeActivityIndicatorProps) {
+}: AgentActivityIndicatorProps) {
   const config = stateConfig[state];
 
   return (
