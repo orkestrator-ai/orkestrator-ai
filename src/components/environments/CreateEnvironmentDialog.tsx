@@ -218,16 +218,18 @@ export function CreateEnvironmentDialog({
           networkAccessMode,
           portMappings,
         });
-        // Clear the draft on successful creation
+        // Clear the draft on successful creation and close directly
+        // (bypass handleOpenChange which would re-save the draft)
         if (projectId) {
           draftPrompts.delete(projectId);
         }
-        handleOpenChange(false);
+        resetForm();
+        onOpenChange(false);
       } catch (err) {
         console.error("Failed to create environment:", err);
       }
     },
-    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, initialPrompt, networkAccessMode, portMappings, onCreate, handleOpenChange, validatePortMappings]
+    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, initialPrompt, networkAccessMode, portMappings, onCreate, resetForm, onOpenChange, projectId, validatePortMappings]
   );
 
   const handlePromptKeyDown = useCallback(
