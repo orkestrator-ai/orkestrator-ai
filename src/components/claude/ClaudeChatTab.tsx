@@ -33,6 +33,7 @@ import {
   getClaudeServerLog,
   startLocalClaudeServer,
   getLocalClaudeServerStatus,
+  renameEnvironmentFromPrompt,
 } from "@/lib/tauri";
 import { ClaudeMessage } from "./ClaudeMessage";
 import { ClaudeComposeBar } from "./ClaudeComposeBar";
@@ -81,6 +82,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setModels,
     setSession,
     addMessage,
+    removeMessage,
     setMessages,
     setSessionLoading,
     setServerStatus,
@@ -951,6 +953,29 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       addMessage(sessionKey, userMessage);
       setSessionLoading(sessionKey, true);
 
+      // If this is the first message and the environment still has a default timestamp name,
+      // rename the environment (including git branch) BEFORE sending the prompt to the agent.
+      // This avoids renaming the branch while the agent is doing git operations.
+      if (!session.messages.length) {
+        const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+        if (env && /^\d{8}-\d{6}$/.test(env.name)) {
+          const namingMsgId = `${SYSTEM_MESSAGE_PREFIX}naming-${crypto.randomUUID()}`;
+          addMessage(sessionKey, {
+            id: namingMsgId,
+            role: "system" as const,
+            content: "Naming environment...",
+            parts: [{ type: "text" as const, content: "Naming environment..." }],
+            timestamp: new Date().toISOString(),
+          });
+          try {
+            await renameEnvironmentFromPrompt(environmentId, text);
+          } catch (e) {
+            console.warn("[ClaudeChatTab] Failed to rename environment from prompt:", e);
+          }
+          removeMessage(sessionKey, namingMsgId);
+        }
+      }
+
       const sdkAttachments = attachments.map((att) => ({
         type: att.type,
         path: att.path,
@@ -975,7 +1000,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         setSessionLoading(sessionKey, false);
       }
     },
-    [client, session, sessionKey, getSelectedModel, addMessage, setSessionLoading]
+    [client, session, sessionKey, environmentId, getSelectedModel, addMessage, removeMessage, setSessionLoading]
   );
 
   handleSendRef.current = handleSend;

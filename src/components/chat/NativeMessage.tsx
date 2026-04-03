@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { useTerminalContext } from "@/contexts/TerminalContext";
 import {
   ERROR_MESSAGE_PREFIX,
+  SYSTEM_MESSAGE_PREFIX,
   type ToolDiffMetadata,
 } from "@/lib/opencode-client";
 import { isEditTool } from "@/lib/tool-names";
@@ -893,6 +894,7 @@ export const NativeMessage = memo(function NativeMessage({
 }: NativeMessageProps) {
   const isUser = message.role === "user";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
+  const isSystem = message.id.startsWith(SYSTEM_MESSAGE_PREFIX);
   const isContinuation =
     !isUser &&
     !isError &&
@@ -909,6 +911,19 @@ export const NativeMessage = memo(function NativeMessage({
         content={message.content}
         timestampLabel={formatTime(message.createdAt)}
       />
+    );
+  }
+
+  // Render system messages with distinct info styling
+  if (isSystem) {
+    return (
+      <div className="px-4 py-2">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-xs text-muted-foreground italic text-center py-1">
+            {message.content}
+          </div>
+        </div>
+      </div>
     );
   }
 

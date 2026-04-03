@@ -29,6 +29,7 @@ import {
   abortSession,
   subscribeToEvents,
   ERROR_MESSAGE_PREFIX,
+  SYSTEM_MESSAGE_PREFIX,
   type PermissionRequest,
   type QuestionRequest,
   type OpenCodeConversationMode,
@@ -43,6 +44,7 @@ import {
   getOpencodeModelPreferences,
   startLocalOpencodeServer,
   getLocalOpencodeServerStatus,
+  renameEnvironmentFromPrompt,
   type OpenCodeModelRef,
   type OpenCodeModelPreferences,
 } from "@/lib/tauri";
@@ -135,6 +137,7 @@ export function OpenCodeChatTab({
     getSession,
     setSession,
     addMessage,
+    removeMessage,
     setMessages,
     setSessionLoading,
     setServerStatus,
@@ -1060,6 +1063,29 @@ export function OpenCodeChatTab({
       addMessage(sessionKey, userMessage);
       setSessionLoading(sessionKey, true);
 
+      // If this is the first message and the environment still has a default timestamp name,
+      // rename the environment (including git branch) BEFORE sending the prompt to the agent.
+      // This avoids renaming the branch while the agent is doing git operations.
+      if (!session.messages.length) {
+        const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+        if (env && /^\d{8}-\d{6}$/.test(env.name)) {
+          const namingMsgId = `${SYSTEM_MESSAGE_PREFIX}naming-${Date.now()}`;
+          addMessage(sessionKey, {
+            id: namingMsgId,
+            role: "assistant" as const,
+            content: "Naming environment...",
+            parts: [{ type: "text" as const, content: "Naming environment..." }],
+            createdAt: new Date().toISOString(),
+          });
+          try {
+            await renameEnvironmentFromPrompt(environmentId, text);
+          } catch (e) {
+            console.warn("[OpenCodeChatTab] Failed to rename environment from prompt:", e);
+          }
+          removeMessage(sessionKey, namingMsgId);
+        }
+      }
+
       // Convert attachments to SDK format (include dataUrl for proper MIME/URL handling)
       const sdkAttachments = attachments.map((att) => ({
         type: att.type,
@@ -1099,6 +1125,7 @@ export function OpenCodeChatTab({
       getSelectedVariant,
       getSelectedMode,
       addMessage,
+      removeMessage,
       setSessionLoading,
     ],
   );

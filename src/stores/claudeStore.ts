@@ -103,6 +103,7 @@ interface ClaudeState {
   setSelectedModel: (sessionKey: ClaudeSessionKey, modelId: string) => void;
   setSession: (sessionKey: ClaudeSessionKey, session: ClaudeSessionState | null) => void;
   addMessage: (sessionKey: ClaudeSessionKey, message: ClaudeMessage) => void;
+  removeMessage: (sessionKey: ClaudeSessionKey, messageId: string) => void;
   setMessages: (sessionKey: ClaudeSessionKey, messages: ClaudeMessage[]) => void;
   setSessionLoading: (sessionKey: ClaudeSessionKey, isLoading: boolean) => void;
   setSessionError: (sessionKey: ClaudeSessionKey, error: string | undefined) => void;
@@ -240,6 +241,19 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
         ...session,
         messages: [...session.messages, message],
       });
+      return { sessions: newMap };
+    }),
+
+  removeMessage: (sessionKey, messageId) =>
+    set((state) => {
+      const session = state.sessions.get(sessionKey);
+      if (!session) return state;
+
+      const filtered = session.messages.filter((m) => m.id !== messageId);
+      if (filtered.length === session.messages.length) return state;
+
+      const newMap = new Map(state.sessions);
+      newMap.set(sessionKey, { ...session, messages: filtered });
       return { sessions: newMap };
     }),
 
