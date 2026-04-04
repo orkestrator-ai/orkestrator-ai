@@ -18,7 +18,7 @@ use crate::models::{
     sanitize_branch_name, sanitize_environment_name, ClaudeMode, DefaultAgent, Environment,
     EnvironmentStatus, EnvironmentType, NetworkAccessMode, OpenCodeMode, PortMapping, PrState,
 };
-use crate::storage::{get_config, get_storage, StorageError};
+use crate::storage::{get_config, get_storage, Storage, StorageError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::Emitter;
@@ -102,6 +102,78 @@ async fn fetch_setup_commands(worktree_path: &str, environment_id: &str) -> Opti
             "Found setupLocal commands to run in terminal"
         );
         Some(commands)
+    }
+}
+
+/// Resolve and persist entry port mapping for a container environment.
+///
+/// When `entry_port` is `Some`, queries Docker for the host port mapped to the
+/// container's entry port and stores both `entryPort` and `hostEntryPort` on the
+/// environment. When `entry_port` is `None`, clears any stale port fields.
+async fn resolve_and_store_entry_port(
+    storage: &Storage,
+    environment_id: &str,
+    container_id: &str,
+    entry_port: Option<u16>,
+) {
+    if let Some(ep) = entry_port {
+        match get_docker_client() {
+            Ok(docker) => {
+                match docker.get_host_port(container_id, ep, "tcp").await {
+                    Ok(Some(host_port)) => {
+                        debug!(
+                            environment_id = %environment_id,
+                            container_port = ep,
+                            host_port = host_port,
+                            "Resolved dynamic entry port mapping"
+                        );
+                        let _ = storage.update_environment(
+                            environment_id,
+                            json!({ "entryPort": ep, "hostEntryPort": host_port }),
+                        );
+                    }
+                    Ok(None) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            container_port = ep,
+                            "Entry port not found in container port bindings"
+                        );
+                        let _ = storage.update_environment(
+                            environment_id,
+                            json!({ "entryPort": ep }),
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            error = %e,
+                            "Failed to query entry port mapping"
+                        );
+                        let _ = storage.update_environment(
+                            environment_id,
+                            json!({ "entryPort": ep }),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    environment_id = %environment_id,
+                    error = %e,
+                    "Failed to get docker client for port query"
+                );
+                let _ = storage.update_environment(
+                    environment_id,
+                    json!({ "entryPort": ep }),
+                );
+            }
+        }
+    } else {
+        // Clear stale entry port and host entry port when entry_port is no longer configured
+        let _ = storage.update_environment(
+            environment_id,
+            json!({ "entryPort": null, "hostEntryPort": null }),
+        );
     }
 }
 
@@ -1222,49 +1294,7 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
             .repositories
             .get(&environment.project_id)
             .and_then(|rc| rc.entry_port);
-        if let Some(ep) = has_entry_port {
-            // Store the container entry port on the environment so the UI can show the full mapping
-            let _ = storage.update_environment(
-                &environment_id,
-                json!({ "entryPort": ep }),
-            );
-            if let Ok(docker) = get_docker_client() {
-                match docker.get_host_port(container_id, ep, "tcp").await {
-                    Ok(Some(host_port)) => {
-                        debug!(
-                            environment_id = %environment_id,
-                            container_port = ep,
-                            host_port = host_port,
-                            "Resolved dynamic entry port on existing container start"
-                        );
-                        let _ = storage.update_environment(
-                            &environment_id,
-                            json!({ "hostEntryPort": host_port }),
-                        );
-                    }
-                    Ok(None) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            container_port = ep,
-                            "Entry port not found in container port bindings on restart"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            error = %e,
-                            "Failed to query entry port mapping on restart"
-                        );
-                    }
-                }
-            }
-        } else {
-            // Clear stale entry port and host entry port when entry_port is no longer configured
-            let _ = storage.update_environment(
-                &environment_id,
-                json!({ "entryPort": null, "hostEntryPort": null }),
-            );
-        }
+        resolve_and_store_entry_port(storage, &environment_id, container_id, has_entry_port).await;
 
         storage
             .update_environment(&environment_id, json!({ "status": "running" }))
@@ -1369,55 +1399,8 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
         err_msg
     })?;
 
-    // Query dynamically allocated host entry port if configured
-    if let Some(ep) = entry_port {
-        // Store the container entry port on the environment so the UI can show the full mapping
-        let _ = storage.update_environment(
-            &environment_id,
-            json!({ "entryPort": ep }),
-        );
-        match get_docker_client() {
-            Ok(docker) => {
-                match docker.get_host_port(&container_id, ep, "tcp").await {
-                    Ok(Some(host_port)) => {
-                        debug!(
-                            environment_id = %environment_id,
-                            container_port = ep,
-                            host_port = host_port,
-                            "Resolved dynamic entry port mapping"
-                        );
-                        let _ = storage.update_environment(
-                            &environment_id,
-                            json!({ "hostEntryPort": host_port }),
-                        );
-                    }
-                    Ok(None) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            container_port = ep,
-                            "Entry port not found in container port bindings"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            error = %e,
-                            "Failed to query entry port mapping"
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                warn!(environment_id = %environment_id, error = %e, "Failed to get docker client for port query");
-            }
-        }
-    } else {
-        // Clear stale entry port and host entry port when entry_port is no longer configured
-        let _ = storage.update_environment(
-            &environment_id,
-            json!({ "entryPort": null, "hostEntryPort": null }),
-        );
-    }
+    // Resolve and store entry port mapping
+    resolve_and_store_entry_port(storage, &environment_id, &container_id, entry_port).await;
 
     // Update status to running
     storage
@@ -1854,48 +1837,8 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
         return Err(err_msg);
     }
 
-    // Query dynamically allocated host entry port if configured
-    if let Some(ep) = entry_port {
-        // Store the container entry port on the environment so the UI can show the full mapping
-        let _ = storage.update_environment(
-            &environment_id,
-            json!({ "entryPort": ep }),
-        );
-        match docker.get_host_port(&new_container_id, ep, "tcp").await {
-            Ok(Some(host_port)) => {
-                debug!(
-                    environment_id = %environment_id,
-                    container_port = ep,
-                    host_port = host_port,
-                    "Resolved dynamic entry port mapping on recreate"
-                );
-                let _ = storage.update_environment(
-                    &environment_id,
-                    json!({ "hostEntryPort": host_port }),
-                );
-            }
-            Ok(None) => {
-                warn!(
-                    environment_id = %environment_id,
-                    container_port = ep,
-                    "Entry port not found in container port bindings on recreate"
-                );
-            }
-            Err(e) => {
-                warn!(
-                    environment_id = %environment_id,
-                    error = %e,
-                    "Failed to query entry port mapping on recreate"
-                );
-            }
-        }
-    } else {
-        // Clear stale entry port and host entry port when entry_port is no longer configured
-        let _ = storage.update_environment(
-            &environment_id,
-            json!({ "entryPort": null, "hostEntryPort": null }),
-        );
-    }
+    // Resolve and store entry port mapping
+    resolve_and_store_entry_port(storage, &environment_id, &new_container_id, entry_port).await;
 
     // Update status to running
     storage

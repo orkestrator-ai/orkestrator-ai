@@ -1187,6 +1187,34 @@ mod tests {
     }
 
     #[test]
+    fn test_environment_entry_port_serialization() {
+        let mut env = Environment::new("project-123".to_string());
+        env.entry_port = Some(3000);
+        env.host_entry_port = Some(49152);
+
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"entryPort\":3000"));
+        assert!(json.contains("\"hostEntryPort\":49152"));
+
+        let deserialized: Environment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.entry_port, Some(3000));
+        assert_eq!(deserialized.host_entry_port, Some(49152));
+    }
+
+    #[test]
+    fn test_environment_entry_port_omitted_when_none() {
+        let env = Environment::new("project-123".to_string());
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(!json.contains("entryPort"));
+        assert!(!json.contains("hostEntryPort"));
+
+        // Deserializing without the field should yield None
+        let deserialized: Environment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.entry_port, None);
+        assert_eq!(deserialized.host_entry_port, None);
+    }
+
+    #[test]
     fn test_environment_is_local_and_is_containerized() {
         let local_env =
             Environment::new_local("project-1".to_string(), "local-env".to_string());
