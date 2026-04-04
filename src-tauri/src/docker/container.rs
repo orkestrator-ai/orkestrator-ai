@@ -5,7 +5,7 @@ use super::client::{get_docker_client, CreateContainerConfig, DockerError};
 use crate::models::{Environment, EnvironmentStatus, NetworkAccessMode, PortMapping};
 use bollard::models::PortBinding;
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Base image name for Claude Code environments
 pub const BASE_IMAGE: &str = "orkestrator-ai:latest";
@@ -444,16 +444,23 @@ pub async fn create_environment_container(
     // Expose entry port with dynamic host port allocation if configured
     if let Some(entry_port) = config.entry_port {
         let entry_key = format!("{}/tcp", entry_port);
-        exposed_ports.insert(entry_key.clone(), HashMap::new());
-        let entry_binding = PortBinding {
-            host_ip: Some("127.0.0.1".to_string()),
-            host_port: Some("".to_string()), // Empty string = dynamic allocation
-        };
-        port_bindings.insert(entry_key, Some(vec![entry_binding]));
-        debug!(
-            "Added entry port {} with dynamic host allocation",
-            entry_port
-        );
+        if port_bindings.contains_key(&entry_key) {
+            warn!(
+                "Entry port {} conflicts with an existing port mapping, skipping dynamic allocation",
+                entry_port
+            );
+        } else {
+            exposed_ports.insert(entry_key.clone(), HashMap::new());
+            let entry_binding = PortBinding {
+                host_ip: Some("127.0.0.1".to_string()),
+                host_port: Some("".to_string()), // Empty string = dynamic allocation
+            };
+            port_bindings.insert(entry_key, Some(vec![entry_binding]));
+            debug!(
+                "Added entry port {} with dynamic host allocation",
+                entry_port
+            );
+        }
     }
 
     if !config.port_mappings.is_empty() {

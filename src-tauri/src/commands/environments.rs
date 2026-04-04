@@ -1218,26 +1218,47 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
         })?;
 
         // Re-resolve dynamic entry port (may change on restart)
-        if let Some(repo_config) = config.repositories.get(&environment.project_id) {
-            if let Some(ep) = repo_config.entry_port {
-                if let Ok(docker) = get_docker_client() {
-                    match docker.get_host_port(container_id, ep, "tcp").await {
-                        Ok(Some(host_port)) => {
-                            debug!(
-                                environment_id = %environment_id,
-                                container_port = ep,
-                                host_port = host_port,
-                                "Resolved dynamic entry port on existing container start"
-                            );
-                            let _ = storage.update_environment(
-                                &environment_id,
-                                json!({ "hostEntryPort": host_port }),
-                            );
-                        }
-                        _ => {}
+        let has_entry_port = config
+            .repositories
+            .get(&environment.project_id)
+            .and_then(|rc| rc.entry_port);
+        if let Some(ep) = has_entry_port {
+            if let Ok(docker) = get_docker_client() {
+                match docker.get_host_port(container_id, ep, "tcp").await {
+                    Ok(Some(host_port)) => {
+                        debug!(
+                            environment_id = %environment_id,
+                            container_port = ep,
+                            host_port = host_port,
+                            "Resolved dynamic entry port on existing container start"
+                        );
+                        let _ = storage.update_environment(
+                            &environment_id,
+                            json!({ "hostEntryPort": host_port }),
+                        );
+                    }
+                    Ok(None) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            container_port = ep,
+                            "Entry port not found in container port bindings on restart"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            error = %e,
+                            "Failed to query entry port mapping on restart"
+                        );
                     }
                 }
             }
+        } else {
+            // Clear stale host entry port when entry_port is no longer configured
+            let _ = storage.update_environment(
+                &environment_id,
+                json!({ "hostEntryPort": null }),
+            );
         }
 
         storage
@@ -1380,6 +1401,12 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
                 warn!(environment_id = %environment_id, error = %e, "Failed to get docker client for port query");
             }
         }
+    } else {
+        // Clear stale host entry port when entry_port is no longer configured
+        let _ = storage.update_environment(
+            &environment_id,
+            json!({ "hostEntryPort": null }),
+        );
     }
 
     // Update status to running
@@ -1847,6 +1874,12 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
                 );
             }
         }
+    } else {
+        // Clear stale host entry port when entry_port is no longer configured
+        let _ = storage.update_environment(
+            &environment_id,
+            json!({ "hostEntryPort": null }),
+        );
     }
 
     // Update status to running

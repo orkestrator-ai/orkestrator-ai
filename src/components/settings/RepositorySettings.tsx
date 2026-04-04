@@ -532,23 +532,23 @@ export function RepositorySettings({
             </div>
 
             <div className="border-t border-border pt-4 space-y-4">
-            <Label>Additional Port Mappings</Label>
-            <p className="text-xs text-muted-foreground">These port mappings will be pre-filled when creating new environments for this repository.</p>
-            {portMappings.map((mapping, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <div className="flex-1 grid grid-cols-[1fr_auto_1fr_auto_auto] items-center gap-2">
-                  <Input type="number" placeholder="Container" value={mapping.containerPort} onChange={(e) => updatePortMapping(index, { containerPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
-                  <span className="text-muted-foreground">:</span>
-                  <Input type="number" placeholder="Host" value={mapping.hostPort} onChange={(e) => updatePortMapping(index, { hostPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
-                  <Select value={mapping.protocol} onValueChange={(value: PortProtocol) => updatePortMapping(index, { protocol: value })} disabled={isSaving}>
-                    <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem></SelectContent>
-                  </Select>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => removePortMapping(index)} disabled={isSaving} className="h-8 w-8"><Trash2 className="h-4 w-4" /></Button>
+              <Label>Additional Port Mappings</Label>
+              <p className="text-xs text-muted-foreground">These port mappings will be pre-filled when creating new environments for this repository.</p>
+              {portMappings.map((mapping, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <div className="flex-1 grid grid-cols-[1fr_auto_1fr_auto_auto] items-center gap-2">
+                    <Input type="number" placeholder="Container" value={mapping.containerPort} onChange={(e) => updatePortMapping(index, { containerPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
+                    <span className="text-muted-foreground">:</span>
+                    <Input type="number" placeholder="Host" value={mapping.hostPort} onChange={(e) => updatePortMapping(index, { hostPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
+                    <Select value={mapping.protocol} onValueChange={(value: PortProtocol) => updatePortMapping(index, { protocol: value })} disabled={isSaving}>
+                      <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem></SelectContent>
+                    </Select>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removePortMapping(index)} disabled={isSaving} className="h-8 w-8"><Trash2 className="h-4 w-4" /></Button>
+                  </div>
                 </div>
-              </div>
-            ))}
-            <Button type="button" variant="outline" size="sm" onClick={addPortMapping} disabled={isSaving} className="w-full"><Plus className="h-4 w-4 mr-2" />Add Port Mapping</Button>
+              ))}
+              <Button type="button" variant="outline" size="sm" onClick={addPortMapping} disabled={isSaving} className="w-full"><Plus className="h-4 w-4 mr-2" />Add Port Mapping</Button>
             </div>
           </div>
         );
