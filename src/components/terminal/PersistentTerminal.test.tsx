@@ -8,8 +8,9 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 // let @/lib/tauri fall through to the global @tauri-apps/api/core mock
 // registered in tests/setup.ts.
 
-// @tauri-apps/plugin-clipboard-manager and @/hooks/useClipboardImagePaste
-// are centrally mocked in tests/setup.ts — do NOT re-mock them here.
+// @tauri-apps/plugin-clipboard-manager is centrally mocked in tests/setup.ts.
+// @/hooks/useClipboardImagePaste is NOT mocked — it loads the real module
+// whose clipboard dependencies are satisfied by the central mock above.
 
 const resizeMock = mock(async () => {});
 const connectMock = mock(async () => {});
@@ -232,7 +233,7 @@ describe("PersistentTerminal", () => {
           prUrl: null,
           prState: null,
           hasMergeConflicts: null,
-          createdAt: new Date().toISOString(),
+          createdAt: "2024-01-01T00:00:00.000Z",
           networkAccessMode: "restricted",
           order: 0,
           environmentType: "containerized",

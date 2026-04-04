@@ -10,12 +10,3 @@ import { mock } from "bun:test";
 export const mockReadImage = mock(() => Promise.reject(new Error("no image")) as Promise<unknown>);
 export const mockReadText = mock(() => Promise.resolve(""));
 export const mockWriteText = mock(async () => {});
-
-export function resetClipboardMocks() {
-  mockReadImage.mockClear();
-  mockReadText.mockClear();
-  mockWriteText.mockClear();
-  mockReadImage.mockImplementation(() => Promise.reject(new Error("no image")));
-  mockReadText.mockImplementation(() => Promise.resolve(""));
-  mockWriteText.mockImplementation(async () => {});
-}

@@ -1,9 +1,9 @@
 /**
  * Shared mock functions for @/hooks/useClipboardImagePaste.
  *
- * Registered once in tests/setup.ts so that every test file shares the same
- * mock instances.  Individual tests configure behaviour via mockImplementation
- * in their beforeEach blocks.
+ * NOT registered in tests/setup.ts because useClipboardImagePaste.test.ts
+ * needs the real module.  Tests that need these mocked (e.g. terminal-paste)
+ * call mock.module() per-file, referencing these shared instances.
  */
 import { mock } from "bun:test";
 
@@ -20,13 +20,3 @@ export const mockProcessLocalClipboardPaste = mock(async (
   _onTextPaste?: (text: string) => void | Promise<void>,
   _onError?: (error: string) => void,
 ) => false as boolean);
-
-export const mockUseClipboardImagePaste = mock(() => {});
-
-export function resetClipboardPasteMocks() {
-  mockProcessClipboardPaste.mockClear();
-  mockProcessLocalClipboardPaste.mockClear();
-  mockUseClipboardImagePaste.mockClear();
-  mockProcessClipboardPaste.mockImplementation(async () => false);
-  mockProcessLocalClipboardPaste.mockImplementation(async () => false);
-}
