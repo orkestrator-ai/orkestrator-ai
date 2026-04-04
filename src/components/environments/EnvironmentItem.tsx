@@ -234,10 +234,13 @@ export function EnvironmentItem({
                   )}
                 </p>
               )}
-              {!isLocalEnvironment && environment.hostEntryPort && (
+              {!isLocalEnvironment && environment.entryPort && (
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <Network className="h-3 w-3" />
-                  Port: localhost:{environment.hostEntryPort}
+                  {environment.hostEntryPort
+                    ? <>Port: localhost:{environment.hostEntryPort} → {environment.entryPort}/tcp</>
+                    : <>Port: {environment.entryPort}/tcp (not mapped)</>
+                  }
                 </p>
               )}
               {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0 || diffStats.filesChanged > 0) && (

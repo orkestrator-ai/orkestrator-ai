@@ -186,6 +186,10 @@ pub struct Environment {
     /// Port mappings for container (require restart to apply changes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_mappings: Option<Vec<PortMapping>>,
+    /// Container entry port (e.g. 3000 for a web server).
+    /// Copied from the project's entry_port setting at container creation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_port: Option<u16>,
     /// Dynamically allocated host port mapped to the project's entry port.
     /// Set after container creation when the project has an entry_port configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,6 +324,7 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            entry_port: None,
             host_entry_port: None,
             // Local environment fields default to None/Containerized
             environment_type: EnvironmentType::default(),
@@ -357,6 +362,7 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            entry_port: None,
             host_entry_port: None,
             // Local environment fields default to None/Containerized
             environment_type: EnvironmentType::default(),
@@ -394,6 +400,7 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            entry_port: None,
             host_entry_port: None,
             // Local environment specific
             environment_type: EnvironmentType::Local,
@@ -1177,6 +1184,34 @@ mod tests {
         assert_eq!(env.environment_type, EnvironmentType::Local);
         assert_eq!(env.network_access_mode, NetworkAccessMode::Full);
         assert_eq!(env.status, EnvironmentStatus::Stopped);
+    }
+
+    #[test]
+    fn test_environment_entry_port_serialization() {
+        let mut env = Environment::new("project-123".to_string());
+        env.entry_port = Some(3000);
+        env.host_entry_port = Some(49152);
+
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"entryPort\":3000"));
+        assert!(json.contains("\"hostEntryPort\":49152"));
+
+        let deserialized: Environment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.entry_port, Some(3000));
+        assert_eq!(deserialized.host_entry_port, Some(49152));
+    }
+
+    #[test]
+    fn test_environment_entry_port_omitted_when_none() {
+        let env = Environment::new("project-123".to_string());
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(!json.contains("entryPort"));
+        assert!(!json.contains("hostEntryPort"));
+
+        // Deserializing without the field should yield None
+        let deserialized: Environment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.entry_port, None);
+        assert_eq!(deserialized.host_entry_port, None);
     }
 
     #[test]

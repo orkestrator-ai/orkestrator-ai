@@ -56,6 +56,8 @@ export interface Environment {
   order: number;
   /** Port mappings for container (require restart to apply changes) */
   portMappings?: PortMapping[];
+  /** Container entry port (e.g. 3000 for a web server), copied from project settings */
+  entryPort?: number;
   /** Dynamically allocated host port mapped to the project's entry port */
   hostEntryPort?: number;
 

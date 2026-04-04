@@ -528,6 +528,12 @@ impl Storage {
             environment.opencode_mode =
                 serde_json::from_value(opencode_mode.clone()).ok().flatten();
         }
+        if let Some(entry_port) = updates.get("entryPort") {
+            environment.entry_port = entry_port.as_u64().map(|v| v as u16);
+        }
+        if let Some(host_entry_port) = updates.get("hostEntryPort") {
+            environment.host_entry_port = host_entry_port.as_u64().map(|v| v as u16);
+        }
 
         let updated = environment.clone();
         self.save_environments(&environments)?;
@@ -1692,6 +1698,42 @@ mod tests {
         let loaded = storage.get_environment(&env.id).unwrap().unwrap();
         assert!(loaded.allowed_domains.is_some());
         assert_eq!(loaded.allowed_domains.unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_update_environment_entry_port() {
+        let storage = create_test_storage();
+
+        let env = Environment::new("project-123".to_string());
+        storage.add_environment(env.clone()).unwrap();
+
+        // Set both entry port and host entry port
+        let updates = serde_json::json!({
+            "entryPort": 3000,
+            "hostEntryPort": 49152
+        });
+        let updated = storage.update_environment(&env.id, updates).unwrap();
+        assert_eq!(updated.entry_port, Some(3000));
+        assert_eq!(updated.host_entry_port, Some(49152));
+
+        // Verify it persisted
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert_eq!(loaded.entry_port, Some(3000));
+        assert_eq!(loaded.host_entry_port, Some(49152));
+
+        // Clear both by setting to null
+        let clear_updates = serde_json::json!({
+            "entryPort": null,
+            "hostEntryPort": null
+        });
+        let cleared = storage.update_environment(&env.id, clear_updates).unwrap();
+        assert_eq!(cleared.entry_port, None);
+        assert_eq!(cleared.host_entry_port, None);
+
+        // Verify cleared state persisted
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert_eq!(loaded.entry_port, None);
+        assert_eq!(loaded.host_entry_port, None);
     }
 
     #[test]
