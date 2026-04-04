@@ -1154,4 +1154,28 @@ mod tests {
         assert_eq!(sanitize_environment_name("Hello World"), "hello-world");
         assert_eq!(sanitize_environment_name(""), "env");
     }
+
+    #[test]
+    fn test_environment_new_local() {
+        let env = Environment::new_local("project-456".to_string(), "My Local Env".to_string());
+        assert_eq!(env.name, "my-local-env");
+        assert_eq!(env.branch, "my-local-env");
+        assert_eq!(env.project_id, "project-456");
+        assert_eq!(env.environment_type, EnvironmentType::Local);
+        assert_eq!(env.network_access_mode, NetworkAccessMode::Full);
+        assert_eq!(env.status, EnvironmentStatus::Stopped);
+    }
+
+    #[test]
+    fn test_environment_is_local_and_is_containerized() {
+        let local_env =
+            Environment::new_local("project-1".to_string(), "local-env".to_string());
+        assert!(local_env.is_local());
+        assert!(!local_env.is_containerized());
+
+        let container_env =
+            Environment::with_name("project-2".to_string(), "container-env".to_string());
+        assert!(!container_env.is_local());
+        assert!(container_env.is_containerized());
+    }
 }

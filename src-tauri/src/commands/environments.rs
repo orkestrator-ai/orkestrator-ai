@@ -554,7 +554,7 @@ async fn background_rename_environment(
     let git_branches = list_repo_git_branches(&storage, &environment_id).await;
 
     // Ensure the sanitized branch is also unique (two different names could sanitize to the
-    // same branch, e.g. "My Feature!" and "My Feature?" both become "My-Feature")
+    // same branch, e.g. "My Feature!" and "My Feature?" both become "my-feature")
     let unique_branch =
         make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
     debug!(environment_id = %environment_id, unique_name = %unique_name, unique_branch = %unique_branch, "Unique name and branch determined");
@@ -973,11 +973,19 @@ pub async fn rename_environment(
     name: String,
 ) -> Result<Environment, String> {
     // Validate and sanitize name to kebab-case lowercase
-    let name = name.trim();
-    if name.is_empty() {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
         return Err("Environment name cannot be empty".to_string());
     }
-    let name = sanitize_environment_name(name);
+    let name = sanitize_environment_name(trimmed);
+    if name != trimmed {
+        debug!(
+            environment_id = %environment_id,
+            original = %trimmed,
+            sanitized = %name,
+            "Environment name was sanitized"
+        );
+    }
 
     let storage = get_storage().map_err(storage_error_to_string)?;
 
@@ -1003,7 +1011,13 @@ pub async fn rename_environment(
     }
 
     let old_branch = environment.branch.clone();
-    let new_branch = sanitize_branch_name(&unique_name);
+    let sanitized_branch = sanitize_branch_name(&unique_name);
+
+    // Gather actual git branches from the repo so we don't collide with branches
+    // that exist in git but have no corresponding environment in storage.
+    let git_branches = list_repo_git_branches(&storage, &environment_id).await;
+    let new_branch =
+        make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
 
     // Update storage with new name and branch
     let updated_env = storage
