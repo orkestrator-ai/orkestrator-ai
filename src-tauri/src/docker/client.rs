@@ -21,6 +21,44 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tracing::debug;
+
+/// Sanitize a string for use as a Docker container name.
+/// Docker only allows [a-zA-Z0-9][a-zA-Z0-9_.-] in container names.
+/// This follows the same approach as `sanitize_branch_name` in models.
+fn sanitize_container_name(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    let mut last_was_separator = false;
+
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            result.push(c);
+            last_was_separator = false;
+        } else if c == '-' || c == ' ' || c == '.' || c == '/' {
+            // Replace spaces, dots, slashes with hyphens, avoiding consecutive separators
+            if !last_was_separator && !result.is_empty() {
+                result.push('-');
+                last_was_separator = true;
+            }
+        }
+        // Other characters are silently dropped
+    }
+
+    // Remove trailing hyphens
+    while result.ends_with('-') {
+        result.pop();
+    }
+
+    // Ensure the name doesn't start with a hyphen or dot
+    result = result.trim_start_matches(|c| c == '-' || c == '.').to_string();
+
+    // Fallback if result is empty
+    if result.is_empty() {
+        result = "container".to_string();
+    }
+
+    result
+}
 
 #[derive(Error, Debug)]
 pub enum DockerError {
@@ -194,8 +232,13 @@ impl DockerClient {
 
         config.host_config = Some(host_config);
 
+        let sanitized_name = sanitize_container_name(name);
+        if sanitized_name != name {
+            debug!(original = %name, sanitized = %sanitized_name, "Sanitized container name for Docker");
+        }
+
         let options = CreateContainerOptions {
-            name,
+            name: sanitized_name.as_str(),
             platform: None,
         };
 
@@ -249,7 +292,13 @@ impl DockerClient {
         container_id: &str,
         new_name: &str,
     ) -> Result<(), DockerError> {
-        let options = RenameContainerOptions { name: new_name };
+        let sanitized_name = sanitize_container_name(new_name);
+        if sanitized_name != new_name {
+            debug!(original = %new_name, sanitized = %sanitized_name, "Sanitized container rename for Docker");
+        }
+        let options = RenameContainerOptions {
+            name: &sanitized_name,
+        };
         self.docker.rename_container(container_id, options).await?;
         Ok(())
     }
@@ -875,5 +924,50 @@ mod tests {
         let client = DockerClient::new();
         // Just check that we can create the client
         assert!(client.is_ok() || client.is_err());
+    }
+
+    #[test]
+    fn test_sanitize_container_name_with_spaces() {
+        assert_eq!(sanitize_container_name("link in the middle"), "link-in-the-middle");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_alphanumeric() {
+        assert_eq!(sanitize_container_name("my-container"), "my-container");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_special_chars() {
+        assert_eq!(sanitize_container_name("feat: add login!"), "feat-add-login");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_consecutive_spaces() {
+        assert_eq!(sanitize_container_name("a   b"), "a-b");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_leading_trailing() {
+        assert_eq!(sanitize_container_name(" hello "), "hello");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_empty() {
+        assert_eq!(sanitize_container_name(""), "container");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_only_special() {
+        assert_eq!(sanitize_container_name("!@#$%"), "container");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_dots_and_slashes() {
+        assert_eq!(sanitize_container_name("feat/my.task"), "feat-my-task");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_underscores_preserved() {
+        assert_eq!(sanitize_container_name("my_container_name"), "my_container_name");
     }
 }
