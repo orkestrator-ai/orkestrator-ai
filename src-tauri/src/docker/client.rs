@@ -23,41 +23,16 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use crate::models::sanitize_slug;
+
+/// Maximum length for Docker container names (Docker has no official limit,
+/// but 128 chars keeps names practical in logs, CLI output, and UIs).
+const MAX_CONTAINER_NAME_LEN: usize = 128;
+
 /// Sanitize a string for use as a Docker container name.
-/// Docker only allows [a-zA-Z0-9][a-zA-Z0-9_.-] in container names.
-/// This follows the same approach as `sanitize_branch_name` in models.
+/// Docker only allows `[a-zA-Z0-9][a-zA-Z0-9_.-]`.
 fn sanitize_container_name(name: &str) -> String {
-    let mut result = String::with_capacity(name.len());
-    let mut last_was_separator = false;
-
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() || c == '_' {
-            result.push(c);
-            last_was_separator = false;
-        } else if c == '-' || c == ' ' || c == '.' || c == '/' {
-            // Replace spaces, dots, slashes with hyphens, avoiding consecutive separators
-            if !last_was_separator && !result.is_empty() {
-                result.push('-');
-                last_was_separator = true;
-            }
-        }
-        // Other characters are silently dropped
-    }
-
-    // Remove trailing hyphens
-    while result.ends_with('-') {
-        result.pop();
-    }
-
-    // Ensure the name doesn't start with a hyphen or dot
-    result = result.trim_start_matches(|c| c == '-' || c == '.').to_string();
-
-    // Fallback if result is empty
-    if result.is_empty() {
-        result = "container".to_string();
-    }
-
-    result
+    sanitize_slug(name, "container", MAX_CONTAINER_NAME_LEN)
 }
 
 #[derive(Error, Debug)]
@@ -969,5 +944,22 @@ mod tests {
     #[test]
     fn test_sanitize_container_name_underscores_preserved() {
         assert_eq!(sanitize_container_name("my_container_name"), "my_container_name");
+    }
+
+    #[test]
+    fn test_sanitize_container_name_truncates_long_names() {
+        let long_name = "a".repeat(200);
+        let result = sanitize_container_name(&long_name);
+        assert_eq!(result.len(), MAX_CONTAINER_NAME_LEN);
+    }
+
+    #[test]
+    fn test_sanitize_container_name_truncation_strips_trailing_hyphen() {
+        // 127 a's + space + more => after sanitization "aaa...aaa-more"
+        // truncation at 128 might land on the hyphen, which should be stripped
+        let name = format!("{} more", "a".repeat(127));
+        let result = sanitize_container_name(&name);
+        assert!(!result.ends_with('-'));
+        assert!(result.len() <= MAX_CONTAINER_NAME_LEN);
     }
 }
