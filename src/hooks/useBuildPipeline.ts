@@ -177,6 +177,7 @@ export function useBuildPipeline() {
     async (task: KanbanTask) => {
       if (!task.environmentId) return;
 
+      setProjectCollapsed(task.projectId, false);
       selectProjectAndEnvironment(task.projectId, task.environmentId);
 
       // Poll for the pane state to be available, then find and activate the build tab
@@ -194,7 +195,7 @@ export function useBuildPipeline() {
         await new Promise((r) => setTimeout(r, 50));
       }
     },
-    [selectProjectAndEnvironment]
+    [selectProjectAndEnvironment, setProjectCollapsed]
   );
 
   return { startBuild, navigateToBuild };
