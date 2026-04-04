@@ -15,8 +15,8 @@ use crate::local::{
     stop_all_local_servers,
 };
 use crate::models::{
-    sanitize_branch_name, ClaudeMode, DefaultAgent, Environment, EnvironmentStatus,
-    EnvironmentType, NetworkAccessMode, OpenCodeMode, PortMapping, PrState,
+    sanitize_branch_name, sanitize_environment_name, ClaudeMode, DefaultAgent, Environment,
+    EnvironmentStatus, EnvironmentType, NetworkAccessMode, OpenCodeMode, PortMapping, PrState,
 };
 use crate::storage::{get_config, get_storage, StorageError};
 use serde::{Deserialize, Serialize};
@@ -269,8 +269,10 @@ pub async fn create_environment(
 
     // Determine the base name for the environment
     let base_name = match &name {
-        // User provided explicit name - use it
-        Some(custom_name) if !custom_name.trim().is_empty() => Some(custom_name.trim().to_string()),
+        // User provided explicit name - sanitize to kebab-case lowercase
+        Some(custom_name) if !custom_name.trim().is_empty() => {
+            Some(sanitize_environment_name(custom_name.trim()))
+        }
         // No explicit name - use timestamp (background naming will update later if prompt provided)
         _ => None,
     };
@@ -542,10 +544,9 @@ async fn background_rename_environment(
         }
     };
 
-    let unique_name = make_unique_name(&generated_name, &existing_environments);
-    // Sanitize the branch name separately - the display name may contain spaces/special
-    // chars that are invalid in git branch names. This mirrors what happens during
-    // environment creation (models::sanitize_branch_name).
+    // Sanitize the generated name to kebab-case lowercase (matching branch/container convention)
+    let sanitized_name = sanitize_environment_name(&generated_name);
+    let unique_name = make_unique_name(&sanitized_name, &existing_environments);
     let sanitized_branch = sanitize_branch_name(&unique_name);
 
     // Gather actual git branches from the repo so we don't collide with branches
@@ -971,14 +972,12 @@ pub async fn rename_environment(
     environment_id: String,
     name: String,
 ) -> Result<Environment, String> {
-    // Validate name
+    // Validate and sanitize name to kebab-case lowercase
     let name = name.trim();
     if name.is_empty() {
         return Err("Environment name cannot be empty".to_string());
     }
-    if name.len() > 100 {
-        return Err("Environment name cannot exceed 100 characters".to_string());
-    }
+    let name = sanitize_environment_name(name);
 
     let storage = get_storage().map_err(storage_error_to_string)?;
 
@@ -992,7 +991,7 @@ pub async fn rename_environment(
     let existing_environments = storage
         .load_environments()
         .map_err(storage_error_to_string)?;
-    let unique_name = make_unique_name(name, &existing_environments);
+    let unique_name = make_unique_name(&name, &existing_environments);
 
     if unique_name != name {
         debug!(
@@ -1004,12 +1003,13 @@ pub async fn rename_environment(
     }
 
     let old_branch = environment.branch.clone();
+    let new_branch = sanitize_branch_name(&unique_name);
 
     // Update storage with new name and branch
     let updated_env = storage
         .update_environment(
             &environment_id,
-            json!({ "name": &unique_name, "branch": &unique_name }),
+            json!({ "name": &unique_name, "branch": &new_branch }),
         )
         .map_err(storage_error_to_string)?;
 
@@ -1021,7 +1021,7 @@ pub async fn rename_environment(
                 &environment_id,
                 worktree_path,
                 &old_branch,
-                &unique_name,
+                &new_branch,
             )
             .await;
         }
@@ -1040,7 +1040,7 @@ pub async fn rename_environment(
                             "-m",
                             "--",
                             &old_branch,
-                            &unique_name,
+                            &new_branch,
                         ],
                     )
                     .await
@@ -1053,7 +1053,7 @@ pub async fn rename_environment(
                         warn!(
                             environment_id = %environment_id,
                             old_branch = %old_branch,
-                            new_branch = %unique_name,
+                            new_branch = %new_branch,
                             error = %e,
                             "Failed to rename git branch - branch may not exist or may have a different name. \
                              The environment name has been updated but the git branch name remains unchanged."
@@ -2135,11 +2135,11 @@ mod tests {
     #[test]
     fn test_make_unique_branch_avoids_env_branches() {
         let envs = vec![
-            env_with_branch("A", "My-Feature"),
-            env_with_branch("B", "My-Feature-2"),
+            env_with_branch("A", "my-feature"),
+            env_with_branch("B", "my-feature-2"),
         ];
-        let result = make_unique_branch("My-Feature", &envs, &[]);
-        assert_eq!(result, "My-Feature-3");
+        let result = make_unique_branch("my-feature", &envs, &[]);
+        assert_eq!(result, "my-feature-3");
     }
 
     #[test]
@@ -2161,10 +2161,10 @@ mod tests {
     #[test]
     fn test_sanitize_then_unique_branch_handles_collision() {
         // Two different display names that sanitize to the same branch
-        let envs = vec![env_with_branch("My Feature!", "My-Feature")];
+        let envs = vec![env_with_branch("my feature!", "my-feature")];
         let sanitized = sanitize_branch_name("My Feature?");
-        assert_eq!(sanitized, "My-Feature");
+        assert_eq!(sanitized, "my-feature");
         let result = make_unique_branch(&sanitized, &envs, &[]);
-        assert_eq!(result, "My-Feature-2");
+        assert_eq!(result, "my-feature-2");
     }
 }
