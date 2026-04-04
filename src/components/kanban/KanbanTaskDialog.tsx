@@ -579,6 +579,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
                   onChange={(e) => setEditDescription(e.target.value)}
                   placeholder="Description..."
                   rows={3}
+                  className="max-h-[15rem] overflow-y-auto"
                 />
               </div>
             </DialogHeader>
@@ -596,6 +597,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
                 onChange={(e) => setEditAC(e.target.value)}
                 placeholder="Define what 'done' looks like..."
                 rows={4}
+                className="max-h-[15rem] overflow-y-auto"
               />
             </div>
 
@@ -686,6 +688,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
                   onChange={(e) => setEditDescription(e.target.value)}
                   placeholder="Description..."
                   rows={3}
+                  className="max-h-[15rem] overflow-y-auto"
                 />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={handleSaveEdit}>Save</Button>
@@ -723,6 +726,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
                   onChange={(e) => setEditAC(e.target.value)}
                   placeholder="Define what 'done' looks like..."
                   rows={4}
+                  className="max-h-[15rem] overflow-y-auto"
                   autoFocus
                 />
                 <div className="flex gap-2">
