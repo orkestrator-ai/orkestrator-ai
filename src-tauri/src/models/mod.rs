@@ -244,7 +244,7 @@ pub fn sanitize_slug(name: &str, fallback: &str, max_len: usize) -> String {
 
     for c in name.chars() {
         if c.is_ascii_alphanumeric() || c == '_' {
-            result.push(c);
+            result.push(c.to_ascii_lowercase());
             last_was_hyphen = false;
         } else if c == '-' || c == ' ' || c == '.' || c == '/' {
             if !last_was_hyphen && !result.is_empty() {
@@ -284,6 +284,13 @@ pub fn sanitize_slug(name: &str, fallback: &str, max_len: usize) -> String {
 /// Delegates to [`sanitize_slug`] with a branch-appropriate fallback.
 pub fn sanitize_branch_name(name: &str) -> String {
     sanitize_slug(name, "env", 0)
+}
+
+/// Sanitize a string for use as an environment name.
+/// Produces a lowercase kebab-case slug matching the branch/container name convention.
+/// Delegates to [`sanitize_slug`] with a max length of 100 characters.
+pub fn sanitize_environment_name(name: &str) -> String {
+    sanitize_slug(name, "env", 100)
 }
 
 impl Environment {
@@ -326,6 +333,7 @@ impl Environment {
 
     /// Create an environment with a custom name (and matching branch)
     pub fn with_name(project_id: String, name: String) -> Self {
+        let name = sanitize_environment_name(&name);
         let branch = sanitize_branch_name(&name);
 
         Self {
@@ -361,6 +369,7 @@ impl Environment {
 
     /// Create a local environment with a custom name
     pub fn new_local(project_id: String, name: String) -> Self {
+        let name = sanitize_environment_name(&name);
         let branch = sanitize_branch_name(&name);
 
         Self {
@@ -1125,8 +1134,48 @@ mod tests {
     fn test_environment_with_name() {
         let env =
             Environment::with_name("project-123".to_string(), "my feature branch".to_string());
-        assert_eq!(env.name, "my feature branch");
+        assert_eq!(env.name, "my-feature-branch");
         assert_eq!(env.branch, "my-feature-branch");
         assert_eq!(env.status, EnvironmentStatus::Stopped);
+    }
+
+    #[test]
+    fn test_environment_name_lowercase() {
+        let env =
+            Environment::with_name("project-123".to_string(), "My Feature Branch".to_string());
+        assert_eq!(env.name, "my-feature-branch");
+        assert_eq!(env.branch, "my-feature-branch");
+    }
+
+    #[test]
+    fn test_sanitize_environment_name() {
+        assert_eq!(sanitize_environment_name("My Feature"), "my-feature");
+        assert_eq!(sanitize_environment_name("feat: add login!"), "feat-add-login");
+        assert_eq!(sanitize_environment_name("Hello World"), "hello-world");
+        assert_eq!(sanitize_environment_name(""), "env");
+    }
+
+    #[test]
+    fn test_environment_new_local() {
+        let env = Environment::new_local("project-456".to_string(), "My Local Env".to_string());
+        assert_eq!(env.name, "my-local-env");
+        assert_eq!(env.branch, "my-local-env");
+        assert_eq!(env.project_id, "project-456");
+        assert_eq!(env.environment_type, EnvironmentType::Local);
+        assert_eq!(env.network_access_mode, NetworkAccessMode::Full);
+        assert_eq!(env.status, EnvironmentStatus::Stopped);
+    }
+
+    #[test]
+    fn test_environment_is_local_and_is_containerized() {
+        let local_env =
+            Environment::new_local("project-1".to_string(), "local-env".to_string());
+        assert!(local_env.is_local());
+        assert!(!local_env.is_containerized());
+
+        let container_env =
+            Environment::with_name("project-2".to_string(), "container-env".to_string());
+        assert!(!container_env.is_local());
+        assert!(container_env.is_containerized());
     }
 }
