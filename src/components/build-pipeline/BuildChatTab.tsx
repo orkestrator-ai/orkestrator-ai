@@ -230,12 +230,12 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   // Gate on setup completion: container environments must wait for workspaceReady,
   // local environments must wait for setup scripts to finish.
   useEffect(() => {
-    if (isInitializedRef.current || !pipeline) return;
-
-    // Don't attempt to connect until setup scripts have completed
+    // Block initialization until setup scripts finish (local and container environments)
     if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
       return;
     }
+
+    if (isInitializedRef.current || !pipeline) return;
 
     let mounted = true;
 
@@ -268,11 +268,11 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
           if (!mounted) return;
           hostPort = localStatus.port ?? null;
         } else {
-          // Container environment - get containerId and actively start bridge server
-          const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
-          const containerId = env?.containerId;
+          // Containerized environment - start the bridge server (same as ClaudeChatTab)
+          const environment = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+          const containerId = environment?.containerId;
           if (!containerId) {
-            throw new Error("Container ID not available for build tab");
+            throw new Error("Container ID is required for containerized environments");
           }
 
           let status = await getClaudeServerStatus(containerId);
@@ -281,6 +281,11 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             status = { running: true, hostPort: result.hostPort };
           }
           if (!mounted) return;
+
+          if (!status.hostPort) {
+            throw new Error("Server started but no port available");
+          }
+
           hostPort = status.hostPort;
         }
 
@@ -1101,10 +1106,10 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
   const setupPending = isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady });
 
-  // Show setup-pending UI before the connecting check, because the init effect
-  // gates on setup completion — connectionState will stay "connecting" while
-  // setup scripts are still running.
-  if (setupPending) {
+  // Show setup waiting UI when setup is pending (before connection is even attempted).
+  // Covers all active phases defensively — if setup is somehow pending during "building"
+  // or later phases, we still block until setup completes.
+  if (setupPending && pipeline && !["complete", "failed"].includes(pipeline.phase)) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
         <Loader2 className="w-8 h-8 animate-spin text-yellow-400" />
@@ -1115,17 +1120,13 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
           size="sm"
           className="mt-2 text-xs text-muted-foreground"
           onClick={() => {
-            // Re-derive environment type from store at click time to avoid stale closures
             const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
             const isLocalEnv = env?.environmentType === "local";
             if (isLocalEnv) {
-              // Force-resolve local setup state so the build-start effect can proceed
               useEnvironmentStore.getState().setSetupScriptsRunning(environmentId, false);
               useEnvironmentStore.getState().setSetupCommandsResolved(environmentId, true);
-              // Clear any pending commands so hasPendingSetupCommands becomes false
               useEnvironmentStore.getState().consumePendingSetupCommands(environmentId);
             } else {
-              // Force-resolve container workspace ready state
               useEnvironmentStore.getState().setWorkspaceReady(environmentId, true);
             }
           }}
