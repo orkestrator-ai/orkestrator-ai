@@ -26,8 +26,8 @@ import type { KanbanTask, KanbanStatus } from "@/stores/kanbanStore";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useBuildPipeline } from "@/hooks/useBuildPipeline";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readFileBase64, getKanbanImageData } from "@/lib/tauri";
+import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+import { getKanbanImageData } from "@/lib/tauri";
 
 const STATUS_LABELS: Record<KanbanStatus, string> = {
   backlog: "Backlog",
@@ -164,30 +164,77 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
 
   // Handle paste events for image attachment
   const handlePaste = useCallback(async (e: ClipboardEvent) => {
+    // First try the standard web clipboard API (works for in-browser copies)
     const items = e.clipboardData?.items;
-    if (!items) return;
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) continue;
 
-    for (const item of items) {
-      if (item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
+          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const ext = file.type.split("/")[1] || "png";
+          const renamedFile = new File([file], `clipboard-${timestamp}.${ext}`, { type: file.type });
 
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const ext = file.type.split("/")[1] || "png";
-        const renamedFile = new File([file], `clipboard-${timestamp}.${ext}`, { type: file.type });
+          const result = await processImageFile(renamedFile);
+          if (!result) continue;
 
-        const result = await processImageFile(renamedFile);
-        if (!result) continue;
-
-        if (isCreateMode || !task) {
-          setPendingImages((prev) => [...prev, { id: crypto.randomUUID(), ...result }]);
-        } else {
-          void addImage(task.id, result.filename, result.data);
+          if (isCreateMode || !task) {
+            setPendingImages((prev) => [...prev, { id: crypto.randomUUID(), ...result }]);
+          } else {
+            void addImage(task.id, result.filename, result.data);
+          }
+          toast.success("Image pasted");
+          return;
         }
-        toast.success("Image pasted");
-        break;
       }
+    }
+
+    // Fallback: use Tauri's clipboard plugin for system clipboard images
+    // (standard web API doesn't reliably expose images from native apps in Tauri's webview)
+    try {
+      const image = await readImage();
+      const rgba = await image.rgba();
+      const { width, height } = await image.size();
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
+      ctx.putImageData(imageDataObj, 0, 0);
+
+      const dataUrl = canvas.toDataURL("image/png");
+      const base64Data = dataUrl.split(",")[1];
+      canvas.width = 0;
+      canvas.height = 0;
+
+      if (!base64Data) return;
+
+      // Validate size
+      const estimatedSize = (base64Data.length * 3) / 4;
+      if (estimatedSize > MAX_IMAGE_SIZE) {
+        toast.error("Image is too large (max 5 MB)");
+        return;
+      }
+
+      e.preventDefault();
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `clipboard-${timestamp}.png`;
+      const previewUrl = dataUrl;
+
+      if (isCreateMode || !task) {
+        setPendingImages((prev) => [...prev, { id: crypto.randomUUID(), filename, data: base64Data, previewUrl }]);
+      } else {
+        void addImage(task.id, filename, base64Data);
+      }
+      toast.success("Image pasted");
+    } catch {
+      // No image on clipboard — let the event propagate for text paste
     }
   }, [isCreateMode, task, addImage, processImageFile]);
 
@@ -202,48 +249,33 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
     return () => el.removeEventListener("paste", listener);
   }, [open, handlePaste]);
 
+  // Hidden file input ref for attaching images
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Handle file picker for attaching images
-  const handleAttachImage = useCallback(async () => {
-    try {
-      const selected = await openDialog({
-        multiple: true,
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }],
-      });
-      if (!selected) return;
+  const handleAttachImage = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
 
-      // openDialog with multiple:true returns string[] | null
-      const paths: string[] = Array.isArray(selected) ? selected : [selected];
-      for (const path of paths) {
-        const filename = path.split("/").pop() || path.split("\\").pop() || "image.png";
-        try {
-          const data = await readFileBase64(path);
-          // Validate size (base64 encodes 3 bytes as 4 chars)
-          if (data.length * 0.75 > MAX_IMAGE_SIZE) {
-            toast.error(`${filename} is too large (max 5 MB)`);
-            continue;
-          }
-          // Determine mime type from extension
-          const ext = filename.split(".").pop()?.toLowerCase() || "png";
-          const mimeMap: Record<string, string> = {
-            png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-            gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
-          };
-          const mime = mimeMap[ext] || "image/png";
-          const previewUrl = `data:${mime};base64,${data}`;
+  // Process files selected from the file input
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-          if (isCreateMode || !task) {
-            setPendingImages((prev) => [...prev, { id: crypto.randomUUID(), filename, data, previewUrl }]);
-          } else {
-            void addImage(task.id, filename, data);
-          }
-        } catch {
-          toast.error(`Failed to read ${filename}`);
-        }
+    for (const file of files) {
+      const result = await processImageFile(file);
+      if (!result) continue;
+
+      if (isCreateMode || !task) {
+        setPendingImages((prev) => [...prev, { id: crypto.randomUUID(), ...result }]);
+      } else {
+        void addImage(task.id, result.filename, result.data);
       }
-    } catch {
-      // Dialog cancelled
     }
-  }, [isCreateMode, task, addImage]);
+
+    // Reset file input so the same file can be re-selected
+    e.target.value = "";
+  }, [isCreateMode, task, addImage, processImageFile]);
 
   if (!task && !isCreateMode) return null;
 
@@ -491,6 +523,15 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
   if (isCreateMode) {
     return (
       <>
+        {/* Hidden file input for image attachment */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
+          multiple
+          className="hidden"
+          onChange={handleFileInputChange}
+        />
         <Dialog open={open} onOpenChange={handleOpenChange}>
           <DialogContent
             ref={dialogContentRef}
@@ -589,6 +630,15 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
 
   return (
     <>
+      {/* Hidden file input for image attachment */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
+        multiple
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           ref={dialogContentRef}
