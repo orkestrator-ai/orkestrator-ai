@@ -73,6 +73,8 @@ pub struct ContainerConfig {
     pub files_to_copy: Vec<String>,
     /// Default model for OpenCode
     pub opencode_model: String,
+    /// Entry port inside the container to expose with dynamic host port allocation
+    pub entry_port: Option<u16>,
 }
 
 impl ContainerConfig {
@@ -168,6 +170,7 @@ impl ContainerConfig {
             port_mappings: environment.port_mappings.clone().unwrap_or_default(),
             files_to_copy: Vec::new(),
             opencode_model: String::new(),
+            entry_port: None,
         }
     }
 
@@ -437,6 +440,21 @@ pub async fn create_environment_container(
         "Added Codex Bridge server port {} with dynamic host allocation",
         CODEX_BRIDGE_PORT
     );
+
+    // Expose entry port with dynamic host port allocation if configured
+    if let Some(entry_port) = config.entry_port {
+        let entry_key = format!("{}/tcp", entry_port);
+        exposed_ports.insert(entry_key.clone(), HashMap::new());
+        let entry_binding = PortBinding {
+            host_ip: Some("127.0.0.1".to_string()),
+            host_port: Some("".to_string()), // Empty string = dynamic allocation
+        };
+        port_bindings.insert(entry_key, Some(vec![entry_binding]));
+        debug!(
+            "Added entry port {} with dynamic host allocation",
+            entry_port
+        );
+    }
 
     if !config.port_mappings.is_empty() {
         debug!("User port mappings: {:?}", config.port_mappings);

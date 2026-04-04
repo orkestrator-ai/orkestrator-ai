@@ -186,6 +186,10 @@ pub struct Environment {
     /// Port mappings for container (require restart to apply changes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port_mappings: Option<Vec<PortMapping>>,
+    /// Dynamically allocated host port mapped to the project's entry port.
+    /// Set after container creation when the project has an entry_port configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_entry_port: Option<u16>,
 
     // === Local environment fields ===
     /// Type of environment (containerized or local)
@@ -316,6 +320,7 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            host_entry_port: None,
             // Local environment fields default to None/Containerized
             environment_type: EnvironmentType::default(),
             worktree_path: None,
@@ -352,6 +357,7 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            host_entry_port: None,
             // Local environment fields default to None/Containerized
             environment_type: EnvironmentType::default(),
             worktree_path: None,
@@ -388,6 +394,7 @@ impl Environment {
             allowed_domains: None,
             order: 0,
             port_mappings: None,
+            host_entry_port: None,
             // Local environment specific
             environment_type: EnvironmentType::Local,
             worktree_path: None,
@@ -863,6 +870,10 @@ pub struct RepositoryConfig {
     /// Default effort/thinking level for the configured default agent
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<String>,
+    /// Entry port inside the container (e.g. 3000 for a web server).
+    /// New containers will automatically map this to an available host port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_port: Option<u16>,
 }
 
 impl Default for RepositoryConfig {
@@ -874,6 +885,7 @@ impl Default for RepositoryConfig {
             files_to_copy: None,
             default_model: None,
             default_effort: None,
+            entry_port: None,
         }
     }
 }
@@ -1060,6 +1072,7 @@ mod tests {
                 files_to_copy: None,
                 default_model: None,
                 default_effort: None,
+                entry_port: None,
             },
         );
 

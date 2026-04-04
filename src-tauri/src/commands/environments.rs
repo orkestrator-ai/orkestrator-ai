@@ -1217,6 +1217,29 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
             err_msg
         })?;
 
+        // Re-resolve dynamic entry port (may change on restart)
+        if let Some(repo_config) = config.repositories.get(&environment.project_id) {
+            if let Some(ep) = repo_config.entry_port {
+                if let Ok(docker) = get_docker_client() {
+                    match docker.get_host_port(container_id, ep, "tcp").await {
+                        Ok(Some(host_port)) => {
+                            debug!(
+                                environment_id = %environment_id,
+                                container_port = ep,
+                                host_port = host_port,
+                                "Resolved dynamic entry port on existing container start"
+                            );
+                            let _ = storage.update_environment(
+                                &environment_id,
+                                json!({ "hostEntryPort": host_port }),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         storage
             .update_environment(&environment_id, json!({ "status": "running" }))
             .map_err(storage_error_to_string)?;
@@ -1240,12 +1263,18 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
         container_config = container_config.with_base_branch(base_branch);
     }
 
-    // Apply files_to_copy from repository config if available
-    if let Some(repo_config) = config.repositories.get(&environment.project_id) {
+    // Apply repository config settings
+    let entry_port = if let Some(repo_config) = config.repositories.get(&environment.project_id) {
         if let Some(files) = &repo_config.files_to_copy {
             container_config = container_config.with_files_to_copy(files.clone());
         }
-    }
+        repo_config.entry_port
+    } else {
+        None
+    };
+
+    // Set entry port for dynamic host port allocation
+    container_config.entry_port = entry_port;
 
     // Apply settings from global config
     container_config.cpu_limit = Some(config.global.container_resources.cpu_cores as f64);
@@ -1313,6 +1342,45 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
         let _ = storage.update_environment(&environment_id, json!({ "status": "error" }));
         err_msg
     })?;
+
+    // Query dynamically allocated host entry port if configured
+    if let Some(ep) = entry_port {
+        match get_docker_client() {
+            Ok(docker) => {
+                match docker.get_host_port(&container_id, ep, "tcp").await {
+                    Ok(Some(host_port)) => {
+                        debug!(
+                            environment_id = %environment_id,
+                            container_port = ep,
+                            host_port = host_port,
+                            "Resolved dynamic entry port mapping"
+                        );
+                        let _ = storage.update_environment(
+                            &environment_id,
+                            json!({ "hostEntryPort": host_port }),
+                        );
+                    }
+                    Ok(None) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            container_port = ep,
+                            "Entry port not found in container port bindings"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            environment_id = %environment_id,
+                            error = %e,
+                            "Failed to query entry port mapping"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(environment_id = %environment_id, error = %e, "Failed to get docker client for port query");
+            }
+        }
+    }
 
     // Update status to running
     storage
@@ -1683,12 +1751,18 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
         container_config = container_config.with_base_branch(base_branch);
     }
 
-    // Apply files_to_copy from repository config if available
-    if let Some(repo_config) = config.repositories.get(&environment.project_id) {
+    // Apply repository config settings
+    let entry_port = if let Some(repo_config) = config.repositories.get(&environment.project_id) {
         if let Some(files) = &repo_config.files_to_copy {
             container_config = container_config.with_files_to_copy(files.clone());
         }
-    }
+        repo_config.entry_port
+    } else {
+        None
+    };
+
+    // Set entry port for dynamic host port allocation
+    container_config.entry_port = entry_port;
 
     container_config.cpu_limit = Some(config.global.container_resources.cpu_cores as f64);
     container_config.memory_limit =
@@ -1741,6 +1815,38 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
         let _ = docker.remove_image(&temp_image_full, true).await;
         let _ = storage.update_environment(&environment_id, json!({ "status": "error" }));
         return Err(err_msg);
+    }
+
+    // Query dynamically allocated host entry port if configured
+    if let Some(ep) = entry_port {
+        match docker.get_host_port(&new_container_id, ep, "tcp").await {
+            Ok(Some(host_port)) => {
+                debug!(
+                    environment_id = %environment_id,
+                    container_port = ep,
+                    host_port = host_port,
+                    "Resolved dynamic entry port mapping on recreate"
+                );
+                let _ = storage.update_environment(
+                    &environment_id,
+                    json!({ "hostEntryPort": host_port }),
+                );
+            }
+            Ok(None) => {
+                warn!(
+                    environment_id = %environment_id,
+                    container_port = ep,
+                    "Entry port not found in container port bindings on recreate"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    environment_id = %environment_id,
+                    error = %e,
+                    "Failed to query entry port mapping on recreate"
+                );
+            }
+        }
     }
 
     // Update status to running

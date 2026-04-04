@@ -56,6 +56,8 @@ export interface Environment {
   order: number;
   /** Port mappings for container (require restart to apply changes) */
   portMappings?: PortMapping[];
+  /** Dynamically allocated host port mapped to the project's entry port */
+  hostEntryPort?: number;
 
   // === Local environment fields ===
 
@@ -209,6 +211,9 @@ export interface RepositoryConfig {
   defaultModel?: string;
   /** Default effort/thinking level for the configured default agent */
   defaultEffort?: string;
+  /** Entry port inside the container (e.g. 3000 for a web server).
+   * New containers will automatically map this to an available host port. */
+  entryPort?: number;
 }
 
 export interface AppConfig {
