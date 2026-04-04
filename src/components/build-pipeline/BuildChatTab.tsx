@@ -25,6 +25,8 @@ import type { TaskSnapshotImage } from "@/prompts";
 import {
   startLocalClaudeServer,
   getLocalClaudeServerStatus,
+  startClaudeServer,
+  getClaudeServerStatus,
   getProjectNotes,
 } from "@/lib/tauri";
 import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
@@ -224,9 +226,16 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     }
   }, [pipeline?.phase, pipeline?.taskId]);
 
-  // Initialize bridge server connection
+  // Initialize bridge server connection.
+  // Gate on setup completion: container environments must wait for workspaceReady,
+  // local environments must wait for setup scripts to finish.
   useEffect(() => {
     if (isInitializedRef.current || !pipeline) return;
+
+    // Don't attempt to connect until setup scripts have completed
+    if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
+      return;
+    }
 
     let mounted = true;
 
@@ -259,12 +268,20 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
           if (!mounted) return;
           hostPort = localStatus.port ?? null;
         } else {
-          const env = useClaudeStore.getState().serverStatus.get(environmentId);
-          if (env?.hostPort) {
-            hostPort = env.hostPort;
-          } else {
-            throw new Error("Container server not available for build tab");
+          // Container environment - get containerId and actively start bridge server
+          const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+          const containerId = env?.containerId;
+          if (!containerId) {
+            throw new Error("Container ID not available for build tab");
           }
+
+          let status = await getClaudeServerStatus(containerId);
+          if (!status.running) {
+            const result = await startClaudeServer(containerId);
+            status = { running: true, hostPort: result.hostPort };
+          }
+          if (!mounted) return;
+          hostPort = status.hostPort;
         }
 
         if (!hostPort) throw new Error("Failed to get server port");
@@ -296,7 +313,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     initialize();
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [environmentId, pipeline?.id, isLocal]);
+  }, [environmentId, pipeline?.id, isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady]);
 
   // SSE subscription - reuses same pattern as ClaudeChatTab
   const startSharedEventSubscription = useCallback(
@@ -1082,18 +1099,12 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionState, client, pipeline?.phase, pipeline?.sessions.length, isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady]);
 
-  if (connectionState === "connecting") {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-        <Loader2 className="w-8 h-8 animate-spin" />
-        <p className="text-sm">Connecting to Claude bridge server...</p>
-      </div>
-    );
-  }
-
   const setupPending = isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady });
 
-  if (pipeline?.phase === "waiting-for-setup" && setupPending) {
+  // Show setup-pending UI before the connecting check, because the init effect
+  // gates on setup completion — connectionState will stay "connecting" while
+  // setup scripts are still running.
+  if (setupPending) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
         <Loader2 className="w-8 h-8 animate-spin text-yellow-400" />
@@ -1121,6 +1132,15 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
         >
           Skip waiting
         </Button>
+      </div>
+    );
+  }
+
+  if (connectionState === "connecting") {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+        <Loader2 className="w-8 h-8 animate-spin" />
+        <p className="text-sm">Connecting to Claude bridge server...</p>
       </div>
     );
   }
