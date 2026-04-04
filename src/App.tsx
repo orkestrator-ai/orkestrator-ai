@@ -8,6 +8,7 @@ import { KanbanBoard } from "@/components/kanban";
 import { TerminalProvider } from "@/contexts";
 import { useUIStore, useEnvironmentStore, useConfigStore, useClaudeOptionsStore } from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+import { getBackgroundPipelineEnvironments } from "@/lib/background-pipelines";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
@@ -60,22 +61,10 @@ function App() {
   // These must stay mounted so their SSE subscriptions and pipeline advancement effects
   // continue running in the background even when the user navigates away.
   const pipelines = useBuildPipelineStore((state) => state.pipelines);
-  const backgroundPipelineEnvironments = useMemo(() => {
-    const activePipelineEnvIds = new Set<string>();
-    for (const pipeline of pipelines.values()) {
-      if (pipeline.environmentId && pipeline.phase !== "complete" && pipeline.phase !== "failed") {
-        activePipelineEnvIds.add(pipeline.environmentId);
-      }
-    }
-    if (activePipelineEnvIds.size === 0) return [];
-    // Exclude environments already rendered in the main content area
-    const visibleEnvIds = new Set(
-      selectedEnvironmentId ? projectEnvironments.map((e) => e.id) : []
-    );
-    return environments.filter(
-      (env) => activePipelineEnvIds.has(env.id) && !visibleEnvIds.has(env.id)
-    );
-  }, [pipelines, environments, selectedEnvironmentId, projectEnvironments]);
+  const backgroundPipelineEnvironments = useMemo(
+    () => getBackgroundPipelineEnvironments(pipelines, environments, selectedEnvironmentId, projectEnvironments),
+    [pipelines, environments, selectedEnvironmentId, projectEnvironments],
+  );
 
   // Debug logging
   console.log("[App] selectedEnvironmentId:", selectedEnvironmentId);
@@ -325,6 +314,9 @@ function App() {
     [clearClaudeOptions, startEnvironment]
   );
 
+  // Stable no-op callbacks for background pipeline environments (avoids new references each render)
+  const noop = useCallback(() => {}, []);
+
   const handleCreateScriptFromOverlay = useCallback(
     async (environmentId: string, initialPrompt: string) => {
       const environment = getEnvironmentById(environmentId);
@@ -408,8 +400,8 @@ function App() {
                   isContainerCreating={environment.status === "creating"}
                   isActive={false}
                   className="h-full"
-                  onStartContainer={() => {}}
-                  onCreateScript={() => {}}
+                  onStartContainer={noop}
+                  onCreateScript={noop}
                 />
               ))}
             </div>
