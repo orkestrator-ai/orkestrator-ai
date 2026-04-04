@@ -202,7 +202,7 @@ export async function createSession(
     modelReasoningEffort?: CodexReasoningEffort;
     mode?: CodexConversationMode;
   },
-): Promise<CodexSession | null> {
+): Promise<CodexSession> {
   const response = await fetchWithTimeout(`${client.baseUrl}/session/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -474,9 +474,6 @@ export function CodexChatTab({
             mode: resolvedMode,
           });
           if (!mounted) return;
-          if (!created) {
-            throw new Error("Failed to create Codex session");
-          }
 
           isInitializedRef.current = true;
           setSession(sessionKey, {
@@ -566,9 +563,6 @@ export function CodexChatTab({
             modelReasoningEffort: resolvedReasoningEffort,
             mode: resolvedMode,
           });
-          if (!created) {
-            throw new Error("Failed to create Codex session");
-          }
           setSession(sessionKey, {
             sessionId: created.sessionId,
             messages: [],

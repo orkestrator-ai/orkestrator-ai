@@ -410,8 +410,17 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 // Kill all tracked local server processes so they don't
                 // linger as orphans after the app closes.
+                // Use a timeout to avoid blocking indefinitely if the
+                // process lock is held or the runtime is shutting down.
                 tauri::async_runtime::block_on(async {
-                    local::shutdown_all_local_servers().await;
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        local::shutdown_all_local_servers(),
+                    )
+                    .await;
+                    if result.is_err() {
+                        warn!("Timed out waiting for local server shutdown");
+                    }
                 });
             }
         });

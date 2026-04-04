@@ -17,9 +17,8 @@ describe("codex-client createSession", () => {
     const client: CodexClient = { baseUrl: "http://127.0.0.1:4000" };
     const session = await createSession(client, { model: "gpt-5.3-codex" });
 
-    expect(session).not.toBeNull();
-    expect(session!.sessionId).toBe("session-abc");
-    expect(session!.title).toBe("My Session");
+    expect(session.sessionId).toBe("session-abc");
+    expect(session.title).toBe("My Session");
   });
 
   test("throws on non-ok HTTP response with status and body", async () => {
