@@ -1223,6 +1223,11 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
             .get(&environment.project_id)
             .and_then(|rc| rc.entry_port);
         if let Some(ep) = has_entry_port {
+            // Store the container entry port on the environment so the UI can show the full mapping
+            let _ = storage.update_environment(
+                &environment_id,
+                json!({ "entryPort": ep }),
+            );
             if let Ok(docker) = get_docker_client() {
                 match docker.get_host_port(container_id, ep, "tcp").await {
                     Ok(Some(host_port)) => {
@@ -1254,10 +1259,10 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
                 }
             }
         } else {
-            // Clear stale host entry port when entry_port is no longer configured
+            // Clear stale entry port and host entry port when entry_port is no longer configured
             let _ = storage.update_environment(
                 &environment_id,
-                json!({ "hostEntryPort": null }),
+                json!({ "entryPort": null, "hostEntryPort": null }),
             );
         }
 
@@ -1366,6 +1371,11 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
 
     // Query dynamically allocated host entry port if configured
     if let Some(ep) = entry_port {
+        // Store the container entry port on the environment so the UI can show the full mapping
+        let _ = storage.update_environment(
+            &environment_id,
+            json!({ "entryPort": ep }),
+        );
         match get_docker_client() {
             Ok(docker) => {
                 match docker.get_host_port(&container_id, ep, "tcp").await {
@@ -1402,10 +1412,10 @@ pub async fn start_environment(environment_id: String) -> Result<StartEnvironmen
             }
         }
     } else {
-        // Clear stale host entry port when entry_port is no longer configured
+        // Clear stale entry port and host entry port when entry_port is no longer configured
         let _ = storage.update_environment(
             &environment_id,
-            json!({ "hostEntryPort": null }),
+            json!({ "entryPort": null, "hostEntryPort": null }),
         );
     }
 
@@ -1846,6 +1856,11 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
 
     // Query dynamically allocated host entry port if configured
     if let Some(ep) = entry_port {
+        // Store the container entry port on the environment so the UI can show the full mapping
+        let _ = storage.update_environment(
+            &environment_id,
+            json!({ "entryPort": ep }),
+        );
         match docker.get_host_port(&new_container_id, ep, "tcp").await {
             Ok(Some(host_port)) => {
                 debug!(
@@ -1875,10 +1890,10 @@ pub async fn recreate_environment(environment_id: String) -> Result<(), String> 
             }
         }
     } else {
-        // Clear stale host entry port when entry_port is no longer configured
+        // Clear stale entry port and host entry port when entry_port is no longer configured
         let _ = storage.update_environment(
             &environment_id,
-            json!({ "hostEntryPort": null }),
+            json!({ "entryPort": null, "hostEntryPort": null }),
         );
     }
 
