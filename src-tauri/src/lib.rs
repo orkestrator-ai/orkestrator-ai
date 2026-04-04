@@ -404,6 +404,15 @@ pub fn run() {
             local_terminal_resize,
             close_local_terminal_session,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill all tracked local server processes so they don't
+                // linger as orphans after the app closes.
+                tauri::async_runtime::block_on(async {
+                    local::shutdown_all_local_servers().await;
+                });
+            }
+        });
 }

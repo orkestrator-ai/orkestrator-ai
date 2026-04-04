@@ -203,27 +203,25 @@ export async function createSession(
     mode?: CodexConversationMode;
   },
 ): Promise<CodexSession | null> {
-  try {
-    const response = await fetchWithTimeout(`${client.baseUrl}/session/create`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: options?.title,
-        model: options?.model,
-        modelReasoningEffort: options?.modelReasoningEffort,
-        mode: options?.mode,
-      }),
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return {
-      sessionId: data.sessionId,
-      title: data.title,
-    };
-  } catch (error) {
-    console.error("[codex-client] Failed to create session:", error);
-    return null;
+  const response = await fetchWithTimeout(`${client.baseUrl}/session/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: options?.title,
+      model: options?.model,
+      modelReasoningEffort: options?.modelReasoningEffort,
+      mode: options?.mode,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Codex bridge returned ${response.status}: ${body}`);
   }
+  const data = await response.json();
+  return {
+    sessionId: data.sessionId,
+    title: data.title,
+  };
 }
 
 export async function listSessions(client: CodexClient): Promise<CodexStoredSession[]> {
