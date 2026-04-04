@@ -18,7 +18,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Trash2, Play, Square, Container, Laptop, Shield, Globe, Settings2, RotateCw, Loader2 } from "lucide-react";
+import { Trash2, Play, Square, Container, Laptop, Shield, Globe, Settings2, RotateCw, Loader2, Network } from "lucide-react";
 import type { Environment } from "@/types";
 import { useAgentActivityStore, useEnvironmentStore, useEnvironmentDiffStore, useBuildPipelineStore } from "@/stores";
 import { EnvironmentSettingsDialog } from "./EnvironmentSettingsDialog";
@@ -232,6 +232,12 @@ export function EnvironmentItem({
                       Restricted network
                     </>
                   )}
+                </p>
+              )}
+              {!isLocalEnvironment && environment.hostEntryPort && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Network className="h-3 w-3" />
+                  Port: localhost:{environment.hostEntryPort}
                 </p>
               )}
               {diffStats && (diffStats.additions > 0 || diffStats.deletions > 0 || diffStats.filesChanged > 0) && (

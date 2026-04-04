@@ -1745,6 +1745,7 @@ mod tests {
                 files_to_copy: None,
                 default_model: None,
                 default_effort: None,
+                entry_port: None,
             },
         );
 

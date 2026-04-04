@@ -94,6 +94,9 @@ export function RepositorySettings({
   );
   const [defaultModel, setDefaultModel] = useState(initialConfig.defaultModel ?? "");
   const [defaultEffort, setDefaultEffort] = useState(initialConfig.defaultEffort ?? "");
+  const [entryPort, setEntryPort] = useState<string>(
+    initialConfig.entryPort != null ? String(initialConfig.entryPort) : ""
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   // Reset form when project changes or dialog opens
@@ -112,6 +115,7 @@ export function RepositorySettings({
       setFilesToCopy(config.filesToCopy ?? []);
       setDefaultModel(config.defaultModel ?? "");
       setDefaultEffort(config.defaultEffort ?? "");
+      setEntryPort(config.entryPort != null ? String(config.entryPort) : "");
     }
   }, [open, project.id, project.name, project.localPath, getRepositoryConfig]);
 
@@ -308,6 +312,7 @@ export function RepositorySettings({
 
       // Update repository config - filter out empty file paths
       const cleanedFilesToCopy = filesToCopy.filter((f) => f.trim() !== "");
+      const parsedEntryPort = entryPort.trim() ? parseInt(entryPort.trim(), 10) : undefined;
       const repoConfig: RepositoryConfig = {
         defaultBranch,
         prBaseBranch,
@@ -315,6 +320,7 @@ export function RepositorySettings({
         filesToCopy: cleanedFilesToCopy.length > 0 ? cleanedFilesToCopy : undefined,
         defaultModel: defaultModel || undefined,
         defaultEffort: defaultEffort || undefined,
+        entryPort: parsedEntryPort && parsedEntryPort >= 1 && parsedEntryPort <= 65535 ? parsedEntryPort : undefined,
       };
 
       // Update backend
@@ -349,6 +355,7 @@ export function RepositorySettings({
     setFilesToCopy(config.filesToCopy ?? []);
     setDefaultModel(config.defaultModel ?? "");
     setDefaultEffort(config.defaultEffort ?? "");
+    setEntryPort(config.entryPort != null ? String(config.entryPort) : "");
     onOpenChange(false);
   };
 
@@ -503,23 +510,46 @@ export function RepositorySettings({
         );
       case "ports":
         return (
-          <div className="max-w-2xl space-y-4">
-            <p className="text-xs text-muted-foreground">These port mappings will be pre-filled when creating new environments for this repository.</p>
-            {portMappings.map((mapping, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <div className="flex-1 grid grid-cols-[1fr_auto_1fr_auto_auto] items-center gap-2">
-                  <Input type="number" placeholder="Container" value={mapping.containerPort} onChange={(e) => updatePortMapping(index, { containerPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
-                  <span className="text-muted-foreground">:</span>
-                  <Input type="number" placeholder="Host" value={mapping.hostPort} onChange={(e) => updatePortMapping(index, { hostPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
-                  <Select value={mapping.protocol} onValueChange={(value: PortProtocol) => updatePortMapping(index, { protocol: value })} disabled={isSaving}>
-                    <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem></SelectContent>
-                  </Select>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => removePortMapping(index)} disabled={isSaving} className="h-8 w-8"><Trash2 className="h-4 w-4" /></Button>
+          <div className="max-w-2xl space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="entryPort">Container Entry Port</Label>
+              <Input
+                id="entryPort"
+                type="number"
+                value={entryPort}
+                onChange={(e) => setEntryPort(e.target.value)}
+                placeholder="e.g. 3000"
+                className="max-w-[200px]"
+                min={1}
+                max={65535}
+                disabled={isSaving}
+              />
+              <p className="text-xs text-muted-foreground">
+                If your application runs a server inside the container (e.g. on port 3000), set it here.
+                New containers will automatically find an available host port and map it to this port,
+                so you can access the service from your machine.
+              </p>
+            </div>
+
+            <div className="border-t border-border pt-4 space-y-4">
+              <Label>Additional Port Mappings</Label>
+              <p className="text-xs text-muted-foreground">These port mappings will be pre-filled when creating new environments for this repository.</p>
+              {portMappings.map((mapping, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <div className="flex-1 grid grid-cols-[1fr_auto_1fr_auto_auto] items-center gap-2">
+                    <Input type="number" placeholder="Container" value={mapping.containerPort} onChange={(e) => updatePortMapping(index, { containerPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
+                    <span className="text-muted-foreground">:</span>
+                    <Input type="number" placeholder="Host" value={mapping.hostPort} onChange={(e) => updatePortMapping(index, { hostPort: parseInt(e.target.value) || 0 })} className="text-sm" min={1} max={65535} disabled={isSaving} />
+                    <Select value={mapping.protocol} onValueChange={(value: PortProtocol) => updatePortMapping(index, { protocol: value })} disabled={isSaving}>
+                      <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="tcp">TCP</SelectItem><SelectItem value="udp">UDP</SelectItem></SelectContent>
+                    </Select>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removePortMapping(index)} disabled={isSaving} className="h-8 w-8"><Trash2 className="h-4 w-4" /></Button>
+                  </div>
                 </div>
-              </div>
-            ))}
-            <Button type="button" variant="outline" size="sm" onClick={addPortMapping} disabled={isSaving} className="w-full"><Plus className="h-4 w-4 mr-2" />Add Port Mapping</Button>
+              ))}
+              <Button type="button" variant="outline" size="sm" onClick={addPortMapping} disabled={isSaving} className="w-full"><Plus className="h-4 w-4 mr-2" />Add Port Mapping</Button>
+            </div>
           </div>
         );
       case "files":
