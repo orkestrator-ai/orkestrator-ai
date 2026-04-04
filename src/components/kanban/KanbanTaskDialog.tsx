@@ -28,6 +28,7 @@ import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useBuildPipeline } from "@/hooks/useBuildPipeline";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { getKanbanImageData } from "@/lib/tauri";
+import { resizeCanvasIfNeeded } from "@/lib/canvas-utils";
 
 const STATUS_LABELS: Record<KanbanStatus, string> = {
   backlog: "Backlog",
@@ -38,6 +39,9 @@ const STATUS_LABELS: Record<KanbanStatus, string> = {
 
 /** Max image file size in bytes (5 MB) */
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+
+/** Maximum raw RGBA buffer size (32MB - matches useClipboardImagePaste) */
+const MAX_RGBA_SIZE = 32 * 1024 * 1024;
 
 /** Convert a File to base64 data string (without data URL prefix) */
 function fileToBase64(file: File): Promise<string> {
@@ -191,6 +195,9 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       }
     }
 
+    // If clipboard clearly contains text, skip the Tauri image fallback
+    if (e.clipboardData?.types?.includes("text/plain")) return;
+
     // Fallback: use Tauri's clipboard plugin for system clipboard images
     // (standard web API doesn't reliably expose images from native apps in Tauri's webview)
     try {
@@ -198,7 +205,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       const rgba = await image.rgba();
       const { width, height } = await image.size();
 
-      const canvas = document.createElement("canvas");
+      let canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
@@ -206,6 +213,9 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
 
       const imageDataObj = new ImageData(new Uint8ClampedArray(rgba), width, height);
       ctx.putImageData(imageDataObj, 0, 0);
+
+      // Resize if needed to fit within RGBA size limit
+      canvas = resizeCanvasIfNeeded(canvas, MAX_RGBA_SIZE);
 
       const dataUrl = canvas.toDataURL("image/png");
       const base64Data = dataUrl.split(",")[1];
@@ -262,6 +272,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    let attached = 0;
     for (const file of files) {
       const result = await processImageFile(file);
       if (!result) continue;
@@ -271,11 +282,28 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
       } else {
         void addImage(task.id, result.filename, result.data);
       }
+      attached++;
+    }
+
+    if (attached > 0) {
+      toast.success(`Image${attached > 1 ? "s" : ""} attached`);
     }
 
     // Reset file input so the same file can be re-selected
     e.target.value = "";
   }, [isCreateMode, task, addImage, processImageFile]);
+
+  // Hidden file input for image attachment (shared across create and edit modes)
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
+      multiple
+      className="hidden"
+      onChange={handleFileInputChange}
+    />
+  );
 
   if (!task && !isCreateMode) return null;
 
@@ -523,15 +551,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
   if (isCreateMode) {
     return (
       <>
-        {/* Hidden file input for image attachment */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
-          multiple
-          className="hidden"
-          onChange={handleFileInputChange}
-        />
+        {fileInput}
         <Dialog open={open} onOpenChange={handleOpenChange}>
           <DialogContent
             ref={dialogContentRef}
@@ -630,15 +650,7 @@ export function KanbanTaskDialog({ task, open, onOpenChange, createForProjectId 
 
   return (
     <>
-      {/* Hidden file input for image attachment */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml"
-        multiple
-        className="hidden"
-        onChange={handleFileInputChange}
-      />
+      {fileInput}
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           ref={dialogContentRef}
