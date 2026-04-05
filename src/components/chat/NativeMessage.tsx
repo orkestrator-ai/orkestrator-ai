@@ -917,9 +917,9 @@ export const NativeMessage = memo(function NativeMessage({
   // Render system messages with distinct info styling
   if (isSystem) {
     return (
-      <div className="px-4 py-2">
-        <div className="max-w-3xl mx-auto">
-          <div className="text-xs text-muted-foreground italic text-center py-1">
+      <div className="px-2 @sm:px-4 py-2">
+        <div className="max-w-3xl mx-auto min-w-0">
+          <div className="text-xs text-muted-foreground italic text-center py-1 break-words">
             {message.content}
           </div>
         </div>

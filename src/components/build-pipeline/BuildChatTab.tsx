@@ -1165,7 +1165,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const isRunning = pipeline && !["complete", "failed"].includes(pipeline.phase);
 
   return (
-    <div className="flex flex-col h-full bg-background overflow-hidden">
+    <div className="@container flex flex-col h-full bg-background overflow-hidden">
       {/* Status bar */}
       {pipeline && (
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
@@ -1200,7 +1200,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
       {/* Messages area */}
       <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
-        <div className="py-4">
+        <div className="py-4 min-w-[320px]">
           {allSessionMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground gap-3">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -1228,8 +1228,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
                     />
                   ))}
                 {sessionData.isLoading && (
-                  <div className="px-4 py-3">
-                    <div className="max-w-3xl mx-auto">
+                  <div className="px-2 @sm:px-4 py-3">
+                    <div className="max-w-3xl mx-auto min-w-0">
                       <div className="flex items-center gap-2 text-muted-foreground">
                         <Loader2 className="w-4 h-4 animate-spin" />
                         <span className="text-xs">Claude is working...</span>

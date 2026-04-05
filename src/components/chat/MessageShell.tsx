@@ -24,12 +24,12 @@ export function MessageShell({
   return (
     <div
       className={cn(
-        "px-4 py-3",
+        "px-2 @sm:px-4 py-3",
         isUser ? "bg-muted/30" : "bg-transparent",
         className,
       )}
     >
-      <div className={cn("max-w-3xl mx-auto", contentClassName)}>
+      <div className={cn("max-w-3xl mx-auto min-w-0", contentClassName)}>
         {showHeader && (
           <div className="mb-1.5">
             <span
@@ -46,7 +46,7 @@ export function MessageShell({
           </div>
         )}
 
-        <div className="space-y-2">{children}</div>
+        <div className="space-y-2 break-words">{children}</div>
       </div>
     </div>
   );
@@ -62,11 +62,11 @@ export function MessageErrorAlert({
   timestampLabel,
 }: MessageErrorAlertProps) {
   return (
-    <div className="px-4 py-3">
-      <div className="max-w-3xl mx-auto">
+    <div className="px-2 @sm:px-4 py-3">
+      <div className="max-w-3xl mx-auto min-w-0">
         <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20">
           <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <div className="text-sm text-destructive whitespace-pre-wrap break-words">
               {content}
             </div>

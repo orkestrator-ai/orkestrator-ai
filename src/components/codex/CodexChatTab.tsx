@@ -1103,9 +1103,9 @@ export function CodexChatTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="@container flex h-full min-h-0 flex-col bg-background">
       <ScrollArea ref={scrollRef} className="min-h-0 flex-1">
-        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-5">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-2 @sm:px-4 py-5 min-w-[320px]">
           {sessionMessages.length === 0 ? (
             <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/70 bg-muted/15 px-5 py-8 text-center text-sm text-muted-foreground">
               <p>Codex is ready.</p>
@@ -1132,8 +1132,8 @@ export function CodexChatTab({
           )}
 
           {session?.isLoading && (
-            <div className="px-4 py-3">
-              <div className="mx-auto max-w-3xl">
+            <div className="px-2 @sm:px-4 py-3">
+              <div className="mx-auto max-w-3xl min-w-0">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span className="text-xs">Codex is thinking...</span>
