@@ -217,12 +217,16 @@ export function usePrMonitorService(): void {
             }
 
             if (taskId) {
-              if (taskInStore && taskInStore.status === "in-progress") {
+              // Only advance tasks that are currently in-progress to avoid
+              // regressing tasks that have already moved to "done".
+              const currentStatus = taskInStore?.status;
+              if (currentStatus === "in-progress") {
                 await kanbanState.moveTask(taskId, "review");
                 console.log(`[PrMonitorService] PR merged, moved task ${taskId} to review`);
               } else if (!taskInStore) {
-                await tauri.updateKanbanTask(taskId, undefined, undefined, undefined, "review");
-                console.log(`[PrMonitorService] PR merged, moved task ${taskId} to review (backend only)`);
+                // Task not loaded in store (found via pipeline); update backend directly
+                await kanbanState.updateTask(taskId, { status: "review" });
+                console.log(`[PrMonitorService] PR merged, moved task ${taskId} to review (via pipeline)`);
               }
             }
           } catch (error) {
