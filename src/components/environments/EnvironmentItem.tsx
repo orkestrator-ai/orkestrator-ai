@@ -143,6 +143,8 @@ export function EnvironmentItem({
     if (!localAddress) return;
     navigator.clipboard.writeText(localAddress).then(() => {
       toast.success("Copied address", { description: localAddress });
+    }).catch(() => {
+      toast.error("Failed to copy address");
     });
   };
 
