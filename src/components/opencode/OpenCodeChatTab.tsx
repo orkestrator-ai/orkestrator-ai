@@ -1404,10 +1404,10 @@ export function OpenCodeChatTab({
   }
 
   return (
-    <div className="flex flex-col h-full bg-background overflow-hidden">
+    <div className="@container flex flex-col h-full bg-background overflow-hidden">
       {/* Messages area - min-h-0 is critical for flexbox scrolling */}
       <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
-        <div className="py-4">
+        <div className="py-4 min-w-[320px]">
           {session?.messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground gap-3">
               <p className="text-sm">No messages yet. Start a conversation!</p>
@@ -1435,8 +1435,8 @@ export function OpenCodeChatTab({
 
           {/* Loading indicator */}
           {session?.isLoading && (
-            <div className="px-4 py-3">
-              <div className="max-w-3xl mx-auto">
+            <div className="px-2 @sm:px-4 py-3">
+              <div className="max-w-3xl mx-auto min-w-0">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span className="text-xs">OpenCode is thinking...</span>
@@ -1447,7 +1447,7 @@ export function OpenCodeChatTab({
 
           {/* Pending permissions */}
           {session && client && pendingPermissions.length > 0 && (
-            <div className="max-w-3xl mx-auto">
+            <div className="max-w-3xl mx-auto min-w-0">
               {pendingPermissions.map((permission) => (
                 <OpenCodePermissionCard
                   key={permission.id}
@@ -1460,7 +1460,7 @@ export function OpenCodeChatTab({
 
           {/* Pending questions */}
           {session && client && pendingQuestions.length > 0 && (
-            <div className="max-w-3xl mx-auto">
+            <div className="max-w-3xl mx-auto min-w-0">
               {pendingQuestions.map((question) => (
                 <OpenCodeQuestionCard
                   key={question.id}
