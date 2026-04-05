@@ -18,6 +18,8 @@ import {
   getEffectiveInterval,
 } from "@/stores/prMonitorStore";
 import { useEnvironmentStore, useUIStore, useAgentActivityStore } from "@/stores";
+import { useKanbanStore } from "@/stores/kanbanStore";
+import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import * as tauri from "@/lib/tauri";
 import type { PrDetectionResult } from "@/lib/tauri";
 import type { PrState } from "@/types";
@@ -195,6 +197,38 @@ export function usePrMonitorService(): void {
           environment.prState ?? null,
           useEnvironmentStore.getState().setEnvironmentPR
         );
+
+        // When a PR transitions to "merged", move the associated kanban task to "review"
+        if (
+          detectionResult.status === "success" &&
+          detectionResult.data.state === "merged" &&
+          environment.prState !== "merged"
+        ) {
+          try {
+            // Find the task via kanban store (by environmentId) or build pipeline store
+            const kanbanState = useKanbanStore.getState();
+            const taskInStore = kanbanState.tasks.find((t) => t.environmentId === environmentId);
+            let taskId = taskInStore?.id;
+
+            if (!taskId) {
+              const pipeline = Array.from(useBuildPipelineStore.getState().pipelines.values())
+                .find((p) => p.environmentId === environmentId);
+              taskId = pipeline?.taskId;
+            }
+
+            if (taskId) {
+              if (taskInStore && taskInStore.status === "in-progress") {
+                await kanbanState.moveTask(taskId, "review");
+                console.log(`[PrMonitorService] PR merged, moved task ${taskId} to review`);
+              } else if (!taskInStore) {
+                await tauri.updateKanbanTask(taskId, undefined, undefined, undefined, "review");
+                console.log(`[PrMonitorService] PR merged, moved task ${taskId} to review (backend only)`);
+              }
+            }
+          } catch (error) {
+            console.warn("[PrMonitorService] Failed to move task to review after PR merge:", error);
+          }
+        }
 
         // Handle mode transitions based on result
         const currentMode = usePrMonitorStore.getState().getMonitoringState(environmentId)?.mode;
