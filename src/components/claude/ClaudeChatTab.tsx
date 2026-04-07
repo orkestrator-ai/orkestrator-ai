@@ -1,8 +1,8 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Loader2, AlertCircle, RefreshCw, ArrowDown, History } from "lucide-react";
-import { useScrollLock, clearPersistedScrollState } from "@/hooks";
+import { useVirtuosoScrollState, clearPersistedVirtuosoState } from "@/hooks";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import {
@@ -56,7 +56,6 @@ type ConnectionState = "connecting" | "connected" | "error";
 
 export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
-  const scrollRef = useRef<HTMLDivElement>(null);
   // Initialize as "connected" if we already have a client and session from a previous init.
   // This avoids even a single frame of spinner when switching back to an already-connected env.
   const [connectionState, setConnectionState] = useState<ConnectionState>(() => {
@@ -120,12 +119,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
   const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
 
-  // Scroll lock - auto-scroll only when user is at bottom
-  // mountTrigger ensures we re-search for the viewport when connectionState changes
-  // (since ScrollArea only renders after connection succeeds)
-  const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
-    scrollTrigger: session?.messages,
-    mountTrigger: connectionState,
+  // Virtuoso scroll state - auto-follow when user is at bottom, persist across tab switches
+  const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
     isActive,
     persistKey: sessionKey,
   });
@@ -1162,7 +1157,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     setErrorMessage(null);
     tabSessionIdRef.current = null;
     isInitializedRef.current = false;
-    clearPersistedScrollState(sessionKey);
+    clearPersistedVirtuosoState(sessionKey);
     setClient(environmentId, null);
     setSession(sessionKey, null);
     setContextUsage(sessionKey, null);
@@ -1258,73 +1253,76 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   return (
     <div className="@container flex flex-col h-full bg-background overflow-hidden">
-      {/* Messages area - flex-1 min-h-0 is critical for flexbox scrolling */}
-      <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
-        <div className="py-4 min-w-[320px]">
-          {session?.messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground gap-3">
-              <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
-              {client && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setResumeDialogOpen(true)}
-                >
-                  <History className="w-4 h-4 mr-2" />
-                  Resume Session
-                </Button>
-              )}
-            </div>
-          ) : (
-            session?.messages.map((message, index) => (
-              <ClaudeMessage
-                key={message.id}
-                message={message}
-                previousMessage={index > 0 ? session.messages[index - 1] ?? null : null}
-                isStreaming={session?.isLoading}
-              />
-            ))
-          )}
-
-          {session?.isLoading && (
-            <div className="px-2 @sm:px-4 py-3">
-              <div className="max-w-3xl mx-auto min-w-0">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-xs">Claude is thinking...</span>
+      {/* Virtualized messages area */}
+      <VirtualizedMessageList
+        messages={sessionMessages}
+        computeItemKey={(_index, msg) => msg.id}
+        renderMessage={(_index, message, prev) => (
+          <ClaudeMessage
+            message={message}
+            previousMessage={prev}
+            isStreaming={session?.isLoading}
+          />
+        )}
+        emptyState={
+          <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-muted-foreground gap-3">
+            <p className="text-sm">No messages yet. Start a conversation with Claude!</p>
+            {client && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setResumeDialogOpen(true)}
+              >
+                <History className="w-4 h-4 mr-2" />
+                Resume Session
+              </Button>
+            )}
+          </div>
+        }
+        footer={
+          <>
+            {session?.isLoading && (
+              <div className="px-2 @sm:px-4 py-3">
+                <div className="max-w-3xl mx-auto min-w-0">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-xs">Claude is thinking...</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {session && client && pendingQuestions.length > 0 && (
-            <div className="max-w-3xl mx-auto min-w-0">
-              {pendingQuestions.map((question) => (
-                <ClaudeQuestionCard
-                  key={question.id}
-                  question={question}
-                  client={client}
-                  sessionId={session.sessionId}
-                />
-              ))}
-            </div>
-          )}
+            {session && client && pendingQuestions.length > 0 && (
+              <div className="max-w-3xl mx-auto min-w-0">
+                {pendingQuestions.map((question) => (
+                  <ClaudeQuestionCard
+                    key={question.id}
+                    question={question}
+                    client={client}
+                    sessionId={session.sessionId}
+                  />
+                ))}
+              </div>
+            )}
 
-          {session && client && pendingPlanApprovals.length > 0 && (
-            <div className="max-w-3xl mx-auto min-w-0">
-              {pendingPlanApprovals.map((approval) => (
-                <ClaudePlanApprovalCard
-                  key={approval.id}
-                  approval={approval}
-                  client={client}
-                  sessionId={session.sessionId}
-                  messages={sessionMessages}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+            {session && client && pendingPlanApprovals.length > 0 && (
+              <div className="max-w-3xl mx-auto min-w-0">
+                {pendingPlanApprovals.map((approval) => (
+                  <ClaudePlanApprovalCard
+                    key={approval.id}
+                    approval={approval}
+                    client={client}
+                    sessionId={session.sessionId}
+                    messages={sessionMessages}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        }
+        scrollProps={scrollProps}
+        virtuosoRef={virtuosoRef}
+      />
 
       {/* Scroll to bottom button - positioned above compose bar */}
       {!isAtBottom && (
