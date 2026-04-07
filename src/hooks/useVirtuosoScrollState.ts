@@ -64,7 +64,6 @@ export function useVirtuosoScrollState(
 
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const isAtBottomRef = useRef(true);
 
   // Resolve initial restore state once on mount
   const [restoreState] = useState<StateSnapshot | undefined>(() =>
@@ -83,7 +82,6 @@ export function useVirtuosoScrollState(
   const atBottomStateChange = useCallback(
     (atBottom: boolean) => {
       setIsAtBottom(atBottom);
-      isAtBottomRef.current = atBottom;
     },
     []
   );
@@ -101,8 +99,8 @@ export function useVirtuosoScrollState(
       align: "end",
       behavior: "smooth",
     });
-    setIsAtBottom(true);
-    isAtBottomRef.current = true;
+    // Don't optimistically set isAtBottom — let Virtuoso's atBottomStateChange
+    // fire when the scroll actually reaches the bottom.
   }, []);
 
   return {

@@ -608,8 +608,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
       const userMessage: ClaudeMessageType = {
         id: crypto.randomUUID(),
         role: "user",
-        content: "Please address all the above issues, without asking questions. Make sensible assumptions. Run typechecking and build validation to ensure the changes are valid as appropriate for the project.",
-        parts: [{ type: "text", content: "Please address all the above issues, without asking questions. Make sensible assumptions. Run typechecking and build validation to ensure the changes are valid as appropriate for the project." }],
+        content: "Please address all the above issues and test coverage gaps, without asking questions. Make sensible assumptions. Run typechecking and build validation to ensure the changes are valid as appropriate for the project.",
+        parts: [{ type: "text", content: "Please address all the above issues and test coverage gaps, without asking questions. Make sensible assumptions. Run typechecking and build validation to ensure the changes are valid as appropriate for the project." }],
         timestamp: new Date().toISOString(),
       };
       addMessage(reviewSession.sessionKey, userMessage);

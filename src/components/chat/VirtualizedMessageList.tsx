@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useMemo } from "react";
+import { type ReactNode, type RefObject } from "react";
 import { Virtuoso, type VirtuosoHandle, type StateSnapshot } from "react-virtuoso";
 
 interface VirtualizedMessageListProps<TMessage> {
@@ -16,6 +16,14 @@ interface VirtualizedMessageListProps<TMessage> {
   virtuosoRef: RefObject<VirtuosoHandle | null>;
 }
 
+function FooterWrapper({ children }: { children: ReactNode }) {
+  return <div className="min-w-[320px]">{children}</div>;
+}
+
+function EmptyPlaceholderWrapper({ children }: { children: ReactNode }) {
+  return <div className="min-w-[320px]">{children}</div>;
+}
+
 export function VirtualizedMessageList<TMessage>({
   messages,
   computeItemKey,
@@ -25,18 +33,6 @@ export function VirtualizedMessageList<TMessage>({
   scrollProps,
   virtuosoRef,
 }: VirtualizedMessageListProps<TMessage>) {
-  const components = useMemo(
-    () => ({
-      Footer: footer
-        ? () => <div className="min-w-[320px]">{footer}</div>
-        : undefined,
-      EmptyPlaceholder: emptyState
-        ? () => <div className="min-w-[320px]">{emptyState}</div>
-        : undefined,
-    }),
-    [footer, emptyState]
-  );
-
   return (
     <div className="flex-1 min-h-0">
       <Virtuoso
@@ -46,7 +42,14 @@ export function VirtualizedMessageList<TMessage>({
         itemContent={(index, data) =>
           renderMessage(index, data, index > 0 ? messages[index - 1] ?? null : null)
         }
-        components={components}
+        components={{
+          Footer: footer
+            ? () => <FooterWrapper>{footer}</FooterWrapper>
+            : undefined,
+          EmptyPlaceholder: emptyState
+            ? () => <EmptyPlaceholderWrapper>{emptyState}</EmptyPlaceholderWrapper>
+            : undefined,
+        }}
         followOutput={scrollProps.followOutput}
         atBottomStateChange={scrollProps.atBottomStateChange}
         atBottomThreshold={scrollProps.atBottomThreshold}
