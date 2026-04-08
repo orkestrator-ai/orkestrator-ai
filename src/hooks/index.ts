@@ -10,5 +10,6 @@ export { useTerminalClipboard } from "./useTerminalClipboard";
 export type { UseTerminalClipboardOptions, UseTerminalClipboardReturn } from "./useTerminalClipboard";
 export { useScrollLock, clearPersistedScrollState } from "./useScrollLock";
 export { useVirtuosoScrollState, clearPersistedVirtuosoState } from "./useVirtuosoScrollState";
+export { useElapsedTimer } from "./useElapsedTimer";
 export { useFileSearch } from "./useFileSearch";
 export { useFileMentions } from "./useFileMentions";
