@@ -234,4 +234,118 @@ describe("VirtualizedMessageList", () => {
       bottom: 200,
     });
   });
+
+  test("components identity stays stable when footer content changes", () => {
+    const ref = createRef<VirtuosoHandle>();
+    const { rerender } = render(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        footer={<div>Footer v1</div>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={ref}
+      />
+    );
+
+    const firstComponents = lastVirtuosoProps.components;
+
+    rerender(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        footer={<div>Footer v2</div>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={ref}
+      />
+    );
+
+    // Components object identity must not change when only footer content changes,
+    // because a new identity causes Virtuoso to unmount/remount children.
+    expect(lastVirtuosoProps.components).toBe(firstComponents);
+    // But context should update so the new content renders
+    expect(lastVirtuosoProps.context.footer).toBeTruthy();
+  });
+
+  test("components identity changes when footer presence toggles", () => {
+    const ref = createRef<VirtuosoHandle>();
+    const { rerender } = render(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        footer={<div>Footer</div>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={ref}
+      />
+    );
+
+    const firstComponents = lastVirtuosoProps.components;
+    expect(firstComponents.Footer).toBeDefined();
+
+    rerender(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={ref}
+      />
+    );
+
+    // Components object should change because footer presence toggled
+    expect(lastVirtuosoProps.components).not.toBe(firstComponents);
+    expect(lastVirtuosoProps.components.Footer).toBeUndefined();
+  });
+
+  test("context updates when footer or emptyState content changes", () => {
+    const ref = createRef<VirtuosoHandle>();
+    const { rerender } = render(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        footer={<div>Footer v1</div>}
+        emptyState={<p>Empty v1</p>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={ref}
+      />
+    );
+
+    const firstContext = lastVirtuosoProps.context;
+
+    rerender(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        footer={<div>Footer v2</div>}
+        emptyState={<p>Empty v1</p>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={ref}
+      />
+    );
+
+    // Context should update so Virtuoso renders new footer content
+    expect(lastVirtuosoProps.context).not.toBe(firstContext);
+  });
+
+  test("footer renders nothing when context has no footer", () => {
+    // Render with no footer and no emptyState — the components object
+    // should not include Footer or EmptyPlaceholder at all.
+    render(
+      <VirtualizedMessageList
+        messages={[{ id: "1", text: "Hi" }]}
+        computeItemKey={(_i, msg) => (msg as any).id}
+        renderMessage={(_i, msg) => <span>{(msg as any).text}</span>}
+        scrollProps={makeScrollProps()}
+        virtuosoRef={createRef<VirtuosoHandle>()}
+      />
+    );
+
+    expect(lastVirtuosoProps.components.Footer).toBeUndefined();
+    expect(lastVirtuosoProps.components.EmptyPlaceholder).toBeUndefined();
+    expect(screen.queryByTestId("virtuoso-footer")).toBeNull();
+  });
 });
