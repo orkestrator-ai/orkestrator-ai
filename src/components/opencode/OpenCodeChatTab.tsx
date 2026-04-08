@@ -6,7 +6,8 @@ import {
   ArrowDown,
   History,
 } from "lucide-react";
-import { useVirtuosoScrollState, clearPersistedVirtuosoState } from "@/hooks";
+import { useVirtuosoScrollState, clearPersistedVirtuosoState, useElapsedTimer } from "@/hooks";
+import { formatElapsed } from "@/lib/format-elapsed";
 import { Button } from "@/components/ui/button";
 import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
 import {
@@ -188,7 +189,7 @@ export function OpenCodeChatTab({
   const sessionMessages = useMemo(() => session?.messages ?? [], [session?.messages]);
 
   // Virtuoso scroll state - auto-follow when user is at bottom, persist across tab switches
-  const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
+  const { isAtBottom, isAtBottomRef, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
     isActive,
     persistKey: sessionKey,
   });
@@ -230,6 +231,19 @@ export function OpenCodeChatTab({
 
     return ids;
   }, [modelPreferences]);
+
+  // Elapsed timer: counts up while agent is working
+  const { elapsedSeconds, finalElapsedSeconds } = useElapsedTimer(session?.isLoading, session?.sessionId);
+
+  // Auto-scroll when footer content changes while user is at bottom.
+  // Virtuoso's followOutput only fires on data item changes, but the footer
+  // (thinking indicator, question/permission cards) can grow without data changes.
+  useEffect(() => {
+    if (isAtBottomRef.current) {
+      const rafId = requestAnimationFrame(() => scrollToBottom());
+      return () => cancelAnimationFrame(rafId);
+    }
+  }, [session?.isLoading, pendingQuestions.length, pendingPermissions.length, scrollToBottom]);
 
   const worktreePath = useEnvironmentStore(
     useCallback(
@@ -1438,6 +1452,9 @@ export function OpenCodeChatTab({
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="text-xs">OpenCode is thinking...</span>
+                    {elapsedSeconds !== null && elapsedSeconds > 0 && (
+                      <span className="text-xs text-muted-foreground/50">{formatElapsed(elapsedSeconds)}</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1464,6 +1481,16 @@ export function OpenCodeChatTab({
                     client={client}
                   />
                 ))}
+              </div>
+            )}
+
+            {!session?.isLoading && finalElapsedSeconds !== null && (
+              <div className="px-2 @sm:px-4 py-1.5">
+                <div className="max-w-3xl mx-auto min-w-0">
+                  <span className="text-[10px] text-muted-foreground/40">
+                    Completed in {formatElapsed(finalElapsedSeconds)}
+                  </span>
+                </div>
               </div>
             )}
           </>
