@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { summarizeTodoList, mapTodoArgs } from "./todo-helpers";
+import { summarizeTodoList, mapTodoArgs } from "./todo-helpers.js";
 
 describe("summarizeTodoList", () => {
   test("renders completed items with [x] and pending items with [ ]", () => {

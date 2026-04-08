@@ -18,12 +18,12 @@ import {
   type ThreadOptions,
   type UserInput,
 } from "@openai/codex-sdk";
-import { summarizeTodoList, mapTodoArgs } from "./todo-helpers";
+import { summarizeTodoList, mapTodoArgs } from "./todo-helpers.js";
 
 type ToolState = "success" | "failure" | "pending";
 type MessageRole = "user" | "assistant" | "system";
 
-interface NormalizedPart {
+export interface NormalizedPart {
   type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file";
   content: string;
   fileUrl?: string;
@@ -137,7 +137,7 @@ interface SessionStatusResponse {
   error?: string;
 }
 
-interface ToolDiffMetadata {
+export interface ToolDiffMetadata {
   filePath?: string;
   additions?: number;
   deletions?: number;
@@ -470,7 +470,7 @@ function createAssistantMessage(): NormalizedMessage {
   };
 }
 
-function stringifyUnknown(value: unknown): string | undefined {
+export function stringifyUnknown(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "string") return value;
   try {
@@ -1313,7 +1313,7 @@ async function getFileChangeDiffMetadata(
   };
 }
 
-async function itemToParts(
+export async function itemToParts(
   item: ThreadItem,
   cwd: string,
 ): Promise<NormalizedPart[]> {

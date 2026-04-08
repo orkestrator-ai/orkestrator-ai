@@ -824,9 +824,6 @@ function TextPart({ content }: { content: string }) {
   );
 }
 
-// isEditTool imported from @/lib/tool-names
-// isTodoTool imported from @/lib/todo-tool
-
 /** Render a single message part based on its type */
 function MessagePart({ part }: { part: NativeMessagePart }) {
   switch (part.type) {
