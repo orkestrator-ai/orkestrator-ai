@@ -9,14 +9,14 @@ let lastVirtuosoProps: Record<string, any> = {};
 mock.module("react-virtuoso", () => ({
   Virtuoso: (props: any) => {
     lastVirtuosoProps = props;
-    const { data, itemContent, components, ref: _ref, ...rest } = props;
+    const { data, itemContent, components, context } = props;
 
     // Render EmptyPlaceholder when data is empty
     if (data.length === 0 && components?.EmptyPlaceholder) {
       const Empty = components.EmptyPlaceholder;
       return (
         <div data-testid="virtuoso-mock">
-          <Empty />
+          <Empty context={context} />
         </div>
       );
     }
@@ -33,7 +33,7 @@ mock.module("react-virtuoso", () => ({
           <div data-testid="virtuoso-footer">
             {(() => {
               const Footer = components.Footer;
-              return <Footer />;
+              return <Footer context={context} />;
             })()}
           </div>
         )}
