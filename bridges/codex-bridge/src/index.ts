@@ -1387,6 +1387,12 @@ async function itemToParts(
         toolName: "todo_list",
         toolState: "success",
         toolTitle: "Todo List",
+        toolArgs: {
+          todos: item.items.map((todo) => ({
+            content: todo.text,
+            status: todo.completed ? "completed" : "pending",
+          })),
+        },
         toolOutput: summarizeTodoList(item),
       }];
     case "error":

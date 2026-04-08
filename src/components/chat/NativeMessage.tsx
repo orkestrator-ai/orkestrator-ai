@@ -825,10 +825,11 @@ function TextPart({ content }: { content: string }) {
 
 // isEditTool imported from @/lib/tool-names
 
-/** Check if a tool name is a TodoWrite tool */
+/** Check if a tool name is a TodoWrite / todo_list tool */
 function isTodoTool(toolName?: string): boolean {
   if (!toolName) return false;
-  return toolName.toLowerCase() === "todowrite";
+  const lower = toolName.toLowerCase();
+  return lower === "todowrite" || lower === "todo_list";
 }
 
 /** Render a single message part based on its type */
