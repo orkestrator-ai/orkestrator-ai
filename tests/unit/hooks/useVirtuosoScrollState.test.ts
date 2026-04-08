@@ -87,13 +87,12 @@ describe("useVirtuosoScrollState", () => {
   });
 
   describe("scrollToBottom", () => {
-    test("calls scrollToIndex on the virtuoso ref", () => {
+    test("calls scrollTo on the virtuoso ref", () => {
       const { result } = renderHook(() => useVirtuosoScrollState());
 
-      const mockScrollToIndex = (() => {}) as any;
-      const scrollToIndexCalls: any[] = [];
+      const scrollToCalls: any[] = [];
       result.current.virtuosoRef.current = {
-        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
         getState: () => {},
       } as any;
 
@@ -101,10 +100,9 @@ describe("useVirtuosoScrollState", () => {
         result.current.scrollToBottom();
       });
 
-      expect(scrollToIndexCalls).toHaveLength(1);
-      expect(scrollToIndexCalls[0]).toEqual({
-        index: "LAST",
-        align: "end",
+      expect(scrollToCalls).toHaveLength(1);
+      expect(scrollToCalls[0]).toEqual({
+        top: 10_000_000,
         behavior: "smooth",
       });
     });
@@ -120,7 +118,7 @@ describe("useVirtuosoScrollState", () => {
 
       // Provide a mock ref
       result.current.virtuosoRef.current = {
-        scrollToIndex: () => {},
+        scrollTo: () => {},
         getState: () => {},
       } as any;
 

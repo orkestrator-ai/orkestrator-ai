@@ -35,6 +35,8 @@ interface UseVirtuosoScrollStateOptions {
 interface UseVirtuosoScrollStateReturn {
   /** Whether the user is currently at the bottom of the scroll area */
   isAtBottom: boolean;
+  /** Ref that tracks at-bottom state without triggering re-renders (for use in effects) */
+  isAtBottomRef: React.RefObject<boolean>;
   /** Scroll to bottom and re-enable follow mode */
   scrollToBottom: () => void;
   /** Ref to attach to the Virtuoso component */
@@ -64,6 +66,7 @@ export function useVirtuosoScrollState(
 
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const isAtBottomRef = useRef(true);
 
   // Resolve initial restore state once on mount
   const [restoreState] = useState<StateSnapshot | undefined>(() =>
@@ -82,6 +85,7 @@ export function useVirtuosoScrollState(
   const atBottomStateChange = useCallback(
     (atBottom: boolean) => {
       setIsAtBottom(atBottom);
+      isAtBottomRef.current = atBottom;
     },
     []
   );
@@ -94,9 +98,14 @@ export function useVirtuosoScrollState(
   );
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({
-      index: "LAST",
-      align: "end",
+    // Use scrollTo with a very large top value instead of scrollToIndex.
+    // scrollToIndex({ index: "LAST" }) only scrolls to the last data item,
+    // but the footer (thinking indicator, question cards) renders below the
+    // last item and would remain hidden. scrollTo with a large value gets
+    // capped to scrollHeight - clientHeight by the browser, ensuring the
+    // entire footer is visible.
+    virtuosoRef.current?.scrollTo({
+      top: 10_000_000,
       behavior: "smooth",
     });
     // Don't optimistically set isAtBottom — let Virtuoso's atBottomStateChange
@@ -105,6 +114,7 @@ export function useVirtuosoScrollState(
 
   return {
     isAtBottom,
+    isAtBottomRef,
     scrollToBottom,
     virtuosoRef,
     scrollProps: {

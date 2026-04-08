@@ -45,6 +45,13 @@ import { useEnvironmentStore } from "@/stores/environmentStore";
 import { isSetupPending } from "@/lib/setup-commands";
 import type { ClaudeAttachment } from "@/stores/claudeStore";
 
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
 interface ClaudeChatTabProps {
   tabId: string;
   data: ClaudeNativeData;
@@ -120,7 +127,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
 
   // Virtuoso scroll state - auto-follow when user is at bottom, persist across tab switches
-  const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
+  const { isAtBottom, isAtBottomRef, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
     isActive,
     persistKey: sessionKey,
   });
@@ -155,6 +162,52 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const queueLength = useClaudeStore(
     useCallback((state) => state.messageQueue.get(sessionKey)?.length ?? 0, [sessionKey])
   );
+
+  // --- Elapsed timer: counts up while agent is working ---
+  const loadingStartTimeRef = useRef<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
+  const [finalElapsedSeconds, setFinalElapsedSeconds] = useState<number | null>(null);
+
+  // Reset timer state when session changes (e.g. resume session)
+  useEffect(() => {
+    loadingStartTimeRef.current = null;
+    setElapsedSeconds(null);
+    setFinalElapsedSeconds(null);
+  }, [session?.sessionId]);
+
+  useEffect(() => {
+    if (session?.isLoading) {
+      if (loadingStartTimeRef.current === null) {
+        loadingStartTimeRef.current = Date.now();
+      }
+      setFinalElapsedSeconds(null);
+
+      const interval = setInterval(() => {
+        if (loadingStartTimeRef.current !== null) {
+          setElapsedSeconds(Math.floor((Date.now() - loadingStartTimeRef.current) / 1000));
+        }
+      }, 1000);
+
+      return () => clearInterval(interval);
+    } else {
+      if (loadingStartTimeRef.current !== null) {
+        const finalTime = Math.floor((Date.now() - loadingStartTimeRef.current) / 1000);
+        setFinalElapsedSeconds(finalTime);
+        loadingStartTimeRef.current = null;
+      }
+      setElapsedSeconds(null);
+    }
+  }, [session?.isLoading]);
+
+  // Auto-scroll when footer content changes while user is at bottom.
+  // Virtuoso's followOutput only fires on data item changes, but the footer
+  // (thinking indicator, question/approval cards) can grow without data changes.
+  useEffect(() => {
+    if (isAtBottomRef.current) {
+      const rafId = requestAnimationFrame(() => scrollToBottom());
+      return () => cancelAnimationFrame(rafId);
+    }
+  }, [session?.isLoading, pendingQuestions.length, pendingPlanApprovals.length, scrollToBottom]);
 
   // Setup completion awareness - block initialization until setup scripts finish
   const setupScriptsRunning = useEnvironmentStore(
@@ -1287,6 +1340,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="text-xs">Claude is thinking...</span>
+                    {elapsedSeconds !== null && elapsedSeconds > 0 && (
+                      <span className="text-xs text-muted-foreground/50">{formatElapsed(elapsedSeconds)}</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1316,6 +1372,16 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
                     messages={sessionMessages}
                   />
                 ))}
+              </div>
+            )}
+
+            {!session?.isLoading && finalElapsedSeconds !== null && (
+              <div className="px-2 @sm:px-4 py-1.5">
+                <div className="max-w-3xl mx-auto min-w-0">
+                  <span className="text-[10px] text-muted-foreground/40">
+                    Completed in {formatElapsed(finalElapsedSeconds)}
+                  </span>
+                </div>
               </div>
             )}
           </>
