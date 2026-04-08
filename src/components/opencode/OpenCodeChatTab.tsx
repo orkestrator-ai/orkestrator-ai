@@ -6,7 +6,8 @@ import {
   ArrowDown,
   History,
 } from "lucide-react";
-import { useVirtuosoScrollState, clearPersistedVirtuosoState } from "@/hooks";
+import { useVirtuosoScrollState, clearPersistedVirtuosoState, useElapsedTimer } from "@/hooks";
+import { formatElapsed } from "@/lib/format-elapsed";
 import { Button } from "@/components/ui/button";
 import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
 import {
@@ -60,13 +61,6 @@ import {
 import { getNativeSlashCommands } from "./slash-command-registry";
 import type { OpenCodeNativeData } from "@/types/paneLayout";
 import type { OpenCodeAttachment } from "@/stores/openCodeStore";
-
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}m ${secs}s`;
-}
 
 interface OpenCodeChatTabProps {
   tabId: string;
@@ -238,41 +232,8 @@ export function OpenCodeChatTab({
     return ids;
   }, [modelPreferences]);
 
-  // --- Elapsed timer: counts up while agent is working ---
-  const loadingStartTimeRef = useRef<number | null>(null);
-  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
-  const [finalElapsedSeconds, setFinalElapsedSeconds] = useState<number | null>(null);
-
-  // Reset timer state when session changes (e.g. resume session)
-  useEffect(() => {
-    loadingStartTimeRef.current = null;
-    setElapsedSeconds(null);
-    setFinalElapsedSeconds(null);
-  }, [session?.sessionId]);
-
-  useEffect(() => {
-    if (session?.isLoading) {
-      if (loadingStartTimeRef.current === null) {
-        loadingStartTimeRef.current = Date.now();
-      }
-      setFinalElapsedSeconds(null);
-
-      const interval = setInterval(() => {
-        if (loadingStartTimeRef.current !== null) {
-          setElapsedSeconds(Math.floor((Date.now() - loadingStartTimeRef.current) / 1000));
-        }
-      }, 1000);
-
-      return () => clearInterval(interval);
-    } else {
-      if (loadingStartTimeRef.current !== null) {
-        const finalTime = Math.floor((Date.now() - loadingStartTimeRef.current) / 1000);
-        setFinalElapsedSeconds(finalTime);
-        loadingStartTimeRef.current = null;
-      }
-      setElapsedSeconds(null);
-    }
-  }, [session?.isLoading]);
+  // Elapsed timer: counts up while agent is working
+  const { elapsedSeconds, finalElapsedSeconds } = useElapsedTimer(session?.isLoading, session?.sessionId);
 
   // Auto-scroll when footer content changes while user is at bottom.
   // Virtuoso's followOutput only fires on data item changes, but the footer

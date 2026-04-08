@@ -7,6 +7,12 @@ const AT_BOTTOM_THRESHOLD = 50;
 /** Maximum persisted scroll states to retain (LRU eviction) */
 const MAX_PERSISTED_STATES = 200;
 
+/**
+ * Large value used with scrollTo({ top }) to scroll past the last data item
+ * into the footer. The browser clamps this to scrollHeight - clientHeight.
+ */
+const SCROLL_TO_ABSOLUTE_BOTTOM = 10_000_000;
+
 const persistedStates = new Map<string, StateSnapshot>();
 
 function setPersistedState(key: string, state: StateSnapshot) {
@@ -105,7 +111,7 @@ export function useVirtuosoScrollState(
     // capped to scrollHeight - clientHeight by the browser, ensuring the
     // entire footer is visible.
     virtuosoRef.current?.scrollTo({
-      top: 10_000_000,
+      top: SCROLL_TO_ABSOLUTE_BOTTOM,
       behavior: "smooth",
     });
     // Don't optimistically set isAtBottom — let Virtuoso's atBottomStateChange

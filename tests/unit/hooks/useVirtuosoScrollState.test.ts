@@ -72,6 +72,23 @@ describe("useVirtuosoScrollState", () => {
       });
       expect(result.current.isAtBottom).toBe(true);
     });
+
+    test("updates isAtBottomRef in sync with isAtBottom", () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      // Initially true
+      expect(result.current.isAtBottomRef.current).toBe(true);
+
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(false);
+      });
+      expect(result.current.isAtBottomRef.current).toBe(false);
+
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(true);
+      });
+      expect(result.current.isAtBottomRef.current).toBe(true);
+    });
   });
 
   describe("followOutput", () => {
