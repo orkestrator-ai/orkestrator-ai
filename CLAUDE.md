@@ -92,8 +92,8 @@ orkestrator-ai/
 ### Setup
 
 ```bash
-# Install dependencies
-bun install
+# Run setup (downloads bun binary, installs dependencies, builds Claude bridge)
+bun run setup
 
 # Build the Docker base image
 docker build -t orkestrator-ai:latest -f docker/Dockerfile .
