@@ -35,6 +35,7 @@ import {
   type ToolDiffMetadata,
 } from "@/lib/opencode-client";
 import { isEditTool } from "@/lib/tool-names";
+import { isTodoTool } from "@/lib/todo-tool";
 import { TodoToolPart } from "@/components/todo/TodoToolPart";
 import { MessageErrorAlert, MessageShell } from "@/components/chat/MessageShell";
 import { MessageMarkdown } from "@/components/chat/MessageMarkdown";
@@ -824,13 +825,7 @@ function TextPart({ content }: { content: string }) {
 }
 
 // isEditTool imported from @/lib/tool-names
-
-/** Check if a tool name is a TodoWrite / todo_list tool */
-function isTodoTool(toolName?: string): boolean {
-  if (!toolName) return false;
-  const lower = toolName.toLowerCase();
-  return lower === "todowrite" || lower === "todo_list";
-}
+// isTodoTool imported from @/lib/todo-tool
 
 /** Render a single message part based on its type */
 function MessagePart({ part }: { part: NativeMessagePart }) {

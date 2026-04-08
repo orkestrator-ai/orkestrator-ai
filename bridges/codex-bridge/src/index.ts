@@ -18,6 +18,7 @@ import {
   type ThreadOptions,
   type UserInput,
 } from "@openai/codex-sdk";
+import { summarizeTodoList, mapTodoArgs } from "./todo-helpers";
 
 type ToolState = "success" | "failure" | "pending";
 type MessageRole = "user" | "assistant" | "system";
@@ -467,12 +468,6 @@ function createAssistantMessage(): NormalizedMessage {
     parts: [],
     createdAt: new Date().toISOString(),
   };
-}
-
-function summarizeTodoList(item: Extract<ThreadItem, { type: "todo_list" }>): string {
-  return item.items
-    .map((todo) => `${todo.completed ? "[x]" : "[ ]"} ${todo.text}`)
-    .join("\n");
 }
 
 function stringifyUnknown(value: unknown): string | undefined {
@@ -1383,17 +1378,12 @@ async function itemToParts(
     case "todo_list":
       return [{
         type: "tool-invocation",
-        content: summarizeTodoList(item),
+        content: summarizeTodoList(item.items),
         toolName: "todo_list",
         toolState: "success",
         toolTitle: "Todo List",
-        toolArgs: {
-          todos: item.items.map((todo) => ({
-            content: todo.text,
-            status: todo.completed ? "completed" : "pending",
-          })),
-        },
-        toolOutput: summarizeTodoList(item),
+        toolArgs: mapTodoArgs(item.items),
+        toolOutput: summarizeTodoList(item.items),
       }];
     case "error":
       return [{
