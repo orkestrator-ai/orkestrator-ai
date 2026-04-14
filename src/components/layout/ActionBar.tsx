@@ -38,8 +38,7 @@ import { RepositorySettings, SettingsPage } from "@/components/settings";
 import { EnvironmentSettingsDialog } from "@/components/environments/EnvironmentSettingsDialog";
 import { DockerStatsDialog } from "@/components/docker";
 import * as tauri from "@/lib/tauri";
-import { useKanbanStore } from "@/stores/kanbanStore";
-import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+import { useKanbanStore, findTaskForEnvironment } from "@/stores/kanbanStore";
 
 export function ActionBar() {
   const { selectedEnvironmentId, selectedProjectId } = useUIStore();
@@ -488,15 +487,9 @@ export function ActionBar() {
 
       // Add "PR merged" comment to the associated ticket
       try {
-        const kanbanState = useKanbanStore.getState();
-        const task = kanbanState.tasks.find((t) => t.environmentId === selectedEnvironmentId);
-        let taskId = task?.id;
-        if (!taskId) {
-          const pipeline = Array.from(useBuildPipelineStore.getState().pipelines.values())
-            .find((p) => p.environmentId === selectedEnvironmentId);
-          taskId = pipeline?.taskId;
-        }
-        if (taskId) {
+        const { task, taskId } = findTaskForEnvironment(selectedEnvironmentId);
+        if (taskId && !task?.prMergeCommented) {
+          const kanbanState = useKanbanStore.getState();
           await kanbanState.addComment(taskId, "🎉 PR merged");
           await kanbanState.updateTask(taskId, { prState: "merged", prMergeCommented: true });
         }

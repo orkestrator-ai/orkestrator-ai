@@ -70,13 +70,12 @@ interface PendingImage {
 
 /** Renders comment text with clickable URLs */
 function CommentText({ text }: { text: string }) {
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const parts = text.split(urlRegex);
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
   if (parts.length === 1) return <>{text}</>;
   return (
     <>
       {parts.map((part, i) =>
-        urlRegex.test(part) ? (
+        i % 2 === 1 ? (
           <button
             key={i}
             className="text-blue-400 hover:underline cursor-pointer inline"

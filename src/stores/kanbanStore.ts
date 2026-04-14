@@ -17,7 +17,23 @@ import {
   type ProjectNotes,
 } from "@/lib/tauri";
 
+import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+
 export type { KanbanTask, KanbanStatus, KanbanComment, KanbanImage, ProjectNotes };
+
+/**
+ * Find the kanban task ID associated with an environment.
+ * Checks the kanban store first, then falls back to the build pipeline store.
+ * Returns the task (if found in kanban store) and the task ID.
+ */
+export function findTaskForEnvironment(environmentId: string): { task: KanbanTask | undefined; taskId: string | undefined } {
+  const kanbanState = useKanbanStore.getState();
+  const task = kanbanState.tasks.find((t) => t.environmentId === environmentId);
+  if (task) return { task, taskId: task.id };
+  const pipeline = Array.from(useBuildPipelineStore.getState().pipelines.values())
+    .find((p) => p.environmentId === environmentId);
+  return { task: undefined, taskId: pipeline?.taskId };
+}
 
 interface KanbanState {
   tasks: KanbanTask[];
