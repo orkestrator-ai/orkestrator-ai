@@ -41,6 +41,20 @@ import { useConfigStore } from "@/stores";
 // Stable empty array reference to prevent infinite re-renders when no default port mappings are provided
 const EMPTY_PORT_MAPPINGS: PortMapping[] = [];
 
+/**
+ * Resolves the effective agent defaults by applying project-level overrides
+ * over app-level settings, with final fallbacks.
+ */
+export function resolveAgentDefaults(
+  globalConfig: { defaultAgent?: string; claudeMode?: string; opencodeMode?: string },
+  repoConfig?: { defaultAgent?: string; agentStyle?: string },
+) {
+  const defaultAgent = repoConfig?.defaultAgent || globalConfig.defaultAgent || "claude";
+  const claudeMode = repoConfig?.agentStyle || globalConfig.claudeMode || "terminal";
+  const opencodeMode = repoConfig?.agentStyle || globalConfig.opencodeMode || "terminal";
+  return { defaultAgent, claudeMode, opencodeMode } as const;
+}
+
 const UNSELECTED_CARD_CLASSES = "border-transparent bg-zinc-900 hover:border-zinc-600";
 
 export interface ClaudeOptions {
@@ -78,18 +92,20 @@ export function CreateEnvironmentDialog({
   defaultPortMappings = EMPTY_PORT_MAPPINGS,
 }: CreateEnvironmentDialogProps) {
   const { config } = useConfigStore();
-  const configDefaultAgent = config.global.defaultAgent || "claude";
+  const repoConfig = projectId ? config.repositories[projectId] : undefined;
+
+  // Resolve effective defaults: project-level overrides > app-level
+  const resolved = resolveAgentDefaults(config.global, repoConfig);
+  const configDefaultAgent = resolved.defaultAgent as AgentType;
+  const configClaudeMode = resolved.claudeMode as ClaudeMode;
+  const configOpencodeMode = resolved.opencodeMode as OpenCodeMode;
 
   const [environmentType, setEnvironmentType] = useState<EnvironmentType>("containerized");
   const [environmentName, setEnvironmentName] = useState("");
   const [launchAgent, setLaunchAgent] = useState(true);
   const [agentType, setAgentType] = useState<AgentType>(configDefaultAgent);
-  const [claudeMode, setClaudeMode] = useState<ClaudeMode>(
-    config.global.claudeMode || "terminal",
-  );
-  const [opencodeMode, setOpencodeMode] = useState<OpenCodeMode>(
-    config.global.opencodeMode || "terminal",
-  );
+  const [claudeMode, setClaudeMode] = useState<ClaudeMode>(configClaudeMode);
+  const [opencodeMode, setOpencodeMode] = useState<OpenCodeMode>(configOpencodeMode);
   const [initialPrompt, setInitialPrompt] = useState("");
   const [networkAccessMode, setNetworkAccessMode] = useState<NetworkAccessMode>("full");
   const [portMappings, setPortMappings] = useState<PortMapping[]>(defaultPortMappings);
@@ -121,13 +137,13 @@ export function CreateEnvironmentDialog({
     setEnvironmentName("");
     setLaunchAgent(true);
     setAgentType(configDefaultAgent);
-    setClaudeMode(config.global.claudeMode || "terminal");
-    setOpencodeMode(config.global.opencodeMode || "terminal");
+    setClaudeMode(configClaudeMode);
+    setOpencodeMode(configOpencodeMode);
     setInitialPrompt("");
     setNetworkAccessMode("full");
     setPortMappings(defaultPortMappings);
     setShowPortConfig(defaultPortMappings.length > 0);
-  }, [defaultPortMappings, configDefaultAgent]);
+  }, [defaultPortMappings, configDefaultAgent, configClaudeMode, configOpencodeMode]);
 
   // Sync defaults when dialog opens
   // This ensures the dialog always starts with the latest defaults, since the component
@@ -137,8 +153,8 @@ export function CreateEnvironmentDialog({
       setPortMappings(defaultPortMappings);
       setShowPortConfig(defaultPortMappings.length > 0);
       setAgentType(configDefaultAgent);
-      setClaudeMode(config.global.claudeMode || "terminal");
-      setOpencodeMode(config.global.opencodeMode || "terminal");
+      setClaudeMode(configClaudeMode);
+      setOpencodeMode(configOpencodeMode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally omit defaultPortMappings and configDefaultAgent:
     // we read the current value at dialog-open time, not re-sync when defaults change mid-dialog

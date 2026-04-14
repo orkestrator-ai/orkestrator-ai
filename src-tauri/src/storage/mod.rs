@@ -1800,6 +1800,8 @@ mod tests {
                 default_model: None,
                 default_effort: None,
                 entry_port: None,
+                default_agent: None,
+                agent_style: None,
             },
         );
 
