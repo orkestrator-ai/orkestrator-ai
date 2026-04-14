@@ -1139,6 +1139,9 @@ impl Storage {
         status: Option<KanbanStatus>,
         environment_id: Option<String>,
         build_pipeline_id: Option<String>,
+        pr_url: Option<String>,
+        pr_state: Option<String>,
+        pr_merge_commented: Option<bool>,
     ) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task_index = tasks
@@ -1173,6 +1176,15 @@ impl Storage {
         }
         if let Some(build_pipeline_id) = build_pipeline_id {
             tasks[task_index].build_pipeline_id = if build_pipeline_id.is_empty() { None } else { Some(build_pipeline_id) };
+        }
+        if let Some(pr_url) = pr_url {
+            tasks[task_index].pr_url = if pr_url.is_empty() { None } else { Some(pr_url) };
+        }
+        if let Some(pr_state) = pr_state {
+            tasks[task_index].pr_state = if pr_state.is_empty() { None } else { Some(pr_state) };
+        }
+        if let Some(pr_merge_commented) = pr_merge_commented {
+            tasks[task_index].pr_merge_commented = pr_merge_commented;
         }
 
         let updated = tasks[task_index].clone();

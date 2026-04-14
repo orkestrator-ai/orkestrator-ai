@@ -485,6 +485,15 @@ pub struct KanbanTask {
     /// Active build pipeline ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_pipeline_id: Option<String>,
+    /// PR URL associated with this task (set when PR is created during build)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    /// PR state (open, merged, closed) - mirrors PrState but stored on the task
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_state: Option<String>,
+    /// Whether a merge/close comment has already been added (prevents duplicate comments)
+    #[serde(default)]
+    pub pr_merge_commented: bool,
 }
 
 impl KanbanTask {
@@ -502,6 +511,9 @@ impl KanbanTask {
             order: 0,
             environment_id: None,
             build_pipeline_id: None,
+            pr_url: None,
+            pr_state: None,
+            pr_merge_commented: false,
         }
     }
 }

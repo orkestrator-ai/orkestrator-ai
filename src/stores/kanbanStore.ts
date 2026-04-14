@@ -30,7 +30,7 @@ interface KanbanState {
   // Task actions
   loadTasks: (projectId: string) => Promise<void>;
   addTask: (projectId: string, title: string, description: string) => Promise<string | undefined>;
-  updateTask: (taskId: string, updates: Partial<Pick<KanbanTask, "title" | "description" | "acceptanceCriteria" | "status" | "environmentId" | "buildPipelineId">>) => Promise<void>;
+  updateTask: (taskId: string, updates: Partial<Pick<KanbanTask, "title" | "description" | "acceptanceCriteria" | "status" | "environmentId" | "buildPipelineId" | "prUrl" | "prState" | "prMergeCommented">>) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   moveTask: (taskId: string, newStatus: KanbanStatus) => Promise<void>;
   addComment: (taskId: string, text: string) => Promise<void>;
@@ -88,6 +88,9 @@ export const useKanbanStore = create<KanbanState>()((set, get) => ({
         updates.status,
         updates.environmentId,
         updates.buildPipelineId,
+        updates.prUrl,
+        updates.prState,
+        updates.prMergeCommented,
       );
       set((state) => ({
         tasks: state.tasks.map((t) => (t.id === taskId ? updated : t)),
