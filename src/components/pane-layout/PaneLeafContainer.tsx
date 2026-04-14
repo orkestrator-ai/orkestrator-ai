@@ -128,16 +128,16 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
   // Handle clicking on the pane to focus it
   const handlePaneClick = useCallback(() => {
     if (activePaneId !== pane.id) {
-      setActivePane(pane.id);
+      setActivePane(pane.id, environmentId);
     }
-  }, [activePaneId, pane.id, setActivePane]);
+  }, [activePaneId, environmentId, pane.id, setActivePane]);
 
   // Handle tab selection
   const handleTabSelect = useCallback(
     (tabId: string) => {
-      setActiveTab(pane.id, tabId);
+      setActiveTab(pane.id, tabId, environmentId);
     },
-    [pane.id, setActiveTab]
+    [environmentId, pane.id, setActiveTab]
   );
 
   // Check if this pane is focused (active in the layout)

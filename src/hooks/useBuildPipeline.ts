@@ -188,7 +188,7 @@ export function useBuildPipeline() {
         if (envState) {
           const result = findBuildTabInTree(envState.root, task.id);
           if (result) {
-            paneState.setActiveTab(result.paneId, result.tabId);
+            paneState.setActiveTab(result.paneId, result.tabId, task.environmentId);
             return;
           }
         }

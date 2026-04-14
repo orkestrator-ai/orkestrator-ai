@@ -133,13 +133,13 @@ interface PaneLayoutState {
 
   // Actions
   setActiveEnvironment: (environmentId: string) => void;
-  initialize: (containerId: string | null) => void;
-  reset: () => void;
+  initialize: (containerId: string | null, environmentId?: string) => void;
+  reset: (environmentId?: string) => void;
 
   // Tab management
   addTab: (paneId: string, tab: TabInfo, environmentId?: string) => void;
   removeTab: (paneId: string, tabId: string) => void;
-  setActiveTab: (paneId: string, tabId: string) => void;
+  setActiveTab: (paneId: string, tabId: string, environmentId?: string) => void;
   moveTab: (fromPaneId: string, toPaneId: string, tabId: string, toIndex?: number) => void;
   reorderTabs: (paneId: string, fromIndex: number, toIndex: number) => void;
   clearTabInitialPrompt: (tabId: string, environmentId?: string) => void;
@@ -148,18 +148,18 @@ interface PaneLayoutState {
   splitPane: (paneId: string, direction: "horizontal" | "vertical", tabId: string) => void;
   splitPaneAtEdge: (targetPaneId: string, edge: EdgeDirection, tabId: string, fromPaneId: string) => void;
   closePane: (paneId: string) => void;
-  setActivePane: (paneId: string) => void;
+  setActivePane: (paneId: string, environmentId?: string) => void;
   updateSizes: (splitId: string, sizes: [number, number]) => void;
 
   // Getters for current environment state
-  getRoot: () => PaneNode;
-  getActivePaneId: () => string;
-  getContainerId: () => string | null;
-  getPane: (paneId: string) => PaneLeaf | null;
-  getActivePane: () => PaneLeaf | null;
-  getAllTabs: () => TabInfo[];
-  getOpenFilePaths: () => string[];
-  findPaneWithTab: (tabId: string) => PaneLeaf | null;
+  getRoot: (environmentId?: string) => PaneNode;
+  getActivePaneId: (environmentId?: string) => string;
+  getContainerId: (environmentId?: string) => string | null;
+  getPane: (paneId: string, environmentId?: string) => PaneLeaf | null;
+  getActivePane: (environmentId?: string) => PaneLeaf | null;
+  getAllTabs: (environmentId?: string) => TabInfo[];
+  getOpenFilePaths: (environmentId?: string) => string[];
+  findPaneWithTab: (tabId: string, environmentId?: string) => PaneLeaf | null;
 }
 
 // Create initial single-pane layout
@@ -173,15 +173,19 @@ function createInitialLayout(): PaneLeaf {
 }
 
 // Helper to get current environment state or default
-function getCurrentEnvState(state: PaneLayoutState): EnvironmentPaneState {
-  if (!state.activeEnvironmentId) {
+function getEnvironmentPaneState(
+  state: PaneLayoutState,
+  environmentId?: string | null,
+): EnvironmentPaneState {
+  const envId = environmentId ?? state.activeEnvironmentId;
+  if (!envId) {
     return {
       root: createInitialLayout(),
       activePaneId: "default",
       containerId: null,
     };
   }
-  return state.environments.get(state.activeEnvironmentId) ?? {
+  return state.environments.get(envId) ?? {
     root: createInitialLayout(),
     activePaneId: "default",
     containerId: null,
@@ -193,9 +197,9 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
   activeEnvironmentId: null,
 
   // Getter functions for current environment state
-  getRoot: () => getCurrentEnvState(get()).root,
-  getActivePaneId: () => getCurrentEnvState(get()).activePaneId,
-  getContainerId: () => getCurrentEnvState(get()).containerId,
+  getRoot: (environmentId) => getEnvironmentPaneState(get(), environmentId).root,
+  getActivePaneId: (environmentId) => getEnvironmentPaneState(get(), environmentId).activePaneId,
+  getContainerId: (environmentId) => getEnvironmentPaneState(get(), environmentId).containerId,
 
   setActiveEnvironment: (environmentId: string) => {
     const state = get();
@@ -217,9 +221,9 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     }
   },
 
-  initialize: (containerId) => {
+  initialize: (containerId, environmentId) => {
     const state = get();
-    const envId = state.activeEnvironmentId;
+    const envId = environmentId ?? state.activeEnvironmentId;
     if (!envId) {
       console.warn("[PaneLayout] initialize called without active environment");
       return;
@@ -236,9 +240,9 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     set({ environments: newEnvs });
   },
 
-  reset: () => {
+  reset: (environmentId) => {
     const state = get();
-    const envId = state.activeEnvironmentId;
+    const envId = environmentId ?? state.activeEnvironmentId;
     if (!envId) return;
 
     const envState = state.environments.get(envId);
@@ -387,9 +391,9 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     set({ environments: newEnvs });
   },
 
-  setActiveTab: (paneId, tabId) => {
+  setActiveTab: (paneId, tabId, environmentId) => {
     const state = get();
-    const envId = state.activeEnvironmentId;
+    const envId = environmentId ?? state.activeEnvironmentId;
     if (!envId) return;
 
     const envState = state.environments.get(envId);
@@ -786,9 +790,9 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     set({ environments: newEnvs });
   },
 
-  setActivePane: (paneId) => {
+  setActivePane: (paneId, environmentId) => {
     const state = get();
-    const envId = state.activeEnvironmentId;
+    const envId = environmentId ?? state.activeEnvironmentId;
     if (!envId) return;
 
     const envState = state.environments.get(envId);
@@ -824,35 +828,35 @@ export const usePaneLayoutStore = create<PaneLayoutState>()((set, get) => ({
     set({ environments: newEnvs });
   },
 
-  getPane: (paneId) => {
+  getPane: (paneId, environmentId) => {
     const state = get();
-    const envState = getCurrentEnvState(state);
+    const envState = getEnvironmentPaneState(state, environmentId);
     return findLeaf(envState.root, paneId);
   },
 
-  getActivePane: () => {
+  getActivePane: (environmentId) => {
     const state = get();
-    const envState = getCurrentEnvState(state);
+    const envState = getEnvironmentPaneState(state, environmentId);
     return findLeaf(envState.root, envState.activePaneId);
   },
 
-  getAllTabs: () => {
+  getAllTabs: (environmentId) => {
     const state = get();
-    const envState = getCurrentEnvState(state);
+    const envState = getEnvironmentPaneState(state, environmentId);
     const leaves = getAllLeaves(envState.root);
     return leaves.flatMap((leaf) => leaf.tabs);
   },
 
-  getOpenFilePaths: () => {
-    const tabs = get().getAllTabs();
+  getOpenFilePaths: (environmentId) => {
+    const tabs = get().getAllTabs(environmentId);
     return tabs
       .filter((t) => t.type === "file" && t.fileData?.filePath)
       .map((t) => t.fileData!.filePath);
   },
 
-  findPaneWithTab: (tabId: string) => {
+  findPaneWithTab: (tabId: string, environmentId) => {
     const state = get();
-    const envState = getCurrentEnvState(state);
+    const envState = getEnvironmentPaneState(state, environmentId);
     return findPaneWithTab(envState.root, tabId);
   },
 }));
