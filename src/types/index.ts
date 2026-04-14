@@ -155,6 +155,8 @@ export type OpenCodeMode = "terminal" | "native";
 
 /** Claude mode - terminal CLI or native chat interface */
 export type ClaudeMode = "terminal" | "native";
+/** Agent style - terminal CLI or native chat interface (used for project-level override) */
+export type AgentStyle = "terminal" | "native";
 /** Codex reasoning effort preference */
 export type CodexReasoningEffortPreference =
   | "minimal"
@@ -216,6 +218,10 @@ export interface RepositoryConfig {
   /** Entry port inside the container (e.g. 3000 for a web server).
    * New containers will automatically map this to an available host port. */
   entryPort?: number;
+  /** Project-level default agent override (undefined = use app default) */
+  defaultAgent?: DefaultAgent;
+  /** Project-level agent style override (undefined = use app default) */
+  agentStyle?: AgentStyle;
 }
 
 export interface AppConfig {
