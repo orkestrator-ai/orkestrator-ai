@@ -202,4 +202,71 @@ describe("configStore", () => {
     useConfigStore.getState().setError(null);
     expect(useConfigStore.getState().error).toBeNull();
   });
+
+  test("setRepositoryConfig stores project-level agent override", () => {
+    const repoConfig: RepositoryConfig = {
+      defaultBranch: "main",
+      prBaseBranch: "main",
+      defaultAgent: "opencode",
+      agentStyle: "native",
+    };
+
+    useConfigStore.getState().setRepositoryConfig("repo-1", repoConfig);
+
+    const state = useConfigStore.getState();
+    expect(state.config.repositories["repo-1"]?.defaultAgent).toBe("opencode");
+    expect(state.config.repositories["repo-1"]?.agentStyle).toBe("native");
+  });
+
+  test("setRepositoryConfig stores config without agent overrides", () => {
+    const repoConfig: RepositoryConfig = {
+      defaultBranch: "main",
+      prBaseBranch: "main",
+    };
+
+    useConfigStore.getState().setRepositoryConfig("repo-1", repoConfig);
+
+    const state = useConfigStore.getState();
+    expect(state.config.repositories["repo-1"]?.defaultAgent).toBeUndefined();
+    expect(state.config.repositories["repo-1"]?.agentStyle).toBeUndefined();
+  });
+
+  test("setRepositoryConfig can update agent override to a different value", () => {
+    useConfigStore.getState().setRepositoryConfig("repo-1", {
+      defaultBranch: "main",
+      prBaseBranch: "main",
+      defaultAgent: "claude",
+      agentStyle: "terminal",
+    });
+
+    useConfigStore.getState().setRepositoryConfig("repo-1", {
+      defaultBranch: "main",
+      prBaseBranch: "main",
+      defaultAgent: "codex",
+      agentStyle: "native",
+    });
+
+    const state = useConfigStore.getState();
+    expect(state.config.repositories["repo-1"]?.defaultAgent).toBe("codex");
+    expect(state.config.repositories["repo-1"]?.agentStyle).toBe("native");
+  });
+
+  test("setRepositoryConfig can clear agent override by omitting fields", () => {
+    useConfigStore.getState().setRepositoryConfig("repo-1", {
+      defaultBranch: "main",
+      prBaseBranch: "main",
+      defaultAgent: "opencode",
+      agentStyle: "native",
+    });
+
+    // Update without agent fields (clearing the override)
+    useConfigStore.getState().setRepositoryConfig("repo-1", {
+      defaultBranch: "main",
+      prBaseBranch: "main",
+    });
+
+    const state = useConfigStore.getState();
+    expect(state.config.repositories["repo-1"]?.defaultAgent).toBeUndefined();
+    expect(state.config.repositories["repo-1"]?.agentStyle).toBeUndefined();
+  });
 });

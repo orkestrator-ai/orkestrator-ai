@@ -43,6 +43,9 @@ const FALLBACK_CLAUDE_MODELS: ClaudeModel[] = [
   { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high"] },
 ];
 
+/** Sentinel value representing "use the app-level default" for project overrides */
+const APP_DEFAULT = "__app_default__";
+
 const CLAUDE_EFFORT_LEVELS: { value: ClaudeEffortLevel; label: string }[] = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
@@ -97,7 +100,6 @@ export function RepositorySettings({
   const [entryPort, setEntryPort] = useState<string>(
     initialConfig.entryPort != null ? String(initialConfig.entryPort) : ""
   );
-  const APP_DEFAULT = "__app_default__";
   const [projectDefaultAgent, setProjectDefaultAgent] = useState<string>(initialConfig.defaultAgent ?? APP_DEFAULT);
   const [projectAgentStyle, setProjectAgentStyle] = useState<string>(initialConfig.agentStyle ?? APP_DEFAULT);
   const [isSaving, setIsSaving] = useState(false);
@@ -503,7 +505,7 @@ export function RepositorySettings({
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="projectDefaultAgent">Default Agent</Label>
-                <Select value={projectDefaultAgent} onValueChange={setProjectDefaultAgent} disabled={isSaving}>
+                <Select value={projectDefaultAgent} onValueChange={(value) => { setProjectDefaultAgent(value); setDefaultModel(""); setDefaultEffort(""); }} disabled={isSaving}>
                   <SelectTrigger id="projectDefaultAgent"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={APP_DEFAULT}>Use App Default</SelectItem>

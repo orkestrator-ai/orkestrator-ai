@@ -41,6 +41,20 @@ import { useConfigStore } from "@/stores";
 // Stable empty array reference to prevent infinite re-renders when no default port mappings are provided
 const EMPTY_PORT_MAPPINGS: PortMapping[] = [];
 
+/**
+ * Resolves the effective agent defaults by applying project-level overrides
+ * over app-level settings, with final fallbacks.
+ */
+export function resolveAgentDefaults(
+  globalConfig: { defaultAgent?: string; claudeMode?: string; opencodeMode?: string },
+  repoConfig?: { defaultAgent?: string; agentStyle?: string },
+) {
+  const defaultAgent = repoConfig?.defaultAgent || globalConfig.defaultAgent || "claude";
+  const claudeMode = repoConfig?.agentStyle || globalConfig.claudeMode || "terminal";
+  const opencodeMode = repoConfig?.agentStyle || globalConfig.opencodeMode || "terminal";
+  return { defaultAgent, claudeMode, opencodeMode } as const;
+}
+
 const UNSELECTED_CARD_CLASSES = "border-transparent bg-zinc-900 hover:border-zinc-600";
 
 export interface ClaudeOptions {
@@ -81,9 +95,10 @@ export function CreateEnvironmentDialog({
   const repoConfig = projectId ? config.repositories[projectId] : undefined;
 
   // Resolve effective defaults: project-level overrides > app-level
-  const configDefaultAgent = repoConfig?.defaultAgent || config.global.defaultAgent || "claude";
-  const configClaudeMode: ClaudeMode = repoConfig?.agentStyle || config.global.claudeMode || "terminal";
-  const configOpencodeMode: OpenCodeMode = repoConfig?.agentStyle || config.global.opencodeMode || "terminal";
+  const resolved = resolveAgentDefaults(config.global, repoConfig);
+  const configDefaultAgent = resolved.defaultAgent as AgentType;
+  const configClaudeMode = resolved.claudeMode as ClaudeMode;
+  const configOpencodeMode = resolved.opencodeMode as OpenCodeMode;
 
   const [environmentType, setEnvironmentType] = useState<EnvironmentType>("containerized");
   const [environmentName, setEnvironmentName] = useState("");

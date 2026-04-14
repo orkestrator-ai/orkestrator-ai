@@ -1051,6 +1051,8 @@ mod tests {
         assert_eq!(config.pr_base_branch, "main");
         assert!(config.default_port_mappings.is_none());
         assert!(config.files_to_copy.is_none());
+        assert!(config.default_agent.is_none());
+        assert!(config.agent_style.is_none());
     }
 
     #[test]
@@ -1245,5 +1247,55 @@ mod tests {
             Environment::with_name("project-2".to_string(), "container-env".to_string());
         assert!(!container_env.is_local());
         assert!(container_env.is_containerized());
+    }
+
+    #[test]
+    fn test_agent_style_serialization_round_trip() {
+        let config = RepositoryConfig {
+            default_branch: "main".to_string(),
+            pr_base_branch: "main".to_string(),
+            default_port_mappings: None,
+            files_to_copy: None,
+            default_model: None,
+            default_effort: None,
+            entry_port: None,
+            default_agent: Some(DefaultAgent::Opencode),
+            agent_style: Some(AgentStyle::Native),
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"defaultAgent\":\"opencode\""));
+        assert!(json.contains("\"agentStyle\":\"native\""));
+
+        let deserialized: RepositoryConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.default_agent, Some(DefaultAgent::Opencode));
+        assert_eq!(deserialized.agent_style, Some(AgentStyle::Native));
+    }
+
+    #[test]
+    fn test_agent_style_omitted_when_none() {
+        let config = RepositoryConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("defaultAgent"));
+        assert!(!json.contains("agentStyle"));
+
+        // Deserializing without the fields should yield None
+        let deserialized: RepositoryConfig = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.default_agent.is_none());
+        assert!(deserialized.agent_style.is_none());
+    }
+
+    #[test]
+    fn test_agent_style_all_variants() {
+        // Verify all AgentStyle variants serialize correctly
+        for (style, expected) in [(AgentStyle::Terminal, "terminal"), (AgentStyle::Native, "native")] {
+            let json = serde_json::to_value(style).unwrap();
+            assert_eq!(json, expected);
+        }
+        // Verify all DefaultAgent variants in RepositoryConfig context
+        for (agent, expected) in [(DefaultAgent::Claude, "claude"), (DefaultAgent::Opencode, "opencode"), (DefaultAgent::Codex, "codex")] {
+            let json = serde_json::to_value(agent).unwrap();
+            assert_eq!(json, expected);
+        }
     }
 }
