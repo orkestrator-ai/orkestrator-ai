@@ -22,7 +22,7 @@ import { CODEX_MODELS } from "@/lib/codex-client";
 import { Loader2, Network, Plus, Trash2, FolderOpen, ExternalLink, FileText, Bot, Settings2, GitBranch } from "lucide-react";
 import { FullscreenSettingsLayout, type SettingsMenuItem } from "./FullscreenSettingsLayout";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { Project, RepositoryConfig, PortMapping, PortProtocol } from "@/types";
+import type { Project, RepositoryConfig, PortMapping, PortProtocol, DefaultAgent, AgentStyle } from "@/types";
 
 interface RepositorySettingsProps {
   project: Project;
@@ -68,7 +68,7 @@ export function RepositorySettings({
   onUpdateProject,
 }: RepositorySettingsProps) {
   const { getRepositoryConfig, setRepositoryConfig, setConfig, config } = useConfigStore();
-  const defaultAgent = config.global.defaultAgent || "claude";
+  const globalDefaultAgent = config.global.defaultAgent || "claude";
 
   // Pull cached models from stores
   const claudeModels = useClaudeStore((s) => s.models);
@@ -97,6 +97,9 @@ export function RepositorySettings({
   const [entryPort, setEntryPort] = useState<string>(
     initialConfig.entryPort != null ? String(initialConfig.entryPort) : ""
   );
+  const APP_DEFAULT = "__app_default__";
+  const [projectDefaultAgent, setProjectDefaultAgent] = useState<string>(initialConfig.defaultAgent ?? APP_DEFAULT);
+  const [projectAgentStyle, setProjectAgentStyle] = useState<string>(initialConfig.agentStyle ?? APP_DEFAULT);
   const [isSaving, setIsSaving] = useState(false);
 
   // Reset form when project changes or dialog opens
@@ -116,6 +119,8 @@ export function RepositorySettings({
       setDefaultModel(config.defaultModel ?? "");
       setDefaultEffort(config.defaultEffort ?? "");
       setEntryPort(config.entryPort != null ? String(config.entryPort) : "");
+      setProjectDefaultAgent(config.defaultAgent ?? APP_DEFAULT);
+      setProjectAgentStyle(config.agentStyle ?? APP_DEFAULT);
     }
   }, [open, project.id, project.name, project.localPath, getRepositoryConfig]);
 
@@ -321,6 +326,8 @@ export function RepositorySettings({
         defaultModel: defaultModel || undefined,
         defaultEffort: defaultEffort || undefined,
         entryPort: parsedEntryPort && parsedEntryPort >= 1 && parsedEntryPort <= 65535 ? parsedEntryPort : undefined,
+        defaultAgent: projectDefaultAgent !== APP_DEFAULT ? projectDefaultAgent as DefaultAgent : undefined,
+        agentStyle: projectAgentStyle !== APP_DEFAULT ? projectAgentStyle as AgentStyle : undefined,
       };
 
       // Update backend
@@ -356,6 +363,8 @@ export function RepositorySettings({
     setDefaultModel(config.defaultModel ?? "");
     setDefaultEffort(config.defaultEffort ?? "");
     setEntryPort(config.entryPort != null ? String(config.entryPort) : "");
+    setProjectDefaultAgent(config.defaultAgent ?? APP_DEFAULT);
+    setProjectAgentStyle(config.agentStyle ?? APP_DEFAULT);
     onOpenChange(false);
   };
 
@@ -363,9 +372,12 @@ export function RepositorySettings({
   const portValidationResult = useMemo(() => validatePortMappings(), [validatePortMappings]);
   const filesValidationResult = useMemo(() => validateFilesToCopy(), [validateFilesToCopy]);
 
-  // Compute available models and effort levels based on the global default agent
+  // The effective agent for model/effort selection: project override > global default
+  const effectiveAgent = projectDefaultAgent !== APP_DEFAULT ? projectDefaultAgent as DefaultAgent : globalDefaultAgent;
+
+  // Compute available models and effort levels based on the effective agent
   const availableModels = useMemo((): { id: string; name: string }[] => {
-    switch (defaultAgent) {
+    switch (effectiveAgent) {
       case "claude": {
         const models = claudeModels.length > 0 ? claudeModels : FALLBACK_CLAUDE_MODELS;
         return models.map((m) => ({ id: m.id, name: m.name }));
@@ -391,10 +403,10 @@ export function RepositorySettings({
       default:
         return [];
     }
-  }, [defaultAgent, claudeModels, openCodeModelsMap, codexModels]);
+  }, [effectiveAgent, claudeModels, openCodeModelsMap, codexModels]);
 
   const availableEffortLevels = useMemo((): { value: string; label: string }[] => {
-    switch (defaultAgent) {
+    switch (effectiveAgent) {
       case "claude": {
         // If we have a selected model with specific effort levels, use those
         const allModels = claudeModels.length > 0 ? claudeModels : FALLBACK_CLAUDE_MODELS;
@@ -421,9 +433,9 @@ export function RepositorySettings({
       default:
         return [];
     }
-  }, [defaultAgent, defaultModel, claudeModels, openCodeModelsMap]);
+  }, [effectiveAgent, defaultModel, claudeModels, openCodeModelsMap]);
 
-  const agentLabel = defaultAgent === "claude" ? "Claude" : defaultAgent === "opencode" ? "OpenCode" : "Codex";
+  const agentLabel = effectiveAgent === "claude" ? "Claude" : effectiveAgent === "opencode" ? "OpenCode" : "Codex";
 
   const hasErrors = projectNameError !== null || !portValidationResult.valid || !filesValidationResult.valid;
 
@@ -486,25 +498,52 @@ export function RepositorySettings({
                 <Label className="text-sm font-medium">Default Agent Settings</Label>
                 <span className="text-xs text-muted-foreground bg-zinc-800 px-1.5 py-0.5 rounded">{agentLabel}</span>
               </div>
-              <p className="text-xs text-muted-foreground">Default model and effort level for new sessions. Agent type is configured in global settings.</p>
+              <p className="text-xs text-muted-foreground">Override the app-level default agent and style for this project. Leave as "Use App Default" to inherit from global settings.</p>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="defaultModel">Default Model</Label>
-              {availableModels.length > 0 ? (
-                <Select value={defaultModel} onValueChange={setDefaultModel} disabled={isSaving}>
-                  <SelectTrigger id="defaultModel"><SelectValue placeholder="Use agent default" /></SelectTrigger>
-                  <SelectContent>{availableModels.map((model) => (<SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>))}</SelectContent>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="projectDefaultAgent">Default Agent</Label>
+                <Select value={projectDefaultAgent} onValueChange={setProjectDefaultAgent} disabled={isSaving}>
+                  <SelectTrigger id="projectDefaultAgent"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={APP_DEFAULT}>Use App Default</SelectItem>
+                    <SelectItem value="claude">Claude</SelectItem>
+                    <SelectItem value="opencode">OpenCode</SelectItem>
+                    <SelectItem value="codex">Codex</SelectItem>
+                  </SelectContent>
                 </Select>
-              ) : (<p className="text-xs text-muted-foreground italic">Start an environment to load available models</p>)}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="projectAgentStyle">Agent Style</Label>
+                <Select value={projectAgentStyle} onValueChange={setProjectAgentStyle} disabled={isSaving}>
+                  <SelectTrigger id="projectAgentStyle"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={APP_DEFAULT}>Use App Default</SelectItem>
+                    <SelectItem value="terminal">Terminal</SelectItem>
+                    <SelectItem value="native">Native</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="defaultEffort">Default Effort Level</Label>
-              {availableEffortLevels.length > 0 ? (
-                <Select value={defaultEffort} onValueChange={setDefaultEffort} disabled={isSaving}>
-                  <SelectTrigger id="defaultEffort"><SelectValue placeholder="Use agent default" /></SelectTrigger>
-                  <SelectContent>{availableEffortLevels.map((level) => (<SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>))}</SelectContent>
-                </Select>
-              ) : (<p className="text-xs text-muted-foreground italic">No effort levels available for this agent</p>)}
+            <div className="border-t border-border pt-4 space-y-6">
+              <div className="grid gap-2">
+                <Label htmlFor="defaultModel">Default Model</Label>
+                {availableModels.length > 0 ? (
+                  <Select value={defaultModel} onValueChange={setDefaultModel} disabled={isSaving}>
+                    <SelectTrigger id="defaultModel"><SelectValue placeholder="Use agent default" /></SelectTrigger>
+                    <SelectContent>{availableModels.map((model) => (<SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>))}</SelectContent>
+                  </Select>
+                ) : (<p className="text-xs text-muted-foreground italic">Start an environment to load available models</p>)}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="defaultEffort">Default Effort Level</Label>
+                {availableEffortLevels.length > 0 ? (
+                  <Select value={defaultEffort} onValueChange={setDefaultEffort} disabled={isSaving}>
+                    <SelectTrigger id="defaultEffort"><SelectValue placeholder="Use agent default" /></SelectTrigger>
+                    <SelectContent>{availableEffortLevels.map((level) => (<SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>))}</SelectContent>
+                  </Select>
+                ) : (<p className="text-xs text-muted-foreground italic">No effort levels available for this agent</p>)}
+              </div>
             </div>
           </div>
         );

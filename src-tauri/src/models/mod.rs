@@ -719,6 +719,16 @@ pub enum ClaudeMode {
     Native,
 }
 
+/// Agent style - terminal CLI or native chat interface (used for project-level override)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentStyle {
+    /// Terminal mode - launches agent CLI in terminal
+    Terminal,
+    /// Native mode - uses agent SDK with chat interface
+    Native,
+}
+
 impl PreferredEditor {
     /// Get the CLI command for this editor
     pub fn cli_command(&self) -> &'static str {
@@ -881,6 +891,12 @@ pub struct RepositoryConfig {
     /// New containers will automatically map this to an available host port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_port: Option<u16>,
+    /// Project-level default agent override (None = use app default)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_agent: Option<DefaultAgent>,
+    /// Project-level agent style override (None = use app default)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_style: Option<AgentStyle>,
 }
 
 impl Default for RepositoryConfig {
@@ -893,6 +909,8 @@ impl Default for RepositoryConfig {
             default_model: None,
             default_effort: None,
             entry_port: None,
+            default_agent: None,
+            agent_style: None,
         }
     }
 }
@@ -1080,6 +1098,8 @@ mod tests {
                 default_model: None,
                 default_effort: None,
                 entry_port: None,
+                default_agent: None,
+                agent_style: None,
             },
         );
 
