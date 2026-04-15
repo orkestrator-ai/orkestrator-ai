@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 // Mock modules that require a real Tauri runtime or have side effects.
 // IMPORTANT: Do NOT mock @/stores (barrel) or @/lib/tauri here — doing so
@@ -111,6 +111,7 @@ mock.module("@/components/terminal/ComposeBar", () => ({
 import { useTerminalSessionStore } from "@/stores/terminalSessionStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
+import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 
 const { PersistentTerminal } = await import("./PersistentTerminal");
 
@@ -247,6 +248,32 @@ describe("PersistentTerminal", () => {
       setupCommandsResolved: new Set<string>(),
       setupScriptsRunning: new Set<string>(),
     });
+
+    usePaneLayoutStore.setState({
+      environments: new Map([
+        ["env-1", {
+          root: {
+            kind: "leaf",
+            id: "pane-1",
+            tabs: [{ id: "tab-1", type: "claude" }],
+            activeTabId: "tab-1",
+          },
+          activePaneId: "stale-pane",
+          containerId: "container-1",
+        }],
+        ["env-2", {
+          root: {
+            kind: "leaf",
+            id: "pane-2",
+            tabs: [{ id: "tab-2", type: "plain" }],
+            activeTabId: "tab-2",
+          },
+          activePaneId: "pane-2",
+          containerId: "container-2",
+        }],
+      ]),
+      activeEnvironmentId: "env-2",
+    });
   });
 
   afterEach(() => {
@@ -317,5 +344,27 @@ describe("PersistentTerminal", () => {
       expect(resizeMock).toHaveBeenCalledWith(80, 25);
       expect(resizeMock).toHaveBeenCalledWith(80, 24);
     });
+  });
+
+  it("clicking the terminal updates the active pane for its own environment", async () => {
+    const { container } = render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    fireEvent.click(container.querySelector("div[style]") as HTMLElement);
+
+    expect(usePaneLayoutStore.getState().environments.get("env-1")?.activePaneId).toBe("pane-1");
+    expect(usePaneLayoutStore.getState().activeEnvironmentId).toBe("env-2");
   });
 });
