@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import {
   Select,
   SelectContent,
@@ -15,6 +16,7 @@ import { useClaudeStore } from "@/stores/claudeStore";
 import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { useCodexStore } from "@/stores/codexStore";
 import * as tauri from "@/lib/tauri";
+import { cn } from "@/lib/utils";
 import type { ClaudeModel, ClaudeEffortLevel } from "@/lib/claude-client";
 import type { OpenCodeModel } from "@/lib/opencode-client";
 import type { CodexReasoningEffort } from "@/lib/codex-client";
@@ -438,6 +440,28 @@ export function RepositorySettings({
   }, [effectiveAgent, defaultModel, claudeModels, openCodeModelsMap]);
 
   const agentLabel = effectiveAgent === "claude" ? "Claude" : effectiveAgent === "opencode" ? "OpenCode" : "Codex";
+  const projectAgentOptions = [
+    {
+      value: APP_DEFAULT,
+      label: `Use App Default (${agentLabel})`,
+      icon: <Bot className="h-4 w-4" />,
+    },
+    {
+      value: "claude",
+      label: "Claude",
+      icon: <ClaudeIcon className="h-4 w-4" />,
+    },
+    {
+      value: "opencode",
+      label: "OpenCode",
+      icon: <OpenCodeIcon className="h-4 w-4 shrink-0" />,
+    },
+    {
+      value: "codex",
+      label: "Codex",
+      icon: <CodexIcon className="h-4 w-4 text-emerald-400" />,
+    },
+  ] as const;
 
   const hasErrors = projectNameError !== null || !portValidationResult.valid || !filesValidationResult.valid;
 
@@ -502,20 +526,37 @@ export function RepositorySettings({
               </div>
               <p className="text-xs text-muted-foreground">Override the app-level default agent and style for this project. Leave as "Use App Default" to inherit from global settings.</p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-6">
               <div className="grid gap-2">
-                <Label htmlFor="projectDefaultAgent">Default Agent</Label>
-                <Select value={projectDefaultAgent} onValueChange={(value) => { setProjectDefaultAgent(value); setDefaultModel(""); setDefaultEffort(""); }} disabled={isSaving}>
-                  <SelectTrigger id="projectDefaultAgent"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={APP_DEFAULT}>Use App Default</SelectItem>
-                    <SelectItem value="claude">Claude</SelectItem>
-                    <SelectItem value="opencode">OpenCode</SelectItem>
-                    <SelectItem value="codex">Codex</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Default Agent</Label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {projectAgentOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setProjectDefaultAgent(option.value);
+                        setDefaultModel("");
+                        setDefaultEffort("");
+                      }}
+                      disabled={isSaving}
+                      className={cn(
+                        "p-3 rounded-lg border-2 text-left transition-colors",
+                        projectDefaultAgent === option.value
+                          ? "border-primary bg-primary/5"
+                          : "border-transparent bg-zinc-900 hover:border-zinc-600",
+                        isSaving && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        {option.icon}
+                        <span>{option.label}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="grid gap-2">
+              <div className="grid gap-2 max-w-sm">
                 <Label htmlFor="projectAgentStyle">Agent Style</Label>
                 <Select value={projectAgentStyle} onValueChange={setProjectAgentStyle} disabled={isSaving}>
                   <SelectTrigger id="projectAgentStyle"><SelectValue /></SelectTrigger>
