@@ -2,16 +2,52 @@ import {
   ERROR_MESSAGE_PREFIX,
   SYSTEM_MESSAGE_PREFIX,
 } from "@/lib/opencode-client";
-import type { NativeMessage } from "./native-message-types";
+import type { NativeMessage, NativeMessagePart } from "./native-message-types";
 
 export const OPTIMISTIC_MESSAGE_PREFIX = "optimistic-";
+
+interface OptimisticNativeAttachment {
+  path: string;
+  previewUrl?: string;
+  name: string;
+}
 
 function normalizeMessageContent(content: string): string {
   return content.replace(/\r\n/g, "\n").trim();
 }
 
-function getMessageFingerprint(message: Pick<NativeMessage, "role" | "content">): string {
-  return `${message.role}:${normalizeMessageContent(message.content)}`;
+function toOptimisticFileUrl(path: string, previewUrl?: string): string | undefined {
+  if (previewUrl) {
+    return previewUrl;
+  }
+
+  if (!path.startsWith("/")) {
+    return undefined;
+  }
+
+  return `file://${encodeURI(path)}`;
+}
+
+function getPartFingerprint(part: NativeMessagePart): string {
+  return JSON.stringify({
+    type: part.type,
+    content: normalizeMessageContent(part.content),
+    fileUrl: part.fileUrl,
+    toolName: part.toolName,
+    toolTitle: part.toolTitle,
+    toolState: part.toolState,
+    toolOutput: part.toolOutput,
+    toolError: part.toolError,
+    toolArgs: part.toolArgs,
+  });
+}
+
+function getMessageFingerprint(message: Pick<NativeMessage, "role" | "content" | "parts">): string {
+  return JSON.stringify({
+    role: message.role,
+    content: normalizeMessageContent(message.content),
+    parts: message.parts.map(getPartFingerprint),
+  });
 }
 
 function countFingerprints(messages: NativeMessage[]): Map<string, number> {
@@ -58,6 +94,30 @@ function mergeMessagesByTimestamp(
 
 export function isOptimisticNativeMessage(message: Pick<NativeMessage, "id">): boolean {
   return message.id.startsWith(OPTIMISTIC_MESSAGE_PREFIX);
+}
+
+export function createOptimisticNativeMessage(
+  messageId: string,
+  text: string,
+  attachments: OptimisticNativeAttachment[] = [],
+  createdAt: string = new Date().toISOString(),
+): NativeMessage {
+  const parts: NativeMessagePart[] = [
+    { type: "text", content: text },
+    ...attachments.map((attachment) => ({
+      type: "file" as const,
+      content: attachment.name || attachment.path,
+      fileUrl: toOptimisticFileUrl(attachment.path, attachment.previewUrl),
+    })),
+  ];
+
+  return {
+    id: messageId,
+    role: "user",
+    content: text,
+    parts,
+    createdAt,
+  };
 }
 
 export function isClientOnlyNativeMessage(message: Pick<NativeMessage, "id">): boolean {

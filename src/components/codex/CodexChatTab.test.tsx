@@ -55,13 +55,20 @@ mock.module("@/lib/codex-client", () => ({
 }));
 
 let composeText = "Rename the environment";
+let composeAttachments: Array<{
+  id: string;
+  type: "image";
+  path: string;
+  previewUrl?: string;
+  name: string;
+}> = [];
 
 mock.module("./CodexComposeBar", () => ({
   CodexComposeBar: ({
     onSend,
     disabled,
   }: {
-    onSend: (text: string, attachments: []) => Promise<void>;
+    onSend: (text: string, attachments: typeof composeAttachments) => Promise<void>;
     disabled?: boolean;
   }) => (
     <button
@@ -69,7 +76,7 @@ mock.module("./CodexComposeBar", () => ({
       data-testid="codex-send"
       disabled={disabled}
       onClick={() => {
-        void onSend(composeText, []);
+        void onSend(composeText, composeAttachments);
       }}
     >
       Send
@@ -237,6 +244,7 @@ describe("CodexChatTab", () => {
   beforeEach(() => {
     cleanup();
     composeText = "Rename the environment";
+    composeAttachments = [];
 
     mockRenameEnvironmentFromPrompt.mockClear();
     mockRenameEnvironmentFromPrompt.mockImplementation(async () => {});
@@ -463,6 +471,68 @@ describe("CodexChatTab", () => {
     await waitFor(() => {
       const messages = useCodexStore.getState().sessions.get(SESSION_KEY)?.messages ?? [];
       expect(messages.some((message) => message.role === "user" && message.content === composeText)).toBe(true);
+    });
+  });
+
+  test("removes the optimistic prompt when Codex fails to send it", async () => {
+    composeText = "This should not stick around";
+    mockSendPrompt.mockImplementation(async () => false);
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("codex-send"));
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      const session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.messages.some((message) => message.content === composeText)).toBe(false);
+      expect(session?.error).toBe("Failed to send prompt");
+    });
+  });
+
+  test("includes attachment parts in the optimistic prompt", async () => {
+    composeText = "Please inspect the screenshot";
+    composeAttachments = [
+      {
+        id: "attachment-1",
+        type: "image",
+        path: "/workspace/screenshot.png",
+        previewUrl: "data:image/png;base64,abc123",
+        name: "screenshot.png",
+      },
+    ];
+    mockGetSessionMessages.mockImplementation(async () => []);
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("codex-send"));
+
+    await waitFor(() => {
+      const messages = useCodexStore.getState().sessions.get(SESSION_KEY)?.messages ?? [];
+      const userMessage = messages.find((message) => message.role === "user");
+      expect(userMessage?.parts).toEqual([
+        { type: "text", content: composeText },
+        {
+          type: "file",
+          content: "screenshot.png",
+          fileUrl: "data:image/png;base64,abc123",
+        },
+      ]);
     });
   });
 });

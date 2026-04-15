@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { ERROR_MESSAGE_PREFIX, type OpenCodeMessage, type PermissionRequest } from "../lib/opencode-client";
 import { OPTIMISTIC_MESSAGE_PREFIX } from "../lib/chat/client-only-messages";
 import { type OpenCodeAttachment, useOpenCodeStore } from "./openCodeStore";
+import type { ContextUsageSnapshot } from "../lib/context-usage";
 
 function resetOpenCodeStore() {
   useOpenCodeStore.setState({
@@ -516,5 +517,213 @@ describe("openCodeStore pending permissions", () => {
     expect(useOpenCodeStore.getState().getPendingPermission("perm-a")).toBeUndefined();
     expect(useOpenCodeStore.getState().getPendingPermission("perm-b")).toBeUndefined();
     expect(useOpenCodeStore.getState().getPendingPermission("perm-c")).toBeDefined();
+  });
+});
+
+describe("openCodeStore selectors and session mutations", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("stores server status, client, model, variant, and session error state", () => {
+    const store = useOpenCodeStore.getState();
+    const client = { session: {} } as any;
+
+    store.setServerStatus("env-1", { running: true, hostPort: 4321 });
+    store.setClient("env-1", client);
+    store.setSelectedModel("env-1", "openai/gpt-5");
+    store.setSelectedVariant("env-1", "high");
+    store.setSession("env-env-1:tab-1", {
+      sessionId: "session-1",
+      messages: [],
+      isLoading: false,
+    });
+    store.setSessionLoading("env-env-1:tab-1", true);
+    store.setSessionError("env-env-1:tab-1", "send failed");
+
+    expect(store.getServerStatus("env-1")).toEqual({ running: true, hostPort: 4321 });
+    expect(store.getClient("env-1")).toBe(client);
+    expect(store.getSelectedModel("env-1")).toBe("openai/gpt-5");
+    expect(store.getSelectedVariant("env-1")).toBe("high");
+    expect(store.getSession("env-env-1:tab-1")).toMatchObject({
+      isLoading: true,
+      error: "send failed",
+    });
+
+    store.setClient("env-1", null);
+    store.setSelectedVariant("env-1", "");
+
+    expect(store.getClient("env-1")).toBeUndefined();
+    expect(store.getSelectedVariant("env-1")).toBeUndefined();
+  });
+
+  test("adds and removes messages from an existing session", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-1:tab-1";
+    const message: OpenCodeMessage = {
+      id: "msg-1",
+      role: "assistant",
+      content: "Hello",
+      parts: [{ type: "text", content: "Hello" }],
+      createdAt: "2026-04-15T10:00:00.000Z",
+    };
+
+    store.setSession(sessionKey, {
+      sessionId: "session-1",
+      messages: [],
+      isLoading: false,
+    });
+
+    store.addMessage(sessionKey, message);
+    expect(store.getSession(sessionKey)?.messages).toHaveLength(1);
+
+    store.removeMessage(sessionKey, message.id);
+    expect(store.getSession(sessionKey)?.messages).toHaveLength(0);
+  });
+});
+
+describe("openCodeStore attachments, drafts, and composing state", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("removes and clears attachments for a tab session", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-1:tab-1";
+
+    store.addAttachment(sessionKey, {
+      id: "att-1",
+      type: "image",
+      path: "/workspace/a.png",
+      name: "a.png",
+    });
+    store.addAttachment(sessionKey, {
+      id: "att-2",
+      type: "file",
+      path: "/workspace/b.txt",
+      name: "b.txt",
+    });
+
+    store.removeAttachment(sessionKey, "att-1");
+    expect(store.getAttachments(sessionKey).map((attachment) => attachment.id)).toEqual(["att-2"]);
+
+    store.clearAttachments(sessionKey);
+    expect(store.getAttachments(sessionKey)).toHaveLength(0);
+  });
+
+  test("stores draft mentions and composing state", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-1:tab-1";
+    const mentions = [{ path: "/workspace/file.ts", name: "file.ts" }] as any;
+
+    store.setDraftMentions(sessionKey, mentions);
+    store.setComposing("env-1", true);
+
+    expect(store.getDraftMentions(sessionKey)).toEqual(mentions);
+    expect(store.isComposingFor("env-1")).toBe(true);
+
+    store.setDraftMentions(sessionKey, []);
+    store.setComposing("env-1", false);
+
+    expect(store.getDraftMentions(sessionKey)).toEqual([]);
+    expect(store.isComposingFor("env-1")).toBe(false);
+  });
+
+  test("stores and clears context usage snapshots", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-1:tab-1";
+    const usage: ContextUsageSnapshot = {
+      usedTokens: 1200,
+      totalTokens: 8000,
+      percentUsed: 15,
+      modelId: "openai/gpt-5",
+    };
+
+    store.setContextUsage(sessionKey, usage);
+    expect(store.getContextUsage(sessionKey)).toEqual(usage);
+
+    store.setContextUsage(sessionKey, null);
+    expect(store.getContextUsage(sessionKey)).toBeUndefined();
+  });
+});
+
+describe("openCodeStore questions and event subscriptions", () => {
+  beforeEach(() => {
+    resetOpenCodeStore();
+  });
+
+  test("tracks pending questions per session", () => {
+    const store = useOpenCodeStore.getState();
+
+    store.addPendingQuestion({
+      id: "question-1",
+      sessionID: "session-1",
+      messageID: "msg-1",
+      question: {
+        header: "Confirm",
+        question: "Proceed?",
+        options: [{ label: "Yes" }],
+      },
+    } as any);
+
+    expect(store.getPendingQuestionsForSession("session-1")).toHaveLength(1);
+    expect(store.getPendingQuestion("question-1")?.id).toBe("question-1");
+
+    store.removePendingQuestion("question-1");
+    expect(store.getPendingQuestion("question-1")).toBeUndefined();
+  });
+
+  test("creates, updates, and closes event subscriptions", async () => {
+    const store = useOpenCodeStore.getState();
+    let closed = false;
+    const stream: AsyncIterable<any> = {
+      [Symbol.asyncIterator](): AsyncIterableIterator<any> {
+        return {
+          async next(): Promise<IteratorResult<any>> {
+            return { done: true as const, value: undefined };
+          },
+          async return(): Promise<IteratorResult<any>> {
+            closed = true;
+            return { done: true as const, value: undefined };
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        };
+      },
+    };
+
+    const subscription = store.getOrCreateEventSubscription("env-1");
+    expect(subscription?.isActive).toBe(true);
+    expect(store.hasActiveEventSubscription("env-1")).toBe(true);
+
+    store.setEventStream("env-1", stream);
+    expect(store.hasActiveEventSubscription("env-1")).toBe(true);
+
+    store.setEventStream("env-1", null);
+    expect(store.hasActiveEventSubscription("env-1")).toBe(false);
+
+    const replacement = store.getOrCreateEventSubscription("env-1");
+    expect(replacement).not.toBe(subscription);
+
+    store.setEventStream("env-1", stream);
+    store.closeEventSubscription("env-1");
+
+    expect(store.hasActiveEventSubscription("env-1")).toBe(false);
+    expect(closed).toBe(true);
+  });
+
+  test("clearQueue empties only the targeted session queue", () => {
+    const store = useOpenCodeStore.getState();
+    const queueA = "env-env-1:tab-1";
+    const queueB = "env-env-1:tab-2";
+
+    store.addToQueue(queueA, { id: "a", text: "First", attachments: [], mode: "build" });
+    store.addToQueue(queueB, { id: "b", text: "Second", attachments: [], mode: "build" });
+
+    store.clearQueue(queueA);
+
+    expect(store.getQueueLength(queueA)).toBe(0);
+    expect(store.getQueueLength(queueB)).toBe(1);
   });
 });

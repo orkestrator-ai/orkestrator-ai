@@ -7,7 +7,10 @@ import {
   History,
 } from "lucide-react";
 import { useVirtuosoScrollState, clearPersistedVirtuosoState, useElapsedTimer } from "@/hooks";
-import { OPTIMISTIC_MESSAGE_PREFIX } from "@/lib/chat/client-only-messages";
+import {
+  OPTIMISTIC_MESSAGE_PREFIX,
+  createOptimisticNativeMessage,
+} from "@/lib/chat/client-only-messages";
 import { formatElapsed } from "@/lib/format-elapsed";
 import { Button } from "@/components/ui/button";
 import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
@@ -1067,13 +1070,11 @@ export function OpenCodeChatTab({
       const selectedMode = options?.mode ?? getSelectedMode(sessionKey);
 
       // Add user message optimistically
-      const userMessage = {
-        id: `${OPTIMISTIC_MESSAGE_PREFIX}${crypto.randomUUID()}`,
-        role: "user" as const,
-        content: text,
-        parts: [{ type: "text" as const, content: text }],
-        createdAt: new Date().toISOString(),
-      };
+      const userMessage = createOptimisticNativeMessage(
+        `${OPTIMISTIC_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+        text,
+        attachments,
+      );
       addMessage(sessionKey, userMessage);
       setSessionLoading(sessionKey, true);
 
@@ -1119,6 +1120,7 @@ export function OpenCodeChatTab({
       if (!sendResult.success) {
         console.error("[OpenCodeChatTab] Failed to send prompt");
         const errorText = sendResult.error || "Failed to send prompt";
+        removeMessage(sessionKey, userMessage.id);
         addMessage(sessionKey, {
           id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
           role: "assistant" as const,

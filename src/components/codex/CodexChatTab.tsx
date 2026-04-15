@@ -5,7 +5,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useScrollLock } from "@/hooks";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useCodexStore, createCodexSessionKey, useConfigStore } from "@/stores";
-import { OPTIMISTIC_MESSAGE_PREFIX } from "@/lib/chat/client-only-messages";
+import {
+  OPTIMISTIC_MESSAGE_PREFIX,
+  createOptimisticNativeMessage,
+} from "@/lib/chat/client-only-messages";
 import {
   type CodexConversationMode,
   type CodexPromptAttachment,
@@ -242,13 +245,11 @@ export function CodexChatTab({
     async (text: string, attachments: CodexAttachment[]) => {
       if (!client || !session?.sessionId) return;
 
-      const userMessage = {
-        id: `${OPTIMISTIC_MESSAGE_PREFIX}${crypto.randomUUID()}`,
-        role: "user" as const,
-        content: text,
-        parts: [{ type: "text" as const, content: text }],
-        createdAt: new Date().toISOString(),
-      };
+      const userMessage = createOptimisticNativeMessage(
+        `${OPTIMISTIC_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+        text,
+        attachments,
+      );
       addMessage(sessionKey, userMessage);
 
       if (!session.messages.length) {
@@ -283,6 +284,7 @@ export function CodexChatTab({
         attachments: promptAttachments.length > 0 ? promptAttachments : undefined,
       });
       if (!sent) {
+        removeMessage(sessionKey, userMessage.id);
         setSessionLoading(sessionKey, false);
         setSessionError(sessionKey, "Failed to send prompt");
         return;
