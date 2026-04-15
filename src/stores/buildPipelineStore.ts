@@ -14,6 +14,7 @@ export type BuildPhase =
   | "fixing"
   | "creating-pr"
   | "resolving-conflicts"
+  | "paused"
   | "complete"
   | "failed";
 
@@ -69,6 +70,8 @@ interface BuildPipelineState {
   setVerificationResult: (pipelineId: string, result: "pass" | "fail", feedback: string) => void;
   incrementIteration: (pipelineId: string) => void;
   setPipelineError: (pipelineId: string, error: string) => void;
+  pausePipeline: (pipelineId: string) => void;
+  markSessionRunning: (pipelineId: string, sdkSessionId: string) => void;
 
   // Selectors
   getPipelineByTaskId: (taskId: string) => BuildPipeline | undefined;
@@ -193,6 +196,31 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
       if (!pipeline) return state;
       const newMap = new Map(state.pipelines);
       newMap.set(pipelineId, { ...pipeline, phase: "failed", error });
+      return { pipelines: newMap };
+    }),
+
+  pausePipeline: (pipelineId) =>
+    set((state) => {
+      const pipeline = state.pipelines.get(pipelineId);
+      if (!pipeline) return state;
+      const newMap = new Map(state.pipelines);
+      newMap.set(pipelineId, {
+        ...pipeline,
+        phase: "paused",
+        error: undefined,
+      });
+      return { pipelines: newMap };
+    }),
+
+  markSessionRunning: (pipelineId, sdkSessionId) =>
+    set((state) => {
+      const pipeline = state.pipelines.get(pipelineId);
+      if (!pipeline) return state;
+      const newMap = new Map(state.pipelines);
+      const sessions = pipeline.sessions.map((s) =>
+        s.sdkSessionId === sdkSessionId ? { ...s, status: "running" as const } : s
+      );
+      newMap.set(pipelineId, { ...pipeline, sessions });
       return { pipelines: newMap };
     }),
 

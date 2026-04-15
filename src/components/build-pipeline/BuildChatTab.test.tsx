@@ -472,6 +472,87 @@ describe("BuildChatTab", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Paused state UI
+  // -----------------------------------------------------------------------
+
+  describe("paused state", () => {
+    test("does not show setup-pending UI when pipeline is paused", () => {
+      seedPipeline("paused");
+      seedEnvironment({ isLocal: false, workspaceReady: false });
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      expect(screen.queryByText("Waiting for setup scripts to complete...")).toBeNull();
+    });
+
+    test("shows 'Review and continue' button when paused", async () => {
+      seedPipeline("paused");
+      seedEnvironment({ isLocal: false, workspaceReady: true });
+
+      // Pre-set client so the warm-path initialization succeeds
+      useClaudeStore.setState({
+        clients: new Map([[ENV_ID, { baseUrl: "http://127.0.0.1:9999" } as any]]),
+        serverStatus: new Map([[ENV_ID, { running: true, hostPort: 9999 }]]),
+      });
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Review and continue")).toBeTruthy();
+      });
+    });
+
+    test("shows jump-in compose bar when paused", async () => {
+      seedPipeline("paused");
+      seedEnvironment({ isLocal: false, workspaceReady: true });
+
+      useClaudeStore.setState({
+        clients: new Map([[ENV_ID, { baseUrl: "http://127.0.0.1:9999" } as any]]),
+        serverStatus: new Map([[ENV_ID, { running: true, hostPort: 9999 }]]),
+      });
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Send a message to the agent...")).toBeTruthy();
+      });
+    });
+
+    test("does not show stop button when paused", async () => {
+      seedPipeline("paused");
+      seedEnvironment({ isLocal: false, workspaceReady: true });
+
+      useClaudeStore.setState({
+        clients: new Map([[ENV_ID, { baseUrl: "http://127.0.0.1:9999" } as any]]),
+        serverStatus: new Map([[ENV_ID, { running: true, hostPort: 9999 }]]),
+      });
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Paused")).toBeTruthy();
+      });
+      expect(screen.queryByText("Stop")).toBeNull();
+    });
+
+    test("shows 'Paused' in the status bar when paused", async () => {
+      seedPipeline("paused");
+      seedEnvironment({ isLocal: false, workspaceReady: true });
+
+      useClaudeStore.setState({
+        clients: new Map([[ENV_ID, { baseUrl: "http://127.0.0.1:9999" } as any]]),
+        serverStatus: new Map([[ENV_ID, { running: true, hostPort: 9999 }]]),
+      });
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Paused")).toBeTruthy();
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Render guard ordering
   // -----------------------------------------------------------------------
 

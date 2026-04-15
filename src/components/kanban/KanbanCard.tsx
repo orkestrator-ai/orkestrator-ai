@@ -27,6 +27,8 @@ function getBuildPhaseDisplay(phase: BuildPhase): { label: string; className: st
       return { label: "Creating PR", className: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30" };
     case "resolving-conflicts":
       return { label: "Resolving", className: "bg-orange-500/15 text-orange-400 border-orange-500/30" };
+    case "paused":
+      return { label: "Paused", className: "bg-amber-500/15 text-amber-400 border-amber-500/30" };
     case "complete":
       return { label: "Complete", className: "bg-green-500/15 text-green-400 border-green-500/30" };
     case "failed":
@@ -81,7 +83,7 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
     : undefined;
 
   const phaseDisplay = buildPhase ? getBuildPhaseDisplay(buildPhase) : null;
-  const isActivelyBuilding = buildPhase && !["complete", "failed"].includes(buildPhase);
+  const isActivelyBuilding = buildPhase && !["complete", "failed", "paused"].includes(buildPhase);
 
   return (
     <div
