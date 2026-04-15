@@ -1204,7 +1204,10 @@ mod tests {
     #[test]
     fn test_sanitize_environment_name() {
         assert_eq!(sanitize_environment_name("My Feature"), "my-feature");
-        assert_eq!(sanitize_environment_name("feat: add login!"), "feat-add-login");
+        assert_eq!(
+            sanitize_environment_name("feat: add login!"),
+            "feat-add-login"
+        );
         assert_eq!(sanitize_environment_name("Hello World"), "hello-world");
         assert_eq!(sanitize_environment_name(""), "env");
     }
@@ -1250,8 +1253,7 @@ mod tests {
 
     #[test]
     fn test_environment_is_local_and_is_containerized() {
-        let local_env =
-            Environment::new_local("project-1".to_string(), "local-env".to_string());
+        let local_env = Environment::new_local("project-1".to_string(), "local-env".to_string());
         assert!(local_env.is_local());
         assert!(!local_env.is_containerized());
 
@@ -1263,7 +1265,11 @@ mod tests {
 
     #[test]
     fn test_kanban_task_pr_fields_default() {
-        let task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         assert!(task.pr_url.is_none());
         assert!(task.pr_state.is_none());
         assert!(!task.pr_merge_commented);
@@ -1271,7 +1277,11 @@ mod tests {
 
     #[test]
     fn test_kanban_task_pr_fields_roundtrip() {
-        let mut task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let mut task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         task.pr_url = Some("https://github.com/org/repo/pull/5".to_string());
         task.pr_state = Some("open".to_string());
         task.pr_merge_commented = false;
@@ -1285,7 +1295,11 @@ mod tests {
 
     #[test]
     fn test_kanban_task_pr_fields_omitted_in_json_when_none() {
-        let task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         let json = serde_json::to_string(&task).unwrap();
         // pr_url and pr_state should be omitted (skip_serializing_if = "Option::is_none")
         assert!(!json.contains("\"prUrl\""));
@@ -1333,12 +1347,19 @@ mod tests {
     #[test]
     fn test_agent_style_all_variants() {
         // Verify all AgentStyle variants serialize correctly
-        for (style, expected) in [(AgentStyle::Terminal, "terminal"), (AgentStyle::Native, "native")] {
+        for (style, expected) in [
+            (AgentStyle::Terminal, "terminal"),
+            (AgentStyle::Native, "native"),
+        ] {
             let json = serde_json::to_value(style).unwrap();
             assert_eq!(json, expected);
         }
         // Verify all DefaultAgent variants in RepositoryConfig context
-        for (agent, expected) in [(DefaultAgent::Claude, "claude"), (DefaultAgent::Opencode, "opencode"), (DefaultAgent::Codex, "codex")] {
+        for (agent, expected) in [
+            (DefaultAgent::Claude, "claude"),
+            (DefaultAgent::Opencode, "opencode"),
+            (DefaultAgent::Codex, "codex"),
+        ] {
             let json = serde_json::to_value(agent).unwrap();
             assert_eq!(json, expected);
         }

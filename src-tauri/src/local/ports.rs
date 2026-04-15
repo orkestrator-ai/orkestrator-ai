@@ -30,8 +30,7 @@ pub struct PortAllocation {
 /// which can lead to two processes listening on the same port and
 /// non-deterministic connection routing.
 pub fn is_port_available(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).is_ok()
-        && TcpListener::bind(("0.0.0.0", port)).is_ok()
+    TcpListener::bind(("127.0.0.1", port)).is_ok() && TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
 
 /// Get all ports currently in use by local environments

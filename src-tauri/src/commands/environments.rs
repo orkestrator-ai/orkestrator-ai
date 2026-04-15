@@ -118,54 +118,43 @@ async fn resolve_and_store_entry_port(
 ) {
     if let Some(ep) = entry_port {
         match get_docker_client() {
-            Ok(docker) => {
-                match docker.get_host_port(container_id, ep, "tcp").await {
-                    Ok(Some(host_port)) => {
-                        debug!(
-                            environment_id = %environment_id,
-                            container_port = ep,
-                            host_port = host_port,
-                            "Resolved dynamic entry port mapping"
-                        );
-                        let _ = storage.update_environment(
-                            environment_id,
-                            json!({ "entryPort": ep, "hostEntryPort": host_port }),
-                        );
-                    }
-                    Ok(None) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            container_port = ep,
-                            "Entry port not found in container port bindings"
-                        );
-                        let _ = storage.update_environment(
-                            environment_id,
-                            json!({ "entryPort": ep }),
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            environment_id = %environment_id,
-                            error = %e,
-                            "Failed to query entry port mapping"
-                        );
-                        let _ = storage.update_environment(
-                            environment_id,
-                            json!({ "entryPort": ep }),
-                        );
-                    }
+            Ok(docker) => match docker.get_host_port(container_id, ep, "tcp").await {
+                Ok(Some(host_port)) => {
+                    debug!(
+                        environment_id = %environment_id,
+                        container_port = ep,
+                        host_port = host_port,
+                        "Resolved dynamic entry port mapping"
+                    );
+                    let _ = storage.update_environment(
+                        environment_id,
+                        json!({ "entryPort": ep, "hostEntryPort": host_port }),
+                    );
                 }
-            }
+                Ok(None) => {
+                    warn!(
+                        environment_id = %environment_id,
+                        container_port = ep,
+                        "Entry port not found in container port bindings"
+                    );
+                    let _ = storage.update_environment(environment_id, json!({ "entryPort": ep }));
+                }
+                Err(e) => {
+                    warn!(
+                        environment_id = %environment_id,
+                        error = %e,
+                        "Failed to query entry port mapping"
+                    );
+                    let _ = storage.update_environment(environment_id, json!({ "entryPort": ep }));
+                }
+            },
             Err(e) => {
                 warn!(
                     environment_id = %environment_id,
                     error = %e,
                     "Failed to get docker client for port query"
                 );
-                let _ = storage.update_environment(
-                    environment_id,
-                    json!({ "entryPort": ep }),
-                );
+                let _ = storage.update_environment(environment_id, json!({ "entryPort": ep }));
             }
         }
     } else {
@@ -1088,8 +1077,7 @@ pub async fn rename_environment(
     // Gather actual git branches from the repo so we don't collide with branches
     // that exist in git but have no corresponding environment in storage.
     let git_branches = list_repo_git_branches(&storage, &environment_id).await;
-    let new_branch =
-        make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
+    let new_branch = make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
 
     // Update storage with new name and branch
     let updated_env = storage
@@ -1103,13 +1091,8 @@ pub async fn rename_environment(
     if environment.is_local() {
         // Local environment: rename branch in the worktree
         if let Some(worktree_path) = &environment.worktree_path {
-            rename_local_worktree_branch(
-                &environment_id,
-                worktree_path,
-                &old_branch,
-                &new_branch,
-            )
-            .await;
+            rename_local_worktree_branch(&environment_id, worktree_path, &old_branch, &new_branch)
+                .await;
         }
     } else if let Some(container_id) = &environment.container_id {
         if environment.status == EnvironmentStatus::Running {

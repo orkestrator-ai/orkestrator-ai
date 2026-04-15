@@ -903,7 +903,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_container_name_with_spaces() {
-        assert_eq!(sanitize_container_name("link in the middle"), "link-in-the-middle");
+        assert_eq!(
+            sanitize_container_name("link in the middle"),
+            "link-in-the-middle"
+        );
     }
 
     #[test]
@@ -913,7 +916,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_container_name_special_chars() {
-        assert_eq!(sanitize_container_name("feat: add login!"), "feat-add-login");
+        assert_eq!(
+            sanitize_container_name("feat: add login!"),
+            "feat-add-login"
+        );
     }
 
     #[test]
@@ -943,7 +949,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_container_name_underscores_preserved() {
-        assert_eq!(sanitize_container_name("my_container_name"), "my_container_name");
+        assert_eq!(
+            sanitize_container_name("my_container_name"),
+            "my_container_name"
+        );
     }
 
     #[test]

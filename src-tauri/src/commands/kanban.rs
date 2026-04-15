@@ -52,7 +52,18 @@ pub async fn update_kanban_task(
     debug!(task_id = %task_id, "Updating kanban task");
     let storage = get_storage().map_err(storage_error_to_string)?;
     storage
-        .update_kanban_task(&task_id, title, description, acceptance_criteria, status, environment_id, build_pipeline_id, pr_url, pr_state, pr_merge_commented)
+        .update_kanban_task(
+            &task_id,
+            title,
+            description,
+            acceptance_criteria,
+            status,
+            environment_id,
+            build_pipeline_id,
+            pr_url,
+            pr_state,
+            pr_merge_commented,
+        )
         .map_err(storage_error_to_string)
 }
 
@@ -105,10 +116,7 @@ pub async fn add_kanban_image(
 
 /// Delete an image from a kanban task
 #[tauri::command]
-pub async fn delete_kanban_image(
-    task_id: String,
-    image_id: String,
-) -> Result<KanbanTask, String> {
+pub async fn delete_kanban_image(task_id: String, image_id: String) -> Result<KanbanTask, String> {
     debug!(task_id = %task_id, image_id = %image_id, "Deleting kanban image");
     let storage = get_storage().map_err(storage_error_to_string)?;
     storage

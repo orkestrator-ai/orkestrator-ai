@@ -2,9 +2,10 @@
 
 use crate::docker::client::get_docker_client;
 use crate::models::PrState;
+use crate::storage::Storage;
 
 /// PR detection result containing both URL and state
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrDetectionResult {
     pub url: String,
@@ -12,8 +13,199 @@ pub struct PrDetectionResult {
     pub has_merge_conflicts: bool,
 }
 
-/// Detect PR URL and state for the environment's branch by running gh pr view in the container
-/// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
+#[derive(serde::Deserialize)]
+struct GhPrListEntry {
+    url: String,
+    state: String,
+    mergeable: Option<String>,
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+}
+
+struct DetectionCandidate {
+    rank: u8,
+    updated_at: Option<String>,
+    result: PrDetectionResult,
+}
+
+fn parse_pr_state(state: &str) -> Option<PrState> {
+    match state.to_uppercase().as_str() {
+        "OPEN" => Some(PrState::Open),
+        "MERGED" => Some(PrState::Merged),
+        "CLOSED" => Some(PrState::Closed),
+        _ => None,
+    }
+}
+
+fn pr_state_rank(state: &PrState) -> u8 {
+    match state {
+        PrState::Open => 2,
+        PrState::Merged => 1,
+        PrState::Closed => 0,
+    }
+}
+
+fn is_valid_pr_url(url: &str) -> bool {
+    url.starts_with("https://") && url.contains("github.com/") && url.contains("/pull/")
+}
+
+fn is_expected_absence_output(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed == "[]" {
+        return true;
+    }
+
+    let lowered = trimmed.to_lowercase();
+    lowered.contains("no pull request")
+        || lowered.contains("no pull requests match your search")
+        || lowered.contains("could not resolve")
+        || lowered.contains("not found")
+}
+
+fn build_detection_candidate(entry: GhPrListEntry) -> Option<DetectionCandidate> {
+    let state = parse_pr_state(&entry.state)?;
+    if !is_valid_pr_url(&entry.url) {
+        return None;
+    }
+
+    let has_merge_conflicts = entry
+        .mergeable
+        .map(|mergeable| mergeable.eq_ignore_ascii_case("CONFLICTING"))
+        .unwrap_or(false);
+
+    Some(DetectionCandidate {
+        rank: pr_state_rank(&state),
+        updated_at: entry.updated_at,
+        result: PrDetectionResult {
+            url: entry.url,
+            state,
+            has_merge_conflicts,
+        },
+    })
+}
+
+fn parse_pr_detection_output(trimmed: &str) -> Option<PrDetectionResult> {
+    let entries: Vec<GhPrListEntry> = serde_json::from_str(trimmed).ok()?;
+
+    entries
+        .into_iter()
+        .filter_map(build_detection_candidate)
+        .max_by(|left, right| {
+            left.rank
+                .cmp(&right.rank)
+                .then_with(|| left.updated_at.cmp(&right.updated_at))
+        })
+        .map(|candidate| candidate.result)
+}
+
+fn parse_pr_list_output(trimmed: &str, branch: &str) -> Result<Option<PrDetectionResult>, String> {
+    if is_expected_absence_output(trimmed) {
+        return Ok(None);
+    }
+
+    if let Some(result) = parse_pr_detection_output(trimmed) {
+        return Ok(Some(result));
+    }
+
+    tracing::debug!(output = %trimmed, branch = %branch, "Unexpected output from gh pr list");
+    Err("Failed to parse gh pr list output".to_string())
+}
+
+fn parse_local_pr_list_output(
+    stdout: &str,
+    stderr: &str,
+    success: bool,
+    branch: &str,
+) -> Result<Option<PrDetectionResult>, String> {
+    let trimmed = stdout.trim();
+    let stderr_trimmed = stderr.trim();
+
+    if !success {
+        if (!trimmed.is_empty() && is_expected_absence_output(trimmed))
+            || (!stderr_trimmed.is_empty() && is_expected_absence_output(stderr_trimmed))
+        {
+            return Ok(None);
+        }
+
+        tracing::debug!(
+            stdout = %trimmed,
+            stderr = %stderr_trimmed,
+            branch = %branch,
+            "gh pr list failed for local environment"
+        );
+
+        let error_msg = if !stderr_trimmed.is_empty() {
+            stderr_trimmed.to_string()
+        } else if !trimmed.is_empty() {
+            trimmed.to_string()
+        } else {
+            "gh pr list failed".to_string()
+        };
+
+        return Err(format!("Failed to detect PR: {}", error_msg));
+    }
+
+    parse_pr_list_output(trimmed, branch)
+}
+
+fn get_environment_pr_url_from_storage(
+    storage: &Storage,
+    environment_id: &str,
+) -> Result<Option<String>, String> {
+    let environment = storage
+        .get_environment(environment_id)
+        .map_err(|e| e.to_string())?;
+
+    Ok(environment.and_then(|e| e.pr_url))
+}
+
+fn clear_environment_pr_in_storage(storage: &Storage, environment_id: &str) -> Result<(), String> {
+    use serde_json::json;
+
+    storage
+        .update_environment(
+            environment_id,
+            json!({ "prUrl": null, "prState": null, "hasMergeConflicts": null }),
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn build_merge_command(method: MergeMethod, should_delete_branch: bool) -> Vec<&'static str> {
+    let mut cmd = vec!["gh", "pr", "merge", method.as_flag()];
+
+    if should_delete_branch {
+        cmd.push("--delete-branch");
+    }
+
+    cmd
+}
+
+fn build_local_merge_args(method: MergeMethod) -> Vec<&'static str> {
+    vec!["pr", "merge", method.as_flag()]
+}
+
+fn parse_merge_command_result(stdout: &str, stderr: &str, success: bool) -> Result<(), String> {
+    if success {
+        return Ok(());
+    }
+
+    let stdout_trimmed = stdout.trim();
+    let stderr_trimmed = stderr.trim();
+    let error_msg = if !stderr_trimmed.is_empty() {
+        stderr_trimmed.to_string()
+    } else if !stdout_trimmed.is_empty() {
+        stdout_trimmed.to_string()
+    } else {
+        "Unknown error".to_string()
+    };
+
+    Err(format!("Failed to merge PR: {}", error_msg))
+}
+
+/// Detect PR URL and state for the environment's branch by querying GitHub for that head branch
+/// Uses the stored branch explicitly so detection is independent of the current checkout
 #[tauri::command]
 pub async fn detect_pr(
     container_id: String,
@@ -35,100 +227,36 @@ pub async fn detect_pr(
         return Err("Container is not running".to_string());
     }
 
-    // Run: gh pr view <branch> --json url,state,mergeable -q '{...}'
-    // Pass the branch as a positional argument to check the environment's branch explicitly,
-    // not the currently checked out branch.
-    // After a PR merge with --delete-branch, the workspace may switch to main, so relying on
-    // the current branch would check the wrong PR.
+    // Run: gh pr list --head <branch> --state all --json ...
+    // Query by head branch explicitly so detection keeps following the environment's
+    // stored branch even after background renames or checkout changes.
     // Use exec_command_stdout to only capture stdout, as gh CLI may output
-    // progress messages to stderr which would corrupt JSON parsing
+    // progress messages to stderr which would corrupt JSON parsing.
     let output = client
         .exec_command_stdout(
             &container_id,
             vec![
                 "gh",
                 "pr",
-                "view",
+                "list",
+                "--head",
                 &branch,
+                "--state",
+                "all",
+                "--limit",
+                "30",
                 "--json",
-                "url,state,mergeable",
-                "-q",
-                "{url: .url, state: .state, mergeable: .mergeable}",
+                "url,state,mergeable,updatedAt",
             ],
         )
         .await
         .map_err(|e| e.to_string())?;
 
-    let trimmed = output.trim();
-
-    // If output is empty, no PR exists
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    // Try to parse the JSON output first
-    // This is the expected success path when a PR exists
-    #[derive(serde::Deserialize)]
-    struct GhPrView {
-        url: String,
-        state: String,
-        mergeable: Option<String>,
-    }
-
-    let pr_view: GhPrView = match serde_json::from_str(trimmed) {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            // JSON parsing failed - this likely means no PR exists
-            // or gh CLI returned an error message instead of JSON
-            // Fall back to checking for common error indicators
-            let trimmed_lower = trimmed.to_lowercase();
-            if trimmed_lower.contains("no pull request")
-                || trimmed_lower.contains("could not resolve")
-                || trimmed_lower.contains("not found")
-                || trimmed_lower.contains("error")
-                || trimmed_lower.contains("failed")
-            {
-                return Ok(None);
-            }
-            // Unexpected non-JSON output that doesn't match known errors
-            // Log and return None rather than erroring
-            tracing::debug!(output = %trimmed, "Unexpected non-JSON output from gh pr view");
-            return Ok(None);
-        }
-    };
-
-    // Validate URL format
-    if !pr_view.url.starts_with("https://")
-        || !pr_view.url.contains("github.com/")
-        || !pr_view.url.contains("/pull/")
-    {
-        return Ok(None);
-    }
-
-    // Convert state string to PrState enum
-    let state = match pr_view.state.to_uppercase().as_str() {
-        "OPEN" => PrState::Open,
-        "MERGED" => PrState::Merged,
-        "CLOSED" => PrState::Closed,
-        _ => return Ok(None), // Unknown state
-    };
-
-    // Check for merge conflicts
-    // mergeable can be: "MERGEABLE", "CONFLICTING", "UNKNOWN"
-    let has_merge_conflicts = pr_view
-        .mergeable
-        .map(|m| m.to_uppercase() == "CONFLICTING")
-        .unwrap_or(false);
-
-    Ok(Some(PrDetectionResult {
-        url: pr_view.url,
-        state,
-        has_merge_conflicts,
-    }))
+    parse_pr_list_output(output.trim(), &branch)
 }
 
-/// Detect PR URL and state for the environment's branch by running gh pr view locally
-/// Passes branch as positional arg to check the correct branch regardless of what's currently checked out
+/// Detect PR URL and state for the environment's branch by querying GitHub for that head branch
+/// Uses the stored branch explicitly so detection is independent of the current checkout
 /// Used for local (worktree-based) environments where there's no container
 #[tauri::command]
 pub async fn detect_pr_local(
@@ -157,17 +285,21 @@ pub async fn detect_pr_local(
 
     debug!(environment_id = %environment_id, worktree_path = %worktree_path, branch = %branch, "Detecting PR for local environment");
 
-    // Run: gh pr view <branch> --json url,state,mergeable -q '{...}'
-    // Pass the branch as a positional argument to check the environment's branch explicitly
+    // Run: gh pr list --head <branch> --state all --json ...
+    // Query by head branch explicitly so detection keeps following the environment's
+    // stored branch even after background renames or checkout changes.
     let output = Command::new("gh")
         .args([
             "pr",
-            "view",
+            "list",
+            "--head",
             &branch,
+            "--state",
+            "all",
+            "--limit",
+            "30",
             "--json",
-            "url,state,mergeable",
-            "-q",
-            "{url: .url, state: .state, mergeable: .mergeable}",
+            "url,state,mergeable,updatedAt",
         ])
         .current_dir(&worktree_path)
         .output()
@@ -176,67 +308,9 @@ pub async fn detect_pr_local(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let trimmed = stdout.trim();
+    debug!(stdout = %stdout.trim(), stderr = %stderr.trim(), "gh pr list output");
 
-    debug!(stdout = %trimmed, stderr = %stderr, "gh pr view output");
-
-    // If output is empty or command failed, no PR exists
-    if trimmed.is_empty() || !output.status.success() {
-        return Ok(None);
-    }
-
-    // Try to parse the JSON output
-    #[derive(serde::Deserialize)]
-    struct GhPrView {
-        url: String,
-        state: String,
-        mergeable: Option<String>,
-    }
-
-    let pr_view: GhPrView = match serde_json::from_str(trimmed) {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            let trimmed_lower = trimmed.to_lowercase();
-            if trimmed_lower.contains("no pull request")
-                || trimmed_lower.contains("could not resolve")
-                || trimmed_lower.contains("not found")
-                || trimmed_lower.contains("error")
-                || trimmed_lower.contains("failed")
-            {
-                return Ok(None);
-            }
-            debug!(output = %trimmed, "Unexpected non-JSON output from gh pr view (local)");
-            return Ok(None);
-        }
-    };
-
-    // Validate URL format
-    if !pr_view.url.starts_with("https://")
-        || !pr_view.url.contains("github.com/")
-        || !pr_view.url.contains("/pull/")
-    {
-        return Ok(None);
-    }
-
-    // Convert state string to PrState enum
-    let state = match pr_view.state.to_uppercase().as_str() {
-        "OPEN" => PrState::Open,
-        "MERGED" => PrState::Merged,
-        "CLOSED" => PrState::Closed,
-        _ => return Ok(None),
-    };
-
-    // Check for merge conflicts
-    let has_merge_conflicts = pr_view
-        .mergeable
-        .map(|m| m.to_uppercase() == "CONFLICTING")
-        .unwrap_or(false);
-
-    Ok(Some(PrDetectionResult {
-        url: pr_view.url,
-        state,
-        has_merge_conflicts,
-    }))
+    parse_local_pr_list_output(&stdout, &stderr, output.status.success(), &branch)
 }
 
 /// Open a URL in the default browser
@@ -266,30 +340,16 @@ pub async fn get_environment_pr_url(environment_id: String) -> Result<Option<Str
     use crate::storage::get_storage;
 
     let storage = get_storage().map_err(|e| e.to_string())?;
-    let environment = storage
-        .get_environment(&environment_id)
-        .map_err(|e| e.to_string())?;
-
-    Ok(environment.and_then(|e| e.pr_url))
+    get_environment_pr_url_from_storage(storage, &environment_id)
 }
 
 /// Clear the PR URL, state, and merge conflicts for an environment (for resetting)
 #[tauri::command]
 pub async fn clear_environment_pr(environment_id: String) -> Result<(), String> {
     use crate::storage::get_storage;
-    use serde_json::json;
 
     let storage = get_storage().map_err(|e| e.to_string())?;
-
-    // Set pr_url, pr_state, and has_merge_conflicts to null
-    storage
-        .update_environment(
-            &environment_id,
-            json!({ "prUrl": null, "prState": null, "hasMergeConflicts": null }),
-        )
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+    clear_environment_pr_in_storage(storage, &environment_id)
 }
 
 /// Merge method for PR merging
@@ -336,12 +396,7 @@ pub async fn merge_pr(
     let merge_method = method.unwrap_or_default();
     let should_delete_branch = delete_branch.unwrap_or(true);
 
-    // Build the command
-    let mut cmd = vec!["gh", "pr", "merge", merge_method.as_flag()];
-
-    if should_delete_branch {
-        cmd.push("--delete-branch");
-    }
+    let cmd = build_merge_command(merge_method, should_delete_branch);
 
     info!(
         container_id = %container_id,
@@ -368,17 +423,7 @@ pub async fn merge_pr(
         "gh pr merge output"
     );
 
-    if exit_code != 0 {
-        // On failure, stderr contains the error message from gh CLI
-        let error_msg = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else if !stdout.trim().is_empty() {
-            stdout.trim().to_string()
-        } else {
-            "Unknown error".to_string()
-        };
-        return Err(format!("Failed to merge PR: {}", error_msg));
-    }
+    parse_merge_command_result(&stdout, &stderr, exit_code == 0)?;
 
     info!(container_id = %container_id, "PR merged successfully");
 
@@ -424,7 +469,7 @@ pub async fn merge_pr_local(
     );
 
     // Build the command arguments - no --delete-branch for worktrees
-    let args = vec!["pr", "merge", merge_method.as_flag()];
+    let args = build_local_merge_args(merge_method);
 
     // Run: gh pr merge --squash (or --merge/--rebase)
     let output = Command::new("gh")
@@ -442,17 +487,8 @@ pub async fn merge_pr_local(
     debug!(stdout = %trimmed, stderr = %stderr_trimmed, status = ?output.status, "gh pr merge output (local)");
 
     // Primary check: rely on exit status
-    // gh pr merge returns non-zero on actual failures
-    if !output.status.success() {
-        let error_msg = if !stderr_trimmed.is_empty() {
-            stderr_trimmed
-        } else if !trimmed.is_empty() {
-            trimmed
-        } else {
-            "Unknown error"
-        };
-        return Err(format!("Failed to merge PR: {}", error_msg));
-    }
+    // gh pr merge returns non-zero on actual failures.
+    parse_merge_command_result(trimmed, stderr_trimmed, output.status.success())?;
 
     info!(environment_id = %environment_id, "PR merged successfully (local)");
 
@@ -461,10 +497,184 @@ pub async fn merge_pr_local(
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        build_local_merge_args, build_merge_command, clear_environment_pr_in_storage, detect_pr,
+        detect_pr_local, get_environment_pr_url_from_storage, is_expected_absence_output,
+        parse_local_pr_list_output, parse_merge_command_result, parse_pr_detection_output,
+        parse_pr_list_output, MergeMethod,
+    };
+    use crate::models::{Environment, PrState};
+    use crate::storage::Storage;
+    use tempfile::tempdir;
+
+    fn create_test_storage() -> Storage {
+        let temp_dir = tempdir().expect("tempdir should be created");
+        Storage::new_for_tests(temp_dir.keep())
+    }
+
     #[test]
-    fn test_url_format() {
-        // Simple test to ensure URLs are valid
-        let url = "https://github.com/user/repo/pull/123";
-        assert!(url.starts_with("https://"));
+    fn parse_pr_detection_output_prefers_open_pr_for_branch() {
+        let parsed = parse_pr_detection_output(
+            r#"[
+                {"url":"https://github.com/org/repo/pull/11","state":"MERGED","mergeable":"MERGEABLE","updatedAt":"2026-04-15T09:00:00Z"},
+                {"url":"https://github.com/org/repo/pull/12","state":"OPEN","mergeable":"CONFLICTING","updatedAt":"2026-04-15T10:00:00Z"}
+            ]"#,
+        )
+        .expect("expected PR detection result");
+
+        assert_eq!(parsed.url, "https://github.com/org/repo/pull/12");
+        assert_eq!(parsed.state, PrState::Open);
+        assert!(parsed.has_merge_conflicts);
+    }
+
+    #[test]
+    fn parse_pr_detection_output_ignores_invalid_entries() {
+        let parsed = parse_pr_detection_output(
+            r#"[
+                {"url":"https://example.com/not-a-pr","state":"OPEN","mergeable":"MERGEABLE","updatedAt":"2026-04-15T09:00:00Z"},
+                {"url":"https://github.com/org/repo/pull/13","state":"CLOSED","mergeable":"UNKNOWN","updatedAt":"2026-04-15T11:00:00Z"}
+            ]"#,
+        )
+        .expect("expected fallback PR detection result");
+
+        assert_eq!(parsed.url, "https://github.com/org/repo/pull/13");
+        assert_eq!(parsed.state, PrState::Closed);
+        assert!(!parsed.has_merge_conflicts);
+    }
+
+    #[test]
+    fn expected_absence_output_treats_empty_array_as_no_pr() {
+        assert!(is_expected_absence_output("[]"));
+    }
+
+    #[test]
+    fn parse_pr_detection_output_prefers_most_recent_same_state() {
+        let parsed = parse_pr_detection_output(
+            r#"[
+                {"url":"https://github.com/org/repo/pull/21","state":"OPEN","mergeable":"MERGEABLE","updatedAt":"2026-04-15T09:00:00Z"},
+                {"url":"https://github.com/org/repo/pull/22","state":"OPEN","mergeable":"MERGEABLE","updatedAt":"2026-04-15T10:00:00Z"}
+            ]"#,
+        )
+        .expect("expected PR detection result");
+
+        assert_eq!(parsed.url, "https://github.com/org/repo/pull/22");
+        assert_eq!(parsed.state, PrState::Open);
+    }
+
+    #[test]
+    fn parse_pr_list_output_returns_error_on_unexpected_output() {
+        let error = parse_pr_list_output("warning: something odd happened", "feature/test")
+            .expect_err("unexpected output should fail");
+
+        assert!(error.contains("Failed to parse"));
+    }
+
+    #[test]
+    fn parse_local_pr_list_output_treats_known_absence_as_no_pr() {
+        let parsed = parse_local_pr_list_output(
+            "",
+            "no pull requests match your search",
+            false,
+            "feature/test",
+        )
+        .expect("known absence should not error");
+
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn parse_local_pr_list_output_returns_error_for_real_failures() {
+        let error = parse_local_pr_list_output(
+            "",
+            "authentication failed for github.com",
+            false,
+            "feature/test",
+        )
+        .expect_err("unexpected failures should surface");
+
+        assert!(error.contains("authentication failed"));
+    }
+
+    #[test]
+    fn get_environment_pr_url_from_storage_returns_stored_url() {
+        let storage = create_test_storage();
+        let mut environment = Environment::new("project-1".to_string());
+        environment.pr_url = Some("https://github.com/org/repo/pull/42".to_string());
+        storage
+            .add_environment(environment.clone())
+            .expect("environment should save");
+
+        let pr_url = get_environment_pr_url_from_storage(&storage, &environment.id)
+            .expect("PR URL should load");
+
+        assert_eq!(
+            pr_url,
+            Some("https://github.com/org/repo/pull/42".to_string())
+        );
+    }
+
+    #[test]
+    fn clear_environment_pr_in_storage_clears_all_metadata() {
+        let storage = create_test_storage();
+        let mut environment = Environment::new("project-1".to_string());
+        environment.pr_url = Some("https://github.com/org/repo/pull/42".to_string());
+        environment.pr_state = Some(PrState::Open);
+        environment.has_merge_conflicts = Some(true);
+        storage
+            .add_environment(environment.clone())
+            .expect("environment should save");
+
+        clear_environment_pr_in_storage(&storage, &environment.id)
+            .expect("PR metadata should clear");
+
+        let updated = storage
+            .get_environment(&environment.id)
+            .expect("environment should load")
+            .expect("environment should exist");
+
+        assert!(updated.pr_url.is_none());
+        assert!(updated.pr_state.is_none());
+        assert!(updated.has_merge_conflicts.is_none());
+    }
+
+    #[test]
+    fn build_merge_command_includes_delete_branch_when_requested() {
+        let command = build_merge_command(MergeMethod::Squash, true);
+        assert_eq!(
+            command,
+            vec!["gh", "pr", "merge", "--squash", "--delete-branch"]
+        );
+    }
+
+    #[test]
+    fn build_local_merge_args_never_include_delete_branch() {
+        let args = build_local_merge_args(MergeMethod::Rebase);
+        assert_eq!(args, vec!["pr", "merge", "--rebase"]);
+    }
+
+    #[test]
+    fn parse_merge_command_result_prefers_stderr_on_failure() {
+        let error = parse_merge_command_result("stdout message", "stderr message", false)
+            .expect_err("failure should use stderr");
+
+        assert_eq!(error, "Failed to merge PR: stderr message");
+    }
+
+    #[tokio::test]
+    async fn detect_pr_rejects_empty_branch() {
+        let error = detect_pr("container-1".to_string(), "   ".to_string())
+            .await
+            .expect_err("empty branch should be rejected");
+
+        assert_eq!(error, "Branch name cannot be empty");
+    }
+
+    #[tokio::test]
+    async fn detect_pr_local_rejects_empty_branch() {
+        let error = detect_pr_local("env-1".to_string(), "".to_string())
+            .await
+            .expect_err("empty branch should be rejected");
+
+        assert_eq!(error, "Branch name cannot be empty");
     }
 }
