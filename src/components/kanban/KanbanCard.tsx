@@ -83,7 +83,7 @@ export function KanbanCard({ task, onClick, isDragOverlay, buildPhase }: KanbanC
     : undefined;
 
   const phaseDisplay = buildPhase ? getBuildPhaseDisplay(buildPhase) : null;
-  const isActivelyBuilding = buildPhase && !["complete", "failed"].includes(buildPhase);
+  const isActivelyBuilding = buildPhase && !["complete", "failed", "paused"].includes(buildPhase);
 
   return (
     <div

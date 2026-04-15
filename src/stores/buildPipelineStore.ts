@@ -44,7 +44,6 @@ export interface BuildPipeline {
   verificationResult?: "pass" | "fail";
   verificationFeedback?: string;
   error?: string;
-  pausedAtPhase?: BuildPhase;
   createdAt: string;
   taskTitle: string;
   taskSnapshot: TaskSnapshot;
@@ -208,7 +207,6 @@ export const useBuildPipelineStore = create<BuildPipelineState>()((set, get) => 
       newMap.set(pipelineId, {
         ...pipeline,
         phase: "paused",
-        pausedAtPhase: pipeline.phase,
         error: undefined,
       });
       return { pipelines: newMap };

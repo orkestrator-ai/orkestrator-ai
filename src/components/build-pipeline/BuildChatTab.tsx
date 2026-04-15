@@ -1084,6 +1084,14 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     if (!success) {
       setSessionLoading(currentSession.sessionKey, false);
       markSessionIdle(pipelineId, currentSession.sdkSessionId);
+      const errMessage: ClaudeMessageType = {
+        id: `${ERROR_MESSAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        role: "assistant",
+        content: "Failed to send message to the agent",
+        parts: [{ type: "text", content: "Failed to send message to the agent" }],
+        timestamp: new Date().toISOString(),
+      };
+      addMessage(currentSession.sessionKey, errMessage);
     }
   }, [client, pipeline, pipelineId, markSessionRunning, markSessionIdle, setSessionLoading, addMessage]);
 
@@ -1180,6 +1188,13 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
   const isRunning = pipeline && !["complete", "failed", "paused"].includes(pipeline.phase);
   const isPaused = pipeline?.phase === "paused";
+
+  // Auto-focus the jump-in textarea when entering paused state
+  useEffect(() => {
+    if (isPaused) {
+      jumpInTextareaRef.current?.focus();
+    }
+  }, [isPaused]);
 
   // Check if the agent is processing a user's jump-in message
   const isJumpInLoading = useMemo(() => {

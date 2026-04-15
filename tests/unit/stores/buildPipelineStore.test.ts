@@ -245,6 +245,87 @@ describe("buildPipelineStore", () => {
     });
   });
 
+  describe("pausePipeline", () => {
+    test("sets phase to paused and clears error", () => {
+      const id = useBuildPipelineStore.getState().createPipeline(createPipelineParams());
+      useBuildPipelineStore.getState().setPhase(id, "building");
+      useBuildPipelineStore.getState().setPipelineError(id, "some error");
+
+      // Re-create since setPipelineError sets phase to "failed"
+      const id2 = useBuildPipelineStore.getState().createPipeline(createPipelineParams({ taskId: "task-2" }));
+      useBuildPipelineStore.getState().setPhase(id2, "building");
+
+      useBuildPipelineStore.getState().pausePipeline(id2);
+
+      const pipeline = useBuildPipelineStore.getState().pipelines.get(id2)!;
+      expect(pipeline.phase).toBe("paused");
+      expect(pipeline.error).toBeUndefined();
+    });
+
+    test("clears existing error when pausing", () => {
+      const id = useBuildPipelineStore.getState().createPipeline(createPipelineParams());
+      // Manually set error on the pipeline
+      useBuildPipelineStore.setState((state) => {
+        const newMap = new Map(state.pipelines);
+        const pipeline = newMap.get(id)!;
+        newMap.set(id, { ...pipeline, phase: "building", error: "previous error" });
+        return { pipelines: newMap };
+      });
+
+      useBuildPipelineStore.getState().pausePipeline(id);
+
+      const pipeline = useBuildPipelineStore.getState().pipelines.get(id)!;
+      expect(pipeline.phase).toBe("paused");
+      expect(pipeline.error).toBeUndefined();
+    });
+
+    test("no-ops for unknown pipeline ID", () => {
+      useBuildPipelineStore.getState().pausePipeline("nonexistent");
+      expect(useBuildPipelineStore.getState().pipelines.size).toBe(0);
+    });
+  });
+
+  describe("markSessionRunning", () => {
+    test("marks a specific session as running by sdkSessionId", () => {
+      const id = useBuildPipelineStore.getState().createPipeline(createPipelineParams());
+      useBuildPipelineStore.getState().addSession(id, createMockSession({ sdkSessionId: "s1", status: "idle" }));
+      useBuildPipelineStore.getState().addSession(id, createMockSession({ sdkSessionId: "s2", status: "idle" }));
+
+      useBuildPipelineStore.getState().markSessionRunning(id, "s1");
+
+      const pipeline = useBuildPipelineStore.getState().pipelines.get(id)!;
+      expect(pipeline.sessions[0]!.status).toBe("running");
+      expect(pipeline.sessions[1]!.status).toBe("idle");
+    });
+
+    test("leaves other sessions unchanged", () => {
+      const id = useBuildPipelineStore.getState().createPipeline(createPipelineParams());
+      useBuildPipelineStore.getState().addSession(id, createMockSession({ sdkSessionId: "s1", status: "running" }));
+      useBuildPipelineStore.getState().addSession(id, createMockSession({ sdkSessionId: "s2", status: "error" }));
+
+      useBuildPipelineStore.getState().markSessionRunning(id, "s2");
+
+      const pipeline = useBuildPipelineStore.getState().pipelines.get(id)!;
+      expect(pipeline.sessions[0]!.status).toBe("running");
+      expect(pipeline.sessions[1]!.status).toBe("running");
+    });
+
+    test("no-ops for unknown pipeline ID", () => {
+      useBuildPipelineStore.getState().markSessionRunning("nonexistent", "s1");
+      expect(useBuildPipelineStore.getState().pipelines.size).toBe(0);
+    });
+
+    test("no-ops for unknown session ID within pipeline", () => {
+      const id = useBuildPipelineStore.getState().createPipeline(createPipelineParams());
+      useBuildPipelineStore.getState().addSession(id, createMockSession({ sdkSessionId: "s1", status: "idle" }));
+
+      useBuildPipelineStore.getState().markSessionRunning(id, "nonexistent");
+
+      const pipeline = useBuildPipelineStore.getState().pipelines.get(id)!;
+      expect(pipeline.sessions[0]!.status).toBe("idle");
+    });
+  });
+
   describe("getPipelineByTaskId", () => {
     test("returns the pipeline matching the task ID", () => {
       const id = useBuildPipelineStore.getState().createPipeline(createPipelineParams({ taskId: "task-abc" }));
