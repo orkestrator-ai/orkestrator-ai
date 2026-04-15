@@ -6,6 +6,10 @@ import { useScrollLock } from "@/hooks";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useCodexStore, createCodexSessionKey, useConfigStore } from "@/stores";
 import {
+  OPTIMISTIC_MESSAGE_PREFIX,
+  createOptimisticNativeMessage,
+} from "@/lib/chat/client-only-messages";
+import {
   type CodexConversationMode,
   type CodexPromptAttachment,
   type CodexReasoningEffort,
@@ -32,6 +36,7 @@ import {
   startLocalCodexServer,
   updateGlobalConfig,
 } from "@/lib/tauri";
+import { SYSTEM_MESSAGE_PREFIX } from "@/lib/opencode-client";
 import { NativeMessage } from "@/components/chat/NativeMessage";
 import { CodexComposeBar } from "./CodexComposeBar";
 import { CodexPlanModeCard } from "./CodexPlanModeCard";
@@ -107,6 +112,8 @@ export function CodexChatTab({
     setServerStatus,
     setClient,
     setSession,
+    addMessage,
+    removeMessage,
     setMessages,
     setSessionLoading,
     setSessionError,
@@ -238,14 +245,30 @@ export function CodexChatTab({
     async (text: string, attachments: CodexAttachment[]) => {
       if (!client || !session?.sessionId) return;
 
+      const userMessage = createOptimisticNativeMessage(
+        `${OPTIMISTIC_MESSAGE_PREFIX}${crypto.randomUUID()}`,
+        text,
+        attachments,
+      );
+      addMessage(sessionKey, userMessage);
+
       if (!session.messages.length) {
         const environment = useEnvironmentStore.getState().getEnvironmentById(environmentId);
         if (environment && /^\d{8}-\d{6}$/.test(environment.name)) {
+          const namingMessageId = `${SYSTEM_MESSAGE_PREFIX}naming-${crypto.randomUUID()}`;
+          addMessage(sessionKey, {
+            id: namingMessageId,
+            role: "assistant" as const,
+            content: "Naming environment...",
+            parts: [{ type: "text" as const, content: "Naming environment..." }],
+            createdAt: new Date().toISOString(),
+          });
           try {
             await renameEnvironmentFromPrompt(environmentId, text);
           } catch (error) {
             console.warn("[CodexChatTab] Failed to rename environment from prompt:", error);
           }
+          removeMessage(sessionKey, namingMessageId);
         }
       }
 
@@ -261,6 +284,7 @@ export function CodexChatTab({
         attachments: promptAttachments.length > 0 ? promptAttachments : undefined,
       });
       if (!sent) {
+        removeMessage(sessionKey, userMessage.id);
         setSessionLoading(sessionKey, false);
         setSessionError(sessionKey, "Failed to send prompt");
         return;
@@ -269,8 +293,10 @@ export function CodexChatTab({
     },
     [
       client,
+      addMessage,
       environmentId,
       refreshMessages,
+      removeMessage,
       session?.sessionId,
       session?.messages.length,
       sessionKey,
