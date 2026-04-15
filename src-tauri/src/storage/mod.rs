@@ -486,6 +486,18 @@ impl Storage {
         if let Some(pr_url) = updates.get("prUrl") {
             environment.pr_url = pr_url.as_str().map(String::from);
         }
+        if let Some(pr_state) = updates.get("prState") {
+            environment.pr_state =
+                serde_json::from_value::<Option<crate::models::PrState>>(pr_state.clone())
+                    .ok()
+                    .flatten();
+        }
+        if let Some(has_merge_conflicts) = updates.get("hasMergeConflicts") {
+            environment.has_merge_conflicts =
+                serde_json::from_value::<Option<bool>>(has_merge_conflicts.clone())
+                    .ok()
+                    .flatten();
+        }
         if let Some(allowed_domains) = updates.get("allowedDomains") {
             environment.allowed_domains = serde_json::from_value(allowed_domains.clone()).ok();
         }
@@ -1645,7 +1657,9 @@ mod tests {
         let updates = serde_json::json!({
             "status": "running",
             "containerId": "container-abc",
-            "prUrl": "https://github.com/test/repo/pull/123"
+            "prUrl": "https://github.com/test/repo/pull/123",
+            "prState": "open",
+            "hasMergeConflicts": true
         });
 
         let updated = storage.update_environment(&env.id, updates).unwrap();
@@ -1655,10 +1669,14 @@ mod tests {
             updated.pr_url,
             Some("https://github.com/test/repo/pull/123".to_string())
         );
+        assert_eq!(updated.pr_state, Some(crate::models::PrState::Open));
+        assert_eq!(updated.has_merge_conflicts, Some(true));
 
         // Verify it persisted
         let loaded = storage.get_environment(&env.id).unwrap().unwrap();
         assert_eq!(loaded.status, EnvironmentStatus::Running);
+        assert_eq!(loaded.pr_state, Some(crate::models::PrState::Open));
+        assert_eq!(loaded.has_merge_conflicts, Some(true));
     }
 
     #[test]
