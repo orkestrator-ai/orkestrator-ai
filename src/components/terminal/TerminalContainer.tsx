@@ -254,16 +254,13 @@ export function TerminalContainer({
       return;
     }
 
-    // First ensure this environment is active in the store
-    setActiveEnvironment(environmentId);
-
     // Check if we need to initialize (no tabs yet for THIS environment)
     const currentTabs = currentEnvState
       ? getAllLeaves(currentEnvState.root).flatMap((leaf) => leaf.tabs)
       : [];
 
     if (currentTabs.length === 0) {
-      initialize(containerId);
+      initialize(containerId, environmentId);
 
       // Determine initial tab type based on agent options
       let initialTabType: TerminalTabType = "plain";
@@ -431,14 +428,14 @@ export function TerminalContainer({
         addTab("default", initialTab, environmentId);
       }
     }
-  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, setActiveEnvironment, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning]);
+  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning]);
 
   // Reset pane layout when container changes within the same environment
   // (e.g., container was stopped and restarted with a new ID)
   useEffect(() => {
     if (previousContainerIdRef.current !== null && previousContainerIdRef.current !== containerId) {
       console.debug("[TerminalContainer] Container changed for environment:", environmentId, "resetting panes");
-      reset();
+      reset(environmentId);
       hasAppliedClaudeOptionsRef.current = false;
     }
     previousContainerIdRef.current = containerId;
@@ -450,7 +447,7 @@ export function TerminalContainer({
     if (!isContainerRunning && containerId) {
       console.debug("[TerminalContainer] Container stopped, resetting panes for environment:", environmentId);
       setWorkspaceReady(environmentId, false);
-      reset();
+      reset(environmentId);
       // Clear pending native OpenCode launch on container stop
       pendingNativeAgentRef.current = null;
     }
@@ -551,7 +548,7 @@ export function TerminalContainer({
       // For local environments, we don't need a containerId but do need worktreePath to be set
       if (!isEnvironmentRunning || (!containerId && !isLocalEnvironmentReady)) return;
 
-      const allTabs = getAllTabs();
+      const allTabs = getAllTabs(environmentId);
       if (allTabs.length >= MAX_TABS) {
         console.debug("[TerminalContainer] Maximum tab limit reached:", MAX_TABS);
         return;
@@ -631,7 +628,7 @@ export function TerminalContainer({
       const canCreateForLocal = isLocalEnvironment && worktreePath;
       if (!canCreateForContainer && !canCreateForLocal) return;
 
-      const allTabs = getAllTabs();
+      const allTabs = getAllTabs(environmentId);
       if (allTabs.length >= MAX_TABS) {
         console.debug("[TerminalContainer] Maximum tab limit reached:", MAX_TABS);
         return;
@@ -647,9 +644,9 @@ export function TerminalContainer({
       );
       if (existingTab) {
         // Activate the existing tab instead of creating a duplicate
-        const pane = usePaneLayoutStore.getState().findPaneWithTab(existingTab.id);
+        const pane = usePaneLayoutStore.getState().findPaneWithTab(existingTab.id, environmentId);
         if (pane) {
-          usePaneLayoutStore.getState().setActiveTab(pane.id, existingTab.id);
+          usePaneLayoutStore.getState().setActiveTab(pane.id, existingTab.id, environmentId);
           console.debug("[TerminalContainer] Activated existing tab:", existingTab.id, "in pane:", pane.id);
         }
         return;
@@ -684,24 +681,24 @@ export function TerminalContainer({
   // This now only affects the active pane
   const handleSelectTab = useCallback(
     (index: number) => {
-      const activePane = getActivePane();
+      const activePane = getActivePane(environmentId);
       if (activePane && index >= 0 && index < activePane.tabs.length) {
         const tab = activePane.tabs[index];
         if (tab) {
-          usePaneLayoutStore.getState().setActiveTab(activePaneId, tab.id);
+          usePaneLayoutStore.getState().setActiveTab(activePaneId, tab.id, environmentId);
         }
       }
     },
-    [activePaneId, getActivePane]
+    [activePaneId, environmentId, getActivePane]
   );
 
   // Handler for closing the active tab
   const handleCloseActiveTab = useCallback(() => {
-    const activePane = getActivePane();
+    const activePane = getActivePane(environmentId);
     if (activePane && activePane.activeTabId) {
       removeTab(activePaneId, activePane.activeTabId);
     }
-  }, [activePaneId, getActivePane, removeTab]);
+  }, [activePaneId, environmentId, getActivePane, removeTab]);
 
   // Clear claude options after they've been applied to first tab
   useEffect(() => {
@@ -722,10 +719,10 @@ export function TerminalContainer({
       setCreateTab(handleCreateTab);
       setSelectTab(handleSelectTab);
       setCloseActiveTab(handleCloseActiveTab);
-      const allTabs = getAllTabs();
+      const allTabs = getAllTabs(environmentId);
       setTabCount(allTabs.length);
       setCreateFileTab(handleCreateFileTab);
-      setOpenFilePaths(getOpenFilePaths());
+      setOpenFilePaths(getOpenFilePaths(environmentId));
     } else {
       setCreateTab(null);
       setSelectTab(null);

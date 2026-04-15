@@ -1099,11 +1099,11 @@ export function PersistentTerminal({
 
   const handleTerminalClick = useCallback(() => {
     // Set this pane as active when clicked
-    setActivePane(paneId);
+    setActivePane(paneId, environmentId);
     if (isActive) {
       terminal.focus();
     }
-  }, [isActive, terminal, paneId, setActivePane]);
+  }, [environmentId, isActive, terminal, paneId, setActivePane]);
 
   const [manuallyCompleted, setManuallyCompleted] = useState(false);
   const handleMarkSetupComplete = useCallback(() => {
