@@ -332,6 +332,49 @@ describe("CodexChatTab", () => {
     });
   });
 
+  test("shows the first prompt and naming feedback before the rename completes", async () => {
+    composeText = "Audit the flaky reconnect flow";
+
+    let resolveRename: (() => void) | undefined;
+    mockRenameEnvironmentFromPrompt.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRename = resolve;
+        }),
+    );
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("codex-send"));
+
+    await waitFor(() => {
+      expect(screen.queryByText(composeText)).not.toBeNull();
+      expect(screen.queryByText("Naming environment...")).not.toBeNull();
+      expect(mockSendPrompt).not.toHaveBeenCalled();
+    });
+
+    resolveRename?.();
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        SESSION_ID,
+        composeText,
+        { attachments: undefined },
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Naming environment...")).toBeNull();
+    });
+  });
+
   test("auto-sends initialPrompt through the same rename path and clears it from pane state", async () => {
     const initialPrompt = "Set up the environment for release automation";
     seedPaneLayout(initialPrompt);
@@ -381,7 +424,7 @@ describe("CodexChatTab", () => {
 
     await waitFor(() => {
       expect(mockRenameEnvironmentFromPrompt).toHaveBeenCalledTimes(1);
-      expect(useCodexStore.getState().sessions.get(SESSION_KEY)?.messages).toHaveLength(1);
+      expect(useCodexStore.getState().sessions.get(SESSION_KEY)?.messages?.some((message) => message.content === "First prompt")).toBe(true);
     });
 
     composeText = "Second prompt";
@@ -392,5 +435,34 @@ describe("CodexChatTab", () => {
     });
 
     expect(mockRenameEnvironmentFromPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps the optimistic first prompt visible until Codex returns messages", async () => {
+    composeText = "Investigate why the first message disappears";
+    mockGetSessionMessages.mockImplementation(async () => []);
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("codex-send"));
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        SESSION_ID,
+        composeText,
+        { attachments: undefined },
+      );
+    });
+
+    await waitFor(() => {
+      const messages = useCodexStore.getState().sessions.get(SESSION_KEY)?.messages ?? [];
+      expect(messages.some((message) => message.role === "user" && message.content === composeText)).toBe(true);
+    });
   });
 });

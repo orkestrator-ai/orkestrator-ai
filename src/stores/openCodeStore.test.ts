@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ERROR_MESSAGE_PREFIX, type OpenCodeMessage, type PermissionRequest } from "../lib/opencode-client";
+import { OPTIMISTIC_MESSAGE_PREFIX } from "../lib/chat/client-only-messages";
 import { type OpenCodeAttachment, useOpenCodeStore } from "./openCodeStore";
 
 function resetOpenCodeStore() {
@@ -81,6 +82,63 @@ describe("openCodeStore setMessages", () => {
 
     const messages = useOpenCodeStore.getState().getSession(sessionKey)?.messages ?? [];
     expect(messages.filter((m) => m.id === errorMessage.id)).toHaveLength(1);
+  });
+
+  test("preserves optimistic user messages until the server echoes them", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-3:tab-1";
+
+    const optimisticUserMessage: OpenCodeMessage = {
+      id: `${OPTIMISTIC_MESSAGE_PREFIX}msg-1`,
+      role: "user",
+      content: "Rename the environment",
+      parts: [{ type: "text", content: "Rename the environment" }],
+      createdAt: "2026-02-11T00:01:00.000Z",
+    };
+
+    store.setSession(sessionKey, {
+      sessionId: "session-3",
+      messages: [optimisticUserMessage],
+      isLoading: true,
+    });
+
+    store.setMessages(sessionKey, []);
+
+    const messages = useOpenCodeStore.getState().getSession(sessionKey)?.messages ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe(optimisticUserMessage.id);
+  });
+
+  test("drops optimistic user messages once the server returns the matching prompt", () => {
+    const store = useOpenCodeStore.getState();
+    const sessionKey = "env-env-4:tab-1";
+
+    const optimisticUserMessage: OpenCodeMessage = {
+      id: `${OPTIMISTIC_MESSAGE_PREFIX}msg-2`,
+      role: "user",
+      content: "Rename the environment",
+      parts: [{ type: "text", content: "Rename the environment" }],
+      createdAt: "2026-02-11T00:01:00.000Z",
+    };
+    const serverUserMessage: OpenCodeMessage = {
+      id: "msg-2",
+      role: "user",
+      content: "Rename the environment",
+      parts: [{ type: "text", content: "Rename the environment" }],
+      createdAt: "2026-02-11T00:01:02.000Z",
+    };
+
+    store.setSession(sessionKey, {
+      sessionId: "session-4",
+      messages: [optimisticUserMessage],
+      isLoading: true,
+    });
+
+    store.setMessages(sessionKey, [serverUserMessage]);
+
+    const messages = useOpenCodeStore.getState().getSession(sessionKey)?.messages ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe(serverUserMessage.id);
   });
 });
 

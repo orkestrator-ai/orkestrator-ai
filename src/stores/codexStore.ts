@@ -9,6 +9,7 @@ import {
   type CodexReasoningEffort,
   type CodexSlashCommand,
 } from "@/lib/codex-client";
+import { mergeNativeMessagesPreservingClientOnly } from "@/lib/chat/client-only-messages";
 import { createSessionKey } from "@/lib/utils";
 import type { FileMention } from "@/types";
 
@@ -61,6 +62,8 @@ interface CodexState {
   setServerStatus: (environmentId: string, status: CodexServerStatus) => void;
   setClient: (environmentId: string, client: CodexClient | null) => void;
   setSession: (sessionKey: string, session: CodexSessionState | null) => void;
+  addMessage: (sessionKey: string, message: CodexMessage) => void;
+  removeMessage: (sessionKey: string, messageId: string) => void;
   setMessages: (sessionKey: string, messages: CodexMessage[]) => void;
   setSlashCommands: (environmentId: string, commands: CodexSlashCommand[]) => void;
   setSessionLoading: (sessionKey: string, isLoading: boolean) => void;
@@ -132,12 +135,45 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
       return { sessions: next };
     }),
 
+  addMessage: (sessionKey, message) =>
+    set((state) => {
+      const session = state.sessions.get(sessionKey);
+      if (!session) return state;
+      const next = new Map(state.sessions);
+      next.set(sessionKey, {
+        ...session,
+        messages: [...session.messages, message],
+      });
+      return { sessions: next };
+    }),
+
+  removeMessage: (sessionKey, messageId) =>
+    set((state) => {
+      const session = state.sessions.get(sessionKey);
+      if (!session) return state;
+
+      const filteredMessages = session.messages.filter((message) => message.id !== messageId);
+      if (filteredMessages.length === session.messages.length) {
+        return state;
+      }
+
+      const next = new Map(state.sessions);
+      next.set(sessionKey, {
+        ...session,
+        messages: filteredMessages,
+      });
+      return { sessions: next };
+    }),
+
   setMessages: (sessionKey, messages) =>
     set((state) => {
       const session = state.sessions.get(sessionKey);
       if (!session) return state;
       const next = new Map(state.sessions);
-      next.set(sessionKey, { ...session, messages });
+      next.set(sessionKey, {
+        ...session,
+        messages: mergeNativeMessagesPreservingClientOnly(session.messages, messages),
+      });
       return { sessions: next };
     }),
 

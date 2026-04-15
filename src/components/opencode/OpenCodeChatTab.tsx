@@ -7,6 +7,7 @@ import {
   History,
 } from "lucide-react";
 import { useVirtuosoScrollState, clearPersistedVirtuosoState, useElapsedTimer } from "@/hooks";
+import { OPTIMISTIC_MESSAGE_PREFIX } from "@/lib/chat/client-only-messages";
 import { formatElapsed } from "@/lib/format-elapsed";
 import { Button } from "@/components/ui/button";
 import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
@@ -1067,7 +1068,7 @@ export function OpenCodeChatTab({
 
       // Add user message optimistically
       const userMessage = {
-        id: crypto.randomUUID(),
+        id: `${OPTIMISTIC_MESSAGE_PREFIX}${crypto.randomUUID()}`,
         role: "user" as const,
         content: text,
         parts: [{ type: "text" as const, content: text }],
@@ -1082,7 +1083,7 @@ export function OpenCodeChatTab({
       if (!session.messages.length) {
         const env = useEnvironmentStore.getState().getEnvironmentById(environmentId);
         if (env && /^\d{8}-\d{6}$/.test(env.name)) {
-          const namingMsgId = `${SYSTEM_MESSAGE_PREFIX}naming-${Date.now()}`;
+          const namingMsgId = `${SYSTEM_MESSAGE_PREFIX}naming-${crypto.randomUUID()}`;
           addMessage(sessionKey, {
             id: namingMsgId,
             role: "assistant" as const,

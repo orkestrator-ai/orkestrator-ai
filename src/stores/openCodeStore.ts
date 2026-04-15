@@ -1,7 +1,5 @@
 import { create } from "zustand";
 import {
-  ERROR_MESSAGE_PREFIX,
-  SYSTEM_MESSAGE_PREFIX,
   type OpenCodeMessage,
   type OpenCodeModel,
   type OpenCodeSlashCommand,
@@ -11,6 +9,7 @@ import {
   type PermissionRequest,
   type OpenCodeEvent,
 } from "@/lib/opencode-client";
+import { mergeNativeMessagesPreservingClientOnly } from "@/lib/chat/client-only-messages";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { createSessionKey } from "@/lib/utils";
 import type { FileMention } from "@/types";
@@ -344,50 +343,10 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       const session = state.sessions.get(environmentId);
       if (!session) return state;
 
-      // Preserve client-side messages (errors and system messages like naming notifications)
-      // These exist only on the client and would be lost when fetching from server
-      const existingClientMessages = session.messages.filter(
-        (m) => m.id.startsWith(ERROR_MESSAGE_PREFIX) || m.id.startsWith(SYSTEM_MESSAGE_PREFIX)
-      );
-      const incomingMessageIds = new Set(messages.map((m) => m.id));
-      const clientMessagesToPreserve = existingClientMessages.filter((m) => !incomingMessageIds.has(m.id));
-
-      // If there are no client messages to preserve, just use server messages
-      if (clientMessagesToPreserve.length === 0) {
-        const newMap = new Map(state.sessions);
-        newMap.set(environmentId, {
-          ...session,
-          messages,
-        });
-        return { sessions: newMap };
-      }
-
-      // Merge client messages into server messages based on timestamp
-      // Each client message should appear after the message it follows chronologically
-      const mergedMessages = [...messages];
-      for (const clientMsg of clientMessagesToPreserve) {
-        const errorTime = new Date(clientMsg.createdAt || 0).getTime();
-        // Find the position to insert: after the last message with earlier/equal timestamp
-        let insertIndex = mergedMessages.length;
-        for (let i = mergedMessages.length - 1; i >= 0; i--) {
-          const msg = mergedMessages[i];
-          if (!msg) continue;
-          const msgTime = new Date(msg.createdAt || 0).getTime();
-          if (msgTime <= errorTime) {
-            insertIndex = i + 1;
-            break;
-          }
-          if (i === 0 && msgTime > errorTime) {
-            insertIndex = 0;
-          }
-        }
-        mergedMessages.splice(insertIndex, 0, clientMsg);
-      }
-
       const newMap = new Map(state.sessions);
       newMap.set(environmentId, {
         ...session,
-        messages: mergedMessages,
+        messages: mergeNativeMessagesPreservingClientOnly(session.messages, messages),
       });
       return { sessions: newMap };
     }),
