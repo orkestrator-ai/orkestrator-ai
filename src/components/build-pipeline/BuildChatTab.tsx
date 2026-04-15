@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
-import { Loader2, AlertCircle, RefreshCw, ArrowDown, Hammer, StopCircle } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, ArrowDown, Hammer, StopCircle, ArrowUp, PlayCircle } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -80,6 +80,7 @@ const PHASE_LABELS: Record<BuildPhase, string> = {
   fixing: "Fixing Issues",
   "creating-pr": "Creating PR",
   "resolving-conflicts": "Resolving Conflicts",
+  paused: "Paused",
   complete: "Complete",
   failed: "Failed",
 };
@@ -95,6 +96,7 @@ const PHASE_COLORS: Record<BuildPhase, string> = {
   fixing: "text-red-400",
   "creating-pr": "text-cyan-400",
   "resolving-conflicts": "text-yellow-400",
+  paused: "text-amber-400",
   complete: "text-green-400",
   failed: "text-red-500",
 };
@@ -133,6 +135,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const buildStartTriggeredRef = useRef(false);
   const [advanceTick, setAdvanceTick] = useState(0);
   const handledErrorIdsRef = useRef(new Set<string>());
+  const [jumpInText, setJumpInText] = useState("");
+  const jumpInTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const pipeline = useBuildPipelineStore((s) => s.pipelines.get(pipelineId));
   const { config } = useConfigStore();
@@ -140,9 +144,11 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     setPhase,
     addSession: addPipelineSession,
     markSessionIdle,
+    markSessionRunning,
     setVerificationResult,
     incrementIteration,
     setPipelineError,
+    pausePipeline,
   } = useBuildPipelineStore();
 
   const {
@@ -449,6 +455,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   useEffect(() => {
     if (!pipeline || !client || connectionState !== "connected" || pipelineAdvancingRef.current) return;
     if (pipeline.phase === "addressing") return; // Handled by separate effect
+    if (pipeline.phase === "paused") return; // User has paused - don't auto-advance
 
     const currentSession = pipeline.sessions[pipeline.currentSessionIndex];
     if (!currentSession) return;
@@ -660,6 +667,17 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     },
     [client, pipelineId, addMessage, setSessionLoading, setPhase, setPipelineError]
   );
+
+  // Handle session idle during paused state - mark idle but don't advance
+  useEffect(() => {
+    if (!pipeline || pipeline.phase !== "paused") return;
+    const currentSession = pipeline.sessions[pipeline.currentSessionIndex];
+    if (!currentSession || currentSession.status !== "running") return;
+    const sessionState = sessionsMap.get(currentSession.sessionKey);
+    if (!sessionState || sessionState.isLoading) return;
+    markSessionIdle(pipelineId, currentSession.sdkSessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipeline?.phase, pipeline?.currentSessionIndex, pipeline?.sessions, sessionsMap]);
 
   // Handle idle after "addressing" phase
   useEffect(() => {
@@ -1013,7 +1031,7 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     [client, pipelineId, config.repositories, createPipelineSession, addMessage, setPhase, setPipelineError]
   );
 
-  // Stop the pipeline - abort all sessions to ensure nothing keeps running
+  // Stop the pipeline - abort running sessions and pause for user intervention
   const handleStop = useCallback(async () => {
     if (!client || !pipeline) return;
 
@@ -1027,8 +1045,8 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     });
     await Promise.all(abortPromises);
 
-    setPipelineError(pipelineId, "Pipeline stopped by user");
-  }, [client, pipeline, pipelineId, setSessionLoading, setPipelineError]);
+    pausePipeline(pipelineId);
+  }, [client, pipeline, pipelineId, setSessionLoading, pausePipeline]);
 
   // Retry
   const handleRetry = useCallback(() => {
@@ -1038,6 +1056,42 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     setClient(environmentId, null);
     setServerStatus(environmentId, { running: false, hostPort: null });
   }, [environmentId, setClient, setServerStatus]);
+
+  // Send a user message to the current session while pipeline is paused
+  const handleJumpInSend = useCallback(async (text: string) => {
+    if (!client || !pipeline || pipeline.phase !== "paused" || !text.trim()) return;
+
+    const currentSession = pipeline.sessions[pipeline.currentSessionIndex];
+    if (!currentSession) return;
+
+    // Mark session as running and set loading
+    markSessionRunning(pipelineId, currentSession.sdkSessionId);
+    setSessionLoading(currentSession.sessionKey, true);
+
+    const userMessage: ClaudeMessageType = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text.trim(),
+      parts: [{ type: "text", content: text.trim() }],
+      timestamp: new Date().toISOString(),
+    };
+    addMessage(currentSession.sessionKey, userMessage);
+
+    const success = await sendPrompt(client, currentSession.sdkSessionId, text.trim(), {
+      permissionMode: "bypassPermissions",
+    });
+
+    if (!success) {
+      setSessionLoading(currentSession.sessionKey, false);
+      markSessionIdle(pipelineId, currentSession.sdkSessionId);
+    }
+  }, [client, pipeline, pipelineId, markSessionRunning, markSessionIdle, setSessionLoading, addMessage]);
+
+  // Resume pipeline from paused state by starting a review session
+  const handleReviewAndContinue = useCallback(async () => {
+    if (!pipeline || pipeline.phase !== "paused") return;
+    await startReviewSession(pipeline);
+  }, [pipeline, startReviewSession]);
 
   // When the bridge server is connected and environment is starting, transition to
   // waiting-for-setup. Both local and container environments must complete their setup
@@ -1124,10 +1178,45 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
 
   const setupPending = isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady });
 
+  const isRunning = pipeline && !["complete", "failed", "paused"].includes(pipeline.phase);
+  const isPaused = pipeline?.phase === "paused";
+
+  // Check if the agent is processing a user's jump-in message
+  const isJumpInLoading = useMemo(() => {
+    if (!pipeline || pipeline.phase !== "paused") return false;
+    const currentSession = pipeline.sessions[pipeline.currentSessionIndex];
+    if (!currentSession) return false;
+    const sessionState = sessionsMap.get(currentSession.sessionKey);
+    return sessionState?.isLoading ?? false;
+  }, [pipeline, sessionsMap]);
+
+  const handleJumpInKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (jumpInText.trim() && !isJumpInLoading) {
+        handleJumpInSend(jumpInText);
+        setJumpInText("");
+      }
+    }
+  }, [jumpInText, isJumpInLoading, handleJumpInSend]);
+
+  // Abort a running jump-in message
+  const handleJumpInStop = useCallback(async () => {
+    if (!client || !pipeline) return;
+    const currentSession = pipeline.sessions[pipeline.currentSessionIndex];
+    if (!currentSession) return;
+    try {
+      await abortSession(client, currentSession.sdkSessionId);
+      setSessionLoading(currentSession.sessionKey, false);
+    } catch {
+      // Best effort
+    }
+  }, [client, pipeline, setSessionLoading]);
+
   // Show setup waiting UI when setup is pending (before connection is even attempted).
   // Covers all active phases defensively — if setup is somehow pending during "building"
   // or later phases, we still block until setup completes.
-  if (setupPending && pipeline && !["complete", "failed"].includes(pipeline.phase)) {
+  if (setupPending && pipeline && !["complete", "failed", "paused"].includes(pipeline.phase)) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
         <Loader2 className="w-8 h-8 animate-spin text-yellow-400" />
@@ -1180,8 +1269,6 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     );
   }
 
-  const isRunning = pipeline && !["complete", "failed"].includes(pipeline.phase);
-
   return (
     <div className="@container flex flex-col h-full bg-background overflow-hidden">
       {/* Status bar */}
@@ -1204,6 +1291,18 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
               <Button variant="ghost" size="sm" onClick={handleStop} className="h-6 px-2 gap-1 text-xs">
                 <StopCircle className="w-3 h-3" />
                 Stop
+              </Button>
+            )}
+            {isPaused && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleReviewAndContinue}
+                disabled={isJumpInLoading}
+                className="h-6 px-3 gap-1.5 text-xs"
+              >
+                <PlayCircle className="w-3 h-3" />
+                Review and continue
               </Button>
             )}
             {pipeline.phase === "complete" && (
@@ -1271,6 +1370,59 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
             <ArrowDown className="w-3.5 h-3.5" />
             <span>Scroll down</span>
           </button>
+        </div>
+      )}
+
+      {/* Jump-in compose bar when pipeline is paused */}
+      {isPaused && (
+        <div className="border-t border-border bg-muted/30 px-4 py-3">
+          <div className="max-w-3xl mx-auto flex items-end gap-2">
+            <textarea
+              ref={jumpInTextareaRef}
+              value={jumpInText}
+              onChange={(e) => setJumpInText(e.target.value)}
+              onKeyDown={handleJumpInKeyDown}
+              placeholder="Send a message to the agent..."
+              disabled={isJumpInLoading}
+              rows={1}
+              className={cn(
+                "flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm",
+                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "min-h-[36px] max-h-[120px]",
+                isJumpInLoading && "opacity-50 cursor-not-allowed"
+              )}
+              onInput={(e) => {
+                const target = e.target as HTMLTextAreaElement;
+                target.style.height = "auto";
+                target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
+              }}
+            />
+            {isJumpInLoading ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleJumpInStop}
+                className="h-9 w-9 shrink-0"
+              >
+                <StopCircle className="w-4 h-4" />
+              </Button>
+            ) : (
+              <Button
+                variant="default"
+                size="icon"
+                onClick={() => {
+                  if (jumpInText.trim()) {
+                    handleJumpInSend(jumpInText);
+                    setJumpInText("");
+                  }
+                }}
+                disabled={!jumpInText.trim()}
+                className="h-9 w-9 shrink-0"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>
