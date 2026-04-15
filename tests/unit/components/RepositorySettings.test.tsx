@@ -1,34 +1,49 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 // ---------------------------------------------------------------------------
 // Mocks — must be declared BEFORE importing the component under test
 // ---------------------------------------------------------------------------
 
-const mockUpdateRepositoryConfig = mock(() =>
+let mockSection = "agent";
+let nextDialogResult: string | null = null;
+let dialogError: Error | null = null;
+let updateRepositoryConfigImpl = (_projectId: string, repoConfig: unknown) =>
   Promise.resolve({
     version: "1.0",
-    global: {},
-    repositories: {},
-  })
+    global: makeConfig().global,
+    repositories: { "project-1": repoConfig as Record<string, unknown> },
+  });
+
+const mockUpdateRepositoryConfig = mock((projectId: string, repoConfig: unknown) =>
+  updateRepositoryConfigImpl(projectId, repoConfig)
 );
+const mockUpdateProject = mock(async (project: unknown) => project);
+const mockOpenDialog = mock(async () => {
+  if (dialogError) {
+    throw dialogError;
+  }
+  return nextDialogResult;
+});
+const mockToastSuccess = mock(() => {});
+const mockToastError = mock(() => {});
 
 mock.module("@/lib/tauri", () => ({
   updateRepositoryConfig: mockUpdateRepositoryConfig,
-  updateProject: mock(() => Promise.resolve({})),
+  updateProject: mockUpdateProject,
 }));
 
 mock.module("@tauri-apps/plugin-dialog", () => ({
-  open: mock(() => Promise.resolve(null)),
+  open: mockOpenDialog,
 }));
 
 mock.module("sonner", () => ({
-  toast: { success: mock(() => {}), error: mock(() => {}) },
+  toast: {
+    success: mockToastSuccess,
+    error: mockToastError,
+  },
 }));
 
-// Render the FullscreenSettingsLayout as a simple div that calls children
-// with a configurable section. Default to "agent" section for our tests.
-let mockSection = "agent";
 mock.module("@/components/settings/FullscreenSettingsLayout", () => ({
   FullscreenSettingsLayout: ({
     open,
@@ -54,8 +69,19 @@ mock.module("@/components/settings/FullscreenSettingsLayout", () => ({
 }));
 
 mock.module("@/components/ui/button", () => ({
-  Button: ({ children, onClick, disabled, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode; variant?: string; size?: string }) => (
-    <button onClick={onClick} disabled={disabled} {...props}>{children}</button>
+  Button: ({
+    children,
+    onClick,
+    disabled,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    children: React.ReactNode;
+    variant?: string;
+    size?: string;
+  }) => (
+    <button onClick={onClick} disabled={disabled} {...props}>
+      {children}
+    </button>
   ),
 }));
 
@@ -64,14 +90,21 @@ mock.module("@/components/ui/input", () => ({
 }));
 
 mock.module("@/components/ui/label", () => ({
-  Label: ({ children, ...props }: React.LabelHTMLAttributes<HTMLLabelElement> & { children: React.ReactNode }) => (
+  Label: ({
+    children,
+    ...props
+  }: React.LabelHTMLAttributes<HTMLLabelElement> & { children: React.ReactNode }) => (
     <label {...props}>{children}</label>
   ),
 }));
 
-// Select mock that renders as a native <select> for easy interaction
 mock.module("@/components/ui/select", () => ({
-  Select: ({ children, value, onValueChange, disabled }: {
+  Select: ({
+    children,
+    value,
+    onValueChange,
+    disabled,
+  }: {
     children: React.ReactNode;
     value?: string;
     onValueChange?: (v: string) => void;
@@ -87,21 +120,34 @@ mock.module("@/components/ui/select", () => ({
     </select>
   ),
   SelectContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SelectItem: ({ children, value }: { children: React.ReactNode; value: string }) => (
-    <option value={value}>{children}</option>
-  ),
-  SelectTrigger: ({ children, id }: { children: React.ReactNode; id?: string }) => <>{children}</>,
-  SelectValue: ({ placeholder }: { placeholder?: string }) => null,
+  SelectItem: ({
+    children,
+    value,
+  }: {
+    children: React.ReactNode;
+    value: string;
+  }) => <option value={value}>{children}</option>,
+  SelectTrigger: ({
+    children,
+  }: {
+    children: React.ReactNode;
+    id?: string;
+    className?: string;
+  }) => <>{children}</>,
+  SelectValue: ({ placeholder }: { placeholder?: string }) => placeholder ? <option value="">{placeholder}</option> : null,
 }));
 
 // ---------------------------------------------------------------------------
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
-import { useConfigStore } from "@/stores/configStore";
+import { CODEX_MODELS } from "@/lib/codex-client";
 import { useClaudeStore } from "@/stores/claudeStore";
+import { useCodexStore } from "@/stores/codexStore";
+import { useConfigStore } from "@/stores/configStore";
+import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { RepositorySettings } from "../../../src/components/settings/RepositorySettings";
-import type { Project, AppConfig } from "@/types";
+import type { AppConfig, Project } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,6 +160,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     gitUrl: "git@github.com:test/repo.git",
     localPath: null,
     addedAt: new Date().toISOString(),
+    order: 0,
     ...overrides,
   };
 }
@@ -126,12 +173,16 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       envFilePatterns: [".env"],
       allowedDomains: [],
       defaultAgent: "claude",
-      opencodeModel: "grok",
-      codexModel: "codex-1",
+      opencodeModel: "opencode/grok-code",
+      codexModel: "gpt-5.3-codex",
       codexReasoningEffort: "medium",
       opencodeMode: "terminal",
       claudeMode: "terminal",
-      terminalAppearance: { fontFamily: "monospace", fontSize: 14, backgroundColor: "#000" },
+      terminalAppearance: {
+        fontFamily: "monospace",
+        fontSize: 14,
+        backgroundColor: "#000000",
+      },
       terminalScrollback: 5000,
       ...overrides.global,
     },
@@ -139,244 +190,516 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   };
 }
 
-function renderSettings(overrides: { project?: Partial<Project>; config?: Partial<AppConfig> } = {}) {
-  const project = makeProject(overrides.project);
-  const config = makeConfig(overrides.config);
-
+function resetStores(config = makeConfig()) {
   useConfigStore.setState({
     config,
     isLoading: false,
     error: null,
   });
+  useClaudeStore.setState({ models: [] });
+  useOpenCodeStore.setState({ models: new Map() });
+  useCodexStore.setState({ models: CODEX_MODELS });
+}
 
-  return render(
-    <RepositorySettings
-      project={project}
-      open={true}
-      onOpenChange={() => {}}
-    />
-  );
+function renderSettings({
+  project,
+  config,
+  section = "agent",
+  onOpenChange,
+  onUpdateProject,
+  prepareStores,
+}: {
+  project?: Partial<Project>;
+  config?: Partial<AppConfig>;
+  section?: string;
+  onOpenChange?: (open: boolean) => void;
+  onUpdateProject?: (project: Project) => Promise<Project | void>;
+  prepareStores?: () => void;
+} = {}) {
+  mockSection = section;
+  const resolvedProject = makeProject(project);
+  const resolvedConfig = makeConfig(config);
+  resetStores(resolvedConfig);
+  prepareStores?.();
+
+  const handleOpenChange = onOpenChange ?? mock(() => {});
+
+  return {
+    ...render(
+      <RepositorySettings
+        project={resolvedProject}
+        open={true}
+        onOpenChange={handleOpenChange}
+        onUpdateProject={onUpdateProject}
+      />
+    ),
+    project: resolvedProject,
+    onOpenChange: handleOpenChange,
+  };
+}
+
+function getSettingsContent() {
+  return screen.getByTestId("settings-content");
+}
+
+function getSaveButton() {
+  return screen.getByRole("button", { name: "Save" });
+}
+
+function getCancelButton() {
+  return screen.getByRole("button", { name: "Cancel" });
+}
+
+function getMockSelects() {
+  return screen.getAllByTestId("mock-select") as HTMLSelectElement[];
+}
+
+function getAgentGroup() {
+  return screen.getByRole("radiogroup", { name: "Default Agent" });
+}
+
+function getAgentRadio(name: string | RegExp) {
+  return within(getAgentGroup()).getByRole("radio", { name });
+}
+
+function getSavedConfig() {
+  return mockUpdateRepositoryConfig.mock.calls[0]?.[1] as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("RepositorySettings - agent/style settings", () => {
+describe("RepositorySettings", () => {
   beforeEach(() => {
     mockSection = "agent";
+    nextDialogResult = null;
+    dialogError = null;
+    updateRepositoryConfigImpl = (_projectId: string, repoConfig: unknown) =>
+      Promise.resolve({
+        version: "1.0",
+        global: makeConfig().global,
+        repositories: { "project-1": repoConfig as Record<string, unknown> },
+      });
+
     mockUpdateRepositoryConfig.mockClear();
-    useConfigStore.setState({
-      config: makeConfig(),
-      isLoading: false,
-      error: null,
-    });
+    mockUpdateProject.mockClear();
+    mockOpenDialog.mockClear();
+    mockToastSuccess.mockClear();
+    mockToastError.mockClear();
+
+    resetStores();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  test("renders agent and style dropdowns in the agent section", () => {
-    renderSettings();
+  describe("agent section", () => {
+    test("renders accessible agent tiles and keeps app default selected by default", () => {
+      renderSettings();
 
-    // Should have labels for both new dropdowns
-    expect(screen.getByText("Default Agent")).toBeTruthy();
-    expect(screen.getByText("Agent Style")).toBeTruthy();
-  });
+      expect(screen.getByText("Agent Style")).toBeTruthy();
 
-  test("agent dropdown defaults to Use App Default when no project override", () => {
-    renderSettings();
+      const group = getAgentGroup();
+      expect(within(group).getByRole("radio", { name: "Use App Default (Claude)" }).getAttribute("aria-checked")).toBe("true");
+      expect(within(group).getByRole("radio", { name: "Claude" })).toBeTruthy();
+      expect(within(group).getByRole("radio", { name: "OpenCode" })).toBeTruthy();
+      expect(within(group).getByRole("radio", { name: "Codex" })).toBeTruthy();
 
-    const selects = screen.getAllByTestId("mock-select");
-    // The first two selects in the agent section are: Default Agent, Agent Style
-    const agentSelect = selects[0]!;
-    expect(agentSelect.getAttribute("value") || (agentSelect as HTMLSelectElement).value).toBe("__app_default__");
-  });
+      const [styleSelect] = getMockSelects();
+      expect(styleSelect.value).toBe("__app_default__");
+    });
 
-  test("agent dropdown shows project override value when set", () => {
-    renderSettings({
-      config: {
-        repositories: {
-          "project-1": {
-            defaultBranch: "main",
-            prBaseBranch: "main",
-            defaultAgent: "opencode",
+    test("shows the project override and keeps the app-default tile label tied to the global default", () => {
+      const { container } = renderSettings({
+        config: {
+          global: { defaultAgent: "claude" } as AppConfig["global"],
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              defaultAgent: "opencode",
+            },
           },
         },
-      },
+      });
+
+      expect(getAgentRadio("Use App Default (Claude)")).toBeTruthy();
+      expect(getAgentRadio("OpenCode").getAttribute("aria-checked")).toBe("true");
+      expect(container.querySelector("span.text-xs.text-muted-foreground.bg-zinc-800")?.textContent).toBe("OpenCode");
     });
 
-    const selects = screen.getAllByTestId("mock-select");
-    const agentSelect = selects[0]!;
-    expect((agentSelect as HTMLSelectElement).value).toBe("opencode");
-  });
-
-  test("style dropdown defaults to Use App Default when no project override", () => {
-    renderSettings();
-
-    const selects = screen.getAllByTestId("mock-select");
-    const styleSelect = selects[1]!;
-    expect((styleSelect as HTMLSelectElement).value).toBe("__app_default__");
-  });
-
-  test("style dropdown shows project override value when set", () => {
-    renderSettings({
-      config: {
-        repositories: {
-          "project-1": {
-            defaultBranch: "main",
-            prBaseBranch: "main",
-            agentStyle: "native",
+    test("clicking an agent tile updates the effective badge and clears model and effort on save", async () => {
+      const { container } = renderSettings({
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              defaultModel: "claude-sonnet-4-6",
+              defaultEffort: "high",
+            },
           },
         },
-      },
+      });
+
+      fireEvent.click(getAgentRadio("OpenCode"));
+      expect(container.querySelector("span.text-xs.text-muted-foreground.bg-zinc-800")?.textContent).toBe("OpenCode");
+
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+
+      const savedConfig = getSavedConfig();
+      expect(savedConfig.defaultAgent).toBe("opencode");
+      expect(savedConfig.defaultModel).toBeUndefined();
+      expect(savedConfig.defaultEffort).toBeUndefined();
     });
 
-    const selects = screen.getAllByTestId("mock-select");
-    const styleSelect = selects[1]!;
-    expect((styleSelect as HTMLSelectElement).value).toBe("native");
-  });
+    test("saves explicit agent and style overrides", async () => {
+      renderSettings();
 
-  test("agent dropdown has all expected options", () => {
-    renderSettings();
+      fireEvent.click(getAgentRadio("OpenCode"));
 
-    const selects = screen.getAllByTestId("mock-select");
-    const agentSelect = selects[0]!;
-    const options = agentSelect.querySelectorAll("option");
-    const values = Array.from(options).map((o) => o.getAttribute("value"));
+      const [styleSelect] = getMockSelects();
+      fireEvent.change(styleSelect, { target: { value: "native" } });
+      fireEvent.click(getSaveButton());
 
-    expect(values).toContain("__app_default__");
-    expect(values).toContain("claude");
-    expect(values).toContain("opencode");
-    expect(values).toContain("codex");
-  });
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
 
-  test("style dropdown has all expected options", () => {
-    renderSettings();
+      const savedConfig = getSavedConfig();
+      expect(savedConfig.defaultAgent).toBe("opencode");
+      expect(savedConfig.agentStyle).toBe("native");
+    });
 
-    const selects = screen.getAllByTestId("mock-select");
-    const styleSelect = selects[1]!;
-    const options = styleSelect.querySelectorAll("option");
-    const values = Array.from(options).map((o) => o.getAttribute("value"));
-
-    expect(values).toContain("__app_default__");
-    expect(values).toContain("terminal");
-    expect(values).toContain("native");
-  });
-
-  test("changing agent resets model and effort selections", async () => {
-    const { container } = renderSettings({
-      config: {
-        repositories: {
-          "project-1": {
-            defaultBranch: "main",
-            prBaseBranch: "main",
-            defaultModel: "claude-sonnet-4-6",
-            defaultEffort: "high",
+    test("omits agent and style overrides when reset to app default", async () => {
+      renderSettings({
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              defaultAgent: "opencode",
+              agentStyle: "native",
+            },
           },
         },
-      },
+      });
+
+      fireEvent.click(getAgentRadio(/^Use App Default/));
+
+      const [styleSelect] = getMockSelects();
+      fireEvent.change(styleSelect, { target: { value: "__app_default__" } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+
+      const savedConfig = getSavedConfig();
+      expect(savedConfig.defaultAgent).toBeUndefined();
+      expect(savedConfig.agentStyle).toBeUndefined();
     });
 
-    const selects = screen.getAllByTestId("mock-select");
-    const agentSelect = selects[0]!;
-
-    // Change agent — this should trigger setDefaultModel("") and setDefaultEffort("")
-    fireEvent.change(agentSelect, { target: { value: "opencode" } });
-
-    // After the change, click Save to capture the persisted config
-    const saveButton = screen.getByText("Save");
-    fireEvent.click(saveButton);
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1);
-    const [, savedConfig] = mockUpdateRepositoryConfig.mock.calls[0]!;
-    // Model and effort should be cleared (undefined) because "" maps to undefined in the save logic
-    expect(savedConfig.defaultModel).toBeUndefined();
-    expect(savedConfig.defaultEffort).toBeUndefined();
-    expect(savedConfig.defaultAgent).toBe("opencode");
-  });
-
-  test("effective agent label updates when project agent override changes", () => {
-    const { container } = renderSettings({
-      config: {
-        global: { defaultAgent: "claude" } as AppConfig["global"],
-      },
-    });
-
-    // The agent label is rendered in a <span> badge next to "Default Agent Settings"
-    const getAgentBadge = () => container.querySelector("span.text-xs.text-muted-foreground.bg-zinc-800");
-
-    // Initially effective agent is claude (app default)
-    expect(getAgentBadge()?.textContent).toBe("Claude");
-
-    const selects = screen.getAllByTestId("mock-select");
-    const agentSelect = selects[0]!;
-
-    // Change to opencode
-    fireEvent.change(agentSelect, { target: { value: "opencode" } });
-    expect(getAgentBadge()?.textContent).toBe("OpenCode");
-
-    // Change to codex
-    fireEvent.change(agentSelect, { target: { value: "codex" } });
-    expect(getAgentBadge()?.textContent).toBe("Codex");
-  });
-
-  test("save sends correct config with agent and style overrides", async () => {
-    renderSettings();
-
-    const selects = screen.getAllByTestId("mock-select");
-
-    // Set agent to opencode
-    fireEvent.change(selects[0]!, { target: { value: "opencode" } });
-    // Set style to native
-    fireEvent.change(selects[1]!, { target: { value: "native" } });
-
-    // Click Save
-    const saveButton = screen.getByText("Save");
-    fireEvent.click(saveButton);
-
-    // Wait for async save
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1);
-    const [projectId, savedConfig] = mockUpdateRepositoryConfig.mock.calls[0]!;
-    expect(projectId).toBe("project-1");
-    expect(savedConfig.defaultAgent).toBe("opencode");
-    expect(savedConfig.agentStyle).toBe("native");
-  });
-
-  test("save sends undefined agent/style when set to Use App Default", async () => {
-    renderSettings({
-      config: {
-        repositories: {
-          "project-1": {
-            defaultBranch: "main",
-            prBaseBranch: "main",
-            defaultAgent: "opencode",
-            agentStyle: "native",
+    test("uses OpenCode model variants when the effective agent is OpenCode", () => {
+      renderSettings({
+        config: {
+          global: { defaultAgent: "opencode" } as AppConfig["global"],
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              defaultAgent: "opencode",
+              defaultModel: "openai/gpt-5",
+            },
           },
         },
-      },
+        prepareStores: () => {
+          useOpenCodeStore.setState({
+            models: new Map([
+              [
+                "env-1",
+                [
+                  {
+                    id: "openai/gpt-5",
+                    name: "GPT-5",
+                    provider: "openai",
+                    variants: ["low", "high", "xhigh"],
+                  },
+                ],
+              ],
+            ]),
+          });
+        },
+      });
+
+      const selects = getMockSelects();
+      const effortSelect = selects[2]!;
+      const values = Array.from(effortSelect.querySelectorAll("option")).map((option) => option.value);
+
+      expect(values).toContain("low");
+      expect(values).toContain("high");
+      expect(values).toContain("xhigh");
     });
 
-    const selects = screen.getAllByTestId("mock-select");
+    test("shows a no-models hint when the effective agent has no available models", () => {
+      renderSettings({
+        config: {
+          global: { defaultAgent: "opencode" } as AppConfig["global"],
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              defaultAgent: "opencode",
+            },
+          },
+        },
+      });
 
-    // Reset both to app default
-    fireEvent.change(selects[0]!, { target: { value: "__app_default__" } });
-    fireEvent.change(selects[1]!, { target: { value: "__app_default__" } });
+      expect(screen.getByText("Start an environment to load available models")).toBeTruthy();
+    });
+  });
 
-    // Click Save
-    const saveButton = screen.getByText("Save");
-    fireEvent.click(saveButton);
+  describe("general section", () => {
+    test("validates project name and disables save when it is empty", () => {
+      renderSettings({ section: "general" });
 
-    await new Promise((r) => setTimeout(r, 50));
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "   " } });
 
-    expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1);
-    const [, savedConfig] = mockUpdateRepositoryConfig.mock.calls[0]!;
-    expect(savedConfig.defaultAgent).toBeUndefined();
-    expect(savedConfig.agentStyle).toBeUndefined();
+      expect(screen.getByText("Name cannot be empty")).toBeTruthy();
+      expect((getSaveButton() as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    test("browsing updates the local path field", async () => {
+      nextDialogResult = "/Users/test/repo";
+      renderSettings({ section: "general" });
+
+      const contentButtons = within(getSettingsContent()).getAllByRole("button");
+      fireEvent.click(contentButtons[1]!);
+
+      await waitFor(() => expect(mockOpenDialog).toHaveBeenCalledTimes(1));
+      expect((screen.getByLabelText("Local Path") as HTMLInputElement).value).toBe("/Users/test/repo");
+    });
+
+    test("save trims changed project fields and calls onUpdateProject", async () => {
+      const onUpdateProject = mock(async (project: Project) => project);
+      renderSettings({
+        section: "general",
+        onUpdateProject,
+      });
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "  renamed repo  " } });
+      fireEvent.change(screen.getByLabelText("Local Path"), { target: { value: "  /tmp/repo  " } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(onUpdateProject).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+
+      expect(onUpdateProject.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          id: "project-1",
+          name: "renamed repo",
+          localPath: "/tmp/repo",
+        })
+      );
+    });
+
+    test("cancel resets edits and closes the dialog", () => {
+      const onOpenChange = mock(() => {});
+      renderSettings({
+        section: "general",
+        onOpenChange,
+      });
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "changed" } });
+      fireEvent.change(screen.getByLabelText("Local Path"), { target: { value: "/tmp/changed" } });
+      fireEvent.click(getCancelButton());
+
+      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("test-repo");
+      expect((screen.getByLabelText("Local Path") as HTMLInputElement).value).toBe("");
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe("branches section", () => {
+    test("saves default branch and PR base branch changes", async () => {
+      renderSettings({ section: "branches" });
+
+      fireEvent.change(screen.getByLabelText("Default Branch"), { target: { value: "develop" } });
+      fireEvent.change(screen.getByLabelText("PR Base Branch"), { target: { value: "release" } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+
+      const savedConfig = getSavedConfig();
+      expect(savedConfig.defaultBranch).toBe("develop");
+      expect(savedConfig.prBaseBranch).toBe("release");
+    });
+  });
+
+  describe("ports section", () => {
+    test("saves entry port and additional port mapping edits", async () => {
+      renderSettings({
+        section: "ports",
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              entryPort: 3000,
+              defaultPortMappings: [
+                { containerPort: 3000, hostPort: 3001, protocol: "tcp" },
+              ],
+            },
+          },
+        },
+      });
+
+      fireEvent.change(screen.getByLabelText("Container Entry Port"), { target: { value: "8080" } });
+      fireEvent.change(screen.getByPlaceholderText("Host"), { target: { value: "4000" } });
+      fireEvent.change(getMockSelects()[0]!, { target: { value: "udp" } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+
+      const savedConfig = getSavedConfig();
+      expect(savedConfig.entryPort).toBe(8080);
+      expect(savedConfig.defaultPortMappings).toEqual([
+        { containerPort: 3000, hostPort: 4000, protocol: "udp" },
+      ]);
+    });
+
+    test("disables save when host ports are duplicated", () => {
+      renderSettings({
+        section: "ports",
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              defaultPortMappings: [
+                { containerPort: 3000, hostPort: 4000, protocol: "tcp" },
+                { containerPort: 3001, hostPort: 4000, protocol: "tcp" },
+              ],
+            },
+          },
+        },
+      });
+
+      expect((getSaveButton() as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    test("omits an out-of-range entry port on save", async () => {
+      renderSettings({ section: "ports" });
+
+      fireEvent.change(screen.getByLabelText("Container Entry Port"), { target: { value: "70000" } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+      expect(getSavedConfig().entryPort).toBeUndefined();
+    });
+  });
+
+  describe("files section", () => {
+    test("adds a file row and saves cleaned file paths", async () => {
+      renderSettings({ section: "files" });
+
+      fireEvent.click(within(getSettingsContent()).getByRole("button", { name: /add file/i }));
+
+      const inputs = within(getSettingsContent()).getAllByRole("textbox");
+      fireEvent.change(inputs[0]!, { target: { value: "config/settings.json" } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+      expect(getSavedConfig().filesToCopy).toEqual(["config/settings.json"]);
+    });
+
+    test("disables save for invalid file paths", () => {
+      renderSettings({
+        section: "files",
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              filesToCopy: ["/etc/passwd"],
+            },
+          },
+        },
+      });
+
+      expect((getSaveButton() as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    test("browse file converts an absolute path under the repo to a relative path", async () => {
+      nextDialogResult = "/repo/config/.env";
+      renderSettings({
+        section: "files",
+        project: { localPath: "/repo" },
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              filesToCopy: [""],
+            },
+          },
+        },
+      });
+
+      const contentButtons = within(getSettingsContent()).getAllByRole("button");
+      fireEvent.click(contentButtons[0]!);
+
+      await waitFor(() =>
+        expect((within(getSettingsContent()).getByRole("textbox") as HTMLInputElement).value).toBe("config/.env")
+      );
+    });
+
+    test("browse file outside the repo shows an error toast", async () => {
+      nextDialogResult = "/other/config/.env";
+      renderSettings({
+        section: "files",
+        project: { localPath: "/repo" },
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              filesToCopy: [""],
+            },
+          },
+        },
+      });
+
+      const contentButtons = within(getSettingsContent()).getAllByRole("button");
+      fireEvent.click(contentButtons[0]!);
+
+      await waitFor(() =>
+        expect(mockToastError).toHaveBeenCalledWith(
+          "Invalid file location",
+          expect.objectContaining({
+            description: "The file must be inside the project's local path.",
+          })
+        )
+      );
+    });
+  });
+
+  describe("save errors", () => {
+    test("shows an error toast and re-enables save when persistence fails", async () => {
+      updateRepositoryConfigImpl = async () => {
+        throw new Error("save failed");
+      };
+
+      renderSettings({ section: "branches" });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() =>
+        expect(mockToastError).toHaveBeenCalledWith(
+          "Failed to save settings",
+          expect.objectContaining({ description: "save failed" })
+        )
+      );
+      expect((getSaveButton() as HTMLButtonElement).disabled).toBe(false);
+    });
   });
 });

@@ -440,10 +440,11 @@ export function RepositorySettings({
   }, [effectiveAgent, defaultModel, claudeModels, openCodeModelsMap]);
 
   const agentLabel = effectiveAgent === "claude" ? "Claude" : effectiveAgent === "opencode" ? "OpenCode" : "Codex";
+  const appDefaultAgentLabel = globalDefaultAgent === "claude" ? "Claude" : globalDefaultAgent === "opencode" ? "OpenCode" : "Codex";
   const projectAgentOptions = [
     {
       value: APP_DEFAULT,
-      label: `Use App Default (${agentLabel})`,
+      label: `Use App Default (${appDefaultAgentLabel})`,
       icon: <Bot className="h-4 w-4" />,
     },
     {
@@ -529,11 +530,13 @@ export function RepositorySettings({
             <div className="grid gap-6">
               <div className="grid gap-2">
                 <Label>Default Agent</Label>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div role="radiogroup" aria-label="Default Agent" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
                   {projectAgentOptions.map((option) => (
                     <button
                       key={option.value}
                       type="button"
+                      role="radio"
+                      aria-checked={projectDefaultAgent === option.value}
                       onClick={() => {
                         setProjectDefaultAgent(option.value);
                         setDefaultModel("");
