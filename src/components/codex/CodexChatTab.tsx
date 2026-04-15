@@ -27,6 +27,7 @@ import {
   getCodexServerLog,
   getCodexServerStatus,
   getLocalCodexServerStatus,
+  renameEnvironmentFromPrompt,
   startCodexServer,
   startLocalCodexServer,
   updateGlobalConfig,
@@ -236,6 +237,18 @@ export function CodexChatTab({
   const handleSend = useCallback(
     async (text: string, attachments: CodexAttachment[]) => {
       if (!client || !session?.sessionId) return;
+
+      if (!session.messages.length) {
+        const environment = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+        if (environment && /^\d{8}-\d{6}$/.test(environment.name)) {
+          try {
+            await renameEnvironmentFromPrompt(environmentId, text);
+          } catch (error) {
+            console.warn("[CodexChatTab] Failed to rename environment from prompt:", error);
+          }
+        }
+      }
+
       setSessionError(sessionKey, undefined);
       setSessionLoading(sessionKey, true);
       const promptAttachments: CodexPromptAttachment[] = attachments.map((attachment) => ({
@@ -256,8 +269,10 @@ export function CodexChatTab({
     },
     [
       client,
+      environmentId,
       refreshMessages,
       session?.sessionId,
+      session?.messages.length,
       sessionKey,
       setSessionError,
       setSessionLoading,
