@@ -72,6 +72,14 @@ mock.module("@/lib/context-usage", () => ({
   extractContextUsage: () => null,
 }));
 
+mock.module("./CodexBuildChatTab", () => ({
+  CodexBuildChatTab: ({ data }: { data: BuildTabData }) => <div>Codex Build Stub {data.pipelineId}</div>,
+}));
+
+mock.module("./OpenCodeBuildChatTab", () => ({
+  OpenCodeBuildChatTab: ({ data }: { data: BuildTabData }) => <div>OpenCode Build Stub {data.pipelineId}</div>,
+}));
+
 // Mock sonner (toast) used by transitive deps (ClaudeMessage, etc.)
 mock.module("sonner", () => ({
   toast: { success: () => {}, error: () => {} },
@@ -140,6 +148,7 @@ function seedPipeline(phase = "waiting-for-setup" as string) {
           projectId: "project-1",
           environmentId: ENV_ID,
           environmentType: "containerized" as const,
+          agentType: "claude" as const,
           phase: phase as any,
           sessions: [],
           currentSessionIndex: -1,
@@ -159,6 +168,17 @@ function seedPipeline(phase = "waiting-for-setup" as string) {
     ]),
     buildEnvironmentIds: new Set([ENV_ID]),
   });
+}
+
+function seedPipelineAgent(agentType: "claude" | "codex" | "opencode") {
+  useBuildPipelineStore.setState((state) => ({
+    pipelines: new Map(
+      Array.from(state.pipelines.entries()).map(([id, pipeline]) => [
+        id,
+        { ...pipeline, agentType },
+      ])
+    ),
+  }));
 }
 
 function seedEnvironment(opts: { isLocal?: boolean; workspaceReady?: boolean } = {}) {
@@ -369,6 +389,30 @@ describe("BuildChatTab", () => {
       expect(
         useEnvironmentStore.getState().workspaceReadyEnvironments.has(ENV_ID)
       ).toBe(true);
+    });
+  });
+
+  describe("agent routing", () => {
+    test("renders the Codex pipeline runner when the pipeline agent is codex", () => {
+      seedPipeline();
+      seedPipelineAgent("codex");
+      seedEnvironment({ workspaceReady: true });
+      seedConfigStore();
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      expect(screen.getByText("Codex Build Stub pipeline-1")).toBeTruthy();
+    });
+
+    test("renders the OpenCode pipeline runner when the pipeline agent is opencode", () => {
+      seedPipeline();
+      seedPipelineAgent("opencode");
+      seedEnvironment({ workspaceReady: true });
+      seedConfigStore();
+
+      render(<BuildChatTab data={createContainerBuildData()} isActive />);
+
+      expect(screen.getByText("OpenCode Build Stub pipeline-1")).toBeTruthy();
     });
   });
 

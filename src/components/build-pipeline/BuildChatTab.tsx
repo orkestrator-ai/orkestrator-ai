@@ -45,6 +45,9 @@ import { parseVerificationResult } from "@/lib/parse-verification-result";
 import { isSetupPending } from "@/lib/setup-commands";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
+import { resolveBuildPipelineAgent } from "@/lib/build-pipeline-agent";
+import { CodexBuildChatTab } from "./CodexBuildChatTab";
+import { OpenCodeBuildChatTab } from "./OpenCodeBuildChatTab";
 import * as tauri from "@/lib/tauri";
 
 // Reference to kanban store for non-reactive reads
@@ -126,6 +129,30 @@ function SessionDivider({ session, index }: { session: PipelineSession; index: n
 }
 
 export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
+  const pipeline = useBuildPipelineStore((state) => state.pipelines.get(data.pipelineId));
+  const { config } = useConfigStore();
+  const environmentDefaultAgent = useEnvironmentStore(
+    (state) => state.getEnvironmentById(data.environmentId)?.defaultAgent
+  );
+
+  const agentType =
+    pipeline?.agentType
+    ?? environmentDefaultAgent
+    ?? resolveBuildPipelineAgent(config, pipeline?.projectId ?? "")
+    ?? "claude";
+
+  if (agentType === "codex") {
+    return <CodexBuildChatTab data={data} isActive={isActive} />;
+  }
+
+  if (agentType === "opencode") {
+    return <OpenCodeBuildChatTab data={data} isActive={isActive} />;
+  }
+
+  return <ClaudeBuildChatTab data={data} isActive={isActive} />;
+}
+
+function ClaudeBuildChatTab({ data, isActive }: BuildChatTabProps) {
   const { environmentId, pipelineId, isLocal } = data;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
@@ -1443,4 +1470,3 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     </div>
   );
 }
-
