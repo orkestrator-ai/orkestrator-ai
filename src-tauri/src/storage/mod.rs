@@ -1,13 +1,16 @@
 // JSON file-based storage layer
 // Stores projects, environments, and config in the app data directory
 
-use crate::models::{AppConfig, Environment, KanbanComment, KanbanImage, KanbanStatus, KanbanTask, Project, ProjectNotes, Session, SessionStatus};
+use crate::models::{
+    AppConfig, Environment, KanbanComment, KanbanImage, KanbanStatus, KanbanTask, Project,
+    ProjectNotes, Session, SessionStatus,
+};
+use base64::Engine;
 use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, info, warn};
-use base64::Engine;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -49,6 +52,11 @@ impl Storage {
         }
 
         Ok(Self { data_dir })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(data_dir: PathBuf) -> Self {
+        Self { data_dir }
     }
 
     /// Get the application data directory path
@@ -487,16 +495,18 @@ impl Storage {
             environment.pr_url = pr_url.as_str().map(String::from);
         }
         if let Some(pr_state) = updates.get("prState") {
-            environment.pr_state =
+            if let Ok(parsed_pr_state) =
                 serde_json::from_value::<Option<crate::models::PrState>>(pr_state.clone())
-                    .ok()
-                    .flatten();
+            {
+                environment.pr_state = parsed_pr_state;
+            }
         }
         if let Some(has_merge_conflicts) = updates.get("hasMergeConflicts") {
-            environment.has_merge_conflicts =
+            if let Ok(parsed_has_merge_conflicts) =
                 serde_json::from_value::<Option<bool>>(has_merge_conflicts.clone())
-                    .ok()
-                    .flatten();
+            {
+                environment.has_merge_conflicts = parsed_has_merge_conflicts;
+            }
         }
         if let Some(allowed_domains) = updates.get("allowedDomains") {
             environment.allowed_domains = serde_json::from_value(allowed_domains.clone()).ok();
@@ -1175,7 +1185,9 @@ impl Storage {
                 let project_id = tasks[task_index].project_id.clone();
                 let max_order = tasks
                     .iter()
-                    .filter(|t| t.project_id == project_id && t.status == new_status && t.id != task_id)
+                    .filter(|t| {
+                        t.project_id == project_id && t.status == new_status && t.id != task_id
+                    })
                     .map(|t| t.order)
                     .max()
                     .unwrap_or(-1);
@@ -1184,16 +1196,32 @@ impl Storage {
             }
         }
         if let Some(environment_id) = environment_id {
-            tasks[task_index].environment_id = if environment_id.is_empty() { None } else { Some(environment_id) };
+            tasks[task_index].environment_id = if environment_id.is_empty() {
+                None
+            } else {
+                Some(environment_id)
+            };
         }
         if let Some(build_pipeline_id) = build_pipeline_id {
-            tasks[task_index].build_pipeline_id = if build_pipeline_id.is_empty() { None } else { Some(build_pipeline_id) };
+            tasks[task_index].build_pipeline_id = if build_pipeline_id.is_empty() {
+                None
+            } else {
+                Some(build_pipeline_id)
+            };
         }
         if let Some(pr_url) = pr_url {
-            tasks[task_index].pr_url = if pr_url.is_empty() { None } else { Some(pr_url) };
+            tasks[task_index].pr_url = if pr_url.is_empty() {
+                None
+            } else {
+                Some(pr_url)
+            };
         }
         if let Some(pr_state) = pr_state {
-            tasks[task_index].pr_state = if pr_state.is_empty() { None } else { Some(pr_state) };
+            tasks[task_index].pr_state = if pr_state.is_empty() {
+                None
+            } else {
+                Some(pr_state)
+            };
         }
         if let Some(pr_merge_commented) = pr_merge_commented {
             tasks[task_index].pr_merge_commented = pr_merge_commented;
@@ -1219,13 +1247,23 @@ impl Storage {
     }
 
     /// Get all kanban tasks for a project
-    pub fn get_kanban_tasks_by_project(&self, project_id: &str) -> Result<Vec<KanbanTask>, StorageError> {
+    pub fn get_kanban_tasks_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<KanbanTask>, StorageError> {
         let tasks = self.load_kanban_tasks()?;
-        Ok(tasks.into_iter().filter(|t| t.project_id == project_id).collect())
+        Ok(tasks
+            .into_iter()
+            .filter(|t| t.project_id == project_id)
+            .collect())
     }
 
     /// Add a comment to a kanban task
-    pub fn add_kanban_comment(&self, task_id: &str, text: String) -> Result<KanbanTask, StorageError> {
+    pub fn add_kanban_comment(
+        &self,
+        task_id: &str,
+        text: String,
+    ) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task = tasks
             .iter_mut()
@@ -1244,7 +1282,11 @@ impl Storage {
     }
 
     /// Delete a comment from a kanban task
-    pub fn delete_kanban_comment(&self, task_id: &str, comment_id: &str) -> Result<KanbanTask, StorageError> {
+    pub fn delete_kanban_comment(
+        &self,
+        task_id: &str,
+        comment_id: &str,
+    ) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task = tasks
             .iter_mut()
@@ -1266,25 +1308,38 @@ impl Storage {
 
         let mut img = image::ImageReader::new(Cursor::new(raw_bytes))
             .with_guessed_format()
-            .map_err(|e| StorageError::ImageProcessing(format!("Failed to detect image format: {}", e)))?
+            .map_err(|e| {
+                StorageError::ImageProcessing(format!("Failed to detect image format: {}", e))
+            })?
             .decode()
             .map_err(|e| StorageError::ImageProcessing(format!("Failed to decode image: {}", e)))?;
 
         // Resize if either dimension exceeds the limit, preserving aspect ratio
         if img.width() > MAX_DIMENSION || img.height() > MAX_DIMENSION {
-            img = img.resize(MAX_DIMENSION, MAX_DIMENSION, image::imageops::FilterType::Lanczos3);
+            img = img.resize(
+                MAX_DIMENSION,
+                MAX_DIMENSION,
+                image::imageops::FilterType::Lanczos3,
+            );
         }
 
         let mut webp_data = Vec::new();
         img.write_to(&mut Cursor::new(&mut webp_data), ImageFormat::WebP)
-            .map_err(|e| StorageError::ImageProcessing(format!("Failed to encode as WebP: {}", e)))?;
+            .map_err(|e| {
+                StorageError::ImageProcessing(format!("Failed to encode as WebP: {}", e))
+            })?;
 
         Ok(webp_data)
     }
 
     /// Add an image to a kanban task. Accepts base64-encoded image data (any supported format),
     /// converts to WebP, and stores the binary file on disk.
-    pub fn add_kanban_image(&self, task_id: &str, filename: String, data: String) -> Result<KanbanTask, StorageError> {
+    pub fn add_kanban_image(
+        &self,
+        task_id: &str,
+        filename: String,
+        data: String,
+    ) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task = tasks
             .iter_mut()
@@ -1324,7 +1379,11 @@ impl Storage {
     }
 
     /// Delete an image from a kanban task and remove the file from disk.
-    pub fn delete_kanban_image(&self, task_id: &str, image_id: &str) -> Result<KanbanTask, StorageError> {
+    pub fn delete_kanban_image(
+        &self,
+        task_id: &str,
+        image_id: &str,
+    ) -> Result<KanbanTask, StorageError> {
         let mut tasks = self.load_kanban_tasks()?;
         let task = tasks
             .iter_mut()
@@ -1473,9 +1532,7 @@ mod tests {
 
     fn create_test_storage() -> Storage {
         let temp_dir = tempdir().unwrap();
-        Storage {
-            data_dir: temp_dir.into_path(),
-        }
+        Storage::new_for_tests(temp_dir.keep())
     }
 
     // --- Project Tests ---
@@ -1675,6 +1732,60 @@ mod tests {
         // Verify it persisted
         let loaded = storage.get_environment(&env.id).unwrap().unwrap();
         assert_eq!(loaded.status, EnvironmentStatus::Running);
+        assert_eq!(loaded.pr_state, Some(crate::models::PrState::Open));
+        assert_eq!(loaded.has_merge_conflicts, Some(true));
+    }
+
+    #[test]
+    fn test_update_environment_clears_pr_metadata_with_null() {
+        let storage = create_test_storage();
+
+        let mut env = Environment::new("project-123".to_string());
+        env.pr_state = Some(crate::models::PrState::Open);
+        env.has_merge_conflicts = Some(true);
+        storage.add_environment(env.clone()).unwrap();
+
+        let updated = storage
+            .update_environment(
+                &env.id,
+                serde_json::json!({
+                    "prState": null,
+                    "hasMergeConflicts": null
+                }),
+            )
+            .unwrap();
+
+        assert!(updated.pr_state.is_none());
+        assert!(updated.has_merge_conflicts.is_none());
+
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert!(loaded.pr_state.is_none());
+        assert!(loaded.has_merge_conflicts.is_none());
+    }
+
+    #[test]
+    fn test_update_environment_preserves_pr_metadata_on_invalid_values() {
+        let storage = create_test_storage();
+
+        let mut env = Environment::new("project-123".to_string());
+        env.pr_state = Some(crate::models::PrState::Open);
+        env.has_merge_conflicts = Some(true);
+        storage.add_environment(env.clone()).unwrap();
+
+        let updated = storage
+            .update_environment(
+                &env.id,
+                serde_json::json!({
+                    "prState": "not-a-real-state",
+                    "hasMergeConflicts": "not-a-bool"
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(updated.pr_state, Some(crate::models::PrState::Open));
+        assert_eq!(updated.has_merge_conflicts, Some(true));
+
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
         assert_eq!(loaded.pr_state, Some(crate::models::PrState::Open));
         assert_eq!(loaded.has_merge_conflicts, Some(true));
     }
@@ -2121,7 +2232,11 @@ mod tests {
 
     #[test]
     fn test_kanban_task_pr_fields_default() {
-        let task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         assert!(task.pr_url.is_none());
         assert!(task.pr_state.is_none());
         assert!(!task.pr_merge_commented);
@@ -2130,37 +2245,67 @@ mod tests {
     #[test]
     fn test_update_kanban_task_pr_url() {
         let storage = create_test_storage();
-        let task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         let saved = storage.add_kanban_task(task).unwrap();
 
-        let updated = storage.update_kanban_task(
-            &saved.id, None, None, None, None, None, None,
-            Some("https://github.com/test/repo/pull/42".to_string()),
-            Some("open".to_string()),
-            None,
-        ).unwrap();
+        let updated = storage
+            .update_kanban_task(
+                &saved.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("https://github.com/test/repo/pull/42".to_string()),
+                Some("open".to_string()),
+                None,
+            )
+            .unwrap();
 
-        assert_eq!(updated.pr_url, Some("https://github.com/test/repo/pull/42".to_string()));
+        assert_eq!(
+            updated.pr_url,
+            Some("https://github.com/test/repo/pull/42".to_string())
+        );
         assert_eq!(updated.pr_state, Some("open".to_string()));
         assert!(!updated.pr_merge_commented);
 
         // Verify persistence
         let tasks = storage.get_kanban_tasks_by_project("proj-1").unwrap();
-        assert_eq!(tasks[0].pr_url, Some("https://github.com/test/repo/pull/42".to_string()));
+        assert_eq!(
+            tasks[0].pr_url,
+            Some("https://github.com/test/repo/pull/42".to_string())
+        );
     }
 
     #[test]
     fn test_update_kanban_task_pr_merge_commented() {
         let storage = create_test_storage();
-        let task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         let saved = storage.add_kanban_task(task).unwrap();
 
-        let updated = storage.update_kanban_task(
-            &saved.id, None, None, None, None, None, None,
-            Some("https://github.com/test/repo/pull/1".to_string()),
-            Some("merged".to_string()),
-            Some(true),
-        ).unwrap();
+        let updated = storage
+            .update_kanban_task(
+                &saved.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("https://github.com/test/repo/pull/1".to_string()),
+                Some("merged".to_string()),
+                Some(true),
+            )
+            .unwrap();
 
         assert_eq!(updated.pr_state, Some("merged".to_string()));
         assert!(updated.pr_merge_commented);
@@ -2169,24 +2314,44 @@ mod tests {
     #[test]
     fn test_update_kanban_task_pr_url_empty_clears() {
         let storage = create_test_storage();
-        let task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         let saved = storage.add_kanban_task(task).unwrap();
 
         // Set a PR URL
-        storage.update_kanban_task(
-            &saved.id, None, None, None, None, None, None,
-            Some("https://github.com/test/repo/pull/1".to_string()),
-            Some("open".to_string()),
-            None,
-        ).unwrap();
+        storage
+            .update_kanban_task(
+                &saved.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("https://github.com/test/repo/pull/1".to_string()),
+                Some("open".to_string()),
+                None,
+            )
+            .unwrap();
 
         // Clear it by passing empty string
-        let cleared = storage.update_kanban_task(
-            &saved.id, None, None, None, None, None, None,
-            Some(String::new()),
-            Some(String::new()),
-            None,
-        ).unwrap();
+        let cleared = storage
+            .update_kanban_task(
+                &saved.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(String::new()),
+                Some(String::new()),
+                None,
+            )
+            .unwrap();
 
         assert!(cleared.pr_url.is_none());
         assert!(cleared.pr_state.is_none());
@@ -2194,7 +2359,11 @@ mod tests {
 
     #[test]
     fn test_kanban_task_pr_fields_serialization() {
-        let mut task = KanbanTask::new("proj-1".to_string(), "title".to_string(), "desc".to_string());
+        let mut task = KanbanTask::new(
+            "proj-1".to_string(),
+            "title".to_string(),
+            "desc".to_string(),
+        );
         task.pr_url = Some("https://github.com/test/repo/pull/99".to_string());
         task.pr_state = Some("merged".to_string());
         task.pr_merge_commented = true;
@@ -2205,7 +2374,10 @@ mod tests {
         assert!(json.contains("\"prMergeCommented\":true"));
 
         let deserialized: KanbanTask = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.pr_url, Some("https://github.com/test/repo/pull/99".to_string()));
+        assert_eq!(
+            deserialized.pr_url,
+            Some("https://github.com/test/repo/pull/99".to_string())
+        );
         assert_eq!(deserialized.pr_state, Some("merged".to_string()));
         assert!(deserialized.pr_merge_commented);
     }
