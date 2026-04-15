@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockCheckHealth = mock(async () => true);
@@ -23,29 +23,12 @@ mock.module("@/hooks", () => ({
   useScrollLock: () => ({ isAtBottom: true, scrollToBottom: () => {} }),
 }));
 
-mock.module("@/components/chat/NativeMessage", () => ({
-  NativeMessage: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
-}));
-
 mock.module("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 mock.module("@/components/ui/separator", () => ({
   Separator: () => <hr />,
-}));
-
-mock.module("@/prompts", () => ({
-  createBuildPrompt: () => "build prompt",
-  createBuildReviewPrompt: () => "review prompt",
-  createFixPrompt: () => "fix prompt",
-  createPRPrompt: () => "pr prompt",
-  createResolveConflictsPrompt: () => "resolve prompt",
-  createVerificationPrompt: () => "verify prompt",
-}));
-
-mock.module("@/lib/parse-verification-result", () => ({
-  parseVerificationResult: () => ({ verdict: "pass", feedback: "" }),
 }));
 
 mock.module("@/lib/tauri", () => ({
@@ -182,6 +165,39 @@ function seedPipeline(phase: "building" | "paused", sessionStatus: "running" | "
   });
 }
 
+function seedStartingPipeline() {
+  useBuildPipelineStore.setState({
+    pipelines: new Map([
+      [
+        PIPELINE_ID,
+        {
+          id: PIPELINE_ID,
+          taskId: TASK_ID,
+          projectId: "project-1",
+          environmentId: ENV_ID,
+          environmentType: "containerized",
+          agentType: "codex",
+          phase: "starting-environment",
+          sessions: [],
+          currentSessionIndex: -1,
+          iteration: 0,
+          maxIterations: 3,
+          createdAt: "2026-04-15T00:00:00.000Z",
+          taskTitle: "Test task",
+          taskSnapshot: {
+            title: "Test task",
+            description: "desc",
+            acceptanceCriteria: "ac",
+            comments: [],
+            images: [],
+          },
+        },
+      ],
+    ]),
+    buildEnvironmentIds: new Set([ENV_ID]),
+  });
+}
+
 function seedCodexStore(isLoading: boolean) {
   useCodexStore.setState({
     models: [],
@@ -253,6 +269,10 @@ function resetStores() {
 }
 
 describe("CodexBuildChatTab", () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   beforeEach(() => {
     cleanup();
     resetStores();
@@ -313,5 +333,37 @@ describe("CodexBuildChatTab", () => {
     });
 
     expect(useCodexStore.getState().sessions.get(SESSION_KEY)?.messages.at(-1)?.content).toBe("Please also update the tests.");
+  });
+
+  test("shows a retry action when codex initialization fails", async () => {
+    seedStartingPipeline();
+    useEnvironmentStore.setState({
+      environments: [{
+        id: ENV_ID,
+        projectId: "project-1",
+        name: "test-env",
+        branch: "feature/test",
+        containerId: null,
+        status: "running",
+        prUrl: null,
+        prState: null,
+        hasMergeConflicts: null,
+        createdAt: "2026-04-15T00:00:00.000Z",
+        networkAccessMode: "restricted",
+        order: 0,
+        environmentType: "containerized",
+      }],
+      isLoading: false,
+      error: null,
+      workspaceReadyEnvironments: new Set([ENV_ID]),
+      deletingEnvironments: new Set(),
+      pendingSetupCommands: new Map(),
+      setupCommandsResolved: new Set(),
+      setupScriptsRunning: new Set(),
+    });
+
+    render(<CodexBuildChatTab data={createData()} isActive />);
+
+    expect(await screen.findByText("Retry")).toBeTruthy();
   });
 });

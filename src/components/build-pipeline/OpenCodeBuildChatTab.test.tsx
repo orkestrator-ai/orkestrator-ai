@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockCreateClient = mock(() => ({ session: {}, event: {} }));
@@ -26,29 +26,12 @@ mock.module("@/hooks", () => ({
   useScrollLock: () => ({ isAtBottom: true, scrollToBottom: () => {} }),
 }));
 
-mock.module("@/components/chat/NativeMessage", () => ({
-  NativeMessage: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
-}));
-
 mock.module("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 mock.module("@/components/ui/separator", () => ({
   Separator: () => <hr />,
-}));
-
-mock.module("@/prompts", () => ({
-  createBuildPrompt: () => "build prompt",
-  createBuildReviewPrompt: () => "review prompt",
-  createFixPrompt: () => "fix prompt",
-  createPRPrompt: () => "pr prompt",
-  createResolveConflictsPrompt: () => "resolve prompt",
-  createVerificationPrompt: () => "verify prompt",
-}));
-
-mock.module("@/lib/parse-verification-result", () => ({
-  parseVerificationResult: () => ({ verdict: "pass", feedback: "" }),
 }));
 
 mock.module("@/lib/context-usage", () => ({
@@ -189,6 +172,39 @@ function seedPipeline(phase: "building" | "paused", sessionStatus: "running" | "
   });
 }
 
+function seedPendingPipeline() {
+  useBuildPipelineStore.setState({
+    pipelines: new Map([
+      [
+        PIPELINE_ID,
+        {
+          id: PIPELINE_ID,
+          taskId: TASK_ID,
+          projectId: "project-1",
+          environmentId: ENV_ID,
+          environmentType: "containerized",
+          agentType: "opencode",
+          phase: "waiting-for-setup",
+          sessions: [],
+          currentSessionIndex: -1,
+          iteration: 0,
+          maxIterations: 3,
+          createdAt: "2026-04-15T00:00:00.000Z",
+          taskTitle: "Test task",
+          taskSnapshot: {
+            title: "Test task",
+            description: "desc",
+            acceptanceCriteria: "ac",
+            comments: [],
+            images: [],
+          },
+        },
+      ],
+    ]),
+    buildEnvironmentIds: new Set([ENV_ID]),
+  });
+}
+
 function seedOpenCodeStore(isLoading: boolean) {
   useOpenCodeStore.setState({
     serverStatus: new Map([[ENV_ID, { running: true, hostPort: 9999 }]]),
@@ -269,6 +285,10 @@ function resetStores() {
 }
 
 describe("OpenCodeBuildChatTab", () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   beforeEach(() => {
     cleanup();
     resetStores();
@@ -332,5 +352,75 @@ describe("OpenCodeBuildChatTab", () => {
 
     expect(useBuildPipelineStore.getState().pipelines.get(PIPELINE_ID)?.sessions[0]?.status).toBe("running");
     expect(useOpenCodeStore.getState().sessions.get(SESSION_KEY)?.isLoading).toBe(true);
+  });
+
+  test("starts a build session automatically once setup is complete", async () => {
+    seedPendingPipeline();
+    useOpenCodeStore.setState({
+      serverStatus: new Map([[ENV_ID, { running: true, hostPort: 9999 }]]),
+      sessions: new Map(),
+      clients: new Map([[ENV_ID, mockCreateClient() as any]]),
+      models: new Map(),
+      slashCommands: new Map(),
+      selectedModel: new Map(),
+      selectedVariant: new Map(),
+      selectedMode: new Map(),
+      attachments: new Map(),
+      draftText: new Map(),
+      draftMentions: new Map(),
+      messageQueue: new Map(),
+      isComposing: new Map(),
+      pendingQuestions: new Map(),
+      pendingPermissions: new Map(),
+      eventSubscriptions: new Map(),
+      contextUsage: new Map(),
+    });
+
+    render(<OpenCodeBuildChatTab data={createData()} isActive />);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalled();
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        expect.anything(),
+        "review-session",
+        expect.stringContaining("Test task"),
+        {
+          model: "openai/gpt-5",
+          variant: undefined,
+          mode: "build",
+          attachments: undefined,
+        },
+      );
+    });
+
+    expect(useBuildPipelineStore.getState().pipelines.get(PIPELINE_ID)?.phase).toBe("building");
+    expect(useBuildPipelineStore.getState().pipelines.get(PIPELINE_ID)?.sessions).toHaveLength(1);
+  });
+
+  test("auto-approves permissions with always and rejects questions for unattended runs", async () => {
+    seedPipeline("paused", "idle");
+    seedOpenCodeStore(false);
+    mockSubscribeToEvents.mockImplementationOnce(async () => ((async function* () {
+      yield {
+        type: "permission.asked",
+        properties: { id: "perm-1", always: ["tool"], sessionID: SESSION_ID },
+      } as any;
+      yield {
+        type: "question.asked",
+        properties: {
+          id: "question-1",
+          questions: [{ header: "Need approval", question: "Need approval" }],
+          sessionID: SESSION_ID,
+        },
+      } as any;
+    })() as any));
+
+    render(<OpenCodeBuildChatTab data={createData()} isActive />);
+
+    await waitFor(() => {
+      expect(mockReplyToPermission).toHaveBeenCalledWith(expect.anything(), "perm-1", "always");
+      expect(mockRejectQuestion).toHaveBeenCalledWith(expect.anything(), "question-1");
+      expect(useBuildPipelineStore.getState().pipelines.get(PIPELINE_ID)?.phase).toBe("failed");
+    });
   });
 });

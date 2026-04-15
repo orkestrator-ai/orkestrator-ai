@@ -8,7 +8,7 @@ import { useUIStore } from "@/stores/uiStore";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
 import { useEnvironments } from "@/hooks/useEnvironments";
 import * as tauri from "@/lib/tauri";
-import { resolveBuildPipelineAgent } from "@/lib/build-pipeline-agent";
+import { getBuildEnvironmentAgentSettings, resolveBuildPipelineAgent } from "@/lib/build-pipeline-agent";
 import type { EnvironmentType } from "@/types";
 import type { KanbanTask } from "@/lib/tauri";
 import type { PaneNode } from "@/types/paneLayout";
@@ -66,6 +66,7 @@ export function useBuildPipeline() {
     async (task: KanbanTask, environmentType: EnvironmentType) => {
       try {
         const agentType = resolveBuildPipelineAgent(config, task.projectId);
+        const agentSettings = getBuildEnvironmentAgentSettings(agentType);
 
         // 1. Load image data from disk for the task snapshot
         const snapshotImages = await Promise.all(
@@ -113,16 +114,16 @@ export function useBuildPipeline() {
         // 4. Configure environment for the selected pipeline agent.
         const configuredEnvironment = await tauri.updateEnvironmentAgentSettings(
           environment.id,
-          agentType,
-          agentType === "claude" ? "native" : null,
-          agentType === "opencode" ? "native" : null,
+          agentSettings.defaultAgent,
+          agentSettings.claudeMode,
+          agentSettings.opencodeMode,
         );
 
         // Update environment in store
         useEnvironmentStore.getState().updateEnvironment(environment.id, configuredEnvironment);
 
         // Claude native mode still relies on the options store to auto-launch the bridge.
-        if (agentType === "claude") {
+        if (agentSettings.shouldLaunchClaude) {
           setOptions(configuredEnvironment.id, {
             launchAgent: true,
             agentType: "claude",

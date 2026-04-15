@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from "react";
+import { Suspense, lazy, useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Loader2, AlertCircle, RefreshCw, ArrowDown, Hammer, StopCircle, ArrowUp, PlayCircle } from "lucide-react";
 import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
@@ -45,13 +45,21 @@ import { parseVerificationResult } from "@/lib/parse-verification-result";
 import { isSetupPending } from "@/lib/setup-commands";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
-import { resolveBuildPipelineAgent } from "@/lib/build-pipeline-agent";
-import { CodexBuildChatTab } from "./CodexBuildChatTab";
-import { OpenCodeBuildChatTab } from "./OpenCodeBuildChatTab";
+import { resolveActiveBuildPipelineAgent } from "@/lib/build-pipeline-agent";
 import * as tauri from "@/lib/tauri";
 
 // Reference to kanban store for non-reactive reads
 const kanbanStoreRef = useKanbanStore;
+
+const LazyCodexBuildChatTab = lazy(async () => {
+  const module = await import("./CodexBuildChatTab");
+  return { default: module.CodexBuildChatTab };
+});
+
+const LazyOpenCodeBuildChatTab = lazy(async () => {
+  const module = await import("./OpenCodeBuildChatTab");
+  return { default: module.OpenCodeBuildChatTab };
+});
 
 /** Convert task snapshot images to ClaudeAttachment array for sending with prompts.
  * Images are always stored as WebP on disk regardless of the original filename. */
@@ -128,6 +136,15 @@ function SessionDivider({ session, index }: { session: PipelineSession; index: n
   );
 }
 
+function AgentTabLoadingState({ label }: { label: string }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+      <Loader2 className="h-8 w-8 animate-spin" />
+      <p className="text-sm">Loading {label} build runner...</p>
+    </div>
+  );
+}
+
 export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
   const pipeline = useBuildPipelineStore((state) => state.pipelines.get(data.pipelineId));
   const { config } = useConfigStore();
@@ -135,18 +152,27 @@ export function BuildChatTab({ data, isActive }: BuildChatTabProps) {
     (state) => state.getEnvironmentById(data.environmentId)?.defaultAgent
   );
 
-  const agentType =
-    pipeline?.agentType
-    ?? environmentDefaultAgent
-    ?? resolveBuildPipelineAgent(config, pipeline?.projectId ?? "")
-    ?? "claude";
+  const agentType = resolveActiveBuildPipelineAgent({
+    pipelineAgent: pipeline?.agentType,
+    environmentDefaultAgent,
+    config,
+    projectId: pipeline?.projectId ?? "",
+  });
 
   if (agentType === "codex") {
-    return <CodexBuildChatTab data={data} isActive={isActive} />;
+    return (
+      <Suspense fallback={<AgentTabLoadingState label="Codex" />}>
+        <LazyCodexBuildChatTab data={data} isActive={isActive} />
+      </Suspense>
+    );
   }
 
   if (agentType === "opencode") {
-    return <OpenCodeBuildChatTab data={data} isActive={isActive} />;
+    return (
+      <Suspense fallback={<AgentTabLoadingState label="OpenCode" />}>
+        <LazyOpenCodeBuildChatTab data={data} isActive={isActive} />
+      </Suspense>
+    );
   }
 
   return <ClaudeBuildChatTab data={data} isActive={isActive} />;

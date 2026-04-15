@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 // ---------------------------------------------------------------------------
@@ -54,30 +54,8 @@ mock.module("@/hooks", () => ({
   useScrollLock: () => ({ isAtBottom: true, scrollToBottom: () => {} }),
 }));
 
-// Prompts — return stubs
-mock.module("@/prompts", () => ({
-  createBuildPrompt: () => "build prompt",
-  createBuildReviewPrompt: () => "review prompt",
-  createVerificationPrompt: () => "verify prompt",
-  createFixPrompt: () => "fix prompt",
-  createPRPrompt: () => "pr prompt",
-  createResolveConflictsPrompt: () => "resolve prompt",
-}));
-
-mock.module("@/lib/parse-verification-result", () => ({
-  parseVerificationResult: () => ({ verdict: "pass", feedback: "" }),
-}));
-
 mock.module("@/lib/context-usage", () => ({
   extractContextUsage: () => null,
-}));
-
-mock.module("./CodexBuildChatTab", () => ({
-  CodexBuildChatTab: ({ data }: { data: BuildTabData }) => <div>Codex Build Stub {data.pipelineId}</div>,
-}));
-
-mock.module("./OpenCodeBuildChatTab", () => ({
-  OpenCodeBuildChatTab: ({ data }: { data: BuildTabData }) => <div>OpenCode Build Stub {data.pipelineId}</div>,
 }));
 
 // Mock sonner (toast) used by transitive deps (ClaudeMessage, etc.)
@@ -168,17 +146,6 @@ function seedPipeline(phase = "waiting-for-setup" as string) {
     ]),
     buildEnvironmentIds: new Set([ENV_ID]),
   });
-}
-
-function seedPipelineAgent(agentType: "claude" | "codex" | "opencode") {
-  useBuildPipelineStore.setState((state) => ({
-    pipelines: new Map(
-      Array.from(state.pipelines.entries()).map(([id, pipeline]) => [
-        id,
-        { ...pipeline, agentType },
-      ])
-    ),
-  }));
 }
 
 function seedEnvironment(opts: { isLocal?: boolean; workspaceReady?: boolean } = {}) {
@@ -288,6 +255,10 @@ function resetStores() {
 // ---------------------------------------------------------------------------
 
 describe("BuildChatTab", () => {
+  afterAll(() => {
+    mock.restore();
+  });
+
   beforeEach(() => {
     cleanup();
     resetStores();
@@ -389,30 +360,6 @@ describe("BuildChatTab", () => {
       expect(
         useEnvironmentStore.getState().workspaceReadyEnvironments.has(ENV_ID)
       ).toBe(true);
-    });
-  });
-
-  describe("agent routing", () => {
-    test("renders the Codex pipeline runner when the pipeline agent is codex", () => {
-      seedPipeline();
-      seedPipelineAgent("codex");
-      seedEnvironment({ workspaceReady: true });
-      seedConfigStore();
-
-      render(<BuildChatTab data={createContainerBuildData()} isActive />);
-
-      expect(screen.getByText("Codex Build Stub pipeline-1")).toBeTruthy();
-    });
-
-    test("renders the OpenCode pipeline runner when the pipeline agent is opencode", () => {
-      seedPipeline();
-      seedPipelineAgent("opencode");
-      seedEnvironment({ workspaceReady: true });
-      seedConfigStore();
-
-      render(<BuildChatTab data={createContainerBuildData()} isActive />);
-
-      expect(screen.getByText("OpenCode Build Stub pipeline-1")).toBeTruthy();
     });
   });
 

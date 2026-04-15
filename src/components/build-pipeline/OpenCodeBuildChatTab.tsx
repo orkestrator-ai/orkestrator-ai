@@ -338,6 +338,9 @@ export function OpenCodeBuildChatTab({ data, isActive }: OpenCodeBuildChatTabPro
           const usageFromEvent = extractContextUsage(event);
 
           if (eventType === "permission.asked" && event.properties?.id) {
+            // Build pipelines are intentionally unattended. When OpenCode offers a
+            // persistent approval path, prefer it so the run does not stall on
+            // repeated prompts for the same tool or pattern.
             await replyToPermission(
               activeClient,
               event.properties.id,
