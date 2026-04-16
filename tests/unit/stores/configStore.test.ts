@@ -14,6 +14,7 @@ describe("configStore", () => {
             memoryGb: 4,
           },
           envFilePatterns: [".env.local", ".env"],
+          experimentalCollatedCodexSubagents: false,
         },
         repositories: {},
       },
@@ -28,6 +29,7 @@ describe("configStore", () => {
     expect(state.config.global.containerResources.cpuCores).toBe(2);
     expect(state.config.global.containerResources.memoryGb).toBe(4);
     expect(state.config.global.envFilePatterns).toEqual([".env.local", ".env"]);
+    expect(state.config.global.experimentalCollatedCodexSubagents).toBe(false);
     expect(state.config.repositories).toEqual({});
     expect(state.isLoading).toBe(false);
     expect(state.error).toBeNull();
@@ -113,6 +115,14 @@ describe("configStore", () => {
     });
 
     expect(useConfigStore.getState().config.global.codexMode).toBe("terminal");
+  });
+
+  test("updateGlobalConfig updates experimentalCollatedCodexSubagents", () => {
+    useConfigStore.getState().updateGlobalConfig({
+      experimentalCollatedCodexSubagents: true,
+    });
+
+    expect(useConfigStore.getState().config.global.experimentalCollatedCodexSubagents).toBe(true);
   });
 
   test("setRepositoryConfig adds a new repository config", () => {

@@ -54,6 +54,7 @@ export function createMockAppConfig(overrides: Partial<AppConfig> = {}): AppConf
         memoryGb: 4,
       },
       envFilePatterns: [".env.local", ".env"],
+      experimentalCollatedCodexSubagents: false,
     },
     repositories: {},
     ...overrides,

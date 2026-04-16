@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { NativeMessage as NativeMessageType } from "../../../src/lib/chat/native-message-types";
 
 mock.module("@/lib/tauri", () => ({
@@ -61,5 +61,54 @@ describe("NativeMessage", () => {
     expect(toolIndex).toBeGreaterThan(firstTextIndex);
     expect(fileIndex).toBeGreaterThanOrEqual(toolIndex);
     expect(secondTextIndex).toBeGreaterThan(fileIndex);
+  });
+
+  test("renders transcript-derived subagent groups as collapsible activity stacks", () => {
+    const message: NativeMessageType = {
+      id: "msg-subagent",
+      role: "assistant",
+      content: "Main agent response",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "subagent",
+          content: "Lovelace",
+          subagentId: "agent-1",
+          subagentName: "Lovelace",
+          subagentRole: "explorer",
+          subagentPrompt: "Inspect the Codex integration",
+          subagentActionCount: 1,
+          toolState: "pending",
+          subagentActions: [
+            {
+              type: "tool-invocation",
+              content: "exec_command",
+              toolName: "exec_command",
+              toolArgs: {
+                command: "rg -n \"codex\" src",
+              },
+              toolState: "success",
+              toolTitle: "exec_command",
+              toolOutput: "matches",
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<NativeMessage message={message} />);
+
+    expect(screen.getByText("subagent")).toBeTruthy();
+    expect(screen.getByText("1 action")).toBeTruthy();
+    expect(screen.getByText("running...")).toBeTruthy();
+    expect(screen.queryByText("Inspect the Codex integration")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /subagent/i }));
+
+    expect(screen.getByText("Inspect the Codex integration")).toBeTruthy();
+    expect(screen.getAllByText("exec_command")).toHaveLength(2);
+    fireEvent.click(screen.getAllByText("exec_command")[0]!);
+    expect(screen.getByText("$ rg -n \"codex\" src")).toBeTruthy();
+    expect(screen.getByText("matches")).toBeTruthy();
   });
 });

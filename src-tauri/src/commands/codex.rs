@@ -28,6 +28,8 @@ static HEALTH_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("Failed to build HTTP client")
 });
 
+const CONTAINER_CODEX_RAW_LOG_DIR: &str = "/tmp/orkestrator-ai/codex-raw";
+
 /// Result of starting the Codex bridge server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +190,8 @@ async fn ensure_codex_bridge_present(
     Ok(())
 }
 
+use super::load_codex_bridge_runtime_settings;
+
 #[tauri::command]
 pub async fn start_codex_server(
     app_handle: tauri::AppHandle,
@@ -222,10 +226,13 @@ pub async fn start_codex_server(
     }
 
     ensure_codex_bridge_present(&app_handle, &client, &container_id).await?;
+    let (experimental_collated_codex_subagents, debug_logging) =
+        load_codex_bridge_runtime_settings()?;
 
     let command = r#"
         cd /workspace
         rm -f /tmp/codex-bridge.log
+        mkdir -p /tmp/orkestrator-ai
         source /etc/profile 2>/dev/null || true
         source ~/.profile 2>/dev/null || true
         source ~/.bashrc 2>/dev/null || true
@@ -237,14 +244,33 @@ pub async fn start_codex_server(
         export HOSTNAME=0.0.0.0
         export CWD=/workspace
         export CODEX_PATH="$(command -v codex 2>/dev/null || echo codex)"
+        export ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS="%EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS%"
+        export ORKESTRATOR_CODEX_RAW_LOG_DIR="%CODEX_RAW_LOG_DIR%"
         setsid node /opt/codex-bridge/dist/index.js > /tmp/codex-bridge.log 2>&1 &
         disown
         sleep 0.5
         echo "Started Codex bridge server"
     "#;
+    let command = command
+        .replace(
+            "%EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS%",
+            if experimental_collated_codex_subagents {
+                "1"
+            } else {
+                "0"
+            },
+        )
+        .replace(
+            "%CODEX_RAW_LOG_DIR%",
+            if debug_logging {
+                CONTAINER_CODEX_RAW_LOG_DIR
+            } else {
+                ""
+            },
+        );
 
     let exec_result = client
-        .exec_in_container(&container_id, vec!["bash", "-c", command], None)
+        .exec_in_container(&container_id, vec!["bash", "-c", &command], None)
         .await
         .map_err(|e| format!("Failed to start Codex bridge server: {}", e))?;
 

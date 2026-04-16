@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Pencil,
   ExternalLink as ExternalLinkIcon,
+  Layers,
 } from "lucide-react";
 import { type Components } from "react-markdown";
 import { cn } from "@/lib/utils";
@@ -824,6 +825,80 @@ function TextPart({ content }: { content: string }) {
   );
 }
 
+function SubagentPart({ part }: { part: NativeMessagePart }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const actionCount = part.subagentActionCount ?? 0;
+  const displayName = part.subagentName || part.subagentRole || part.content || "subagent";
+  const displayLabel = part.subagentRole
+    ? `${displayName} (${part.subagentRole})`
+    : displayName;
+  const stateColors = {
+    success: "text-green-600",
+    failure: "text-red-600",
+    pending: "text-yellow-600 animate-pulse",
+  } as const;
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-1.5">
+      <CollapsibleTrigger
+        className="flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors cursor-pointer"
+      >
+        <ChevronRight
+          className={cn(
+            "w-3 h-3 transition-transform shrink-0",
+            isOpen && "rotate-90",
+          )}
+        />
+        <Layers className="w-3.5 h-3.5 shrink-0" />
+        <span className="font-medium shrink-0">subagent</span>
+        <span className="text-muted-foreground/80 truncate flex-1 text-left">
+          {displayLabel}
+        </span>
+        <span className="shrink-0 text-muted-foreground/70">
+          {actionCount} {actionCount === 1 ? "action" : "actions"}
+        </span>
+        {part.toolState && (
+          <span className={cn("ml-1 shrink-0", stateColors[part.toolState] || "")}>
+            {part.toolState === "pending" ? "running..." : part.toolState}
+          </span>
+        )}
+      </CollapsibleTrigger>
+
+      <CollapsibleContent className="mt-1">
+        <div className="rounded-md border border-border/40 bg-muted/20 p-3">
+          {part.subagentPrompt ? (
+            <div className="mb-3 rounded-md border border-border/30 bg-background/40 px-3 py-2">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                Task
+              </div>
+              <MessageMarkdown
+                content={part.subagentPrompt}
+                components={markdownComponents}
+                className="text-xs text-muted-foreground/90 prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-1 prose-pre:p-2"
+                enableBreaks={false}
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-1">
+            {(part.subagentActions ?? []).map((childPart, index) => (
+              <MessagePart
+                key={`${part.subagentId || part.content}-subagent-part-${index}-${childPart.type}`}
+                part={childPart}
+              />
+            ))}
+            {(part.subagentActions ?? []).length === 0 ? (
+              <div className="rounded-md border border-dashed border-border/40 px-3 py-2 text-xs text-muted-foreground/70">
+                No child actions yet.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 /** Render a single message part based on its type */
 function MessagePart({ part }: { part: NativeMessagePart }) {
   switch (part.type) {
@@ -875,6 +950,8 @@ function MessagePart({ part }: { part: NativeMessagePart }) {
       return null;
     case "file":
       return <FilePart path={part.content} fileUrl={part.fileUrl} />;
+    case "subagent":
+      return <SubagentPart part={part} />;
     default:
       return null;
   }

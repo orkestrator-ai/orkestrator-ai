@@ -115,7 +115,7 @@ export interface ToolDiffMetadata {
 
 /** Part types for OpenCode messages */
 export interface OpenCodeMessagePart {
-  type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file";
+  type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file" | "subagent";
   content: string;
   /** For file parts - original URL from SDK (may be data URL or file:// URL) */
   fileUrl?: string;
@@ -133,6 +133,13 @@ export interface OpenCodeMessagePart {
   toolError?: string;
   /** For edit tools - diff metadata */
   toolDiff?: ToolDiffMetadata;
+  /** For Codex transcript-derived subagent groups */
+  subagentId?: string;
+  subagentName?: string;
+  subagentRole?: string;
+  subagentPrompt?: string;
+  subagentActions?: OpenCodeMessagePart[];
+  subagentActionCount?: number;
 }
 
 export interface OpenCodeMessage {

@@ -672,6 +672,8 @@ pub async fn start_local_codex_bridge(
     port: u16,
     bridge_path: &str,
     bundled_bun_path: Option<&str>,
+    experimental_collated_codex_subagents: bool,
+    raw_log_dir: Option<&str>,
 ) -> Result<LocalServerStartResult, String> {
     wait_for_startup_cleanup().await;
     let start_lock = get_start_lock(environment_id);
@@ -712,6 +714,20 @@ pub async fn start_local_codex_bridge(
         build_comprehensive_path(bundled_bun_path),
     );
     env_vars.insert("CWD".to_string(), worktree_path.to_string());
+    env_vars.insert(
+        "ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS".to_string(),
+        if experimental_collated_codex_subagents {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        },
+    );
+    if let Some(raw_log_dir) = raw_log_dir {
+        env_vars.insert(
+            "ORKESTRATOR_CODEX_RAW_LOG_DIR".to_string(),
+            raw_log_dir.to_string(),
+        );
+    }
 
     if let Ok(openai_api_key) = std::env::var("OPENAI_API_KEY") {
         if !openai_api_key.trim().is_empty() {
