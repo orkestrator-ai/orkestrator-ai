@@ -266,6 +266,28 @@ fn make_unique_name(base_name: &str, existing_environments: &[Environment]) -> S
     })
 }
 
+/// Build a JSON update payload for renaming an environment.
+/// When the branch has changed compared to `old_branch`, the PR metadata
+/// (prUrl, prState, hasMergeConflicts) is cleared so stale data from the
+/// old branch does not persist.
+fn build_rename_update(
+    new_name: &str,
+    new_branch: &str,
+    old_branch: &str,
+) -> serde_json::Value {
+    if new_branch != old_branch {
+        json!({
+            "name": new_name,
+            "branch": new_branch,
+            "prUrl": null,
+            "prState": null,
+            "hasMergeConflicts": null
+        })
+    } else {
+        json!({ "name": new_name, "branch": new_branch })
+    }
+}
+
 /// Generate a unique branch name by appending an integer suffix if needed.
 /// Checks against existing environment branch names and an optional set of
 /// extra branch names (e.g. actual git branches in the repository).
@@ -375,7 +397,7 @@ pub async fn create_environment(
     // to avoid colliding with remote branches that may have associated PRs.
     if base_name.is_some() {
         if let Some(ref local_path) = project.local_path {
-            let git_branches = list_git_branches_at_path(local_path).await;
+            let git_branches = list_git_branches_at_path(local_path, true).await;
             let unique_branch =
                 make_unique_branch(&environment.branch, &existing_environments, &git_branches);
             if unique_branch != environment.branch {
@@ -446,8 +468,18 @@ pub async fn create_environment(
 /// List all git branch names (local and remote) at the given repository path.
 /// Strips the `origin/` prefix from remote tracking branches so they can be
 /// compared directly against environment branch names.
+///
+/// When `fetch_first` is true, runs `git fetch --prune origin` before listing
+/// so that remote-only branches are up-to-date.
 /// Returns an empty vec on any error (best-effort).
-async fn list_git_branches_at_path(repo_path: &str) -> Vec<String> {
+async fn list_git_branches_at_path(repo_path: &str, fetch_first: bool) -> Vec<String> {
+    if fetch_first {
+        let _ = tokio::process::Command::new("git")
+            .args(["-C", repo_path, "fetch", "--prune", "origin"])
+            .output()
+            .await;
+    }
+
     match tokio::process::Command::new("git")
         .args([
             "-C",
@@ -490,14 +522,7 @@ async fn list_repo_git_branches(
         return Vec::new();
     };
 
-    // Fetch latest remote refs so we detect branches that only exist on the
-    // remote (e.g. from a previous environment whose local branch was deleted).
-    let _ = tokio::process::Command::new("git")
-        .args(["-C", &path, "fetch", "--prune", "origin"])
-        .output()
-        .await;
-
-    list_git_branches_at_path(&path).await
+    list_git_branches_at_path(&path, true).await
 }
 
 /// Safely rename a git branch in a local worktree.
@@ -667,20 +692,9 @@ async fn background_rename_environment(
         make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
     debug!(environment_id = %environment_id, unique_name = %unique_name, unique_branch = %unique_branch, "Unique name and branch determined");
 
-    // Update environment name and branch in storage.
-    // If the branch changed, clear stale PR state — the old PR belongs to the
-    // old branch and would otherwise be preserved indefinitely.
-    let update = if unique_branch != old_branch {
-        json!({
-            "name": &unique_name,
-            "branch": &unique_branch,
-            "prUrl": null,
-            "prState": null,
-            "hasMergeConflicts": null
-        })
-    } else {
-        json!({ "name": &unique_name, "branch": &unique_branch })
-    };
+    // Update environment name and branch in storage, clearing stale PR state
+    // if the branch changed.
+    let update = build_rename_update(&unique_name, &unique_branch, &old_branch);
     if let Err(e) = storage.update_environment(&environment_id, update) {
         warn!(environment_id = %environment_id, error = %e, "Failed to update environment");
         return;
@@ -1138,20 +1152,9 @@ pub async fn rename_environment(
     let git_branches = list_repo_git_branches(&storage, &environment_id).await;
     let new_branch = make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
 
-    // Update storage with new name and branch.
-    // If the branch changed, clear stale PR state — the old PR belongs to the
-    // old branch and would otherwise be preserved indefinitely.
-    let update = if new_branch != old_branch {
-        json!({
-            "name": &unique_name,
-            "branch": &new_branch,
-            "prUrl": null,
-            "prState": null,
-            "hasMergeConflicts": null
-        })
-    } else {
-        json!({ "name": &unique_name, "branch": &new_branch })
-    };
+    // Update storage with new name and branch, clearing stale PR state
+    // if the branch changed.
+    let update = build_rename_update(&unique_name, &new_branch, &old_branch);
     let updated_env = storage
         .update_environment(&environment_id, update)
         .map_err(storage_error_to_string)?;
@@ -2329,5 +2332,166 @@ mod tests {
         assert_eq!(sanitized, "my-feature");
         let result = make_unique_branch(&sanitized, &envs, &[]);
         assert_eq!(result, "my-feature-2");
+    }
+
+    #[test]
+    fn test_build_rename_update_clears_pr_state_when_branch_changed() {
+        let update = build_rename_update("new-name", "new-branch", "old-branch");
+        assert_eq!(update["name"], "new-name");
+        assert_eq!(update["branch"], "new-branch");
+        assert!(update["prUrl"].is_null());
+        assert!(update["prState"].is_null());
+        assert!(update["hasMergeConflicts"].is_null());
+    }
+
+    #[test]
+    fn test_build_rename_update_preserves_pr_state_when_branch_unchanged() {
+        let update = build_rename_update("new-name", "same-branch", "same-branch");
+        assert_eq!(update["name"], "new-name");
+        assert_eq!(update["branch"], "same-branch");
+        // prUrl/prState/hasMergeConflicts should not be present at all
+        assert!(update.get("prUrl").is_none());
+        assert!(update.get("prState").is_none());
+        assert!(update.get("hasMergeConflicts").is_none());
+    }
+
+    /// Detect the default branch name in a cloned repo (could be main or master).
+    async fn get_default_branch(repo_path: &str) -> String {
+        let output = tokio::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .await
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn test_list_git_branches_at_path_returns_local_and_remote_branches() {
+        use tempfile::TempDir;
+
+        // Create a "remote" repo
+        let remote_dir = TempDir::new().unwrap();
+        let remote_path = remote_dir.path().to_str().unwrap();
+        run_git(remote_path, &["init", "--bare"]).await;
+
+        // Clone it to create a "local" repo with an origin
+        let local_dir = TempDir::new().unwrap();
+        let local_path = local_dir.path().to_str().unwrap();
+        run_git_at(
+            local_dir.path().parent().unwrap().to_str().unwrap(),
+            &["clone", remote_path, local_path],
+        )
+        .await;
+        run_git(local_path, &["config", "user.email", "test@test.com"]).await;
+        run_git(local_path, &["config", "user.name", "Test"]).await;
+
+        // Create an initial commit on the default branch
+        std::fs::write(local_dir.path().join("file.txt"), "hello").unwrap();
+        run_git(local_path, &["add", "."]).await;
+        run_git(local_path, &["commit", "-m", "init"]).await;
+        run_git(local_path, &["push", "-u", "origin", "HEAD"]).await;
+
+        let default_branch = get_default_branch(local_path).await;
+
+        // Create a remote-only branch by pushing then deleting locally
+        run_git(local_path, &["checkout", "-b", "remote-only-branch"]).await;
+        std::fs::write(local_dir.path().join("file2.txt"), "world").unwrap();
+        run_git(local_path, &["add", "."]).await;
+        run_git(local_path, &["commit", "-m", "remote branch"]).await;
+        run_git(local_path, &["push", "origin", "remote-only-branch"]).await;
+        run_git(local_path, &["checkout", &default_branch]).await;
+        run_git(local_path, &["branch", "-D", "remote-only-branch"]).await;
+
+        // Create a local-only branch
+        run_git(local_path, &["checkout", "-b", "local-only-branch"]).await;
+        run_git(local_path, &["checkout", &default_branch]).await;
+
+        let branches = list_git_branches_at_path(local_path, false).await;
+
+        // Should include the default branch, local-only-branch, and remote-only-branch
+        assert!(
+            branches.contains(&default_branch),
+            "Should contain '{}', got: {:?}",
+            default_branch,
+            branches
+        );
+        assert!(
+            branches.contains(&"local-only-branch".to_string()),
+            "Should contain 'local-only-branch', got: {:?}",
+            branches
+        );
+        assert!(
+            branches.contains(&"remote-only-branch".to_string()),
+            "Should contain 'remote-only-branch', got: {:?}",
+            branches
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_git_branches_at_path_strips_origin_prefix_and_deduplicates() {
+        use tempfile::TempDir;
+
+        let remote_dir = TempDir::new().unwrap();
+        let remote_path = remote_dir.path().to_str().unwrap();
+        run_git(remote_path, &["init", "--bare"]).await;
+
+        let local_dir = TempDir::new().unwrap();
+        let local_path = local_dir.path().to_str().unwrap();
+        run_git_at(
+            local_dir.path().parent().unwrap().to_str().unwrap(),
+            &["clone", remote_path, local_path],
+        )
+        .await;
+        run_git(local_path, &["config", "user.email", "test@test.com"]).await;
+        run_git(local_path, &["config", "user.name", "Test"]).await;
+
+        std::fs::write(local_dir.path().join("f.txt"), "x").unwrap();
+        run_git(local_path, &["add", "."]).await;
+        run_git(local_path, &["commit", "-m", "init"]).await;
+        run_git(local_path, &["push", "-u", "origin", "HEAD"]).await;
+
+        let default_branch = get_default_branch(local_path).await;
+        let branches = list_git_branches_at_path(local_path, false).await;
+
+        // The default branch appears both as local and as origin/<branch> — should be deduplicated
+        let count = branches.iter().filter(|b| **b == default_branch).count();
+        assert_eq!(
+            count, 1,
+            "{} should appear exactly once, got: {:?}",
+            default_branch, branches
+        );
+        // No entry should start with "origin/"
+        assert!(
+            !branches.iter().any(|b| b.starts_with("origin/")),
+            "No branch should retain origin/ prefix, got: {:?}",
+            branches
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_git_branches_at_path_returns_empty_for_invalid_path() {
+        let branches = list_git_branches_at_path("/nonexistent/path", false).await;
+        assert!(branches.is_empty());
+    }
+
+    async fn run_git(dir: &str, args: &[&str]) {
+        let output = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} in {} failed: {}",
+            args,
+            dir,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    async fn run_git_at(dir: &str, args: &[&str]) {
+        run_git(dir, args).await;
     }
 }
