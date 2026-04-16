@@ -418,10 +418,11 @@ pub async fn create_worktree(
 
     loop {
         attempt += 1;
-        let branch_exists = branch_exists(source_repo_path, &target_branch).await?;
-        let branch_in_use = branch_checked_out(source_repo_path, &target_branch).await?;
+        let local_exists = branch_exists(source_repo_path, &target_branch).await?;
+        let in_use = branch_checked_out(source_repo_path, &target_branch).await?;
+        let on_remote = remote_branch_exists(source_repo_path, &target_branch).await?;
 
-        if branch_exists && branch_in_use {
+        if local_exists && in_use {
             debug!(
                 branch = %target_branch,
                 "Branch is already checked out in another worktree; generating a new name"
@@ -431,14 +432,26 @@ pub async fn create_worktree(
             continue;
         }
 
-        if branch_exists {
-            debug!(branch = %target_branch, "Branch exists; reusing existing branch for worktree");
+        // If branch only exists on the remote, avoid reusing it — it may have
+        // an associated PR from a previous environment.
+        if !local_exists && on_remote {
+            debug!(
+                branch = %target_branch,
+                "Branch exists on remote but not locally; generating a new name to avoid PR collision"
+            );
+            target_branch =
+                generate_unique_branch_name(source_repo_path, branch_name, attempt).await?;
+            continue;
+        }
+
+        if local_exists {
+            debug!(branch = %target_branch, "Branch exists locally; reusing for worktree");
         }
 
         // Create the worktree
-        // If branch exists, reuse it: git worktree add <path> <branch>
+        // If branch exists locally, reuse it: git worktree add <path> <branch>
         // Otherwise create a new branch: git worktree add -b <branch> <path> <start-point>
-        let output = if branch_exists {
+        let output = if local_exists {
             Command::new("git")
                 .args(["worktree", "add", &worktree_path_str, &target_branch])
                 .current_dir(source_repo_path)
@@ -518,6 +531,21 @@ async fn branch_exists(repo_path: &str, branch_name: &str) -> Result<bool, Workt
     Ok(output.status.success())
 }
 
+async fn remote_branch_exists(repo_path: &str, branch_name: &str) -> Result<bool, WorktreeError> {
+    let output = Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            &format!("refs/remotes/origin/{}", branch_name),
+        ])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .map_err(|e| WorktreeError::WorktreeCreationFailed(e.to_string()))?;
+
+    Ok(output.status.success())
+}
+
 async fn branch_checked_out(repo_path: &str, branch_name: &str) -> Result<bool, WorktreeError> {
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
@@ -544,7 +572,8 @@ async fn generate_unique_branch_name(
         let candidate = format!("{}-{}", base_name, idx);
         let exists = branch_exists(repo_path, &candidate).await?;
         let in_use = branch_checked_out(repo_path, &candidate).await?;
-        if !exists && !in_use {
+        let on_remote = remote_branch_exists(repo_path, &candidate).await?;
+        if !exists && !in_use && !on_remote {
             return Ok(candidate);
         }
     }

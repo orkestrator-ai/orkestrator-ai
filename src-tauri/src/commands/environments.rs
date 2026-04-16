@@ -294,7 +294,7 @@ pub async fn create_environment(
     let storage = get_storage().map_err(storage_error_to_string)?;
 
     // Verify project exists
-    let _ = storage
+    let project = storage
         .get_project(&project_id)
         .map_err(storage_error_to_string)?
         .ok_or_else(|| format!("Project not found: {}", project_id))?;
@@ -371,6 +371,24 @@ pub async fn create_environment(
         (None, EnvironmentType::Containerized) => Environment::new(project_id.clone()),
     };
 
+    // For user-provided names, also check the branch against actual git branches
+    // to avoid colliding with remote branches that may have associated PRs.
+    if base_name.is_some() {
+        if let Some(ref local_path) = project.local_path {
+            let git_branches = list_git_branches_at_path(local_path).await;
+            let unique_branch =
+                make_unique_branch(&environment.branch, &existing_environments, &git_branches);
+            if unique_branch != environment.branch {
+                debug!(
+                    old_branch = %environment.branch,
+                    new_branch = %unique_branch,
+                    "Branch collides with existing git branch, using unique variant"
+                );
+                environment.branch = unique_branch;
+            }
+        }
+    }
+
     // Set the network access mode
     environment.network_access_mode = network_mode;
 
@@ -425,7 +443,38 @@ pub async fn create_environment(
     Ok(created_environment)
 }
 
+/// List all git branch names (local and remote) at the given repository path.
+/// Strips the `origin/` prefix from remote tracking branches so they can be
+/// compared directly against environment branch names.
+/// Returns an empty vec on any error (best-effort).
+async fn list_git_branches_at_path(repo_path: &str) -> Vec<String> {
+    match tokio::process::Command::new("git")
+        .args([
+            "-C",
+            repo_path,
+            "branch",
+            "-a",
+            "--format=%(refname:short)",
+        ])
+        .output()
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|l| l.strip_prefix("origin/").unwrap_or(l).to_string())
+                .filter(|b| b != "HEAD")
+                .collect();
+            branches.sort();
+            branches.dedup();
+            branches
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// List all git branch names in the repository that owns the given environment.
+/// Fetches from origin first to ensure remote branches are up-to-date.
 /// Returns an empty vec on any error (best-effort).
 async fn list_repo_git_branches(
     storage: &crate::storage::Storage,
@@ -441,17 +490,14 @@ async fn list_repo_git_branches(
         return Vec::new();
     };
 
-    match tokio::process::Command::new("git")
-        .args(["-C", &path, "branch", "--format=%(refname:short)"])
+    // Fetch latest remote refs so we detect branches that only exist on the
+    // remote (e.g. from a previous environment whose local branch was deleted).
+    let _ = tokio::process::Command::new("git")
+        .args(["-C", &path, "fetch", "--prune", "origin"])
         .output()
-        .await
-    {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(|l| l.to_string())
-            .collect(),
-        _ => Vec::new(),
-    }
+        .await;
+
+    list_git_branches_at_path(&path).await
 }
 
 /// Safely rename a git branch in a local worktree.
@@ -621,11 +667,21 @@ async fn background_rename_environment(
         make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
     debug!(environment_id = %environment_id, unique_name = %unique_name, unique_branch = %unique_branch, "Unique name and branch determined");
 
-    // Update environment name and branch in storage
-    if let Err(e) = storage.update_environment(
-        &environment_id,
-        json!({ "name": &unique_name, "branch": &unique_branch }),
-    ) {
+    // Update environment name and branch in storage.
+    // If the branch changed, clear stale PR state — the old PR belongs to the
+    // old branch and would otherwise be preserved indefinitely.
+    let update = if unique_branch != old_branch {
+        json!({
+            "name": &unique_name,
+            "branch": &unique_branch,
+            "prUrl": null,
+            "prState": null,
+            "hasMergeConflicts": null
+        })
+    } else {
+        json!({ "name": &unique_name, "branch": &unique_branch })
+    };
+    if let Err(e) = storage.update_environment(&environment_id, update) {
         warn!(environment_id = %environment_id, error = %e, "Failed to update environment");
         return;
     }
@@ -1082,12 +1138,22 @@ pub async fn rename_environment(
     let git_branches = list_repo_git_branches(&storage, &environment_id).await;
     let new_branch = make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
 
-    // Update storage with new name and branch
+    // Update storage with new name and branch.
+    // If the branch changed, clear stale PR state — the old PR belongs to the
+    // old branch and would otherwise be preserved indefinitely.
+    let update = if new_branch != old_branch {
+        json!({
+            "name": &unique_name,
+            "branch": &new_branch,
+            "prUrl": null,
+            "prState": null,
+            "hasMergeConflicts": null
+        })
+    } else {
+        json!({ "name": &unique_name, "branch": &new_branch })
+    };
     let updated_env = storage
-        .update_environment(
-            &environment_id,
-            json!({ "name": &unique_name, "branch": &new_branch }),
-        )
+        .update_environment(&environment_id, update)
         .map_err(storage_error_to_string)?;
 
     // Rename git branch based on environment type
