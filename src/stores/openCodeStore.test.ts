@@ -16,6 +16,7 @@ function resetOpenCodeStore() {
     selectedMode: new Map(),
     attachments: new Map(),
     draftText: new Map(),
+    draftMentions: new Map(),
     messageQueue: new Map(),
     isComposing: new Map(),
     pendingQuestions: new Map(),
@@ -523,6 +524,92 @@ describe("openCodeStore pending permissions", () => {
 describe("openCodeStore selectors and session mutations", () => {
   beforeEach(() => {
     resetOpenCodeStore();
+  });
+
+  test("preserves timer metadata across loading transitions", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useOpenCodeStore.getState();
+      store.setSession("env-env-1:tab-1", {
+        sessionId: "session-1",
+        messages: [],
+        isLoading: false,
+      });
+
+      store.setSessionLoading("env-env-1:tab-1", true);
+
+      let session = store.getSession("env-env-1:tab-1");
+      expect(session?.loadingStartedAt).toBe(1000);
+      expect(session?.lastCompletedElapsedSeconds).toBeNull();
+
+      Date.now = () => 6500;
+      store.setSessionLoading("env-env-1:tab-1", false);
+
+      session = store.getSession("env-env-1:tab-1");
+      expect(session?.loadingStartedAt).toBeUndefined();
+      expect(session?.lastCompletedElapsedSeconds).toBe(5);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("reconciles timer metadata when a loading session refreshes", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useOpenCodeStore.getState();
+      store.setSession("env-env-1:tab-1", {
+        sessionId: "session-1",
+        messages: [],
+        isLoading: false,
+      });
+      store.setSessionLoading("env-env-1:tab-1", true);
+
+      Date.now = () => 6500;
+      store.setSession("env-env-1:tab-1", {
+        sessionId: "session-1",
+        messages: [],
+        isLoading: false,
+      });
+
+      const session = store.getSession("env-env-1:tab-1");
+      expect(session?.loadingStartedAt).toBeUndefined();
+      expect(session?.lastCompletedElapsedSeconds).toBe(5);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("does not carry timer metadata across session id changes", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useOpenCodeStore.getState();
+      store.setSession("env-env-1:tab-1", {
+        sessionId: "session-1",
+        messages: [],
+        isLoading: false,
+      });
+      store.setSessionLoading("env-env-1:tab-1", true);
+
+      Date.now = () => 8000;
+      store.setSession("env-env-1:tab-1", {
+        sessionId: "session-2",
+        messages: [],
+        isLoading: true,
+      });
+
+      const session = store.getSession("env-env-1:tab-1");
+      expect(session?.sessionId).toBe("session-2");
+      expect(session?.loadingStartedAt).toBe(8000);
+      expect(session?.lastCompletedElapsedSeconds).toBeNull();
+    } finally {
+      Date.now = originalNow;
+    }
   });
 
   test("stores server status, client, model, variant, and session error state", () => {

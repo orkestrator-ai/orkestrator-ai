@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface UseElapsedTimerReturn {
   /** Seconds elapsed since loading started, or null when not loading */
@@ -10,10 +10,9 @@ interface UseElapsedTimerReturn {
 /**
  * Tracks how long an agent has been working (loading).
  *
- * - While `isLoading` is true, `elapsedSeconds` ticks up every second.
- * - When `isLoading` transitions to false, `finalElapsedSeconds` captures the
- *   total duration and `elapsedSeconds` resets to null.
- * - When `sessionId` changes, all timer state resets.
+ * Prefers store-backed timing metadata when available so elapsed state survives
+ * refreshes, but falls back to hook-local timing for callers that only toggle
+ * `isLoading`.
  */
 export function useElapsedTimer(
   isLoading: boolean | undefined,
@@ -21,31 +20,51 @@ export function useElapsedTimer(
   loadingStartedAt?: number,
   storedFinalElapsedSeconds?: number | null,
 ): UseElapsedTimerReturn {
+  const localLoadingStartRef = useRef<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
+  const [localFinalElapsedSeconds, setLocalFinalElapsedSeconds] = useState<number | null>(null);
 
   // Reset timer state when session changes (e.g. resume session)
   useEffect(() => {
+    localLoadingStartRef.current = null;
     setElapsedSeconds(null);
+    setLocalFinalElapsedSeconds(null);
   }, [sessionId]);
 
   useEffect(() => {
-    if (!isLoading || loadingStartedAt === undefined) {
+    if (!isLoading) {
+      if (localLoadingStartRef.current !== null && storedFinalElapsedSeconds == null) {
+        setLocalFinalElapsedSeconds(
+          Math.max(0, Math.floor((Date.now() - localLoadingStartRef.current) / 1000)),
+        );
+      }
+      localLoadingStartRef.current = null;
       setElapsedSeconds(null);
       return;
     }
 
+    setLocalFinalElapsedSeconds(null);
+    const effectiveStartTime = loadingStartedAt ?? localLoadingStartRef.current ?? Date.now();
+    if (loadingStartedAt === undefined) {
+      localLoadingStartRef.current = effectiveStartTime;
+    } else {
+      localLoadingStartRef.current = null;
+    }
+
     const updateElapsed = () => {
-      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - loadingStartedAt) / 1000)));
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - effectiveStartTime) / 1000)));
     };
 
     updateElapsed();
     const interval = setInterval(updateElapsed, 1000);
 
     return () => clearInterval(interval);
-  }, [isLoading, loadingStartedAt]);
+  }, [isLoading, loadingStartedAt, storedFinalElapsedSeconds]);
 
   return {
     elapsedSeconds,
-    finalElapsedSeconds: isLoading ? null : (storedFinalElapsedSeconds ?? null),
+    finalElapsedSeconds: isLoading
+      ? null
+      : (storedFinalElapsedSeconds ?? localFinalElapsedSeconds ?? null),
   };
 }

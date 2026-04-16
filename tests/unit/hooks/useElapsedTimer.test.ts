@@ -39,7 +39,10 @@ describe("useElapsedTimer", () => {
       expect(result.current.finalElapsedSeconds).toBeNull();
     });
 
-    test("elapsedSeconds stays null while loading when loadingStartedAt is missing", () => {
+    test("falls back to a hook-local timer when loadingStartedAt is missing", () => {
+      const startTime = 1000000;
+      dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime);
+
       const { result, rerender } = renderHook(
         ({ isLoading, sessionId, loadingStartedAt }) =>
           useElapsedTimer(isLoading, sessionId, loadingStartedAt),
@@ -48,7 +51,7 @@ describe("useElapsedTimer", () => {
 
       rerender({ isLoading: true, sessionId: "session-1", loadingStartedAt: undefined });
 
-      expect(result.current.elapsedSeconds).toBeNull();
+      expect(result.current.elapsedSeconds).toBe(0);
       expect(result.current.finalElapsedSeconds).toBeNull();
     });
 
@@ -78,6 +81,35 @@ describe("useElapsedTimer", () => {
       );
 
       rerender({ isLoading: false, sessionId: "session-1", finalElapsedSeconds: 5 });
+      expect(result.current.elapsedSeconds).toBeNull();
+      expect(result.current.finalElapsedSeconds).toBe(5);
+    });
+
+    test("computes finalElapsedSeconds locally when loadingStartedAt is missing", () => {
+      const startTime = 1000000;
+      dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime);
+
+      const { result, rerender } = renderHook(
+        ({ isLoading, sessionId, loadingStartedAt, finalElapsedSeconds }) =>
+          useElapsedTimer(isLoading, sessionId, loadingStartedAt, finalElapsedSeconds),
+        { initialProps: { isLoading: false, sessionId: "session-1" } },
+      );
+
+      rerender({
+        isLoading: true,
+        sessionId: "session-1",
+        loadingStartedAt: undefined,
+        finalElapsedSeconds: undefined,
+      });
+
+      dateNowSpy.mockReturnValue(startTime + 5000);
+      rerender({
+        isLoading: false,
+        sessionId: "session-1",
+        loadingStartedAt: undefined,
+        finalElapsedSeconds: undefined,
+      });
+
       expect(result.current.elapsedSeconds).toBeNull();
       expect(result.current.finalElapsedSeconds).toBe(5);
     });
