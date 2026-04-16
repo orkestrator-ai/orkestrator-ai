@@ -113,33 +113,45 @@ export function useVirtuosoScrollState(
     const handle = virtuosoRef.current;
     if (!handle) return;
 
-    // Two-phase scroll to handle both long conversations and footer content.
-    //
-    // Phase 1: Jump (instant) to the last data item via scrollToIndex.
-    // Virtuoso's virtual scrollHeight is based on estimated heights for items
-    // that haven't been rendered. On long conversations, these estimates can
-    // be far too small, causing scrollTo with a large pixel value to fall
-    // short of the actual bottom. scrollToIndex forces Virtuoso to render and
-    // measure items at the end, correcting the virtual scroll height.
-    handle.scrollToIndex({
-      index: "LAST",
-      align: "end",
-    });
+    // Virtuoso's virtual scrollHeight is based on *estimated* heights for
+    // items that haven't been rendered yet. On long conversations those
+    // estimates are often significantly wrong, so a single scrollToIndex(LAST)
+    // can land short of the true bottom (the user's reported "scroll down
+    // only goes to the bottom of the loaded window"). Each retry forces
+    // Virtuoso to render and measure the tail items, correcting the virtual
+    // height, until we actually reach the bottom.
+    const MAX_ATTEMPTS = 10;
+    let attempts = 0;
 
-    // Phase 2: Smooth-scroll past the last data item to reveal footer content
-    // (thinking indicator, question cards, elapsed time). scrollToIndex only
-    // targets the last data item; footer content renders below it and needs
-    // an additional scroll. requestAnimationFrame ensures Virtuoso has
-    // processed height corrections from Phase 1 before we scroll.
-    requestAnimationFrame(() => {
+    const attempt = () => {
       if (!mountedRef.current) return;
-      handle.scrollTo({
-        top: SCROLL_TO_ABSOLUTE_BOTTOM,
-        behavior: "smooth",
+      attempts += 1;
+
+      handle.scrollToIndex({
+        index: "LAST",
+        align: "end",
       });
-    });
-    // Don't optimistically set isAtBottom — let Virtuoso's atBottomStateChange
-    // fire when the scroll actually reaches the bottom.
+
+      // setTimeout (rather than rAF) gives Virtuoso time to fire
+      // atBottomStateChange after rendering/measuring the tail items.
+      setTimeout(() => {
+        if (!mountedRef.current) return;
+        if (!isAtBottomRef.current && attempts < MAX_ATTEMPTS) {
+          attempt();
+          return;
+        }
+
+        // Once stable at the last data item, smooth-scroll past it to
+        // reveal footer content (thinking indicator, question/approval
+        // cards, elapsed time).
+        handle.scrollTo({
+          top: SCROLL_TO_ABSOLUTE_BOTTOM,
+          behavior: "smooth",
+        });
+      }, 16);
+    };
+
+    attempt();
   }, []);
 
   return {
