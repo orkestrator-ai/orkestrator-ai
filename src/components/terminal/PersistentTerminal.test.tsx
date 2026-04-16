@@ -392,4 +392,47 @@ describe("PersistentTerminal", () => {
       expect(writeMock).toHaveBeenCalledWith('codex "Fix the failing tests"\n');
     });
   });
+
+  it("launches Codex terminal mode without an initial prompt", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith("codex\n");
+    });
+  });
+
+  it("escapes quotes and dollar signs in Codex prompts", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        initialPrompt={'Use "$HOME" for the config path'}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith('codex "Use \\"\\$HOME\\" for the config path"\n');
+    });
+  });
 });

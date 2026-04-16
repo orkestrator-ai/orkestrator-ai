@@ -1881,6 +1881,40 @@ mod tests {
     }
 
     #[test]
+    fn test_update_environment_codex_mode() {
+        let storage = create_test_storage();
+
+        let env = Environment::new("project-123".to_string());
+        storage.add_environment(env.clone()).unwrap();
+
+        let updated = storage
+            .update_environment(
+                &env.id,
+                serde_json::json!({
+                    "codexMode": "terminal"
+                }),
+            )
+            .unwrap();
+        assert_eq!(updated.codex_mode, Some(crate::models::CodexMode::Terminal));
+
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert_eq!(loaded.codex_mode, Some(crate::models::CodexMode::Terminal));
+
+        let cleared = storage
+            .update_environment(
+                &env.id,
+                serde_json::json!({
+                    "codexMode": null
+                }),
+            )
+            .unwrap();
+        assert_eq!(cleared.codex_mode, None);
+
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert_eq!(loaded.codex_mode, None);
+    }
+
+    #[test]
     fn test_update_nonexistent_environment() {
         let storage = create_test_storage();
 

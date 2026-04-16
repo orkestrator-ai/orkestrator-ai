@@ -1,7 +1,26 @@
-import { describe, test, expect } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect, mock } from "bun:test";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useConfigStore } from "@/stores/configStore";
 import { resolveAgentDefaults } from "../../../src/components/environments/CreateEnvironmentDialog";
 
+mock.module("sonner", () => ({
+  toast: {
+    success: mock(() => {}),
+    error: mock(() => {}),
+  },
+}));
+
+const { CreateEnvironmentDialog } = await import("../../../src/components/environments/CreateEnvironmentDialog");
+
 describe("resolveAgentDefaults", () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
   test("uses app-level defaults when no repo config provided", () => {
     const result = resolveAgentDefaults(
       { defaultAgent: "claude", claudeMode: "native", opencodeMode: "terminal", codexMode: "native" },
@@ -82,5 +101,61 @@ describe("resolveAgentDefaults", () => {
     expect(result.claudeMode).toBe("native");
     expect(result.opencodeMode).toBe("native");
     expect(result.codexMode).toBe("terminal");
+  });
+
+  test("submits codex terminal mode from the dialog", async () => {
+    useConfigStore.setState({
+      config: {
+        version: "1.0",
+        global: {
+          containerResources: { cpuCores: 2, memoryGb: 4 },
+          envFilePatterns: [],
+          allowedDomains: [],
+          defaultAgent: "claude",
+          opencodeModel: "opencode/grok-code",
+          codexModel: "gpt-5.3-codex",
+          codexReasoningEffort: "medium",
+          opencodeMode: "terminal",
+          claudeMode: "terminal",
+          codexMode: "native",
+          terminalAppearance: {
+            fontFamily: "Fira Code",
+            fontSize: 14,
+            backgroundColor: "#000000",
+          },
+          terminalScrollback: 5000,
+        },
+        repositories: {},
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    const onCreate = mock(async () => {});
+
+    render(
+      <CreateEnvironmentDialog
+        open={true}
+        onOpenChange={() => {}}
+        onCreate={onCreate}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    fireEvent.change(screen.getByLabelText(/Initial Prompt/i), {
+      target: { value: "Review the migration plan" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Environment" }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentType: "codex",
+          codexMode: "terminal",
+          initialPrompt: "Review the migration plan",
+        })
+      );
+    });
   });
 });

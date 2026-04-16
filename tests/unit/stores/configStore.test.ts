@@ -73,6 +73,17 @@ describe("configStore", () => {
   });
 
   test("updateGlobalConfig preserves other global fields", () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          codexMode: "native",
+        },
+      },
+    }));
+
     useConfigStore.getState().updateGlobalConfig({
       envFilePatterns: [".env.production"],
     });
@@ -82,6 +93,26 @@ describe("configStore", () => {
     expect(state.config.global.containerResources.cpuCores).toBe(2);
     expect(state.config.global.containerResources.memoryGb).toBe(4);
     expect(state.config.global.envFilePatterns).toEqual([".env.production"]);
+    expect(state.config.global.codexMode).toBe("native");
+  });
+
+  test("updateGlobalConfig updates codexMode", () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          codexMode: "native",
+        },
+      },
+    }));
+
+    useConfigStore.getState().updateGlobalConfig({
+      codexMode: "terminal",
+    });
+
+    expect(useConfigStore.getState().config.global.codexMode).toBe("terminal");
   });
 
   test("setRepositoryConfig adds a new repository config", () => {

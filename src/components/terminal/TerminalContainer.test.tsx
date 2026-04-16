@@ -120,4 +120,112 @@ describe("TerminalContainer", () => {
 
     expect(usePaneLayoutStore.getState().activeEnvironmentId).toBe("env-visible");
   });
+
+  test("creates a codex terminal tab when codexMode is terminal", async () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          codexMode: "terminal",
+        },
+        repositories: {},
+      },
+    }));
+
+    useClaudeOptionsStore.setState({
+      options: {
+        "env-hidden": {
+          launchAgent: true,
+          agentType: "codex",
+          initialPrompt: "Review this diff",
+        },
+      },
+    });
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId="container-hidden"
+          isContainerRunning
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(1);
+      expect(envHidden.root.tabs[0]?.type).toBe("codex");
+      expect(envHidden.root.tabs[0]?.initialPrompt).toBe("Review this diff");
+    });
+  });
+
+  test("creates a codex native tab for ready local environments when codexMode is native", async () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          codexMode: "native",
+        },
+        repositories: {},
+      },
+    }));
+
+    useEnvironmentStore.setState((state) => ({
+      ...state,
+      environments: state.environments.map((env) =>
+        env.id === "env-hidden"
+          ? {
+              ...env,
+              containerId: null,
+              environmentType: "local",
+              worktreePath: "/tmp/env-hidden-worktree",
+            }
+          : env
+      ),
+      setupCommandsResolved: new Set(["env-hidden"]),
+    }));
+
+    useClaudeOptionsStore.setState({
+      options: {
+        "env-hidden": {
+          launchAgent: true,
+          agentType: "codex",
+          initialPrompt: "Ship it",
+        },
+      },
+    });
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId={null}
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(1);
+      expect(envHidden.root.tabs[0]?.type).toBe("codex-native");
+      expect(envHidden.root.tabs[0]?.initialPrompt).toBe("Ship it");
+    });
+  });
 });

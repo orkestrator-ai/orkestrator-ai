@@ -1078,6 +1078,7 @@ mod tests {
         assert!(config.env_file_patterns.contains(&".env.local".to_string()));
         assert!(config.anthropic_api_key.is_none());
         assert!(config.github_token.is_none());
+        assert_eq!(config.codex_mode, CodexMode::Native);
     }
 
     #[test]
@@ -1121,6 +1122,18 @@ mod tests {
         let deserialized: Environment = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, env.id);
         assert_eq!(deserialized.status, EnvironmentStatus::Stopped);
+    }
+
+    #[test]
+    fn test_environment_serialization_round_trip_with_codex_mode() {
+        let mut env = Environment::new("project-123".to_string());
+        env.codex_mode = Some(CodexMode::Terminal);
+
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"codexMode\":\"terminal\""));
+
+        let deserialized: Environment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.codex_mode, Some(CodexMode::Terminal));
     }
 
     #[test]
@@ -1387,5 +1400,14 @@ mod tests {
             let json = serde_json::to_value(agent).unwrap();
             assert_eq!(json, expected);
         }
+    }
+
+    #[test]
+    fn test_session_type_codex_serialization_round_trip() {
+        let json = serde_json::to_string(&SessionType::Codex).unwrap();
+        assert_eq!(json, "\"codex\"");
+
+        let deserialized: SessionType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, SessionType::Codex);
     }
 }
