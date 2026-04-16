@@ -237,7 +237,12 @@ export function OpenCodeChatTab({
   }, [modelPreferences]);
 
   // Elapsed timer: counts up while agent is working
-  const { elapsedSeconds, finalElapsedSeconds } = useElapsedTimer(session?.isLoading, session?.sessionId);
+  const { elapsedSeconds, finalElapsedSeconds } = useElapsedTimer(
+    session?.isLoading,
+    session?.sessionId,
+    session?.loadingStartedAt,
+    session?.lastCompletedElapsedSeconds,
+  );
 
   // Auto-scroll when footer content changes while user is at bottom.
   // Virtuoso's followOutput only fires on data item changes, but the footer

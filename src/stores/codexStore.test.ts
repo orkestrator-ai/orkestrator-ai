@@ -96,4 +96,76 @@ describe("codexStore message helpers", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]?.id).toBe("server-2");
   });
+
+  test("preserves timer metadata across loading transitions", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useCodexStore.getState();
+      store.setSessionLoading(SESSION_KEY, true);
+
+      let session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.isLoading).toBe(true);
+      expect(session?.loadingStartedAt).toBe(1000);
+      expect(session?.lastCompletedElapsedSeconds).toBeNull();
+
+      Date.now = () => 6500;
+      store.setSessionLoading(SESSION_KEY, false);
+
+      session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.isLoading).toBe(false);
+      expect(session?.loadingStartedAt).toBeUndefined();
+      expect(session?.lastCompletedElapsedSeconds).toBe(5);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("reconciles timer metadata when a loading session refreshes", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useCodexStore.getState();
+      store.setSessionLoading(SESSION_KEY, true);
+
+      Date.now = () => 6500;
+      store.setSession(SESSION_KEY, {
+        sessionId: "session-1",
+        messages: [],
+        isLoading: false,
+      });
+
+      const session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.loadingStartedAt).toBeUndefined();
+      expect(session?.lastCompletedElapsedSeconds).toBe(5);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("does not carry timer metadata across session id changes", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useCodexStore.getState();
+      store.setSessionLoading(SESSION_KEY, true);
+
+      Date.now = () => 8000;
+      store.setSession(SESSION_KEY, {
+        sessionId: "session-2",
+        messages: [],
+        isLoading: true,
+      });
+
+      const session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.sessionId).toBe("session-2");
+      expect(session?.loadingStartedAt).toBe(8000);
+      expect(session?.lastCompletedElapsedSeconds).toBeNull();
+    } finally {
+      Date.now = originalNow;
+    }
+  });
 });

@@ -11,6 +11,7 @@ import {
 } from "@/lib/opencode-client";
 import { mergeNativeMessagesPreservingClientOnly } from "@/lib/chat/client-only-messages";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import { reconcileTimedSession, updateTimedSessionLoading } from "@/lib/session-timer";
 import { createSessionKey } from "@/lib/utils";
 import type { FileMention } from "@/types";
 
@@ -41,6 +42,8 @@ export interface OpenCodeSessionState {
   sessionId: string;
   messages: OpenCodeMessage[];
   isLoading: boolean;
+  loadingStartedAt?: number;
+  lastCompletedElapsedSeconds?: number | null;
   /** Error message to display (cleared when new message is sent) */
   error?: string;
 }
@@ -305,7 +308,14 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
     set((state) => {
       const newMap = new Map(state.sessions);
       if (session) {
-        newMap.set(environmentId, session);
+        const previous = state.sessions.get(environmentId);
+        newMap.set(
+          environmentId,
+          reconcileTimedSession(
+            previous?.sessionId === session.sessionId ? previous : undefined,
+            session,
+          ),
+        );
       } else {
         newMap.delete(environmentId);
       }
@@ -357,10 +367,7 @@ export const useOpenCodeStore = create<OpenCodeState>()((set, get) => ({
       if (!session) return state;
 
       const newMap = new Map(state.sessions);
-      newMap.set(environmentId, {
-        ...session,
-        isLoading,
-      });
+      newMap.set(environmentId, updateTimedSessionLoading(session, isLoading));
       return { sessions: newMap };
     }),
 
