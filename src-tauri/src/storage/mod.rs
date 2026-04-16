@@ -804,6 +804,9 @@ impl Storage {
             if let Some(host_entry_port) = updates.get("hostEntryPort") {
                 environment.host_entry_port = host_entry_port.as_u64().map(|v| v as u16);
             }
+            if let Some(codex_mode) = updates.get("codexMode") {
+                environment.codex_mode = serde_json::from_value(codex_mode.clone()).ok().flatten();
+            }
 
             let updated = environment.clone();
             self.save_environments_unlocked(&environments)?;
@@ -2075,6 +2078,40 @@ mod tests {
         let loaded = storage.get_environment(&env.id).unwrap().unwrap();
         assert_eq!(loaded.entry_port, None);
         assert_eq!(loaded.host_entry_port, None);
+    }
+
+    #[test]
+    fn test_update_environment_codex_mode() {
+        let storage = create_test_storage();
+
+        let env = Environment::new("project-123".to_string());
+        storage.add_environment(env.clone()).unwrap();
+
+        let updated = storage
+            .update_environment(
+                &env.id,
+                serde_json::json!({
+                    "codexMode": "terminal"
+                }),
+            )
+            .unwrap();
+        assert_eq!(updated.codex_mode, Some(crate::models::CodexMode::Terminal));
+
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert_eq!(loaded.codex_mode, Some(crate::models::CodexMode::Terminal));
+
+        let cleared = storage
+            .update_environment(
+                &env.id,
+                serde_json::json!({
+                    "codexMode": null
+                }),
+            )
+            .unwrap();
+        assert_eq!(cleared.codex_mode, None);
+
+        let loaded = storage.get_environment(&env.id).unwrap().unwrap();
+        assert_eq!(loaded.codex_mode, None);
     }
 
     #[test]

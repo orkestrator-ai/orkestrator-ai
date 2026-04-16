@@ -1084,6 +1084,20 @@ export function PersistentTerminal({
           }
           console.debug("[PersistentTerminal] Launching command for tab:", tabId, "command:", command);
           writeRef.current(command + "\n");
+        } else if (tabType === "codex") {
+          // Build the interactive codex command with an optional initial prompt.
+          let command = "codex";
+          if (initialPrompt) {
+            const escapedPrompt = initialPrompt
+              .replace(/\\/g, '\\\\')
+              .replace(/"/g, '\\"')
+              .replace(/\$/g, '\\$')
+              .replace(/`/g, '\\`')
+              .replace(/\n/g, '\\n');
+            command += ` "${escapedPrompt}"`;
+          }
+          console.debug("[PersistentTerminal] Launching command for tab:", tabId, "command:", command);
+          writeRef.current(command + "\n");
         } else if (tabType === "plain" && initialCommands && initialCommands.length > 0) {
           // For plain tabs with initial commands, execute them
           console.debug("[PersistentTerminal] Executing initial commands for tab:", tabId, "commands:", initialCommands);

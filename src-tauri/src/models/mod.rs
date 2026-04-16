@@ -233,6 +233,9 @@ pub struct Environment {
     /// Per-environment OpenCode mode override (None = use global config)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_mode: Option<OpenCodeMode>,
+    /// Per-environment Codex mode override (None = use global config)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_mode: Option<CodexMode>,
 }
 
 /// Default branch for backward compatibility with existing environments
@@ -338,6 +341,7 @@ impl Environment {
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
+            codex_mode: None,
         }
     }
 
@@ -376,6 +380,7 @@ impl Environment {
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
+            codex_mode: None,
         }
     }
 
@@ -414,6 +419,7 @@ impl Environment {
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
+            codex_mode: None,
         }
     }
 
@@ -543,6 +549,8 @@ pub enum SessionType {
     ClaudeYolo,
     /// OpenCode session
     Opencode,
+    /// Codex session
+    Codex,
     /// Root shell session (logged in as root)
     Root,
 }
@@ -560,6 +568,7 @@ impl std::fmt::Display for SessionType {
             SessionType::Claude => write!(f, "claude"),
             SessionType::ClaudeYolo => write!(f, "claude-yolo"),
             SessionType::Opencode => write!(f, "opencode"),
+            SessionType::Codex => write!(f, "codex"),
             SessionType::Root => write!(f, "root"),
         }
     }
@@ -731,6 +740,17 @@ pub enum ClaudeMode {
     Native,
 }
 
+/// Codex mode - terminal CLI or native chat interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexMode {
+    /// Terminal mode - launches Codex CLI in terminal
+    Terminal,
+    /// Native mode - uses the Codex bridge chat interface
+    #[default]
+    Native,
+}
+
 /// Agent style - terminal CLI or native chat interface (used for project-level override)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -848,6 +868,9 @@ pub struct GlobalConfig {
     /// Claude mode - terminal CLI or native chat interface
     #[serde(default)]
     pub claude_mode: ClaudeMode,
+    /// Codex mode - terminal CLI or native chat interface
+    #[serde(default)]
+    pub codex_mode: CodexMode,
     /// Terminal appearance settings (font, size, colors)
     #[serde(default)]
     pub terminal_appearance: TerminalAppearance,
@@ -874,6 +897,7 @@ impl Default for GlobalConfig {
             codex_reasoning_effort: default_codex_reasoning_effort(),
             opencode_mode: OpenCodeMode::default(),
             claude_mode: ClaudeMode::default(),
+            codex_mode: CodexMode::default(),
             terminal_appearance: TerminalAppearance::default(),
             terminal_scrollback: default_terminal_scrollback(),
             debug_logging: false,
@@ -1054,6 +1078,7 @@ mod tests {
         assert!(config.env_file_patterns.contains(&".env.local".to_string()));
         assert!(config.anthropic_api_key.is_none());
         assert!(config.github_token.is_none());
+        assert_eq!(config.codex_mode, CodexMode::Native);
     }
 
     #[test]
@@ -1097,6 +1122,18 @@ mod tests {
         let deserialized: Environment = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, env.id);
         assert_eq!(deserialized.status, EnvironmentStatus::Stopped);
+    }
+
+    #[test]
+    fn test_environment_serialization_round_trip_with_codex_mode() {
+        let mut env = Environment::new("project-123".to_string());
+        env.codex_mode = Some(CodexMode::Terminal);
+
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"codexMode\":\"terminal\""));
+
+        let deserialized: Environment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.codex_mode, Some(CodexMode::Terminal));
     }
 
     #[test]
@@ -1363,5 +1400,14 @@ mod tests {
             let json = serde_json::to_value(agent).unwrap();
             assert_eq!(json, expected);
         }
+    }
+
+    #[test]
+    fn test_session_type_codex_serialization_round_trip() {
+        let json = serde_json::to_string(&SessionType::Codex).unwrap();
+        assert_eq!(json, "\"codex\"");
+
+        let deserialized: SessionType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, SessionType::Codex);
     }
 }

@@ -117,19 +117,21 @@ export function TerminalContainer({
   const claudeOptions = getOptions(environmentId);
   const hasAppliedClaudeOptionsRef = useRef(false);
 
-  // Get config for opencode and claude modes - per-environment overrides take precedence over global
+  // Get config for agent modes - per-environment overrides take precedence over global
   const { config } = useConfigStore();
-  const { envOpencodeMode, envClaudeMode } = useEnvironmentStore(
+  const { envOpencodeMode, envClaudeMode, envCodexMode } = useEnvironmentStore(
     useShallow((state) => {
       const env = state.environments.find(e => e.id === environmentId);
       return {
         envOpencodeMode: env?.opencodeMode,
         envClaudeMode: env?.claudeMode,
+        envCodexMode: env?.codexMode,
       };
     })
   );
   const opencodeMode = envOpencodeMode || config.global.opencodeMode || "terminal";
   const claudeMode = envClaudeMode || config.global.claudeMode || "terminal";
+  const codexMode = envCodexMode || config.global.codexMode || "native";
 
   // Get workspace ready state - needed early for native OpenCode launch
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
@@ -278,7 +280,7 @@ export function TerminalContainer({
       // Check if we should use native mode instead of terminal
       const useNativeOpenCode = initialTabType === "opencode" && opencodeMode === "native";
       const useNativeClaude = initialTabType === "claude" && claudeMode === "native";
-      const useNativeCodex = initialTabType === "codex";
+      const useNativeCodex = initialTabType === "codex" && codexMode === "native";
 
       // For local environments, check for pending setup commands
       const setupCommands = isLocalEnvironment ? consumePendingSetupCommands(environmentId) : undefined;
@@ -289,6 +291,7 @@ export function TerminalContainer({
         launchAgent,
         opencodeMode,
         claudeMode,
+        codexMode,
         useNativeOpenCode,
         useNativeClaude,
         useNativeCodex,
@@ -428,7 +431,7 @@ export function TerminalContainer({
         addTab("default", initialTab, environmentId);
       }
     }
-  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, environmentId, currentEnvState, opencodeMode, claudeMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning]);
+  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, environmentId, currentEnvState, opencodeMode, claudeMode, codexMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning]);
 
   // Reset pane layout when container changes within the same environment
   // (e.g., container was stopped and restarted with a new ID)
@@ -590,7 +593,7 @@ export function TerminalContainer({
         return;
       }
 
-      if (type === "codex") {
+      if (type === "codex" && codexMode === "native") {
         const newTab: TabInfo = {
           id: newTabId,
           type: "codex-native",
@@ -616,7 +619,7 @@ export function TerminalContainer({
       console.debug("[TerminalContainer] Creating new tab:", newTabId, "type:", type, "for environment:", environmentId);
       addTab(activePaneId, newTab, environmentId);
     },
-    [containerId, isEnvironmentRunning, activePaneId, addTab, getAllTabs, environmentId, opencodeMode, claudeMode, isLocalEnvironmentReady]
+    [containerId, isEnvironmentRunning, activePaneId, addTab, getAllTabs, environmentId, opencodeMode, claudeMode, codexMode, isLocalEnvironmentReady]
   );
 
   // Handler for creating file viewer tabs

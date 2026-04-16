@@ -18,6 +18,7 @@ function createConfig(defaultAgent: "claude" | "codex" | "opencode" | undefined,
       codexReasoningEffort: "medium",
       opencodeMode: "native",
       claudeMode: "native",
+      codexMode: "native",
       terminalAppearance: {
         fontFamily: "Fira Code",
         fontSize: 14,
@@ -86,15 +87,17 @@ describe("getBuildEnvironmentAgentSettings", () => {
       defaultAgent: "claude",
       claudeMode: "native",
       opencodeMode: null,
+      codexMode: null,
       shouldLaunchClaude: true,
     });
   });
 
-  test("returns Codex settings without native-mode overrides", () => {
+  test("returns Codex native settings without Claude launch behavior", () => {
     expect(getBuildEnvironmentAgentSettings("codex")).toEqual({
       defaultAgent: "codex",
       claudeMode: null,
       opencodeMode: null,
+      codexMode: "native",
       shouldLaunchClaude: false,
     });
   });
@@ -104,6 +107,7 @@ describe("getBuildEnvironmentAgentSettings", () => {
       defaultAgent: "opencode",
       claudeMode: null,
       opencodeMode: "native",
+      codexMode: null,
       shouldLaunchClaude: false,
     });
   });

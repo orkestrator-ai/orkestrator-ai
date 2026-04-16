@@ -1,25 +1,46 @@
-import { describe, test, expect } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect, mock } from "bun:test";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useConfigStore } from "@/stores/configStore";
 import { resolveAgentDefaults } from "../../../src/components/environments/CreateEnvironmentDialog";
 
+mock.module("sonner", () => ({
+  toast: {
+    success: mock(() => {}),
+    error: mock(() => {}),
+  },
+}));
+
+const { CreateEnvironmentDialog } = await import("../../../src/components/environments/CreateEnvironmentDialog");
+
 describe("resolveAgentDefaults", () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
   test("uses app-level defaults when no repo config provided", () => {
     const result = resolveAgentDefaults(
-      { defaultAgent: "claude", claudeMode: "native", opencodeMode: "terminal" },
+      { defaultAgent: "claude", claudeMode: "native", opencodeMode: "terminal", codexMode: "native" },
       undefined,
     );
     expect(result.defaultAgent).toBe("claude");
     expect(result.claudeMode).toBe("native");
     expect(result.opencodeMode).toBe("terminal");
+    expect(result.codexMode).toBe("native");
   });
 
   test("uses app-level defaults when repo config has no overrides", () => {
     const result = resolveAgentDefaults(
-      { defaultAgent: "opencode", claudeMode: "terminal", opencodeMode: "native" },
+      { defaultAgent: "opencode", claudeMode: "terminal", opencodeMode: "native", codexMode: "terminal" },
       { defaultBranch: "main", prBaseBranch: "main" } as { defaultAgent?: string; agentStyle?: string },
     );
     expect(result.defaultAgent).toBe("opencode");
     expect(result.claudeMode).toBe("terminal");
     expect(result.opencodeMode).toBe("native");
+    expect(result.codexMode).toBe("terminal");
   });
 
   test("project-level defaultAgent overrides app-level", () => {
@@ -32,21 +53,23 @@ describe("resolveAgentDefaults", () => {
 
   test("project-level agentStyle overrides both claudeMode and opencodeMode", () => {
     const result = resolveAgentDefaults(
-      { defaultAgent: "claude", claudeMode: "terminal", opencodeMode: "terminal" },
+      { defaultAgent: "claude", claudeMode: "terminal", opencodeMode: "terminal", codexMode: "native" },
       { agentStyle: "native" },
     );
     expect(result.claudeMode).toBe("native");
     expect(result.opencodeMode).toBe("native");
+    expect(result.codexMode).toBe("native");
   });
 
   test("project-level overrides take precedence over app-level for all fields", () => {
     const result = resolveAgentDefaults(
-      { defaultAgent: "claude", claudeMode: "terminal", opencodeMode: "terminal" },
+      { defaultAgent: "claude", claudeMode: "terminal", opencodeMode: "terminal", codexMode: "native" },
       { defaultAgent: "codex", agentStyle: "native" },
     );
     expect(result.defaultAgent).toBe("codex");
     expect(result.claudeMode).toBe("native");
     expect(result.opencodeMode).toBe("native");
+    expect(result.codexMode).toBe("native");
   });
 
   test("falls back to hardcoded defaults when both levels are undefined", () => {
@@ -54,6 +77,7 @@ describe("resolveAgentDefaults", () => {
     expect(result.defaultAgent).toBe("claude");
     expect(result.claudeMode).toBe("terminal");
     expect(result.opencodeMode).toBe("terminal");
+    expect(result.codexMode).toBe("native");
   });
 
   test("project agentStyle does not affect defaultAgent resolution", () => {
@@ -64,16 +88,74 @@ describe("resolveAgentDefaults", () => {
     // defaultAgent should still come from app-level
     expect(result.defaultAgent).toBe("claude");
     expect(result.claudeMode).toBe("native");
+    expect(result.codexMode).toBe("native");
   });
 
   test("project defaultAgent does not affect mode resolution", () => {
     const result = resolveAgentDefaults(
-      { defaultAgent: "claude", claudeMode: "native", opencodeMode: "native" },
+      { defaultAgent: "claude", claudeMode: "native", opencodeMode: "native", codexMode: "terminal" },
       { defaultAgent: "opencode" },
     );
     // Modes should still come from app-level since no agentStyle override
     expect(result.defaultAgent).toBe("opencode");
     expect(result.claudeMode).toBe("native");
     expect(result.opencodeMode).toBe("native");
+    expect(result.codexMode).toBe("terminal");
+  });
+
+  test("submits codex terminal mode from the dialog", async () => {
+    useConfigStore.setState({
+      config: {
+        version: "1.0",
+        global: {
+          containerResources: { cpuCores: 2, memoryGb: 4 },
+          envFilePatterns: [],
+          allowedDomains: [],
+          defaultAgent: "claude",
+          opencodeModel: "opencode/grok-code",
+          codexModel: "gpt-5.3-codex",
+          codexReasoningEffort: "medium",
+          opencodeMode: "terminal",
+          claudeMode: "terminal",
+          codexMode: "native",
+          terminalAppearance: {
+            fontFamily: "Fira Code",
+            fontSize: 14,
+            backgroundColor: "#000000",
+          },
+          terminalScrollback: 5000,
+        },
+        repositories: {},
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    const onCreate = mock(async () => {});
+
+    render(
+      <CreateEnvironmentDialog
+        open={true}
+        onOpenChange={() => {}}
+        onCreate={onCreate}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    fireEvent.change(screen.getByLabelText(/Initial Prompt/i), {
+      target: { value: "Review the migration plan" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Environment" }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentType: "codex",
+          codexMode: "terminal",
+          initialPrompt: "Review the migration plan",
+        })
+      );
+    });
   });
 });

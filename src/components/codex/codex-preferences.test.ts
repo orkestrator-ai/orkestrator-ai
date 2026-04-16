@@ -39,6 +39,7 @@ function createConfig(overrides?: Partial<GlobalConfig>): AppConfig {
       codexReasoningEffort: "medium",
       opencodeMode: "terminal",
       claudeMode: "terminal",
+      codexMode: "native",
       terminalAppearance: {
         fontFamily: "FiraCode Nerd Font",
         fontSize: 14,

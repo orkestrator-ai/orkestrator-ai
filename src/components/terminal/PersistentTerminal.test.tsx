@@ -14,6 +14,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 const resizeMock = mock(async () => {});
 const connectMock = mock(async () => {});
+const writeMock = mock(async () => {});
 
 mock.module("@/hooks/useTerminal", () => ({
   useTerminal: () => ({
@@ -24,7 +25,7 @@ mock.module("@/hooks/useTerminal", () => ({
     connect: connectMock,
     disconnect: mock(async () => {}),
     resize: resizeMock,
-    write: mock(async () => {}),
+    write: writeMock,
   }),
 }));
 
@@ -190,6 +191,7 @@ describe("PersistentTerminal", () => {
     cleanup();
     resizeMock.mockClear();
     connectMock.mockClear();
+    writeMock.mockClear();
     portalStoreActions.markTerminalOpened.mockClear();
     portalStoreActions.setTerminalContainer.mockClear();
     portalStoreActions.setTerminalPane.mockClear();
@@ -222,6 +224,7 @@ describe("PersistentTerminal", () => {
           codexReasoningEffort: "medium",
           opencodeMode: "terminal",
           claudeMode: "terminal",
+          codexMode: "native",
           terminalAppearance: {
             fontFamily: "Fira Code",
             fontSize: 14,
@@ -379,6 +382,28 @@ describe("PersistentTerminal", () => {
     expect(usePaneLayoutStore.getState().activeEnvironmentId).toBe("env-2");
   });
 
+  it("launches Codex terminal mode with the initial prompt", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        initialPrompt={"Fix the failing tests"}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith('codex "Fix the failing tests"\n');
+    });
+  });
+
   it("creates persistent sessions for local terminals with an empty container id", async () => {
     useEnvironmentStore.setState({
       environments: [
@@ -488,7 +513,6 @@ describe("PersistentTerminal", () => {
         order: 0,
       },
     ];
-
     render(
       <PersistentTerminal
         terminalData={createTerminalData()}
@@ -512,7 +536,6 @@ describe("PersistentTerminal", () => {
 
     await waitFor(() => {
       const sessions = useTerminalSessionStore.getState().sessions;
-      // Session key uses containerId:tabId format
       const session = sessions.get("container-1:tab-1");
       expect(session?.serializedBuffer).toBe("restored-buffer");
     });
@@ -629,9 +652,73 @@ describe("PersistentTerminal", () => {
 
     await waitFor(() => {
       const sessions = useTerminalSessionStore.getState().sessions;
-      // Session key uses containerId:tabId format
       const session = sessions.get("container-1:tab-1");
       expect(session?.hasLaunchedCommand).toBe(true);
+    });
+  });
+
+  it("launches Codex terminal mode without an initial prompt", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith("codex\n");
+    });
+  });
+
+  it("escapes quotes and dollar signs in Codex prompts", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        initialPrompt={'Use "$HOME" for the config path'}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith('codex "Use \\"\\$HOME\\" for the config path"\n');
+    });
+  });
+
+  it("escapes newlines in Codex prompts", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        initialPrompt={"Fix line one\nand line two"}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith('codex "Fix line one\\nand line two"\n');
     });
   });
 });
