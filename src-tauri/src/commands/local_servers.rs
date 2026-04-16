@@ -53,7 +53,7 @@ fn get_codex_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         .clone()
 }
 
-use super::load_codex_bridge_runtime_settings;
+use super::load_codex_bridge_raw_event_logging;
 
 /// Result type for local server start commands
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -892,9 +892,7 @@ pub async fn start_local_codex_server_cmd(
 
     let bridge_path = resolve_codex_bridge_path(&app_handle);
     debug!(environment_id = %environment_id, bridge_path = %bridge_path, "Resolved codex-bridge path");
-    let (experimental_collated_codex_subagents, debug_logging) =
-        load_codex_bridge_runtime_settings()?;
-    let raw_log_dir = if debug_logging {
+    let raw_log_dir = if load_codex_bridge_raw_event_logging()? {
         Some(
             crate::log_dir_path()
                 .join("codex-raw")
@@ -916,7 +914,6 @@ pub async fn start_local_codex_server_cmd(
         port,
         &bridge_path,
         bundled_bun_path.as_deref(),
-        experimental_collated_codex_subagents,
         raw_log_dir.as_deref(),
     )
     .await?;

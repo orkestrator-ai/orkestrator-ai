@@ -206,8 +206,8 @@ export interface GlobalConfig {
   terminalAppearance: TerminalAppearance;
   /** Terminal scrollback buffer size (lines) */
   terminalScrollback: number;
-  /** Enable transcript-derived Codex subagent collation in the native UI */
-  experimentalCollatedCodexSubagents?: boolean;
+  /** Capture raw Codex bridge events for subagent transcript debugging */
+  experimentalCodexRawEventLogging?: boolean;
   /** Enable debug logging to disk (requires app restart) */
   debugLogging?: boolean;
 }

@@ -41,16 +41,12 @@ pub use projects::*;
 pub use sessions::*;
 pub use terminal::*;
 
-/// Load runtime settings needed by the Codex bridge (experimental subagent
-/// collation flag and debug-logging flag).  Shared by both the container and
-/// local server start commands.
-fn load_codex_bridge_runtime_settings() -> Result<(bool, bool), String> {
+/// Load the runtime setting that enables Codex raw event logging. Shared by
+/// both the container and local server start commands.
+fn load_codex_bridge_raw_event_logging() -> Result<bool, String> {
     let storage = crate::storage::get_storage().map_err(|e| e.to_string())?;
     let config = storage.load_config().map_err(|e| e.to_string())?;
-    Ok((
-        config.global.experimental_collated_codex_subagents,
-        config.global.debug_logging,
-    ))
+    Ok(config.global.experimental_codex_raw_event_logging)
 }
 
 /// Simple greeting command for testing

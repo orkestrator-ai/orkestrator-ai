@@ -825,43 +825,100 @@ function TextPart({ content }: { content: string }) {
   );
 }
 
+function getSubagentStatusLabel(state: NativeMessagePart["toolState"]): string {
+  switch (state) {
+    case "success":
+      return "Success";
+    case "failure":
+      return "Failed";
+    default:
+      return "Running";
+  }
+}
+
+function getSubagentStatusClasses(state: NativeMessagePart["toolState"]): string {
+  switch (state) {
+    case "success":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "failure":
+      return "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
+    default:
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+}
+
+function getSubagentPreview(part: NativeMessagePart): string {
+  const actions = part.subagentActions ?? [];
+  const latestAction = actions.at(-1);
+
+  if (!latestAction) {
+    return part.toolState === "pending" ? "Waiting for activity." : "No activity captured.";
+  }
+
+  if (latestAction.type === "text") {
+    return latestAction.content;
+  }
+
+  const command =
+    typeof latestAction.toolArgs?.command === "string"
+      ? latestAction.toolArgs.command
+      : null;
+  if (command) {
+    return command;
+  }
+
+  return latestAction.toolTitle || latestAction.toolName || latestAction.content;
+}
+
 function SubagentPart({ part }: { part: NativeMessagePart }) {
   const [isOpen, setIsOpen] = useState(false);
-  const actionCount = part.subagentActionCount ?? 0;
+  const toolCount = part.subagentActionCount ?? 0;
   const displayName = part.subagentName || part.subagentRole || part.content || "subagent";
   const displayLabel = part.subagentRole
     ? `${displayName} (${part.subagentRole})`
     : displayName;
-  const stateColors = {
-    success: "text-green-600",
-    failure: "text-red-600",
-    pending: "text-yellow-600 animate-pulse",
-  } as const;
+  const statusLabel = getSubagentStatusLabel(part.toolState);
+  const preview = useMemo(() => getSubagentPreview(part), [part]);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-1.5">
       <CollapsibleTrigger
-        className="flex items-center gap-2 w-full text-xs text-muted-foreground py-2 px-3 bg-muted/50 rounded-md hover:bg-muted/70 transition-colors cursor-pointer"
+        className="w-full rounded-lg border border-border/40 bg-muted/40 px-3 py-3 text-left transition-colors hover:bg-muted/60 cursor-pointer"
       >
-        <ChevronRight
-          className={cn(
-            "w-3 h-3 transition-transform shrink-0",
-            isOpen && "rotate-90",
-          )}
-        />
-        <Layers className="w-3.5 h-3.5 shrink-0" />
-        <span className="font-medium shrink-0">subagent</span>
-        <span className="text-muted-foreground/80 truncate flex-1 text-left">
-          {displayLabel}
-        </span>
-        <span className="shrink-0 text-muted-foreground/70">
-          {actionCount} {actionCount === 1 ? "action" : "actions"}
-        </span>
-        {part.toolState && (
-          <span className={cn("ml-1 shrink-0", stateColors[part.toolState] || "")}>
-            {part.toolState === "pending" ? "running..." : part.toolState}
-          </span>
-        )}
+        <div className="flex items-start gap-3">
+          <ChevronRight
+            className={cn(
+              "mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform",
+              isOpen && "rotate-90",
+            )}
+          />
+          <Layers className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="shrink-0 font-medium uppercase tracking-wide text-muted-foreground/80">
+                Agent
+              </span>
+              <span className="truncate text-sm font-medium text-foreground">
+                {displayLabel}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                  getSubagentStatusClasses(part.toolState),
+                )}
+              >
+                {statusLabel}
+              </span>
+            </div>
+            <div className="mt-1 truncate text-xs text-muted-foreground/80">
+              {preview}
+            </div>
+          </div>
+          <div className="shrink-0 text-right text-[11px] text-muted-foreground/70">
+            <div>{toolCount} {toolCount === 1 ? "tool" : "tools"}</div>
+            <div>{(part.subagentActions ?? []).length} {(part.subagentActions ?? []).length === 1 ? "update" : "updates"}</div>
+          </div>
+        </div>
       </CollapsibleTrigger>
 
       <CollapsibleContent className="mt-1">

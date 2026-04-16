@@ -190,7 +190,7 @@ async fn ensure_codex_bridge_present(
     Ok(())
 }
 
-use super::load_codex_bridge_runtime_settings;
+use super::load_codex_bridge_raw_event_logging;
 
 #[tauri::command]
 pub async fn start_codex_server(
@@ -226,8 +226,7 @@ pub async fn start_codex_server(
     }
 
     ensure_codex_bridge_present(&app_handle, &client, &container_id).await?;
-    let (experimental_collated_codex_subagents, debug_logging) =
-        load_codex_bridge_runtime_settings()?;
+    let raw_event_logging = load_codex_bridge_raw_event_logging()?;
 
     let command = r#"
         cd /workspace
@@ -244,7 +243,6 @@ pub async fn start_codex_server(
         export HOSTNAME=0.0.0.0
         export CWD=/workspace
         export CODEX_PATH="$(command -v codex 2>/dev/null || echo codex)"
-        export ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS="%EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS%"
         export ORKESTRATOR_CODEX_RAW_LOG_DIR="%CODEX_RAW_LOG_DIR%"
         setsid node /opt/codex-bridge/dist/index.js > /tmp/codex-bridge.log 2>&1 &
         disown
@@ -253,16 +251,8 @@ pub async fn start_codex_server(
     "#;
     let command = command
         .replace(
-            "%EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS%",
-            if experimental_collated_codex_subagents {
-                "1"
-            } else {
-                "0"
-            },
-        )
-        .replace(
             "%CODEX_RAW_LOG_DIR%",
-            if debug_logging {
+            if raw_event_logging {
                 CONTAINER_CODEX_RAW_LOG_DIR
             } else {
                 ""
