@@ -532,276 +532,276 @@ export function OpenCodeComposeBar({
 
   return (
     <>
-      <div className="border-t border-border bg-background p-3">
-      {/* Attachments preview */}
-      {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-2">
-          {attachments.map((att) => (
-            <div
-              key={att.id}
-              className="relative group flex items-center gap-1.5 px-2 py-1 rounded bg-muted/50 border border-border text-xs"
-            >
-              {att.type === "image" && att.previewUrl ? (
-                <img
-                  src={att.previewUrl}
-                  alt={att.name}
-                  className="w-6 h-6 object-cover rounded"
-                />
-              ) : (
-                <FileText className="w-4 h-4 text-muted-foreground" />
-              )}
-              <span className="max-w-[120px] truncate">{att.name}</span>
-              <button
-                onClick={() => handleRemoveAttachment(att.id)}
-                className="ml-1 p-0.5 rounded-full hover:bg-muted"
+      <div className="shrink-0 border-t border-border bg-background p-3">
+        {/* Attachments preview */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {attachments.map((att) => (
+              <div
+                key={att.id}
+                className="relative group flex items-center gap-1.5 px-2 py-1 rounded bg-muted/50 border border-border text-xs"
               >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Text input area - on top */}
-      <div className="relative" data-mentionable-input ref={inputContainerRef}>
-        {slashMenuOpen && filteredSlashCommands.length > 0 && (
-          <OpenCodeSlashCommandMenu
-            commands={filteredSlashCommands}
-            selectedIndex={slashSelectedIndex}
-            onSelect={handleSlashCommandSelect}
-            onClose={() => setSlashMenuOpen(false)}
-          />
+                {att.type === "image" && att.previewUrl ? (
+                  <img
+                    src={att.previewUrl}
+                    alt={att.name}
+                    className="w-6 h-6 object-cover rounded"
+                  />
+                ) : (
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                )}
+                <span className="max-w-[120px] truncate">{att.name}</span>
+                <button
+                  onClick={() => handleRemoveAttachment(att.id)}
+                  className="ml-1 p-0.5 rounded-full hover:bg-muted"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         )}
 
-        {fileMentionMenuOpen && (
-          <FileMentionMenu
-            files={filteredFiles}
-            selectedIndex={fileMentionSelectedIndex}
-            onSelect={handleFileMentionSelect}
-            onClose={closeFileMentionMenu}
-          />
-        )}
-
-        <MentionableInput
-          ref={inputRef}
-          value={text}
-          mentions={mentions}
-          onChange={handleTextAndMentionsChange}
-          onCursorChange={handleCursorPositionChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask anything (⌘L), @ to mention, / for workflows"
-          disabled={disabled || isSending}
-          minHeight={MIN_INPUT_HEIGHT}
-          maxHeight={MAX_INPUT_HEIGHT}
-        />
-      </div>
-
-      {/* Bottom toolbar row */}
-      <div className="flex items-center gap-1 pt-1">
-        {/* Attachment button */}
-        <div className="relative" ref={attachmentMenuRef}>
-          <button
-            className="p-1.5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-            disabled={disabled}
-            onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-
-          {/* Attachment menu popover */}
-          {showAttachmentMenu && (
-            <div className="absolute bottom-full left-0 mb-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md z-50">
-              <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => {
-                  setShowAttachmentMenu(false);
-                }}
-              >
-                <FileText className="w-4 h-4" />
-                Attach file from workspace
-              </button>
-              <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground cursor-default"
-                disabled
-              >
-                <ImageIcon className="w-4 h-4" />
-                Paste image (Cmd+V)
-              </button>
-            </div>
+        {/* Text input area - on top */}
+        <div className="relative" data-mentionable-input ref={inputContainerRef}>
+          {slashMenuOpen && filteredSlashCommands.length > 0 && (
+            <OpenCodeSlashCommandMenu
+              commands={filteredSlashCommands}
+              selectedIndex={slashSelectedIndex}
+              onSelect={handleSlashCommandSelect}
+              onClose={() => setSlashMenuOpen(false)}
+            />
           )}
+
+          {fileMentionMenuOpen && (
+            <FileMentionMenu
+              files={filteredFiles}
+              selectedIndex={fileMentionSelectedIndex}
+              onSelect={handleFileMentionSelect}
+              onClose={closeFileMentionMenu}
+            />
+          )}
+
+          <MentionableInput
+            ref={inputRef}
+            value={text}
+            mentions={mentions}
+            onChange={handleTextAndMentionsChange}
+            onCursorChange={handleCursorPositionChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask anything (⌘L), @ to mention, / for workflows"
+            disabled={disabled || isSending}
+            minHeight={MIN_INPUT_HEIGHT}
+            maxHeight={MAX_INPUT_HEIGHT}
+          />
         </div>
 
-        {/* Mode dropdown - minimal style */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        {/* Bottom toolbar row */}
+        <div className="flex items-center gap-1 pt-1">
+          {/* Attachment button */}
+          <div className="relative" ref={attachmentMenuRef}>
             <button
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              title={`${modeDisplayName} mode (Shift+Tab to cycle)`}
+              className="p-1.5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+              disabled={disabled}
+              onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
             >
-              <ChevronDown className="w-3 h-3" />
-              <span>{modeDisplayName}</span>
+              <Plus className="w-4 h-4" />
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => handleModeChange("plan")}>
-              Planning
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleModeChange("build")}>
-              Build
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
 
-        {/* Model dropdown - minimal style, grouped by provider */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
-              <ChevronDown className="w-3 h-3" />
-              <span className="max-w-[200px] truncate">{selectedModelName}</span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto">
-            {models.length === 0 ? (
-              <DropdownMenuItem disabled>No models available</DropdownMenuItem>
-            ) : (
-              <>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="text-sm">
-                    Favorites
-                    <span className="ml-2 text-muted-foreground text-[10px]">
-                      ({favoriteModels.length})
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                      {favoriteModels.length === 0 ? (
-                        <DropdownMenuItem disabled>No favorites</DropdownMenuItem>
-                      ) : (
-                        favoriteModels.map((model) => (
-                          <DropdownMenuItem
-                            key={model.id}
-                            onClick={() => handleModelChange(model.id)}
-                            className="text-sm"
-                          >
-                            <span className="truncate">{model.name}</span>
-                          </DropdownMenuItem>
-                        ))
-                      )}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
-
-                <DropdownMenuSeparator />
-
-                {sortedProviders.map((provider) => {
-                  const providerModels = modelsByProvider[provider] ?? [];
-                  return (
-                    <DropdownMenuSub key={provider}>
-                      <DropdownMenuSubTrigger className="text-sm">
-                        {provider}
-                        <span className="ml-2 text-muted-foreground text-[10px]">
-                          ({providerModels.length})
-                        </span>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuPortal>
-                        <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                          {providerModels.map((model) => {
-                            return (
-                              <DropdownMenuItem
-                                key={model.id}
-                                onClick={() => handleModelChange(model.id)}
-                                className="text-sm"
-                              >
-                                <span className="truncate">{model.name}</span>
-                              </DropdownMenuItem>
-                            );
-                          })}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuPortal>
-                    </DropdownMenuSub>
-                  );
-                })}
-              </>
+            {/* Attachment menu popover */}
+            {showAttachmentMenu && (
+              <div className="absolute bottom-full left-0 mb-1 w-56 rounded-md border border-border bg-popover p-1 shadow-md z-50">
+                <button
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => {
+                    setShowAttachmentMenu(false);
+                  }}
+                >
+                  <FileText className="w-4 h-4" />
+                  Attach file from workspace
+                </button>
+                <button
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground cursor-default"
+                  disabled
+                >
+                  <ImageIcon className="w-4 h-4" />
+                  Paste image (Cmd+V)
+                </button>
+              </div>
             )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </div>
 
-        {/* Variant dropdown - model-specific variants (e.g. low/high/xhigh) */}
-        {availableVariants.length > 0 && (
+          {/* Mode dropdown - minimal style */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                title={`${modeDisplayName} mode (Shift+Tab to cycle)`}
+              >
+                <ChevronDown className="w-3 h-3" />
+                <span>{modeDisplayName}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => handleModeChange("plan")}>
+                Planning
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleModeChange("build")}>
+                Build
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Model dropdown - minimal style, grouped by provider */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
                 <ChevronDown className="w-3 h-3" />
-                <span className="max-w-[100px] truncate">{selectedVariantName}</span>
+                <span className="max-w-[200px] truncate">{selectedModelName}</span>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem onClick={() => handleVariantChange(undefined)}>
-                {!selectedVariant && <span className="mr-1.5 text-foreground">&#10003;</span>}
-                Default
-              </DropdownMenuItem>
-              {availableVariants.map((variant) => (
-                <DropdownMenuItem key={variant} onClick={() => handleVariantChange(variant)}>
-                  {selectedVariant === variant && <span className="mr-1.5 text-foreground">&#10003;</span>}
-                  {variant}
-                </DropdownMenuItem>
-              ))}
+            <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto">
+              {models.length === 0 ? (
+                <DropdownMenuItem disabled>No models available</DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="text-sm">
+                      Favorites
+                      <span className="ml-2 text-muted-foreground text-[10px]">
+                        ({favoriteModels.length})
+                      </span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuPortal>
+                      <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
+                        {favoriteModels.length === 0 ? (
+                          <DropdownMenuItem disabled>No favorites</DropdownMenuItem>
+                        ) : (
+                          favoriteModels.map((model) => (
+                            <DropdownMenuItem
+                              key={model.id}
+                              onClick={() => handleModelChange(model.id)}
+                              className="text-sm"
+                            >
+                              <span className="truncate">{model.name}</span>
+                            </DropdownMenuItem>
+                          ))
+                        )}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuPortal>
+                  </DropdownMenuSub>
+
+                  <DropdownMenuSeparator />
+
+                  {sortedProviders.map((provider) => {
+                    const providerModels = modelsByProvider[provider] ?? [];
+                    return (
+                      <DropdownMenuSub key={provider}>
+                        <DropdownMenuSubTrigger className="text-sm">
+                          {provider}
+                          <span className="ml-2 text-muted-foreground text-[10px]">
+                            ({providerModels.length})
+                          </span>
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuPortal>
+                          <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
+                            {providerModels.map((model) => {
+                              return (
+                                <DropdownMenuItem
+                                  key={model.id}
+                                  onClick={() => handleModelChange(model.id)}
+                                  className="text-sm"
+                                >
+                                  <span className="truncate">{model.name}</span>
+                                </DropdownMenuItem>
+                              );
+                            })}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuPortal>
+                      </DropdownMenuSub>
+                    );
+                  })}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
 
-        <ContextUsageWheel usage={contextUsage} className="ml-1" />
+          {/* Variant dropdown - model-specific variants (e.g. low/high/xhigh) */}
+          {availableVariants.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                  <ChevronDown className="w-3 h-3" />
+                  <span className="max-w-[100px] truncate">{selectedVariantName}</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onClick={() => handleVariantChange(undefined)}>
+                  {!selectedVariant && <span className="mr-1.5 text-foreground">&#10003;</span>}
+                  Default
+                </DropdownMenuItem>
+                {availableVariants.map((variant) => (
+                  <DropdownMenuItem key={variant} onClick={() => handleVariantChange(variant)}>
+                    {selectedVariant === variant && <span className="mr-1.5 text-foreground">&#10003;</span>}
+                    {variant}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
-        {/* Spacer */}
-        <div className="flex-1" />
+          <ContextUsageWheel usage={contextUsage} className="ml-1" />
 
-        {/* Queue indicator */}
-        {queueLength > 0 && (
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Queue indicator */}
+          {queueLength > 0 && (
+            <button
+              type="button"
+              onClick={() => setQueueDialogOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50 hover:bg-muted transition-colors"
+              title="View queued prompts"
+            >
+              <span>+{queueLength} queued</span>
+            </button>
+          )}
+
+          {/* Stop button stays available while loading */}
+          {isLoading && (
+            <button
+              onClick={handleStop}
+              disabled={disabled || !onStop}
+              className={cn(
+                "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
+                "bg-destructive/10 hover:bg-destructive/20 text-destructive",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+              )}
+              title="Stop current query"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          )}
+
           <button
-            type="button"
-            onClick={() => setQueueDialogOpen(true)}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50 hover:bg-muted transition-colors"
-            title="View queued prompts"
-          >
-            <span>+{queueLength} queued</span>
-          </button>
-        )}
-
-        {/* Stop button stays available while loading */}
-        {isLoading && (
-          <button
-            onClick={handleStop}
-            disabled={disabled || !onStop}
+            onClick={handleSend}
+            disabled={
+              disabled ||
+              isSending ||
+              (attachments.length === 0 && !text.trim())
+            }
             className={cn(
               "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-              "bg-destructive/10 hover:bg-destructive/20 text-destructive",
+              isLoading
+                ? "bg-primary/20 hover:bg-primary/30 text-primary"
+                : "bg-muted hover:bg-muted/80",
               "disabled:opacity-50 disabled:cursor-not-allowed",
             )}
-            title="Stop current query"
+            title={isLoading ? "Add to queue" : "Send message"}
           >
-            <Square className="w-4 h-4 fill-current" />
+            <ArrowUp className="w-4 h-4" />
           </button>
-        )}
-
-        <button
-          onClick={handleSend}
-          disabled={
-            disabled ||
-            isSending ||
-            (attachments.length === 0 && !text.trim())
-          }
-          className={cn(
-            "w-8 h-8 rounded-full flex items-center justify-center transition-colors",
-            isLoading
-              ? "bg-primary/20 hover:bg-primary/30 text-primary"
-              : "bg-muted hover:bg-muted/80",
-            "disabled:opacity-50 disabled:cursor-not-allowed",
-          )}
-          title={isLoading ? "Add to queue" : "Send message"}
-        >
-          <ArrowUp className="w-4 h-4" />
-        </button>
-      </div>
+        </div>
       </div>
 
       <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>

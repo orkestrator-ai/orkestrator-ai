@@ -54,11 +54,11 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden">
+    <div className="flex h-screen w-screen flex-col overflow-hidden">
       <OpenFileDialog />
       {/* Custom title bar - replaces macOS title bar (Overlay mode) */}
       <div
-        className="flex h-7 w-full items-center justify-center bg-black"
+        className="flex h-7 w-full shrink-0 items-center justify-center bg-black"
         data-tauri-drag-region
         onMouseDown={handleTitleBarMouseDown}
       >
@@ -66,7 +66,7 @@ export function AppShell({ children }: AppShellProps) {
           Orkestrator AI
         </span>
       </div>
-      <ResizablePanelGroup orientation="horizontal" className="h-[calc(100vh-1.75rem)]">
+      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         {/* Sidebar Panel */}
         <ResizablePanel defaultSize={28} minSize="280px" maxSize="400px">
           <Sidebar />
