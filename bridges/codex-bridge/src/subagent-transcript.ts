@@ -41,6 +41,8 @@ interface SpawnedSubagent {
   prompt?: string;
 }
 
+type SubagentOutcome = ToolState;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
 }
@@ -132,6 +134,34 @@ function updateActionPart(
   };
 }
 
+function isExplicitSubagentFailureEvent(eventType: string | undefined): boolean {
+  if (!eventType) {
+    return false;
+  }
+
+  return (
+    eventType === "task_failed"
+    || eventType === "task_error"
+    || eventType === "task_aborted"
+    || eventType === "task_cancelled"
+  );
+}
+
+function resolveSubagentOutcome(
+  childOutcome: SubagentOutcome,
+  parentOutcome?: SubagentOutcome,
+): SubagentOutcome {
+  if (parentOutcome === "success" || childOutcome === "success") {
+    return "success";
+  }
+
+  if (parentOutcome === "failure" || childOutcome === "failure") {
+    return "failure";
+  }
+
+  return "pending";
+}
+
 function parseChildTranscript(
   records: TranscriptRecord[],
   base: SpawnedSubagent,
@@ -157,6 +187,11 @@ function parseChildTranscript(
 
     if (record.type === "event_msg" && payload.type === "task_complete") {
       state = "success";
+      continue;
+    }
+
+    if (record.type === "event_msg" && isExplicitSubagentFailureEvent(asString(payload.type))) {
+      state = "failure";
       continue;
     }
 
@@ -272,12 +307,72 @@ export function parseTranscriptRecords(lines: string[]): TranscriptRecord[] {
   return records;
 }
 
+function parseWaitAgentOutcomeByAgentId(
+  parentRecords: TranscriptRecord[],
+): Map<string, SubagentOutcome> {
+  const outcomeByAgentId = new Map<string, SubagentOutcome>();
+  const waitAgentCallIds = new Set<string>();
+
+  for (const record of parentRecords) {
+    const payload = record.payload;
+    if (!payload || record.type !== "response_item") {
+      continue;
+    }
+
+    const payloadType = asString(payload.type);
+    if (payloadType === "function_call" && asString(payload.name) === "wait_agent") {
+      const callId = asString(payload.call_id);
+      if (callId) {
+        waitAgentCallIds.add(callId);
+      }
+      continue;
+    }
+
+    if (payloadType !== "function_call_output" || typeof payload.output !== "string") {
+      continue;
+    }
+
+    const callId = asString(payload.call_id);
+    if (!callId || !waitAgentCallIds.has(callId)) {
+      continue;
+    }
+
+    const output = parseJson<Record<string, unknown>>(payload.output);
+    if (!isRecord(output?.status)) {
+      continue;
+    }
+
+    for (const [agentId, status] of Object.entries(output.status)) {
+      if (!isRecord(status)) {
+        continue;
+      }
+
+      if (typeof status.completed === "string") {
+        outcomeByAgentId.set(agentId, "success");
+        continue;
+      }
+
+      if (
+        typeof status.failed === "string"
+        || typeof status.error === "string"
+        || status.cancelled === true
+        || status.aborted === true
+      ) {
+        outcomeByAgentId.set(agentId, "failure");
+      }
+    }
+  }
+
+  return outcomeByAgentId;
+}
+
 export function deriveSubagentPartsFromTranscriptRecords(
   parentRecords: TranscriptRecord[],
   childRecordsByAgentId: Map<string, TranscriptRecord[]>,
 ): TranscriptSubagentPart[] {
   const spawnedSubagents: SpawnedSubagent[] = [];
   const spawnedSubagentByCallId = new Map<string, SpawnedSubagent>();
+  const waitAgentOutcomeByAgentId = parseWaitAgentOutcomeByAgentId(parentRecords);
 
   for (const record of parentRecords) {
     const payload = record.payload;
@@ -322,7 +417,15 @@ export function deriveSubagentPartsFromTranscriptRecords(
 
   return spawnedSubagents.map((spawned) => {
     const childRecords = spawned.agentId ? childRecordsByAgentId.get(spawned.agentId) ?? [] : [];
-    return parseChildTranscript(childRecords, spawned);
+    const part = parseChildTranscript(childRecords, spawned);
+    const parentOutcome = spawned.agentId
+      ? waitAgentOutcomeByAgentId.get(spawned.agentId)
+      : undefined;
+
+    return {
+      ...part,
+      toolState: resolveSubagentOutcome(part.toolState, parentOutcome),
+    };
   });
 }
 

@@ -98,12 +98,14 @@ describe("NativeMessage", () => {
 
     render(<NativeMessage message={message} />);
 
-    expect(screen.getByText("subagent")).toBeTruthy();
-    expect(screen.getByText("1 action")).toBeTruthy();
-    expect(screen.getByText("running...")).toBeTruthy();
+    expect(screen.getByText("Agent")).toBeTruthy();
+    expect(screen.getByText("Running")).toBeTruthy();
+    expect(screen.getByText("1 tool")).toBeTruthy();
+    expect(screen.getByText("1 update")).toBeTruthy();
+    expect(screen.getByText('rg -n "codex" src')).toBeTruthy();
     expect(screen.queryByText("Inspect the Codex integration")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /subagent/i }));
+    fireEvent.click(screen.getByRole("button", { name: /lovelace/i }));
 
     expect(screen.getByText("Inspect the Codex integration")).toBeTruthy();
     expect(screen.getAllByText("exec_command")).toHaveLength(2);

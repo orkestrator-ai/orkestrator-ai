@@ -189,15 +189,8 @@ const sessions = new Map<string, SessionState>();
 const subscribers = new Set<(event: SseEvent) => void>();
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-const experimentalCollatedCodexSubagents = parseBooleanEnv(
-  "ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS",
-);
+const experimentalCollatedCodexSubagents = true;
 const codexRawLogDir = normalizeOptionalEnvPath("ORKESTRATOR_CODEX_RAW_LOG_DIR");
-
-function parseBooleanEnv(name: string): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
 
 function normalizeOptionalEnvPath(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -1446,10 +1439,6 @@ export async function itemToParts(
 async function buildTranscriptSubagentParts(
   session: SessionState,
 ): Promise<NormalizedPart[]> {
-  if (!experimentalCollatedCodexSubagents) {
-    return [];
-  }
-
   if (!session.threadId || !session.currentTurnStartedAt) {
     return [];
   }
@@ -1554,9 +1543,7 @@ async function rebuildAssistantMessage(session: SessionState): Promise<void> {
     .filter((item): item is Extract<ThreadItem, { type: "agent_message" }> => item.type === "agent_message")
     .at(-1)?.text ?? "";
 
-  message.parts = experimentalCollatedCodexSubagents
-    ? mergeSubagentPartsIntoMessageParts(parts, subagentParts)
-    : parts;
+  message.parts = mergeSubagentPartsIntoMessageParts(parts, subagentParts);
   message.content = finalResponse || parts.find((part) => part.type === "text")?.content || "";
 }
 
