@@ -75,3 +75,4 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3"
+wiremock = "0.6"
