@@ -548,7 +548,7 @@ export function ClaudeComposeBar({
   const selectedModelName = selectedModelObj?.name ?? (models.length > 0 ? models[0]?.name : "No models");
 
   return (
-    <div className="border-t border-border bg-background p-3">
+    <div className="shrink-0 border-t border-border bg-background p-3">
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">

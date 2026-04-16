@@ -532,7 +532,7 @@ export function OpenCodeComposeBar({
 
   return (
     <>
-      <div className="border-t border-border bg-background p-3">
+      <div className="shrink-0 border-t border-border bg-background p-3">
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
