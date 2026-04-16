@@ -49,10 +49,9 @@ mock.module("@/lib/claude-client", () => ({
   SYSTEM_MESSAGE_PREFIX: "[SYSTEM]",
 }));
 
-// Hooks
-mock.module("@/hooks", () => ({
-  useScrollLock: () => ({ isAtBottom: true, scrollToBottom: () => {} }),
-}));
+// NOTE: Do NOT mock @/hooks or @/hooks/useScrollLock here — it pollutes the
+// global bun module cache and breaks useScrollLock.test.ts. The real hook
+// returns safe defaults (isAtBottom: true) when no viewport is found.
 
 mock.module("@/lib/context-usage", () => ({
   extractContextUsage: () => null,

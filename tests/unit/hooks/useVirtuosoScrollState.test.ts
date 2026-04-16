@@ -104,17 +104,32 @@ describe("useVirtuosoScrollState", () => {
   });
 
   describe("scrollToBottom", () => {
-    test("calls scrollTo on the virtuoso ref", () => {
+    test("calls scrollToIndex then scrollTo on the virtuoso ref", async () => {
       const { result } = renderHook(() => useVirtuosoScrollState());
 
+      const scrollToIndexCalls: any[] = [];
       const scrollToCalls: any[] = [];
       result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
         scrollTo: (opts: any) => scrollToCalls.push(opts),
         getState: () => {},
       } as any;
 
       act(() => {
         result.current.scrollToBottom();
+      });
+
+      // Phase 1: instant scrollToIndex to force rendering at the end
+      expect(scrollToIndexCalls).toHaveLength(1);
+      expect(scrollToIndexCalls[0]).toEqual({
+        index: "LAST",
+        align: "end",
+      });
+
+      // Phase 2: smooth scrollTo after rAF to reveal footer content
+      // Flush the requestAnimationFrame
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
       });
 
       expect(scrollToCalls).toHaveLength(1);
@@ -124,7 +139,7 @@ describe("useVirtuosoScrollState", () => {
       });
     });
 
-    test("does not optimistically set isAtBottom", () => {
+    test("does not optimistically set isAtBottom", async () => {
       const { result } = renderHook(() => useVirtuosoScrollState());
 
       // First move away from bottom
@@ -135,6 +150,7 @@ describe("useVirtuosoScrollState", () => {
 
       // Provide a mock ref
       result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
         scrollTo: () => {},
         getState: () => {},
       } as any;
@@ -154,6 +170,32 @@ describe("useVirtuosoScrollState", () => {
         result.current.scrollToBottom();
       });
       expect(result.current.isAtBottom).toBe(true);
+    });
+
+    test("Phase 2 rAF does not call scrollTo after unmount", async () => {
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      // Start the two-phase scroll
+      act(() => {
+        result.current.scrollToBottom();
+      });
+
+      // Unmount before rAF fires
+      unmount();
+
+      // Flush rAF — scrollTo should NOT be called
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+
+      expect(scrollToCalls).toHaveLength(0);
     });
   });
 
