@@ -41,7 +41,7 @@ mock.module("@/hooks/useAgentState", () => ({
 const persistentSessionStore = {
   createSession: mock(async () => ({ id: "persistent-1" })),
   updateSessionActivity: mock(async () => {}),
-  getSessionsByEnvironment: () => [],
+  getSessionsByEnvironment: (_envId: string): Record<string, unknown>[] => [],
   updateSessionStatus: mock(async () => {}),
   isLoadingEnvironment: () => false,
   loadSessionsForEnvironment: mock(async () => {}),
@@ -50,7 +50,7 @@ const persistentSessionStore = {
   deleteSessionsByEnvironment: mock(async () => {}),
   deleteSession: mock(async () => {}),
   saveSessionBuffer: mock(async () => {}),
-  loadSessionBuffer: mock(async () => null),
+  loadSessionBuffer: mock(async (): Promise<string | null> => null),
   syncSessionsWithContainer: mock(async () => {}),
   renameSession: mock(async () => {}),
   reorderSessions: mock(async () => {}),
@@ -199,6 +199,7 @@ describe("PersistentTerminal", () => {
     persistentSessionStore.updateSessionStatus.mockClear();
     persistentSessionStore.loadSessionsForEnvironment.mockClear();
     persistentSessionStore.saveSessionBuffer.mockClear();
+    persistentSessionStore.loadSessionBuffer.mockImplementation(async (): Promise<string | null> => null);
     persistentSessionStore.getSessionsByEnvironment = () => [];
 
     // Reset real stores to controlled state
@@ -468,6 +469,169 @@ describe("PersistentTerminal", () => {
         "persistent-1",
         "persisted-buffer",
       );
+    });
+  });
+
+  it("loads persistent buffer when restoring an existing session", async () => {
+    persistentSessionStore.loadSessionBuffer.mockImplementation(async () => "restored-buffer");
+    persistentSessionStore.getSessionsByEnvironment = () => [
+      {
+        id: "existing-persistent-1",
+        environmentId: "env-1",
+        containerId: "container-1",
+        tabId: "tab-1",
+        sessionType: "claude",
+        status: "disconnected",
+        hasLaunchedCommand: true,
+        lastActivityAt: "2024-01-01T00:00:00.000Z",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        order: 0,
+      },
+    ];
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(persistentSessionStore.loadSessionBuffer).toHaveBeenCalledWith(
+        "existing-persistent-1",
+      );
+    });
+
+    await waitFor(() => {
+      const sessions = useTerminalSessionStore.getState().sessions;
+      // Session key uses containerId:tabId format
+      const session = sessions.get("container-1:tab-1");
+      expect(session?.serializedBuffer).toBe("restored-buffer");
+    });
+  });
+
+  it("updates session status to connected when reconnecting a disconnected session", async () => {
+    persistentSessionStore.getSessionsByEnvironment = () => [
+      {
+        id: "disconnected-session-1",
+        environmentId: "env-1",
+        containerId: "container-1",
+        tabId: "tab-1",
+        sessionType: "claude",
+        status: "disconnected",
+        hasLaunchedCommand: false,
+        lastActivityAt: "2024-01-01T00:00:00.000Z",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        order: 0,
+      },
+    ];
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(persistentSessionStore.updateSessionStatus).toHaveBeenCalledWith(
+        "disconnected-session-1",
+        "connected",
+      );
+    });
+  });
+
+  it("does not update session status when existing session is already connected", async () => {
+    persistentSessionStore.getSessionsByEnvironment = () => [
+      {
+        id: "connected-session-1",
+        environmentId: "env-1",
+        containerId: "container-1",
+        tabId: "tab-1",
+        sessionType: "claude",
+        status: "connected",
+        hasLaunchedCommand: false,
+        lastActivityAt: "2024-01-01T00:00:00.000Z",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        order: 0,
+      },
+    ];
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    // Wait for session creation effect to settle
+    await waitFor(() => {
+      expect(persistentSessionStore.loadSessionsForEnvironment).toHaveBeenCalled();
+    });
+
+    expect(persistentSessionStore.updateSessionStatus).not.toHaveBeenCalled();
+  });
+
+  it("restores hasLaunchedCommand from persistent session", async () => {
+    persistentSessionStore.getSessionsByEnvironment = () => [
+      {
+        id: "launched-session-1",
+        environmentId: "env-1",
+        containerId: "container-1",
+        tabId: "tab-1",
+        sessionType: "claude",
+        status: "connected",
+        hasLaunchedCommand: true,
+        lastActivityAt: "2024-01-01T00:00:00.000Z",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        order: 0,
+      },
+    ];
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      const sessions = useTerminalSessionStore.getState().sessions;
+      // Session key uses containerId:tabId format
+      const session = sessions.get("container-1:tab-1");
+      expect(session?.hasLaunchedCommand).toBe(true);
     });
   });
 });

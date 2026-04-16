@@ -510,7 +510,8 @@ impl Storage {
         self.with_json_lock(|| self.load_projects_unlocked())
     }
 
-    /// Save all projects to storage
+    /// Save all projects to storage (used in tests for bulk setup)
+    #[cfg(test)]
     pub fn save_projects(&self, projects: &[Project]) -> Result<(), StorageError> {
         self.with_json_lock(|| self.save_projects_unlocked(projects))
     }
@@ -633,7 +634,8 @@ impl Storage {
         self.with_json_lock(|| self.load_environments_unlocked())
     }
 
-    /// Save all environments to storage
+    /// Save all environments to storage (used in tests for bulk setup)
+    #[cfg(test)]
     pub fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
         self.with_json_lock(|| self.save_environments_unlocked(environments))
     }
@@ -897,12 +899,14 @@ impl Storage {
         )
     }
 
-    /// Load all sessions from storage
+    /// Load all sessions from storage (used in tests)
+    #[cfg(test)]
     pub fn load_sessions(&self) -> Result<Vec<Session>, StorageError> {
         self.with_json_lock(|| self.load_sessions_unlocked())
     }
 
-    /// Save all sessions to storage
+    /// Save all sessions to storage (used in tests for bulk setup)
+    #[cfg(test)]
     pub fn save_sessions(&self, sessions: &[Session]) -> Result<(), StorageError> {
         self.with_json_lock(|| self.save_sessions_unlocked(sessions))
     }
@@ -1258,12 +1262,14 @@ impl Storage {
         Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
     }
 
-    /// Load all kanban tasks from storage
+    /// Load all kanban tasks from storage (used in tests)
+    #[cfg(test)]
     pub fn load_kanban_tasks(&self) -> Result<Vec<KanbanTask>, StorageError> {
         self.with_json_lock(|| self.load_kanban_tasks_unlocked())
     }
 
-    /// Save all kanban tasks to storage
+    /// Save all kanban tasks to storage (used in tests for bulk setup)
+    #[cfg(test)]
     pub fn save_kanban_tasks(&self, tasks: &[KanbanTask]) -> Result<(), StorageError> {
         self.with_json_lock(|| self.save_kanban_tasks_unlocked(tasks))
     }
@@ -1585,11 +1591,13 @@ impl Storage {
         Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
     }
 
-    /// Load all project notes
+    /// Load all project notes (used in tests)
+    #[cfg(test)]
     pub fn load_project_notes(&self) -> Result<Vec<ProjectNotes>, StorageError> {
         self.with_json_lock(|| self.load_project_notes_unlocked())
     }
 
+    #[cfg(test)]
     fn save_project_notes(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
         self.with_json_lock(|| self.save_project_notes_unlocked(notes))
     }
@@ -2849,6 +2857,288 @@ mod tests {
 
         let fetched = storage.get_project_notes("proj-1").unwrap();
         assert_eq!(fetched.content, "hello world");
+    }
+
+    #[test]
+    fn test_should_rotate_never_policy_returns_false() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        // Never policy returns false even when the file exists
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+        assert!(path.exists());
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Never
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_never_policy_returns_false_when_file_missing() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Never
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_always_policy_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+        assert!(path.exists());
+
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Always
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_always_policy_returns_false_when_file_missing() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Always
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_no_backup_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+
+        // No .bak.1 exists yet — should rotate
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_recent_backup_returns_false() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        // Create a file and its first backup (recently modified)
+        std::fs::write(&path, "[]").unwrap();
+        let backup = Storage::json_backup_path(&path, 1);
+        std::fs::write(&backup, "[]").unwrap();
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_old_backup_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        std::fs::write(&path, "[]").unwrap();
+        let backup = Storage::json_backup_path(&path, 1);
+        std::fs::write(&backup, "[]").unwrap();
+
+        // Set backup mtime to 61 seconds ago
+        let old_mtime = FileTime::from_unix_time(
+            (Utc::now() - chrono::TimeDelta::seconds(61)).timestamp(),
+            0,
+        );
+        set_file_mtime(&backup, old_mtime).unwrap();
+
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_future_mtime_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        std::fs::write(&path, "[]").unwrap();
+        let backup = Storage::json_backup_path(&path, 1);
+        std::fs::write(&backup, "[]").unwrap();
+
+        // Set backup mtime to the future
+        let future_mtime = FileTime::from_unix_time(
+            (Utc::now() + chrono::TimeDelta::seconds(3600)).timestamp(),
+            0,
+        );
+        set_file_mtime(&backup, future_mtime).unwrap();
+
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_replace_file_creates_new_when_target_missing() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("new-file.json");
+        let temp = storage.data_dir.join("temp-file.json");
+
+        std::fs::write(&temp, "new-content").unwrap();
+        assert!(!path.exists());
+
+        Storage::replace_file(&path, &temp).unwrap();
+
+        assert!(path.exists());
+        assert!(!temp.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-content");
+    }
+
+    #[test]
+    fn test_replace_file_overwrites_existing() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("existing.json");
+        let temp = storage.data_dir.join("replacement.json");
+
+        std::fs::write(&path, "old-content").unwrap();
+        std::fs::write(&temp, "new-content").unwrap();
+
+        Storage::replace_file(&path, &temp).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-content");
+        assert!(!temp.exists());
+    }
+
+    #[test]
+    fn test_write_atomic_creates_parent_dirs() {
+        let storage = create_test_storage();
+        let nested = storage.data_dir.join("a").join("b").join("c.json");
+
+        Storage::write_atomic(&nested, "[]", JsonBackupPolicy::Never).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&nested).unwrap(), "[]");
+    }
+
+    #[test]
+    fn test_write_atomic_cleans_up_temp_on_backup_failure() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("test.json");
+
+        // First write succeeds
+        Storage::write_atomic(&path, "[1]", JsonBackupPolicy::Never).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1]");
+
+        // Second write also succeeds with Never policy
+        Storage::write_atomic(&path, "[1,2]", JsonBackupPolicy::Never).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1,2]");
+
+        // No leftover .tmp files
+        let tmp_files: Vec<_> = std::fs::read_dir(&storage.data_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(tmp_files.is_empty(), "leftover temp files: {:?}", tmp_files);
+    }
+
+    #[test]
+    fn test_archive_invalid_json_creates_snapshot() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("test.json");
+
+        Storage::archive_invalid_json(&path, "broken-content", "test-reason");
+
+        let snapshots: Vec<_> = std::fs::read_dir(&storage.data_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("test.json.corrupted.")
+            })
+            .collect();
+        assert_eq!(snapshots.len(), 1);
+
+        let content = std::fs::read_to_string(snapshots[0].path()).unwrap();
+        assert_eq!(content, "broken-content");
+    }
+
+    #[test]
+    fn test_restore_from_backups_skips_invalid_and_finds_valid() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        // Create the main file (will be "corrupt")
+        std::fs::write(&path, "corrupt").unwrap();
+
+        // .bak.1 is invalid
+        let bak1 = Storage::json_backup_path(&path, 1);
+        std::fs::write(&bak1, "also-invalid").unwrap();
+
+        // .bak.2 is invalid
+        let bak2 = Storage::json_backup_path(&path, 2);
+        std::fs::write(&bak2, "still-invalid").unwrap();
+
+        // .bak.3 is valid
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        let valid_json = serde_json::to_string_pretty(&vec![&project]).unwrap();
+        let bak3 = Storage::json_backup_path(&path, 3);
+        std::fs::write(&bak3, &valid_json).unwrap();
+
+        let restored: Option<Vec<Project>> =
+            storage.restore_from_backups(&path, "corrupt").unwrap();
+
+        assert!(restored.is_some());
+        let projects = restored.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, project.id);
+
+        // The valid backup should have been written to the main file
+        let restored_main: Vec<Project> =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(restored_main.len(), 1);
+    }
+
+    #[test]
+    fn test_restore_from_backups_returns_none_when_all_invalid() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        std::fs::write(&path, "corrupt").unwrap();
+
+        let bak1 = Storage::json_backup_path(&path, 1);
+        std::fs::write(&bak1, "invalid-1").unwrap();
+
+        let bak2 = Storage::json_backup_path(&path, 2);
+        std::fs::write(&bak2, "invalid-2").unwrap();
+
+        let restored: Option<Vec<Project>> =
+            storage.restore_from_backups(&path, "corrupt").unwrap();
+
+        assert!(restored.is_none());
+    }
+
+    #[test]
+    fn test_rotate_json_backups_never_policy_is_noop() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+
+        Storage::rotate_json_backups(&path, JsonBackupPolicy::Never).unwrap();
+
+        let bak1 = Storage::json_backup_path(&path, 1);
+        assert!(!bak1.exists());
     }
 
     #[test]
