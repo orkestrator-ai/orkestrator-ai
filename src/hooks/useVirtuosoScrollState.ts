@@ -104,15 +104,32 @@ export function useVirtuosoScrollState(
   );
 
   const scrollToBottom = useCallback(() => {
-    // Use scrollTo with a very large top value instead of scrollToIndex.
-    // scrollToIndex({ index: "LAST" }) only scrolls to the last data item,
-    // but the footer (thinking indicator, question cards) renders below the
-    // last item and would remain hidden. scrollTo with a large value gets
-    // capped to scrollHeight - clientHeight by the browser, ensuring the
-    // entire footer is visible.
-    virtuosoRef.current?.scrollTo({
-      top: SCROLL_TO_ABSOLUTE_BOTTOM,
-      behavior: "smooth",
+    const handle = virtuosoRef.current;
+    if (!handle) return;
+
+    // Two-phase scroll to handle both long conversations and footer content.
+    //
+    // Phase 1: Jump (instant) to the last data item via scrollToIndex.
+    // Virtuoso's virtual scrollHeight is based on estimated heights for items
+    // that haven't been rendered. On long conversations, these estimates can
+    // be far too small, causing scrollTo with a large pixel value to fall
+    // short of the actual bottom. scrollToIndex forces Virtuoso to render and
+    // measure items at the end, correcting the virtual scroll height.
+    handle.scrollToIndex({
+      index: "LAST",
+      align: "end",
+    });
+
+    // Phase 2: Smooth-scroll past the last data item to reveal footer content
+    // (thinking indicator, question cards, elapsed time). scrollToIndex only
+    // targets the last data item; footer content renders below it and needs
+    // an additional scroll. requestAnimationFrame ensures Virtuoso has
+    // processed height corrections from Phase 1 before we scroll.
+    requestAnimationFrame(() => {
+      handle.scrollTo({
+        top: SCROLL_TO_ABSOLUTE_BOTTOM,
+        behavior: "smooth",
+      });
     });
     // Don't optimistically set isAtBottom — let Virtuoso's atBottomStateChange
     // fire when the scroll actually reaches the bottom.
