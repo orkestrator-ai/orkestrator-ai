@@ -19,12 +19,17 @@ import {
   type UserInput,
 } from "@openai/codex-sdk";
 import { summarizeTodoList, mapTodoArgs } from "./todo-helpers.js";
+import {
+  deriveSubagentPartsFromTranscriptRecords,
+  parseTranscriptRecords,
+  type TranscriptSubagentPart,
+} from "./subagent-transcript.js";
 
 type ToolState = "success" | "failure" | "pending";
 type MessageRole = "user" | "assistant" | "system";
 
 export interface NormalizedPart {
-  type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file";
+  type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file" | "subagent";
   content: string;
   fileUrl?: string;
   toolName?: string;
@@ -34,6 +39,12 @@ export interface NormalizedPart {
   toolOutput?: string;
   toolError?: string;
   toolDiff?: ToolDiffMetadata;
+  subagentId?: string;
+  subagentName?: string;
+  subagentRole?: string;
+  subagentPrompt?: string;
+  subagentActions?: NormalizedPart[];
+  subagentActionCount?: number;
 }
 
 interface NormalizedMessage {
@@ -58,6 +69,7 @@ interface SessionState {
   currentAssistantMessageId?: string;
   currentItems: Map<string, ThreadItem>;
   currentItemOrder: string[];
+  currentTurnStartedAt?: string;
   pendingAttachments: PromptAttachmentInput[];
   lastAccessed: number;
 }
@@ -1069,6 +1081,7 @@ function emitLocalAssistantResponse(
   session.error = undefined;
   session.currentItems.clear();
   session.currentItemOrder = [];
+  session.currentTurnStartedAt = undefined;
   session.abortController = undefined;
   session.currentAssistantMessageId = undefined;
 
@@ -1398,6 +1411,94 @@ export async function itemToParts(
   }
 }
 
+async function buildTranscriptSubagentParts(
+  session: SessionState,
+): Promise<NormalizedPart[]> {
+  if (!session.threadId || !session.currentTurnStartedAt) {
+    return [];
+  }
+
+  const parentMeta = await getPersistedSessionMeta(session.threadId);
+  if (!parentMeta?.transcriptPath) {
+    return [];
+  }
+
+  const turnStartedAt = new Date(session.currentTurnStartedAt).getTime();
+  if (Number.isNaN(turnStartedAt)) {
+    return [];
+  }
+
+  const parentRecords = parseTranscriptRecords(
+    await readTranscriptLines(parentMeta.transcriptPath),
+  ).filter((record) => {
+    if (!record.timestamp) {
+      return false;
+    }
+
+    const timestamp = new Date(record.timestamp).getTime();
+    return !Number.isNaN(timestamp) && timestamp >= turnStartedAt;
+  });
+
+  if (parentRecords.length === 0) {
+    return [];
+  }
+
+  const childRecordsByAgentId = new Map<string, ReturnType<typeof parseTranscriptRecords>>();
+
+  for (const record of parentRecords) {
+    if (
+      record.type !== "response_item"
+      || record.payload?.type !== "function_call_output"
+      || typeof record.payload?.output !== "string"
+    ) {
+      continue;
+    }
+
+    let parsedOutput: { agent_id?: unknown };
+    try {
+      parsedOutput = JSON.parse(record.payload.output) as { agent_id?: unknown };
+    } catch {
+      continue;
+    }
+
+    const agentId =
+      typeof parsedOutput.agent_id === "string" && parsedOutput.agent_id.length > 0
+        ? parsedOutput.agent_id
+        : null;
+    if (!agentId || childRecordsByAgentId.has(agentId)) {
+      continue;
+    }
+
+    const childMeta = await getPersistedSessionMeta(agentId);
+    if (!childMeta?.transcriptPath) {
+      childRecordsByAgentId.set(agentId, []);
+      continue;
+    }
+
+    childRecordsByAgentId.set(
+      agentId,
+      parseTranscriptRecords(await readTranscriptLines(childMeta.transcriptPath)),
+    );
+  }
+
+  const transcriptParts = deriveSubagentPartsFromTranscriptRecords(
+    parentRecords,
+    childRecordsByAgentId,
+  );
+
+  return transcriptParts.map((part: TranscriptSubagentPart) => ({
+    type: "subagent",
+    content: part.content,
+    toolState: part.toolState,
+    subagentId: part.subagentId,
+    subagentName: part.subagentName,
+    subagentRole: part.subagentRole,
+    subagentPrompt: part.subagentPrompt,
+    subagentActions: part.subagentActions as NormalizedPart[],
+    subagentActionCount: part.subagentActionCount,
+  }));
+}
+
 async function rebuildAssistantMessage(session: SessionState): Promise<void> {
   const messageId = session.currentAssistantMessageId;
   if (!messageId) return;
@@ -1412,12 +1513,15 @@ async function rebuildAssistantMessage(session: SessionState): Promise<void> {
   const parts = (await Promise.all(
     items.map((item) => itemToParts(item, cwd)),
   )).flat();
+  const subagentParts = await buildTranscriptSubagentParts(session);
 
   const finalResponse = items
     .filter((item): item is Extract<ThreadItem, { type: "agent_message" }> => item.type === "agent_message")
     .at(-1)?.text ?? "";
 
-  message.parts = parts;
+  const nonTextParts = parts.filter((part) => part.type !== "text");
+  const textParts = parts.filter((part) => part.type === "text");
+  message.parts = [...nonTextParts, ...subagentParts, ...textParts];
   message.content = finalResponse || parts.find((part) => part.type === "text")?.content || "";
 }
 
@@ -1538,6 +1642,7 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
   session.error = undefined;
   session.currentItems.clear();
   session.currentItemOrder = [];
+  session.currentTurnStartedAt = new Date().toISOString();
   session.abortController = new AbortController();
 
   session.messages.push(createUserMessage(prompt, attachments));
@@ -1613,6 +1718,7 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
     });
   } finally {
     session.pendingAttachments = [];
+    session.currentTurnStartedAt = undefined;
     session.abortController = undefined;
   }
 }
@@ -1682,6 +1788,7 @@ app.post("/session/create", async (c) => {
     status: "idle",
     currentItems: new Map(),
     currentItemOrder: [],
+    currentTurnStartedAt: undefined,
     pendingAttachments: [],
     lastAccessed: Date.now(),
   });
@@ -1717,6 +1824,7 @@ app.post("/session/resume", async (c) => {
     status: "idle",
     currentItems: new Map(),
     currentItemOrder: [],
+    currentTurnStartedAt: undefined,
     pendingAttachments: [],
     lastAccessed: Date.now(),
   });
@@ -1757,13 +1865,17 @@ app.post("/session/:id/config", async (c) => {
   return c.json({ status: "updated" });
 });
 
-app.get("/session/:id/messages", (c) => {
+app.get("/session/:id/messages", async (c) => {
   const sessionId = c.req.param("id");
   const session = sessions.get(sessionId);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);
   }
   updateSessionAccess(sessionId);
+
+  if (session.status === "running") {
+    await rebuildAssistantMessage(session);
+  }
 
   return c.json({ messages: session.messages });
 });
@@ -1844,6 +1956,7 @@ app.post("/session/:id/abort", (c) => {
 
   session.abortController?.abort();
   session.status = "idle";
+  session.currentTurnStartedAt = undefined;
   emit({ type: "session.idle", sessionId: session.id, data: { title: session.title } });
   return c.json({ status: "aborted" });
 });
