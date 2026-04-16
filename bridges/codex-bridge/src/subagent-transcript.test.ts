@@ -178,4 +178,54 @@ describe("deriveSubagentPartsFromTranscriptRecords", () => {
       { type: "text", content: "More explanation." },
     ]);
   });
+
+  test("prepends subagent parts when all existing parts are text", () => {
+    const merged = mergeSubagentPartsIntoMessageParts(
+      [
+        { type: "text", content: "A" },
+        { type: "text", content: "B" },
+      ],
+      [{ type: "subagent", content: "Sub" }],
+    );
+
+    expect(merged).toEqual([
+      { type: "subagent", content: "Sub" },
+      { type: "text", content: "A" },
+      { type: "text", content: "B" },
+    ]);
+  });
+
+  test("appends subagent parts when no parts are text", () => {
+    const merged = mergeSubagentPartsIntoMessageParts(
+      [
+        { type: "tool-invocation", content: "Read" },
+        { type: "tool-result", content: "ok" },
+      ],
+      [{ type: "subagent", content: "Sub" }],
+    );
+
+    expect(merged).toEqual([
+      { type: "tool-invocation", content: "Read" },
+      { type: "tool-result", content: "ok" },
+      { type: "subagent", content: "Sub" },
+    ]);
+  });
+
+  test("returns subagent parts alone when parts array is empty", () => {
+    const merged = mergeSubagentPartsIntoMessageParts(
+      [],
+      [{ type: "subagent", content: "Sub" }],
+    );
+
+    expect(merged).toEqual([{ type: "subagent", content: "Sub" }]);
+  });
+
+  test("returns parts unchanged when subagent parts array is empty", () => {
+    const parts = [
+      { type: "text", content: "Hello" },
+      { type: "tool-invocation", content: "Read" },
+    ];
+    const merged = mergeSubagentPartsIntoMessageParts(parts, []);
+    expect(merged).toBe(parts);
+  });
 });

@@ -53,14 +53,7 @@ fn get_codex_start_lock(environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         .clone()
 }
 
-fn load_codex_bridge_runtime_settings() -> Result<(bool, bool), String> {
-    let storage = get_storage().map_err(|e| e.to_string())?;
-    let config = storage.load_config().map_err(|e| e.to_string())?;
-    Ok((
-        config.global.experimental_collated_codex_subagents,
-        config.global.debug_logging,
-    ))
-}
+use super::load_codex_bridge_runtime_settings;
 
 /// Result type for local server start commands
 #[derive(Debug, Clone, Serialize, Deserialize)]

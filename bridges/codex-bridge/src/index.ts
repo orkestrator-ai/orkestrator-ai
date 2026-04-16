@@ -22,9 +22,10 @@ import { summarizeTodoList, mapTodoArgs } from "./todo-helpers.js";
 import {
   deriveSubagentPartsFromTranscriptRecords,
   mergeSubagentPartsIntoMessageParts,
-  parseTranscriptRecords,
+  type TranscriptRecord,
   type TranscriptSubagentPart,
 } from "./subagent-transcript.js";
+import { readCachedTranscript } from "./transcript-cache.js";
 
 type ToolState = "success" | "failure" | "pending";
 type MessageRole = "user" | "assistant" | "system";
@@ -594,15 +595,7 @@ async function findTranscriptPath(threadId: string): Promise<string | null> {
 }
 
 async function readTranscriptLines(path: string): Promise<string[]> {
-  try {
-    const raw = await readFile(path, "utf8");
-    return raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  } catch {
-    return [];
-  }
+  return (await readCachedTranscript(path)).lines;
 }
 
 async function getSessionMetaFromTranscriptPath(
@@ -610,30 +603,18 @@ async function getSessionMetaFromTranscriptPath(
   fallbackTitle?: string,
   fallbackUpdatedAt?: string,
 ): Promise<PersistedSessionMeta | null> {
-  const lines = await readTranscriptLines(transcriptPath);
-  const sessionMetaLine = lines.find((line) => {
-    try {
-      return JSON.parse(line).type === "session_meta";
-    } catch {
-      return false;
-    }
-  });
+  const { records } = await readCachedTranscript(transcriptPath);
+  const sessionMetaRecord = records.find((record) => record.type === "session_meta");
 
-  if (!sessionMetaLine) {
+  if (!sessionMetaRecord?.payload) {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(sessionMetaLine) as {
-      payload?: {
-        id?: unknown;
-        cwd?: unknown;
-        timestamp?: unknown;
-      };
-    };
+    const payload = sessionMetaRecord.payload;
     const id =
-      typeof parsed.payload?.id === "string" && parsed.payload.id.length > 0
-        ? parsed.payload.id
+      typeof payload.id === "string" && payload.id.length > 0
+        ? payload.id
         : null;
 
     if (!id) {
@@ -644,11 +625,10 @@ async function getSessionMetaFromTranscriptPath(
       id,
       title: fallbackTitle,
       updatedAt:
-        typeof parsed.payload?.timestamp === "string"
-          ? parsed.payload.timestamp
+        typeof payload.timestamp === "string"
+          ? payload.timestamp
           : (fallbackUpdatedAt ?? new Date().toISOString()),
-      cwd:
-        typeof parsed.payload?.cwd === "string" ? parsed.payload.cwd : undefined,
+      cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
       transcriptPath,
     };
   } catch {
@@ -1484,9 +1464,8 @@ async function buildTranscriptSubagentParts(
     return [];
   }
 
-  const parentRecords = parseTranscriptRecords(
-    await readTranscriptLines(parentMeta.transcriptPath),
-  ).filter((record) => {
+  const parentTranscript = await readCachedTranscript(parentMeta.transcriptPath);
+  const parentRecords = parentTranscript.records.filter((record) => {
     if (!record.timestamp) {
       return false;
     }
@@ -1499,7 +1478,7 @@ async function buildTranscriptSubagentParts(
     return [];
   }
 
-  const childRecordsByAgentId = new Map<string, ReturnType<typeof parseTranscriptRecords>>();
+  const childRecordsByAgentId = new Map<string, TranscriptRecord[]>();
 
   for (const record of parentRecords) {
     if (
@@ -1533,7 +1512,7 @@ async function buildTranscriptSubagentParts(
 
     childRecordsByAgentId.set(
       agentId,
-      parseTranscriptRecords(await readTranscriptLines(childMeta.transcriptPath)),
+      (await readCachedTranscript(childMeta.transcriptPath)).records,
     );
   }
 

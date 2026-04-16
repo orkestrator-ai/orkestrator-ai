@@ -2,7 +2,6 @@
 // Handles starting, stopping, and checking the status of the Codex bridge server in containers
 
 use crate::docker;
-use crate::storage::get_storage;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -191,14 +190,7 @@ async fn ensure_codex_bridge_present(
     Ok(())
 }
 
-fn load_codex_bridge_runtime_settings() -> Result<(bool, bool), String> {
-    let storage = get_storage().map_err(|e| e.to_string())?;
-    let config = storage.load_config().map_err(|e| e.to_string())?;
-    Ok((
-        config.global.experimental_collated_codex_subagents,
-        config.global.debug_logging,
-    ))
-}
+use super::load_codex_bridge_runtime_settings;
 
 #[tauri::command]
 pub async fn start_codex_server(
