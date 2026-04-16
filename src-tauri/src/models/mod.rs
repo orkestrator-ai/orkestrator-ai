@@ -877,6 +877,9 @@ pub struct GlobalConfig {
     /// Terminal scrollback buffer size (lines)
     #[serde(default = "default_terminal_scrollback")]
     pub terminal_scrollback: u32,
+    /// Enable transcript-derived Codex subagent collation in the native UI
+    #[serde(default)]
+    pub experimental_collated_codex_subagents: bool,
     /// Enable debug logging to a file on disk (requires app restart)
     #[serde(default)]
     pub debug_logging: bool,
@@ -900,6 +903,7 @@ impl Default for GlobalConfig {
             codex_mode: CodexMode::default(),
             terminal_appearance: TerminalAppearance::default(),
             terminal_scrollback: default_terminal_scrollback(),
+            experimental_collated_codex_subagents: false,
             debug_logging: false,
         }
     }
@@ -1079,6 +1083,7 @@ mod tests {
         assert!(config.anthropic_api_key.is_none());
         assert!(config.github_token.is_none());
         assert_eq!(config.codex_mode, CodexMode::Native);
+        assert!(!config.experimental_collated_codex_subagents);
     }
 
     #[test]

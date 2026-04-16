@@ -29,6 +29,10 @@ export interface TranscriptRecord {
   payload?: Record<string, unknown>;
 }
 
+interface MergeablePart {
+  type: string;
+}
+
 interface SpawnedSubagent {
   callId: string;
   agentId?: string;
@@ -320,4 +324,27 @@ export function deriveSubagentPartsFromTranscriptRecords(
     const childRecords = spawned.agentId ? childRecordsByAgentId.get(spawned.agentId) ?? [] : [];
     return parseChildTranscript(childRecords, spawned);
   });
+}
+
+export function mergeSubagentPartsIntoMessageParts<T extends MergeablePart>(
+  parts: T[],
+  subagentParts: T[],
+): T[] {
+  if (subagentParts.length === 0) {
+    return parts;
+  }
+
+  let insertIndex = 0;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (parts[index]?.type !== "text") {
+      insertIndex = index + 1;
+      break;
+    }
+  }
+
+  return [
+    ...parts.slice(0, insertIndex),
+    ...subagentParts,
+    ...parts.slice(insertIndex),
+  ];
 }

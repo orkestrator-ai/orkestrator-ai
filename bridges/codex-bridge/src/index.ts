@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -21,6 +21,7 @@ import {
 import { summarizeTodoList, mapTodoArgs } from "./todo-helpers.js";
 import {
   deriveSubagentPartsFromTranscriptRecords,
+  mergeSubagentPartsIntoMessageParts,
   parseTranscriptRecords,
   type TranscriptSubagentPart,
 } from "./subagent-transcript.js";
@@ -187,6 +188,57 @@ const sessions = new Map<string, SessionState>();
 const subscribers = new Set<(event: SseEvent) => void>();
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const experimentalCollatedCodexSubagents = parseBooleanEnv(
+  "ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS",
+);
+const codexRawLogDir = normalizeOptionalEnvPath("ORKESTRATOR_CODEX_RAW_LOG_DIR");
+
+function parseBooleanEnv(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function normalizeOptionalEnvPath(name: string): string | null {
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
+
+function sanitizeLogFileComponent(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function normalizeLogPayload(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return stringifyUnknown(value);
+  }
+}
+
+async function writeCodexRawLog(
+  sessionId: string,
+  entry: Record<string, unknown>,
+): Promise<void> {
+  if (!codexRawLogDir) {
+    return;
+  }
+
+  try {
+    await mkdir(codexRawLogDir, { recursive: true });
+    const filename = `${sanitizeLogFileComponent(sessionId)}.jsonl`;
+    await appendFile(
+      join(codexRawLogDir, filename),
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        ...entry,
+      })}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    console.error("[codex-bridge] Failed to write raw Codex log:", error);
+  }
+}
 
 function updateSessionAccess(sessionId: string): void {
   const session = sessions.get(sessionId);
@@ -1414,6 +1466,10 @@ export async function itemToParts(
 async function buildTranscriptSubagentParts(
   session: SessionState,
 ): Promise<NormalizedPart[]> {
+  if (!experimentalCollatedCodexSubagents) {
+    return [];
+  }
+
   if (!session.threadId || !session.currentTurnStartedAt) {
     return [];
   }
@@ -1519,9 +1575,9 @@ async function rebuildAssistantMessage(session: SessionState): Promise<void> {
     .filter((item): item is Extract<ThreadItem, { type: "agent_message" }> => item.type === "agent_message")
     .at(-1)?.text ?? "";
 
-  const nonTextParts = parts.filter((part) => part.type !== "text");
-  const textParts = parts.filter((part) => part.type === "text");
-  message.parts = [...nonTextParts, ...subagentParts, ...textParts];
+  message.parts = experimentalCollatedCodexSubagents
+    ? mergeSubagentPartsIntoMessageParts(parts, subagentParts)
+    : parts;
   message.content = finalResponse || parts.find((part) => part.type === "text")?.content || "";
 }
 
@@ -1667,10 +1723,26 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
     const streamed = await session.thread.runStreamed(executionInput, {
       signal: session.abortController.signal,
     });
+    await writeCodexRawLog(session.id, {
+      kind: "stream.start",
+      threadId: session.threadId ?? null,
+      experimentalCollatedCodexSubagents,
+    });
 
     for await (const event of streamed.events) {
+      await writeCodexRawLog(session.id, {
+        kind: "stream.event",
+        threadId: session.threadId ?? null,
+        eventType: event.type,
+        event: normalizeLogPayload(event),
+      });
+
       if (event.type === "thread.started") {
         session.threadId = event.thread_id;
+        await writeCodexRawLog(session.id, {
+          kind: "thread.started",
+          threadId: session.threadId,
+        });
         continue;
       }
 
@@ -1695,6 +1767,11 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
           sessionId: session.id,
           data: { error },
         });
+        await writeCodexRawLog(session.id, {
+          kind: "stream.error",
+          threadId: session.threadId ?? null,
+          error,
+        });
         return;
       }
     }
@@ -1711,6 +1788,11 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
     const message = error instanceof Error ? error.message : "Codex execution failed";
     session.status = "error";
     session.error = message;
+    await writeCodexRawLog(session.id, {
+      kind: "stream.exception",
+      threadId: session.threadId ?? null,
+      error: message,
+    });
     emit({
       type: "session.error",
       sessionId: session.id,

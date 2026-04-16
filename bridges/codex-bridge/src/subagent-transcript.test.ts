@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deriveSubagentPartsFromTranscriptRecords,
+  mergeSubagentPartsIntoMessageParts,
   parseTranscriptRecords,
   type TranscriptRecord,
 } from "./subagent-transcript.js";
@@ -156,5 +157,25 @@ describe("deriveSubagentPartsFromTranscriptRecords", () => {
     expect(parts[0]?.subagentActionCount).toBe(0);
     expect(parts[0]?.subagentRole).toBe("worker");
     expect(parts[0]?.subagentPrompt).toBe("Implement the patch");
+  });
+
+  test("inserts collated subagent parts without reordering existing message parts", () => {
+    const merged = mergeSubagentPartsIntoMessageParts(
+      [
+        { type: "text", content: "First explanation." },
+        { type: "tool-invocation", content: "Read" },
+        { type: "text", content: "More explanation." },
+      ],
+      [
+        { type: "subagent", content: "Lovelace" },
+      ],
+    );
+
+    expect(merged).toEqual([
+      { type: "text", content: "First explanation." },
+      { type: "tool-invocation", content: "Read" },
+      { type: "subagent", content: "Lovelace" },
+      { type: "text", content: "More explanation." },
+    ]);
   });
 });

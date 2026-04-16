@@ -8,6 +8,7 @@ import {
   Shield,
   Container,
   Bug,
+  FlaskConical,
 } from "lucide-react";
 import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import { GlobalSettings } from "./GlobalSettings";
@@ -21,6 +22,7 @@ const MENU_ITEMS: SettingsMenuItem[] = [
   { id: "terminal", label: "Terminal", icon: <Terminal className="h-4 w-4" /> },
   { id: "network", label: "Network", icon: <Shield className="h-4 w-4" /> },
   { id: "container", label: "Container", icon: <Container className="h-4 w-4" /> },
+  { id: "experimental", label: "Experimental", icon: <FlaskConical className="h-4 w-4" /> },
   { id: "debug", label: "Debug", icon: <Bug className="h-4 w-4" /> },
 ];
 

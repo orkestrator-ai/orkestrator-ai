@@ -86,6 +86,9 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       ? global.terminalScrollback
       : DEFAULT_TERMINAL_SCROLLBACK
   );
+  const [experimentalCollatedCodexSubagents, setExperimentalCollatedCodexSubagents] = useState(
+    global.experimentalCollatedCodexSubagents ?? false
+  );
   const [debugLogging, setDebugLogging] = useState(global.debugLogging ?? false);
   const [logDirectory, setLogDirectory] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -120,6 +123,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         ? global.terminalScrollback
         : DEFAULT_TERMINAL_SCROLLBACK
     );
+    setExperimentalCollatedCodexSubagents(global.experimentalCollatedCodexSubagents ?? false);
     setDebugLogging(global.debugLogging ?? false);
   }, [global]);
 
@@ -148,12 +152,13 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       terminalFontSize !== terminalAppearance.fontSize ||
       terminalBackgroundColor !== terminalAppearance.backgroundColor ||
       terminalScrollback !== (global.terminalScrollback ?? DEFAULT_TERMINAL_SCROLLBACK) ||
+      experimentalCollatedCodexSubagents !== (global.experimentalCollatedCodexSubagents ?? false) ||
       debugLogging !== (global.debugLogging ?? false);
     setHasChanges(changed);
     if (changed) {
       setSaveSuccess(false);
     }
-  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, codexMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, debugLogging, global]);
+  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, codexMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, experimentalCollatedCodexSubagents, debugLogging, global]);
 
   // Validate domains on change
   const validateDomainsLocally = useCallback((domainsText: string) => {
@@ -237,6 +242,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         codexMode: CodexMode;
         terminalAppearance: TerminalAppearance;
         terminalScrollback: number;
+        experimentalCollatedCodexSubagents: boolean;
         debugLogging: boolean;
       } = {
         containerResources: { cpuCores, memoryGb },
@@ -256,6 +262,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
           backgroundColor: terminalBackgroundColor,
         },
         terminalScrollback,
+        experimentalCollatedCodexSubagents,
         debugLogging,
       };
 
@@ -315,6 +322,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         ? global.terminalScrollback
         : DEFAULT_TERMINAL_SCROLLBACK
     );
+    setExperimentalCollatedCodexSubagents(global.experimentalCollatedCodexSubagents ?? false);
     setDebugLogging(global.debugLogging ?? false);
   };
 
@@ -844,8 +852,56 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
           </button>
         </div>
       )}
+      {debugLogging && (
+        <p className="text-xs text-muted-foreground">
+          When enabled, Codex native mode also captures raw bridge event output to dedicated debug files for transcript validation.
+        </p>
+      )}
       <p className="text-xs text-muted-foreground/60">
         Requires app restart to take effect
+      </p>
+    </div>
+  );
+
+  const renderExperimental = () => (
+    <div className="max-w-2xl space-y-4">
+      <div>
+        <h3 className="text-sm font-medium text-foreground">Collated Codex Subagents</h3>
+        <p className="text-xs text-muted-foreground mt-1">
+          Experimentally groups transcript-derived Codex subagent activity into collapsible message sections without changing the base chronological message order.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => setExperimentalCollatedCodexSubagents(!experimentalCollatedCodexSubagents)}
+        className={cn(
+          "max-w-xs w-full p-3 rounded-lg border-2 text-left transition-colors",
+          experimentalCollatedCodexSubagents
+            ? "border-primary bg-primary/5"
+            : "border-transparent bg-zinc-900 hover:border-zinc-600"
+        )}
+      >
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-sm">
+            {experimentalCollatedCodexSubagents ? "Enabled" : "Disabled"}
+          </span>
+          <div
+            className={cn(
+              "w-9 h-5 rounded-full transition-colors relative",
+              experimentalCollatedCodexSubagents ? "bg-primary" : "bg-muted-foreground/30"
+            )}
+          >
+            <div
+              className={cn(
+                "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                experimentalCollatedCodexSubagents ? "translate-x-4" : "translate-x-0.5"
+              )}
+            />
+          </div>
+        </div>
+      </button>
+      <p className="text-xs text-muted-foreground">
+        Leave this off if you want the existing Codex message behavior. Turn on debug logging as well if you want raw Codex bridge outputs captured to disk for validating this experiment.
       </p>
     </div>
   );
@@ -858,6 +914,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     terminal: renderTerminal,
     network: renderNetwork,
     container: renderContainer,
+    experimental: renderExperimental,
     debug: renderDebug,
   };
 
