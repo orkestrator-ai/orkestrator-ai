@@ -119,17 +119,22 @@ describe("useVirtuosoScrollState", () => {
         result.current.scrollToBottom();
       });
 
-      // Phase 1: instant scrollToIndex to force rendering at the end
+      // First attempt: instant scrollToIndex to force rendering at the end
       expect(scrollToIndexCalls).toHaveLength(1);
       expect(scrollToIndexCalls[0]).toEqual({
         index: "LAST",
         align: "end",
       });
 
-      // Phase 2: smooth scrollTo after rAF to reveal footer content
-      // Flush the requestAnimationFrame
+      // Simulate Virtuoso firing atBottomStateChange(true) after rendering
+      // the tail items, so the retry loop stops and moves to the scrollTo.
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(true);
+      });
+
+      // Flush the setTimeout that schedules the footer scroll
       await act(async () => {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       });
 
       expect(scrollToCalls).toHaveLength(1);
@@ -137,6 +142,101 @@ describe("useVirtuosoScrollState", () => {
         top: 10_000_000,
         behavior: "smooth",
       });
+    });
+
+    test("retries scrollToIndex until reaching bottom (corrects estimated heights)", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      // Simulate the bug scenario: Virtuoso never reports isAtBottom=true
+      // because estimated heights keep the scroll short of the true bottom.
+      // The retry loop should fire scrollToIndex multiple times.
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(false);
+      });
+
+      const scrollToIndexCalls: any[] = [];
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollToBottom();
+      });
+
+      // Let all retries fire (10 attempts × 16ms + slack)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+
+      // Exhaustion: exactly MAX_ATTEMPTS (10) retries when isAtBottom never flips
+      expect(scrollToIndexCalls).toHaveLength(10);
+      // Even after exhausting retries, the footer scrollTo is still issued
+      expect(scrollToCalls).toHaveLength(1);
+    });
+
+    test("ignores overlapping scrollToBottom invocations while one is in-flight", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      // Stay at non-bottom so the retry loop runs long enough to observe
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(false);
+      });
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollToBottom();
+        // Second call while the first is still iterating — should be ignored
+        result.current.scrollToBottom();
+        result.current.scrollToBottom();
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+
+      // Only one footer scrollTo fires despite three invocations
+      expect(scrollToCalls).toHaveLength(1);
+    });
+
+    test("can be invoked again after a previous scroll completes", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      // First invocation — let it complete via atBottomStateChange(true)
+      act(() => {
+        result.current.scrollToBottom();
+      });
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(true);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      expect(scrollToCalls).toHaveLength(1);
+
+      // Second invocation — should NOT be blocked by the in-flight guard
+      act(() => {
+        result.current.scrollToBottom();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      expect(scrollToCalls).toHaveLength(2);
     });
 
     test("does not optimistically set isAtBottom", async () => {
@@ -172,7 +272,7 @@ describe("useVirtuosoScrollState", () => {
       expect(result.current.isAtBottom).toBe(true);
     });
 
-    test("Phase 2 rAF does not call scrollTo after unmount", async () => {
+    test("scheduled scrollTo does not fire after unmount", async () => {
       const { result, unmount } = renderHook(() => useVirtuosoScrollState());
 
       const scrollToCalls: any[] = [];
@@ -182,17 +282,18 @@ describe("useVirtuosoScrollState", () => {
         getState: () => {},
       } as any;
 
-      // Start the two-phase scroll
+      // Start the scroll — first scrollToIndex fires synchronously, the
+      // follow-up retry/scrollTo is scheduled on setTimeout.
       act(() => {
         result.current.scrollToBottom();
       });
 
-      // Unmount before rAF fires
+      // Unmount before the scheduled callback fires
       unmount();
 
-      // Flush rAF — scrollTo should NOT be called
+      // Flush any pending setTimeout — scrollTo should NOT be called
       await act(async () => {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await new Promise((resolve) => setTimeout(resolve, 250));
       });
 
       expect(scrollToCalls).toHaveLength(0);

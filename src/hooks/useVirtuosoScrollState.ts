@@ -13,6 +13,12 @@ const MAX_PERSISTED_STATES = 200;
  */
 const SCROLL_TO_ABSOLUTE_BOTTOM = 10_000_000;
 
+/** Maximum scrollToIndex retries when correcting estimated virtual heights */
+const SCROLL_TO_BOTTOM_MAX_ATTEMPTS = 10;
+
+/** Delay between retry attempts; ~one frame, gives Virtuoso time to fire atBottomStateChange */
+const SCROLL_TO_BOTTOM_RETRY_INTERVAL_MS = 16;
+
 const persistedStates = new Map<string, StateSnapshot>();
 
 function setPersistedState(key: string, state: StateSnapshot) {
@@ -74,6 +80,7 @@ export function useVirtuosoScrollState(
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
   const mountedRef = useRef(true);
+  const scrollInFlightRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -112,34 +119,64 @@ export function useVirtuosoScrollState(
   const scrollToBottom = useCallback(() => {
     const handle = virtuosoRef.current;
     if (!handle) return;
+    // Guard against overlapping invocations — a second call while the
+    // retry loop is still mid-flight would fire a duplicate footer scroll.
+    if (scrollInFlightRef.current) return;
+    scrollInFlightRef.current = true;
 
-    // Two-phase scroll to handle both long conversations and footer content.
-    //
-    // Phase 1: Jump (instant) to the last data item via scrollToIndex.
-    // Virtuoso's virtual scrollHeight is based on estimated heights for items
-    // that haven't been rendered. On long conversations, these estimates can
-    // be far too small, causing scrollTo with a large pixel value to fall
-    // short of the actual bottom. scrollToIndex forces Virtuoso to render and
-    // measure items at the end, correcting the virtual scroll height.
-    handle.scrollToIndex({
-      index: "LAST",
-      align: "end",
-    });
+    // Virtuoso's virtual scrollHeight is based on *estimated* heights for
+    // items that haven't been rendered yet. On long conversations those
+    // estimates are often significantly wrong, so a single scrollToIndex(LAST)
+    // can land short of the true bottom (the user's reported "scroll down
+    // only goes to the bottom of the loaded window"). Each retry forces
+    // Virtuoso to render and measure the tail items, correcting the virtual
+    // height, until we actually reach the bottom.
+    let attempts = 0;
 
-    // Phase 2: Smooth-scroll past the last data item to reveal footer content
-    // (thinking indicator, question cards, elapsed time). scrollToIndex only
-    // targets the last data item; footer content renders below it and needs
-    // an additional scroll. requestAnimationFrame ensures Virtuoso has
-    // processed height corrections from Phase 1 before we scroll.
-    requestAnimationFrame(() => {
-      if (!mountedRef.current) return;
+    const finish = () => {
+      scrollInFlightRef.current = false;
+      // Once stable at the last data item, smooth-scroll past it to reveal
+      // footer content (thinking indicator, question/approval cards,
+      // elapsed time). The browser clamps to the real scrollHeight, so
+      // this lands correctly even if retries exhausted without isAtBottom
+      // flipping true.
       handle.scrollTo({
         top: SCROLL_TO_ABSOLUTE_BOTTOM,
         behavior: "smooth",
       });
-    });
-    // Don't optimistically set isAtBottom — let Virtuoso's atBottomStateChange
-    // fire when the scroll actually reaches the bottom.
+    };
+
+    const attempt = () => {
+      if (!mountedRef.current) {
+        scrollInFlightRef.current = false;
+        return;
+      }
+      attempts += 1;
+
+      handle.scrollToIndex({
+        index: "LAST",
+        align: "end",
+      });
+
+      // setTimeout (rather than rAF) gives Virtuoso time to fire
+      // atBottomStateChange after rendering/measuring the tail items.
+      setTimeout(() => {
+        if (!mountedRef.current) {
+          scrollInFlightRef.current = false;
+          return;
+        }
+        if (
+          !isAtBottomRef.current &&
+          attempts < SCROLL_TO_BOTTOM_MAX_ATTEMPTS
+        ) {
+          attempt();
+          return;
+        }
+        finish();
+      }, SCROLL_TO_BOTTOM_RETRY_INTERVAL_MS);
+    };
+
+    attempt();
   }, []);
 
   return {
