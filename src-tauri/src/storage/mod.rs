@@ -550,6 +550,9 @@ impl Storage {
             environment.opencode_mode =
                 serde_json::from_value(opencode_mode.clone()).ok().flatten();
         }
+        if let Some(codex_mode) = updates.get("codexMode") {
+            environment.codex_mode = serde_json::from_value(codex_mode.clone()).ok().flatten();
+        }
         if let Some(entry_port) = updates.get("entryPort") {
             environment.entry_port = entry_port.as_u64().map(|v| v as u16);
         }

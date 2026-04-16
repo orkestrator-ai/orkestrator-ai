@@ -286,6 +286,7 @@ export function HierarchicalSidebar() {
         options.agentType,
         options.agentType === "claude" ? options.claudeMode : null,
         options.agentType === "opencode" ? options.opencodeMode : null,
+        options.agentType === "codex" ? options.codexMode : null,
       );
       updateEnvironment(environment.id, configuredEnvironment);
 

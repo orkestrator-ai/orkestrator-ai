@@ -54,7 +54,16 @@ import {
   type McpServerInfo,
   type PluginInfo,
 } from "@/lib/claude-client";
-import type { Environment, DomainTestResult, PortMapping, PortProtocol, DefaultAgent, ClaudeMode, OpenCodeMode } from "@/types";
+import type {
+  ClaudeMode,
+  CodexMode,
+  DefaultAgent,
+  DomainTestResult,
+  Environment,
+  OpenCodeMode,
+  PortMapping,
+  PortProtocol,
+} from "@/types";
 
 // Domain validation regex
 const DOMAIN_REGEX = /^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
@@ -147,6 +156,9 @@ export function EnvironmentSettingsDialog({
   const [envOpencodeMode, setEnvOpencodeMode] = useState<string>(
     environment.opencodeMode ?? "global"
   );
+  const [envCodexMode, setEnvCodexMode] = useState<string>(
+    environment.codexMode ?? "global"
+  );
 
   // MCP servers and plugins state
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
@@ -162,7 +174,8 @@ export function EnvironmentSettingsDialog({
   const agentSettingsChanged =
     (envDefaultAgent === "global" ? undefined : envDefaultAgent) !== (environment.defaultAgent ?? undefined) ||
     (envClaudeMode === "global" ? undefined : envClaudeMode) !== (environment.claudeMode ?? undefined) ||
-    (envOpencodeMode === "global" ? undefined : envOpencodeMode) !== (environment.opencodeMode ?? undefined);
+    (envOpencodeMode === "global" ? undefined : envOpencodeMode) !== (environment.opencodeMode ?? undefined) ||
+    (envCodexMode === "global" ? undefined : envCodexMode) !== (environment.codexMode ?? undefined);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -193,8 +206,9 @@ export function EnvironmentSettingsDialog({
       setEnvDefaultAgent(environment.defaultAgent ?? "global");
       setEnvClaudeMode(environment.claudeMode ?? "global");
       setEnvOpencodeMode(environment.opencodeMode ?? "global");
+      setEnvCodexMode(environment.codexMode ?? "global");
     }
-  }, [open, environment.name, environment.allowedDomains, environment.portMappings, environment.defaultAgent, environment.claudeMode, environment.opencodeMode, globalDomains]);
+  }, [open, environment.name, environment.allowedDomains, environment.portMappings, environment.defaultAgent, environment.claudeMode, environment.opencodeMode, environment.codexMode, globalDomains]);
 
   // Update custom domains when toggling to global
   useEffect(() => {
@@ -464,6 +478,7 @@ export function EnvironmentSettingsDialog({
           envDefaultAgent === "global" ? null : envDefaultAgent as DefaultAgent,
           envClaudeMode === "global" ? null : envClaudeMode as ClaudeMode,
           envOpencodeMode === "global" ? null : envOpencodeMode as OpenCodeMode,
+          envCodexMode === "global" ? null : envCodexMode as CodexMode,
         );
       }
 
@@ -635,31 +650,30 @@ export function EnvironmentSettingsDialog({
             {/* Codex Mode */}
             <div className="space-y-3">
               <Label className="text-sm">Codex Mode</Label>
-              <div className="grid grid-cols-2 gap-2 max-w-xs">
-                <button
-                  type="button"
-                  disabled
-                  className="p-2 rounded-lg border-2 text-left border-transparent bg-zinc-900 opacity-50 cursor-not-allowed"
-                >
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Terminal className="h-3.5 w-3.5" />
-                    Terminal
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  className="p-2 rounded-lg border-2 text-left border-primary bg-primary/5 cursor-not-allowed"
-                >
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Bot className="h-3.5 w-3.5" />
-                    Native
-                  </div>
-                </button>
+              <div className="grid grid-cols-3 gap-2 max-w-md">
+                {([
+                  { value: "global", label: `Global (${(config.global.codexMode || "native") === "native" ? "Native" : "Terminal"})`, icon: <Bot className="h-3.5 w-3.5" /> },
+                  { value: "terminal", label: "Terminal", icon: <Terminal className="h-3.5 w-3.5" /> },
+                  { value: "native", label: "Native", icon: <Bot className="h-3.5 w-3.5" /> },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEnvCodexMode(opt.value)}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      envCodexMode === opt.value
+                        ? "border-primary bg-primary/5"
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {opt.icon}
+                      {opt.label}
+                    </div>
+                  </button>
+                ))}
               </div>
-              <span className="block text-xs text-muted-foreground/60">
-                Codex only supports native mode
-              </span>
             </div>
           </div>
         );

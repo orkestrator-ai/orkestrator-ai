@@ -17,7 +17,15 @@ import { Loader2, Eye, EyeOff, Key, Github, CheckCircle2, XCircle, AlertCircle, 
 import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIcons";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { DomainTestResult, PreferredEditor, TerminalAppearance, DefaultAgent, OpenCodeMode, ClaudeMode } from "@/types";
+import type {
+  ClaudeMode,
+  CodexMode,
+  DefaultAgent,
+  DomainTestResult,
+  OpenCodeMode,
+  PreferredEditor,
+  TerminalAppearance,
+} from "@/types";
 import {
   DEFAULT_TERMINAL_APPEARANCE,
   DEFAULT_TERMINAL_SCROLLBACK,
@@ -61,6 +69,9 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
   const [claudeMode, setClaudeMode] = useState<ClaudeMode>(
     global.claudeMode || "terminal"
   );
+  const [codexMode, setCodexMode] = useState<CodexMode>(
+    global.codexMode || "native"
+  );
   const [terminalFontFamily, setTerminalFontFamily] = useState(
     global.terminalAppearance?.fontFamily || DEFAULT_TERMINAL_APPEARANCE.fontFamily
   );
@@ -100,6 +111,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     setOpencodeModel(global.opencodeModel || "opencode/grok-code");
     setOpencodeMode(global.opencodeMode || "terminal");
     setClaudeMode(global.claudeMode || "terminal");
+    setCodexMode(global.codexMode || "native");
     setTerminalFontFamily(global.terminalAppearance?.fontFamily || DEFAULT_TERMINAL_APPEARANCE.fontFamily);
     setTerminalFontSize(global.terminalAppearance?.fontSize || DEFAULT_TERMINAL_APPEARANCE.fontSize);
     setTerminalBackgroundColor(global.terminalAppearance?.backgroundColor || DEFAULT_TERMINAL_APPEARANCE.backgroundColor);
@@ -131,6 +143,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       opencodeModel !== (global.opencodeModel || "opencode/grok-code") ||
       opencodeMode !== (global.opencodeMode || "terminal") ||
       claudeMode !== (global.claudeMode || "terminal") ||
+      codexMode !== (global.codexMode || "native") ||
       terminalFontFamily !== terminalAppearance.fontFamily ||
       terminalFontSize !== terminalAppearance.fontSize ||
       terminalBackgroundColor !== terminalAppearance.backgroundColor ||
@@ -140,7 +153,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     if (changed) {
       setSaveSuccess(false);
     }
-  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, debugLogging, global]);
+  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, codexMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, debugLogging, global]);
 
   // Validate domains on change
   const validateDomainsLocally = useCallback((domainsText: string) => {
@@ -221,6 +234,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         codexReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
         opencodeMode: OpenCodeMode;
         claudeMode: ClaudeMode;
+        codexMode: CodexMode;
         terminalAppearance: TerminalAppearance;
         terminalScrollback: number;
         debugLogging: boolean;
@@ -235,6 +249,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         codexReasoningEffort: global.codexReasoningEffort || "medium",
         opencodeMode,
         claudeMode,
+        codexMode,
         terminalAppearance: {
           fontFamily: terminalFontFamily,
           fontSize: terminalFontSize,
@@ -291,6 +306,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     setOpencodeModel(global.opencodeModel || "opencode/grok-code");
     setOpencodeMode(global.opencodeMode || "terminal");
     setClaudeMode(global.claudeMode || "terminal");
+    setCodexMode(global.codexMode || "native");
     setTerminalFontFamily(global.terminalAppearance?.fontFamily || DEFAULT_TERMINAL_APPEARANCE.fontFamily);
     setTerminalFontSize(global.terminalAppearance?.fontSize || DEFAULT_TERMINAL_APPEARANCE.fontSize);
     setTerminalBackgroundColor(global.terminalAppearance?.backgroundColor || DEFAULT_TERMINAL_APPEARANCE.backgroundColor);
@@ -554,32 +570,10 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     "Choose how OpenCode runs in environments",
   );
 
-  const renderCodex = () => (
-    <div className="max-w-2xl space-y-4">
-      <p className="text-sm text-muted-foreground">Codex only supports native mode</p>
-      <div className="grid grid-cols-2 gap-3 max-w-xs">
-        <button
-          type="button"
-          disabled
-          className="p-3 rounded-lg border-2 text-left border-transparent bg-zinc-900 opacity-50 cursor-not-allowed"
-        >
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Terminal className="h-4 w-4" />
-            Terminal
-          </div>
-        </button>
-        <button
-          type="button"
-          disabled
-          className="p-3 rounded-lg border-2 text-left border-primary bg-primary/5 cursor-not-allowed"
-        >
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Bot className="h-4 w-4" />
-            Native
-          </div>
-        </button>
-      </div>
-    </div>
+  const renderCodex = () => renderModeToggle(
+    codexMode,
+    setCodexMode,
+    "Choose how Codex runs in environments",
   );
 
   const renderTerminal = () => {

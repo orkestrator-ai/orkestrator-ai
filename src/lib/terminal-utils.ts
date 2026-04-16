@@ -18,6 +18,8 @@ export function tabTypeToSessionType(tabType: TabType): SessionType {
       return "claude";
     case "opencode":
       return "opencode";
+    case "codex":
+      return "codex";
     case "root":
       return "root";
     default:

@@ -304,6 +304,9 @@ mod tests {
         assert_eq!(SessionType::Plain.to_string(), "plain");
         assert_eq!(SessionType::Claude.to_string(), "claude");
         assert_eq!(SessionType::ClaudeYolo.to_string(), "claude-yolo");
+        assert_eq!(SessionType::Opencode.to_string(), "opencode");
+        assert_eq!(SessionType::Codex.to_string(), "codex");
+        assert_eq!(SessionType::Root.to_string(), "root");
     }
 
     #[test]

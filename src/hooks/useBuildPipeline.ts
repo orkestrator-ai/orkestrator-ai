@@ -117,6 +117,7 @@ export function useBuildPipeline() {
           agentSettings.defaultAgent,
           agentSettings.claudeMode,
           agentSettings.opencodeMode,
+          agentSettings.codexMode,
         );
 
         // Update environment in store

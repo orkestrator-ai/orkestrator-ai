@@ -87,6 +87,8 @@ export interface Environment {
   claudeMode?: ClaudeMode;
   /** Per-environment OpenCode mode override (undefined = use global config) */
   opencodeMode?: OpenCodeMode;
+  /** Per-environment Codex mode override (undefined = use global config) */
+  codexMode?: CodexMode;
 }
 
 /** Result of testing a domain for DNS resolution */
@@ -107,7 +109,7 @@ export interface StartEnvironmentResult {
 // Session types - Terminal session tracking for environments
 
 /** Type of terminal session */
-export type SessionType = "plain" | "claude" | "opencode" | "root";
+export type SessionType = "plain" | "claude" | "opencode" | "codex" | "root";
 
 /** Connection status of a terminal session */
 export type SessionStatus = "connected" | "disconnected";
@@ -155,6 +157,8 @@ export type OpenCodeMode = "terminal" | "native";
 
 /** Claude mode - terminal CLI or native chat interface */
 export type ClaudeMode = "terminal" | "native";
+/** Codex mode - terminal CLI or native chat interface */
+export type CodexMode = "terminal" | "native";
 /** Agent style - terminal CLI or native chat interface (used for project-level override) */
 export type AgentStyle = "terminal" | "native";
 /** Codex reasoning effort preference */
@@ -196,6 +200,8 @@ export interface GlobalConfig {
   opencodeMode: OpenCodeMode;
   /** Claude mode - terminal CLI or native chat interface */
   claudeMode: ClaudeMode;
+  /** Codex mode - terminal CLI or native chat interface */
+  codexMode: CodexMode;
   /** Terminal appearance settings (font, size, colors) */
   terminalAppearance: TerminalAppearance;
   /** Terminal scrollback buffer size (lines) */

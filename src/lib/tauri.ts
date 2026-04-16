@@ -18,6 +18,7 @@ import type {
   StartEnvironmentResult,
   DefaultAgent,
   ClaudeMode,
+  CodexMode,
   OpenCodeMode,
 } from "@/types";
 
@@ -813,12 +814,14 @@ export async function updateEnvironmentAgentSettings(
   defaultAgent: DefaultAgent | null,
   claudeMode: ClaudeMode | null,
   opencodeMode: OpenCodeMode | null,
+  codexMode: CodexMode | null,
 ): Promise<Environment> {
   return invoke<Environment>("update_environment_agent_settings", {
     environmentId,
     defaultAgent,
     claudeMode,
     opencodeMode,
+    codexMode,
   });
 }
 

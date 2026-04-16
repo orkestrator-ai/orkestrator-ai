@@ -29,6 +29,7 @@ import { ClaudeIcon, CodexIcon, OpenCodeIcon } from "@/components/icons/AgentIco
 import { cn } from "@/lib/utils";
 import type {
   ClaudeMode,
+  CodexMode,
   EnvironmentType,
   NetworkAccessMode,
   OpenCodeMode,
@@ -46,13 +47,14 @@ const EMPTY_PORT_MAPPINGS: PortMapping[] = [];
  * over app-level settings, with final fallbacks.
  */
 export function resolveAgentDefaults(
-  globalConfig: { defaultAgent?: string; claudeMode?: string; opencodeMode?: string },
+  globalConfig: { defaultAgent?: string; claudeMode?: string; opencodeMode?: string; codexMode?: string },
   repoConfig?: { defaultAgent?: string; agentStyle?: string },
 ) {
   const defaultAgent = repoConfig?.defaultAgent || globalConfig.defaultAgent || "claude";
   const claudeMode = repoConfig?.agentStyle || globalConfig.claudeMode || "terminal";
   const opencodeMode = repoConfig?.agentStyle || globalConfig.opencodeMode || "terminal";
-  return { defaultAgent, claudeMode, opencodeMode } as const;
+  const codexMode = repoConfig?.agentStyle || globalConfig.codexMode || "native";
+  return { defaultAgent, claudeMode, opencodeMode, codexMode } as const;
 }
 
 const UNSELECTED_CARD_CLASSES = "border-transparent bg-zinc-900 hover:border-zinc-600";
@@ -64,6 +66,7 @@ export interface ClaudeOptions {
   agentType: AgentType;
   claudeMode: ClaudeMode;
   opencodeMode: OpenCodeMode;
+  codexMode: CodexMode;
   initialPrompt: string;
   networkAccessMode: NetworkAccessMode;
   portMappings: PortMapping[];
@@ -99,6 +102,7 @@ export function CreateEnvironmentDialog({
   const configDefaultAgent = resolved.defaultAgent as AgentType;
   const configClaudeMode = resolved.claudeMode as ClaudeMode;
   const configOpencodeMode = resolved.opencodeMode as OpenCodeMode;
+  const configCodexMode = resolved.codexMode as CodexMode;
 
   const [environmentType, setEnvironmentType] = useState<EnvironmentType>("containerized");
   const [environmentName, setEnvironmentName] = useState("");
@@ -106,6 +110,7 @@ export function CreateEnvironmentDialog({
   const [agentType, setAgentType] = useState<AgentType>(configDefaultAgent);
   const [claudeMode, setClaudeMode] = useState<ClaudeMode>(configClaudeMode);
   const [opencodeMode, setOpencodeMode] = useState<OpenCodeMode>(configOpencodeMode);
+  const [codexMode, setCodexMode] = useState<CodexMode>(configCodexMode);
   const [initialPrompt, setInitialPrompt] = useState("");
   const [networkAccessMode, setNetworkAccessMode] = useState<NetworkAccessMode>("full");
   const [portMappings, setPortMappings] = useState<PortMapping[]>(defaultPortMappings);
@@ -139,11 +144,12 @@ export function CreateEnvironmentDialog({
     setAgentType(configDefaultAgent);
     setClaudeMode(configClaudeMode);
     setOpencodeMode(configOpencodeMode);
+    setCodexMode(configCodexMode);
     setInitialPrompt("");
     setNetworkAccessMode("full");
     setPortMappings(defaultPortMappings);
     setShowPortConfig(defaultPortMappings.length > 0);
-  }, [defaultPortMappings, configDefaultAgent, configClaudeMode, configOpencodeMode]);
+  }, [defaultPortMappings, configDefaultAgent, configClaudeMode, configOpencodeMode, configCodexMode]);
 
   // Sync defaults when dialog opens
   // This ensures the dialog always starts with the latest defaults, since the component
@@ -155,6 +161,7 @@ export function CreateEnvironmentDialog({
       setAgentType(configDefaultAgent);
       setClaudeMode(configClaudeMode);
       setOpencodeMode(configOpencodeMode);
+      setCodexMode(configCodexMode);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally omit defaultPortMappings and configDefaultAgent:
     // we read the current value at dialog-open time, not re-sync when defaults change mid-dialog
@@ -230,6 +237,7 @@ export function CreateEnvironmentDialog({
           agentType,
           claudeMode,
           opencodeMode,
+          codexMode,
           initialPrompt: initialPrompt.trim(),
           networkAccessMode,
           portMappings,
@@ -245,7 +253,7 @@ export function CreateEnvironmentDialog({
         console.error("Failed to create environment:", err);
       }
     },
-    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, initialPrompt, networkAccessMode, portMappings, onCreate, resetForm, onOpenChange, projectId, validatePortMappings]
+    [environmentType, environmentName, launchAgent, agentType, claudeMode, opencodeMode, codexMode, initialPrompt, networkAccessMode, portMappings, onCreate, resetForm, onOpenChange, projectId, validatePortMappings]
   );
 
   const handlePromptKeyDown = useCallback(
@@ -437,61 +445,67 @@ export function CreateEnvironmentDialog({
                     : "Codex Mode"}
               </Label>
               <div className="grid grid-cols-2 gap-2 w-full">
-                {agentType === "codex" ? (
-                  <div className="col-span-2 rounded-lg border border-muted px-3 py-2 text-sm text-muted-foreground">
-                    Codex runs in native mode.
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (agentType === "claude") {
-                          setClaudeMode("terminal");
-                        } else {
-                          setOpencodeMode("terminal");
-                        }
-                      }}
-                      disabled={isLoading || !launchAgent}
-                      className={cn(
-                        "p-2 rounded-lg border-2 text-left transition-colors",
-                        (agentType === "claude" ? claudeMode : opencodeMode) === "terminal"
-                          ? "border-primary bg-primary/5"
-                          : UNSELECTED_CARD_CLASSES,
-                        (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Terminal className="h-3.5 w-3.5" />
-                        Terminal
-                      </div>
-                    </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (agentType === "claude") {
+                        setClaudeMode("terminal");
+                      } else if (agentType === "opencode") {
+                        setOpencodeMode("terminal");
+                      } else {
+                        setCodexMode("terminal");
+                      }
+                    }}
+                    disabled={isLoading || !launchAgent}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      (agentType === "claude"
+                        ? claudeMode
+                        : agentType === "opencode"
+                          ? opencodeMode
+                          : codexMode) === "terminal"
+                        ? "border-primary bg-primary/5"
+                        : UNSELECTED_CARD_CLASSES,
+                      (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Terminal className="h-3.5 w-3.5" />
+                      Terminal
+                    </div>
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (agentType === "claude") {
-                          setClaudeMode("native");
-                        } else {
-                          setOpencodeMode("native");
-                        }
-                      }}
-                      disabled={isLoading || !launchAgent}
-                      className={cn(
-                        "p-2 rounded-lg border-2 text-left transition-colors",
-                        (agentType === "claude" ? claudeMode : opencodeMode) === "native"
-                          ? "border-primary bg-primary/5"
-                          : UNSELECTED_CARD_CLASSES,
-                        (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Bot className="h-3.5 w-3.5" />
-                        Native
-                      </div>
-                    </button>
-                  </>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (agentType === "claude") {
+                        setClaudeMode("native");
+                      } else if (agentType === "opencode") {
+                        setOpencodeMode("native");
+                      } else {
+                        setCodexMode("native");
+                      }
+                    }}
+                    disabled={isLoading || !launchAgent}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left transition-colors",
+                      (agentType === "claude"
+                        ? claudeMode
+                        : agentType === "opencode"
+                          ? opencodeMode
+                          : codexMode) === "native"
+                        ? "border-primary bg-primary/5"
+                        : UNSELECTED_CARD_CLASSES,
+                      (isLoading || !launchAgent) && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Bot className="h-3.5 w-3.5" />
+                      Native
+                    </div>
+                  </button>
+                </>
               </div>
             </div>
           </div>

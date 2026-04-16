@@ -14,6 +14,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 const resizeMock = mock(async () => {});
 const connectMock = mock(async () => {});
+const writeMock = mock(async () => {});
 
 mock.module("@/hooks/useTerminal", () => ({
   useTerminal: () => ({
@@ -24,7 +25,7 @@ mock.module("@/hooks/useTerminal", () => ({
     connect: connectMock,
     disconnect: mock(async () => {}),
     resize: resizeMock,
-    write: mock(async () => {}),
+    write: writeMock,
   }),
 }));
 
@@ -186,6 +187,7 @@ describe("PersistentTerminal", () => {
     cleanup();
     resizeMock.mockClear();
     connectMock.mockClear();
+    writeMock.mockClear();
     portalStoreActions.markTerminalOpened.mockClear();
     portalStoreActions.setTerminalContainer.mockClear();
     portalStoreActions.setTerminalPane.mockClear();
@@ -211,6 +213,7 @@ describe("PersistentTerminal", () => {
           codexReasoningEffort: "medium",
           opencodeMode: "terminal",
           claudeMode: "terminal",
+          codexMode: "native",
           terminalAppearance: {
             fontFamily: "Fira Code",
             fontSize: 14,
@@ -366,5 +369,27 @@ describe("PersistentTerminal", () => {
 
     expect(usePaneLayoutStore.getState().environments.get("env-1")?.activePaneId).toBe("pane-1");
     expect(usePaneLayoutStore.getState().activeEnvironmentId).toBe("env-2");
+  });
+
+  it("launches Codex terminal mode with the initial prompt", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        initialPrompt={"Fix the failing tests"}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith('codex "Fix the failing tests"\n');
+    });
   });
 });

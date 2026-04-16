@@ -233,6 +233,9 @@ pub struct Environment {
     /// Per-environment OpenCode mode override (None = use global config)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_mode: Option<OpenCodeMode>,
+    /// Per-environment Codex mode override (None = use global config)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_mode: Option<CodexMode>,
 }
 
 /// Default branch for backward compatibility with existing environments
@@ -338,6 +341,7 @@ impl Environment {
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
+            codex_mode: None,
         }
     }
 
@@ -376,6 +380,7 @@ impl Environment {
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
+            codex_mode: None,
         }
     }
 
@@ -414,6 +419,7 @@ impl Environment {
             default_agent: None,
             claude_mode: None,
             opencode_mode: None,
+            codex_mode: None,
         }
     }
 
@@ -543,6 +549,8 @@ pub enum SessionType {
     ClaudeYolo,
     /// OpenCode session
     Opencode,
+    /// Codex session
+    Codex,
     /// Root shell session (logged in as root)
     Root,
 }
@@ -560,6 +568,7 @@ impl std::fmt::Display for SessionType {
             SessionType::Claude => write!(f, "claude"),
             SessionType::ClaudeYolo => write!(f, "claude-yolo"),
             SessionType::Opencode => write!(f, "opencode"),
+            SessionType::Codex => write!(f, "codex"),
             SessionType::Root => write!(f, "root"),
         }
     }
@@ -731,6 +740,17 @@ pub enum ClaudeMode {
     Native,
 }
 
+/// Codex mode - terminal CLI or native chat interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexMode {
+    /// Terminal mode - launches Codex CLI in terminal
+    Terminal,
+    /// Native mode - uses the Codex bridge chat interface
+    #[default]
+    Native,
+}
+
 /// Agent style - terminal CLI or native chat interface (used for project-level override)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -848,6 +868,9 @@ pub struct GlobalConfig {
     /// Claude mode - terminal CLI or native chat interface
     #[serde(default)]
     pub claude_mode: ClaudeMode,
+    /// Codex mode - terminal CLI or native chat interface
+    #[serde(default)]
+    pub codex_mode: CodexMode,
     /// Terminal appearance settings (font, size, colors)
     #[serde(default)]
     pub terminal_appearance: TerminalAppearance,
@@ -874,6 +897,7 @@ impl Default for GlobalConfig {
             codex_reasoning_effort: default_codex_reasoning_effort(),
             opencode_mode: OpenCodeMode::default(),
             claude_mode: ClaudeMode::default(),
+            codex_mode: CodexMode::default(),
             terminal_appearance: TerminalAppearance::default(),
             terminal_scrollback: default_terminal_scrollback(),
             debug_logging: false,
