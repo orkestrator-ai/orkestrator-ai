@@ -73,6 +73,12 @@ export function useVirtuosoScrollState(
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Resolve initial restore state once on mount
   const [restoreState] = useState<StateSnapshot | undefined>(() =>
@@ -126,6 +132,7 @@ export function useVirtuosoScrollState(
     // an additional scroll. requestAnimationFrame ensures Virtuoso has
     // processed height corrections from Phase 1 before we scroll.
     requestAnimationFrame(() => {
+      if (!mountedRef.current) return;
       handle.scrollTo({
         top: SCROLL_TO_ABSOLUTE_BOTTOM,
         behavior: "smooth",

@@ -83,6 +83,7 @@ export function useScrollLock(
   // triggering intermediate scroll events that incorrectly disable scroll lock
   // and cause the scroll-to-bottom button to flicker.
   const isProgrammaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const persistCurrentState = useCallback(() => {
     if (!persistKey || !viewportElement) return;
@@ -186,6 +187,10 @@ export function useScrollLock(
       if (isProgrammaticScrollRef.current) {
         if (atBottom) {
           isProgrammaticScrollRef.current = false;
+          if (programmaticScrollTimerRef.current) {
+            clearTimeout(programmaticScrollTimerRef.current);
+            programmaticScrollTimerRef.current = null;
+          }
           setIsAtBottom(true);
           setIsScrollLocked(true);
           isScrollLockedRef.current = true;
@@ -194,7 +199,7 @@ export function useScrollLock(
         if (persistKey) {
           setPersistedScrollState(persistKey, {
             scrollTop: viewportElement.scrollTop,
-            isAtBottom: isProgrammaticScrollRef.current ? true : atBottom,
+            isAtBottom: true,
             isScrollLocked: true,
           });
         }
@@ -223,7 +228,14 @@ export function useScrollLock(
     };
 
     viewportElement.addEventListener("scroll", handleScroll, { passive: true });
-    return () => viewportElement.removeEventListener("scroll", handleScroll);
+    return () => {
+      viewportElement.removeEventListener("scroll", handleScroll);
+      // Clean up the safety timer on unmount / viewport change
+      if (programmaticScrollTimerRef.current) {
+        clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    };
   }, [viewportElement, persistKey]);
 
   useEffect(() => {
@@ -276,6 +288,17 @@ export function useScrollLock(
     // isScrollLocked during the smooth scroll animation. The flag
     // is cleared when the scroll actually reaches the bottom.
     isProgrammaticScrollRef.current = true;
+
+    // Safety timeout: clear the guard if the smooth scroll never reaches
+    // the bottom (e.g., user interrupts, content resizes, or animation
+    // gets stuck). Without this, the guard would stay set forever.
+    if (programmaticScrollTimerRef.current) {
+      clearTimeout(programmaticScrollTimerRef.current);
+    }
+    programmaticScrollTimerRef.current = setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+      programmaticScrollTimerRef.current = null;
+    }, 2000);
 
     viewportElement.scrollTo({
       top: viewportElement.scrollHeight,

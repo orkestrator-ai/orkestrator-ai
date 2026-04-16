@@ -27,12 +27,9 @@ const mockSendPrompt = mock(async () => true);
 const mockGetSessionMessages = mock(async (): Promise<TestCodexMessage[]> => []);
 const mockSubscribeToEvents = mock(() => (async function* () {})());
 
-mock.module("@/hooks/useScrollLock", () => ({
-  useScrollLock: mock(() => ({
-    isAtBottom: true,
-    scrollToBottom: mock(() => {}),
-  })),
-}));
+// NOTE: Do NOT mock @/hooks/useScrollLock here — it pollutes the global
+// module cache and breaks useScrollLock.test.ts. The real hook returns
+// safe defaults (isAtBottom: true) when no viewport is found in happy-dom.
 
 mock.module("@/lib/tauri", () => ({
   getCodexServerLog: mock(async () => ""),

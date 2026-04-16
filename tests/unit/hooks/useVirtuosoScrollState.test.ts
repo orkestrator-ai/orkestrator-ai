@@ -171,6 +171,32 @@ describe("useVirtuosoScrollState", () => {
       });
       expect(result.current.isAtBottom).toBe(true);
     });
+
+    test("Phase 2 rAF does not call scrollTo after unmount", async () => {
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      // Start the two-phase scroll
+      act(() => {
+        result.current.scrollToBottom();
+      });
+
+      // Unmount before rAF fires
+      unmount();
+
+      // Flush rAF — scrollTo should NOT be called
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+
+      expect(scrollToCalls).toHaveLength(0);
+    });
   });
 
   describe("scroll state persistence", () => {

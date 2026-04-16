@@ -22,9 +22,9 @@ mock.module("@/lib/opencode-client", () => ({
   subscribeToEvents: mockSubscribeToEvents,
 }));
 
-mock.module("@/hooks", () => ({
-  useScrollLock: () => ({ isAtBottom: true, scrollToBottom: () => {} }),
-}));
+// NOTE: Do NOT mock @/hooks or @/hooks/useScrollLock here — it pollutes the
+// global bun module cache and breaks useScrollLock.test.ts. The real hook
+// returns safe defaults (isAtBottom: true) when no viewport is found.
 
 mock.module("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
