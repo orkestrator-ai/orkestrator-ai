@@ -114,14 +114,10 @@ session.post("/:id/prompt", async (c) => {
     const effort = rawEffort && ["low", "medium", "high", "xhigh", "max"].includes(rawEffort)
       ? (rawEffort as "low" | "medium" | "high" | "xhigh" | "max")
       : undefined;
-    const permissionMode = body.permissionMode as
-      | "default"
-      | "acceptEdits"
-      | "bypassPermissions"
-      | "plan"
-      | "dontAsk"
-      | "auto"
-      | undefined;
+    const rawPermissionMode = body.permissionMode as string | undefined;
+    const permissionMode = rawPermissionMode && ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"].includes(rawPermissionMode)
+      ? (rawPermissionMode as "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto")
+      : undefined;
     const attachments = body.attachments as
       | Array<{
           type: "file" | "image";
