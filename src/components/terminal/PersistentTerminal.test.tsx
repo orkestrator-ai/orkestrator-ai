@@ -699,4 +699,26 @@ describe("PersistentTerminal", () => {
       expect(writeMock).toHaveBeenCalledWith('codex "Use \\"\\$HOME\\" for the config path"\n');
     });
   });
+
+  it("escapes newlines in Codex prompts", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="codex"
+        containerId="container-1"
+        environmentId="env-1"
+        initialPrompt={"Fix line one\nand line two"}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith('codex "Fix line one\\nand line two"\n');
+    });
+  });
 });

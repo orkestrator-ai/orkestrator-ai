@@ -1092,7 +1092,8 @@ export function PersistentTerminal({
               .replace(/\\/g, '\\\\')
               .replace(/"/g, '\\"')
               .replace(/\$/g, '\\$')
-              .replace(/`/g, '\\`');
+              .replace(/`/g, '\\`')
+              .replace(/\n/g, '\\n');
             command += ` "${escapedPrompt}"`;
           }
           console.debug("[PersistentTerminal] Launching command for tab:", tabId, "command:", command);
