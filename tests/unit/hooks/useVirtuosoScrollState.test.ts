@@ -171,10 +171,72 @@ describe("useVirtuosoScrollState", () => {
         await new Promise((resolve) => setTimeout(resolve, 250));
       });
 
-      expect(scrollToIndexCalls.length).toBeGreaterThan(1);
-      expect(scrollToIndexCalls.length).toBeLessThanOrEqual(10);
+      // Exhaustion: exactly MAX_ATTEMPTS (10) retries when isAtBottom never flips
+      expect(scrollToIndexCalls).toHaveLength(10);
       // Even after exhausting retries, the footer scrollTo is still issued
       expect(scrollToCalls).toHaveLength(1);
+    });
+
+    test("ignores overlapping scrollToBottom invocations while one is in-flight", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      // Stay at non-bottom so the retry loop runs long enough to observe
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(false);
+      });
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollToBottom();
+        // Second call while the first is still iterating — should be ignored
+        result.current.scrollToBottom();
+        result.current.scrollToBottom();
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+
+      // Only one footer scrollTo fires despite three invocations
+      expect(scrollToCalls).toHaveLength(1);
+    });
+
+    test("can be invoked again after a previous scroll completes", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      // First invocation — let it complete via atBottomStateChange(true)
+      act(() => {
+        result.current.scrollToBottom();
+      });
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(true);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      expect(scrollToCalls).toHaveLength(1);
+
+      // Second invocation — should NOT be blocked by the in-flight guard
+      act(() => {
+        result.current.scrollToBottom();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      expect(scrollToCalls).toHaveLength(2);
     });
 
     test("does not optimistically set isAtBottom", async () => {

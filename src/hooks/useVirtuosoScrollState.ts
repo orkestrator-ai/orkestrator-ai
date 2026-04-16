@@ -13,6 +13,12 @@ const MAX_PERSISTED_STATES = 200;
  */
 const SCROLL_TO_ABSOLUTE_BOTTOM = 10_000_000;
 
+/** Maximum scrollToIndex retries when correcting estimated virtual heights */
+const SCROLL_TO_BOTTOM_MAX_ATTEMPTS = 10;
+
+/** Delay between retry attempts; ~one frame, gives Virtuoso time to fire atBottomStateChange */
+const SCROLL_TO_BOTTOM_RETRY_INTERVAL_MS = 16;
+
 const persistedStates = new Map<string, StateSnapshot>();
 
 function setPersistedState(key: string, state: StateSnapshot) {
@@ -74,6 +80,7 @@ export function useVirtuosoScrollState(
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
   const mountedRef = useRef(true);
+  const scrollInFlightRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -112,6 +119,10 @@ export function useVirtuosoScrollState(
   const scrollToBottom = useCallback(() => {
     const handle = virtuosoRef.current;
     if (!handle) return;
+    // Guard against overlapping invocations — a second call while the
+    // retry loop is still mid-flight would fire a duplicate footer scroll.
+    if (scrollInFlightRef.current) return;
+    scrollInFlightRef.current = true;
 
     // Virtuoso's virtual scrollHeight is based on *estimated* heights for
     // items that haven't been rendered yet. On long conversations those
@@ -120,11 +131,26 @@ export function useVirtuosoScrollState(
     // only goes to the bottom of the loaded window"). Each retry forces
     // Virtuoso to render and measure the tail items, correcting the virtual
     // height, until we actually reach the bottom.
-    const MAX_ATTEMPTS = 10;
     let attempts = 0;
 
+    const finish = () => {
+      scrollInFlightRef.current = false;
+      // Once stable at the last data item, smooth-scroll past it to reveal
+      // footer content (thinking indicator, question/approval cards,
+      // elapsed time). The browser clamps to the real scrollHeight, so
+      // this lands correctly even if retries exhausted without isAtBottom
+      // flipping true.
+      handle.scrollTo({
+        top: SCROLL_TO_ABSOLUTE_BOTTOM,
+        behavior: "smooth",
+      });
+    };
+
     const attempt = () => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {
+        scrollInFlightRef.current = false;
+        return;
+      }
       attempts += 1;
 
       handle.scrollToIndex({
@@ -135,20 +161,19 @@ export function useVirtuosoScrollState(
       // setTimeout (rather than rAF) gives Virtuoso time to fire
       // atBottomStateChange after rendering/measuring the tail items.
       setTimeout(() => {
-        if (!mountedRef.current) return;
-        if (!isAtBottomRef.current && attempts < MAX_ATTEMPTS) {
+        if (!mountedRef.current) {
+          scrollInFlightRef.current = false;
+          return;
+        }
+        if (
+          !isAtBottomRef.current &&
+          attempts < SCROLL_TO_BOTTOM_MAX_ATTEMPTS
+        ) {
           attempt();
           return;
         }
-
-        // Once stable at the last data item, smooth-scroll past it to
-        // reveal footer content (thinking indicator, question/approval
-        // cards, elapsed time).
-        handle.scrollTo({
-          top: SCROLL_TO_ABSOLUTE_BOTTOM,
-          behavior: "smooth",
-        });
-      }, 16);
+        finish();
+      }, SCROLL_TO_BOTTOM_RETRY_INTERVAL_MS);
     };
 
     attempt();
