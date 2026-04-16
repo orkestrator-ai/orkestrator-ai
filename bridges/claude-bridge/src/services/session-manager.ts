@@ -974,6 +974,9 @@ Remember: In planning mode, you can READ files but should NOT write or edit any 
         ...(permissionMode === "bypassPermissions" && { allowDangerouslySkipPermissions: true }),
         // Use effort level to control thinking depth (replaces maxThinkingTokens)
         ...(effortLevel && { effort: effortLevel }),
+        // Opus 4.7 defaults adaptive thinking display to "omitted" (signature only,
+        // redacted text). Opt back into "summarized" so thinking content renders in the UI.
+        thinking: { type: "adaptive", display: "summarized" },
         allowedTools: [
           "Read",
           "Edit",
