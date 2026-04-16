@@ -9,7 +9,7 @@ import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayou
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData } from "@/stores/terminalPortalStore";
 import { cn } from "@/lib/utils";
-import { loadSessionBuffer, setSessionHasLaunchedCommand } from "@/lib/tauri";
+import { setSessionHasLaunchedCommand } from "@/lib/tauri";
 import type { TabType } from "@/contexts";
 import {
   DEFAULT_TERMINAL_APPEARANCE,
@@ -422,6 +422,8 @@ export function PersistentTerminal({
   const {
     createSession: createPersistentSession,
     updateSessionActivity,
+    saveSessionBuffer: savePersistentSessionBuffer,
+    loadSessionBuffer: loadPersistentSessionBuffer,
     getSessionsByEnvironment,
     updateSessionStatus,
     isLoadingEnvironment,
@@ -439,7 +441,7 @@ export function PersistentTerminal({
 
   // Load persistent session data BEFORE PTY is created
   useEffect(() => {
-    if (!environmentId || !containerId) return;
+    if (!environmentId) return;
     if (existingSession) return;
     if (hasRestoredFromPersistentRef.current) return;
     if (isSessionsLoading) return;
@@ -464,7 +466,7 @@ export function PersistentTerminal({
 
       hasLaunchedCommandRef.current = existingPersistentSession.hasLaunchedCommand ?? false;
 
-      loadSessionBuffer(existingPersistentSession.id)
+      loadPersistentSessionBuffer(existingPersistentSession.id)
         .then((buffer) => {
           if (buffer) {
             console.debug("[PersistentTerminal] Loaded persistent buffer, length:", buffer.length);
@@ -479,11 +481,11 @@ export function PersistentTerminal({
     }
   }, [
     environmentId,
-    containerId,
     tabId,
     sessionKey,
     existingSession,
     isSessionsLoading,
+    loadPersistentSessionBuffer,
     getSessionsByEnvironment,
     setSession,
     setSerializedBuffer,
@@ -504,7 +506,7 @@ export function PersistentTerminal({
   // Create persistent session for sidebar tracking
   useEffect(() => {
     if (isSessionsLoading) return;
-    if (!sessionId || !containerId || !environmentId) return;
+    if (!sessionId || !environmentId) return;
     if (persistentSessionCreatedRef.current || creationInProgressRef.current) return;
 
     const existingSessions = getSessionsByEnvironment(environmentId);
@@ -523,9 +525,15 @@ export function PersistentTerminal({
     } else {
       creationInProgressRef.current = true;
       const sessionType = tabTypeToSessionType(tabType);
+      const persistentContainerId = containerId ?? "";
 
-      console.debug("[PersistentTerminal] Creating persistent session:", { sessionId, environmentId, tabType: sessionType });
-      createPersistentSession(environmentId, containerId, tabId, sessionType)
+      console.debug("[PersistentTerminal] Creating persistent session:", {
+        sessionId,
+        environmentId,
+        tabType: sessionType,
+        persistentContainerId,
+      });
+      createPersistentSession(environmentId, persistentContainerId, tabId, sessionType)
         .then((session) => {
           console.debug("[PersistentTerminal] Persistent session created:", session.id);
           persistentSessionIdRef.current = session.id;
@@ -895,6 +903,12 @@ export function PersistentTerminal({
 
           if (restorationComplete && newBufferIsMeaningful) {
             useTerminalSessionStore.getState().setSerializedBuffer(sessionKey, bufferContent);
+            const persistentId = persistentSessionIdRef.current;
+            if (persistentId) {
+              savePersistentSessionBuffer(persistentId, bufferContent).catch((err) => {
+                console.error("[PersistentTerminal] Failed to persist session buffer:", err);
+              });
+            }
           }
         }
       } catch (err) {
@@ -926,6 +940,7 @@ export function PersistentTerminal({
     handleSelectAll,
     toggleComposeBar,
     sessionKey,
+    savePersistentSessionBuffer,
   ]);
 
   // Refresh terminal when it becomes visible (isActive changes to true)
