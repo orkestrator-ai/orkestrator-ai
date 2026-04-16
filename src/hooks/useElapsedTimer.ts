@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 interface UseElapsedTimerReturn {
   /** Seconds elapsed since loading started, or null when not loading */
@@ -18,41 +18,34 @@ interface UseElapsedTimerReturn {
 export function useElapsedTimer(
   isLoading: boolean | undefined,
   sessionId: string | undefined,
+  loadingStartedAt?: number,
+  storedFinalElapsedSeconds?: number | null,
 ): UseElapsedTimerReturn {
-  const loadingStartTimeRef = useRef<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
-  const [finalElapsedSeconds, setFinalElapsedSeconds] = useState<number | null>(null);
 
   // Reset timer state when session changes (e.g. resume session)
   useEffect(() => {
-    loadingStartTimeRef.current = null;
     setElapsedSeconds(null);
-    setFinalElapsedSeconds(null);
   }, [sessionId]);
 
   useEffect(() => {
-    if (isLoading) {
-      if (loadingStartTimeRef.current === null) {
-        loadingStartTimeRef.current = Date.now();
-      }
-      setFinalElapsedSeconds(null);
-
-      const interval = setInterval(() => {
-        if (loadingStartTimeRef.current !== null) {
-          setElapsedSeconds(Math.floor((Date.now() - loadingStartTimeRef.current) / 1000));
-        }
-      }, 1000);
-
-      return () => clearInterval(interval);
-    } else {
-      if (loadingStartTimeRef.current !== null) {
-        const finalTime = Math.floor((Date.now() - loadingStartTimeRef.current) / 1000);
-        setFinalElapsedSeconds(finalTime);
-        loadingStartTimeRef.current = null;
-      }
+    if (!isLoading || loadingStartedAt === undefined) {
       setElapsedSeconds(null);
+      return;
     }
-  }, [isLoading]);
 
-  return { elapsedSeconds, finalElapsedSeconds };
+    const updateElapsed = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - loadingStartedAt) / 1000)));
+    };
+
+    updateElapsed();
+    const interval = setInterval(updateElapsed, 1000);
+
+    return () => clearInterval(interval);
+  }, [isLoading, loadingStartedAt]);
+
+  return {
+    elapsedSeconds,
+    finalElapsedSeconds: isLoading ? null : (storedFinalElapsedSeconds ?? null),
+  };
 }

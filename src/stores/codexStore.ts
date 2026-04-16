@@ -10,6 +10,7 @@ import {
   type CodexSlashCommand,
 } from "@/lib/codex-client";
 import { mergeNativeMessagesPreservingClientOnly } from "@/lib/chat/client-only-messages";
+import { reconcileTimedSession, updateTimedSessionLoading } from "@/lib/session-timer";
 import { createSessionKey } from "@/lib/utils";
 import type { FileMention } from "@/types";
 
@@ -24,6 +25,8 @@ export interface CodexSessionState {
   sessionId: string;
   messages: CodexMessage[];
   isLoading: boolean;
+  loadingStartedAt?: number;
+  lastCompletedElapsedSeconds?: number | null;
   error?: string;
   title?: string;
 }
@@ -128,7 +131,14 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
     set((state) => {
       const next = new Map(state.sessions);
       if (session) {
-        next.set(sessionKey, session);
+        const previous = state.sessions.get(sessionKey);
+        next.set(
+          sessionKey,
+          reconcileTimedSession(
+            previous?.sessionId === session.sessionId ? previous : undefined,
+            session,
+          ),
+        );
       } else {
         next.delete(sessionKey);
       }
@@ -193,7 +203,7 @@ export const useCodexStore = create<CodexState>()((set, get) => ({
       const session = state.sessions.get(sessionKey);
       if (!session) return state;
       const next = new Map(state.sessions);
-      next.set(sessionKey, { ...session, isLoading });
+      next.set(sessionKey, updateTimedSessionLoading(session, isLoading));
       return { sessions: next };
     }),
 

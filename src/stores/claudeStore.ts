@@ -14,6 +14,7 @@ import {
   type ClaudeEffortLevel,
 } from "@/lib/claude-client";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import { reconcileTimedSession, updateTimedSessionLoading } from "@/lib/session-timer";
 import { createSessionKey } from "@/lib/utils";
 import type { FileMention } from "@/types";
 
@@ -44,6 +45,8 @@ export interface ClaudeSessionState {
   sessionId: string;
   messages: ClaudeMessage[];
   isLoading: boolean;
+  loadingStartedAt?: number;
+  lastCompletedElapsedSeconds?: number | null;
   error?: string;
   title?: string;
 }
@@ -224,7 +227,14 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
     set((state) => {
       const newMap = new Map(state.sessions);
       if (session) {
-        newMap.set(sessionKey, session);
+        const previous = state.sessions.get(sessionKey);
+        newMap.set(
+          sessionKey,
+          reconcileTimedSession(
+            previous?.sessionId === session.sessionId ? previous : undefined,
+            session,
+          ),
+        );
       } else {
         newMap.delete(sessionKey);
       }
@@ -311,10 +321,7 @@ export const useClaudeStore = create<ClaudeState>()((set, get) => ({
       if (!session) return state;
 
       const newMap = new Map(state.sessions);
-      newMap.set(sessionKey, {
-        ...session,
-        isLoading,
-      });
+      newMap.set(sessionKey, updateTimedSessionLoading(session, isLoading));
       return { sessions: newMap };
     }),
 

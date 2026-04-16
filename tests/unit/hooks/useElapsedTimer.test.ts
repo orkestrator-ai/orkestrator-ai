@@ -24,113 +24,168 @@ describe("useElapsedTimer", () => {
   });
 
   describe("loading transitions", () => {
-    test("elapsedSeconds is null before interval fires", () => {
-      const now = 1000000;
-      dateNowSpy = spyOn(Date, "now").mockReturnValue(now);
-
+    test("elapsedSeconds is derived immediately from loadingStartedAt", () => {
+      const startTime = 1000000;
+      dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime + 5000);
       const { result, rerender } = renderHook(
-        ({ isLoading, sessionId }) => useElapsedTimer(isLoading, sessionId),
+        ({ isLoading, sessionId, loadingStartedAt }) =>
+          useElapsedTimer(isLoading, sessionId, loadingStartedAt),
         { initialProps: { isLoading: false, sessionId: "session-1" } },
       );
 
-      // Start loading — interval hasn't fired yet
-      rerender({ isLoading: true, sessionId: "session-1" });
+      rerender({ isLoading: true, sessionId: "session-1", loadingStartedAt: startTime });
+
+      expect(result.current.elapsedSeconds).toBe(5);
+      expect(result.current.finalElapsedSeconds).toBeNull();
+    });
+
+    test("elapsedSeconds stays null while loading when loadingStartedAt is missing", () => {
+      const { result, rerender } = renderHook(
+        ({ isLoading, sessionId, loadingStartedAt }) =>
+          useElapsedTimer(isLoading, sessionId, loadingStartedAt),
+        { initialProps: { isLoading: false, sessionId: "session-1" } },
+      );
+
+      rerender({ isLoading: true, sessionId: "session-1", loadingStartedAt: undefined });
 
       expect(result.current.elapsedSeconds).toBeNull();
       expect(result.current.finalElapsedSeconds).toBeNull();
     });
 
-    test("finalElapsedSeconds is set when loading ends", () => {
+    test("ticks elapsedSeconds from loadingStartedAt", () => {
       const startTime = 1000000;
       dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime);
 
       const { result, rerender } = renderHook(
-        ({ isLoading, sessionId }) => useElapsedTimer(isLoading, sessionId),
+        ({ isLoading, sessionId, loadingStartedAt }) =>
+          useElapsedTimer(isLoading, sessionId, loadingStartedAt),
+        { initialProps: { isLoading: true, sessionId: "session-1", loadingStartedAt: startTime } },
+      );
+
+      dateNowSpy.mockReturnValue(startTime + 3000);
+      act(() => {
+        setIntervalMock?.advance();
+      });
+
+      expect(result.current.elapsedSeconds).toBe(3);
+    });
+
+    test("returns stored finalElapsedSeconds when loading ends", () => {
+      const { result, rerender } = renderHook(
+        ({ isLoading, sessionId, finalElapsedSeconds }) =>
+          useElapsedTimer(isLoading, sessionId, undefined, finalElapsedSeconds),
         { initialProps: { isLoading: false, sessionId: "session-1" } },
       );
 
-      // Start loading
-      rerender({ isLoading: true, sessionId: "session-1" });
-
-      // Stop loading after 5 seconds
-      dateNowSpy.mockReturnValue(startTime + 5000);
-      rerender({ isLoading: false, sessionId: "session-1" });
-
+      rerender({ isLoading: false, sessionId: "session-1", finalElapsedSeconds: 5 });
       expect(result.current.elapsedSeconds).toBeNull();
       expect(result.current.finalElapsedSeconds).toBe(5);
     });
 
-    test("finalElapsedSeconds clears when loading starts again", () => {
+    test("clears stored finalElapsedSeconds when loading starts again", () => {
       const startTime = 1000000;
-      dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime);
+      dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime + 1000);
 
       const { result, rerender } = renderHook(
-        ({ isLoading, sessionId }) => useElapsedTimer(isLoading, sessionId),
-        { initialProps: { isLoading: true, sessionId: "session-1" } },
+        ({ isLoading, sessionId, loadingStartedAt, finalElapsedSeconds }) =>
+          useElapsedTimer(isLoading, sessionId, loadingStartedAt, finalElapsedSeconds),
+        {
+          initialProps: {
+            isLoading: false,
+            sessionId: "session-1",
+            finalElapsedSeconds: 3,
+          },
+        },
       );
 
-      // Stop loading
-      dateNowSpy.mockReturnValue(startTime + 3000);
-      rerender({ isLoading: false, sessionId: "session-1" });
-      expect(result.current.finalElapsedSeconds).toBe(3);
+      rerender({
+        isLoading: true,
+        sessionId: "session-1",
+        loadingStartedAt: startTime,
+        finalElapsedSeconds: null,
+      });
 
-      // Start loading again
-      dateNowSpy.mockReturnValue(startTime + 4000);
-      rerender({ isLoading: true, sessionId: "session-1" });
-      expect(result.current.finalElapsedSeconds).toBeNull();
-    });
-
-    test("does not set finalElapsedSeconds if was never loading", () => {
-      const { result, rerender } = renderHook(
-        ({ isLoading, sessionId }) => useElapsedTimer(isLoading, sessionId),
-        { initialProps: { isLoading: false, sessionId: "session-1" } },
-      );
-
-      // Re-render with same false state
-      rerender({ isLoading: false, sessionId: "session-1" });
+      expect(result.current.elapsedSeconds).toBe(1);
       expect(result.current.finalElapsedSeconds).toBeNull();
     });
   });
 
   describe("session changes", () => {
-    test("resets all timer state when sessionId changes", () => {
+    test("resets elapsed timer state when sessionId changes", () => {
       const startTime = 1000000;
       dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime);
 
       const { result, rerender } = renderHook(
-        ({ isLoading, sessionId }) => useElapsedTimer(isLoading, sessionId),
-        { initialProps: { isLoading: true, sessionId: "session-1" } },
+        ({ isLoading, sessionId, loadingStartedAt, finalElapsedSeconds }) =>
+          useElapsedTimer(isLoading, sessionId, loadingStartedAt, finalElapsedSeconds),
+        {
+          initialProps: {
+            isLoading: true,
+            sessionId: "session-1",
+            loadingStartedAt: startTime,
+          },
+        },
       );
 
-      // Stop loading to get a finalElapsedSeconds
       dateNowSpy.mockReturnValue(startTime + 10000);
-      rerender({ isLoading: false, sessionId: "session-1" });
-      expect(result.current.finalElapsedSeconds).toBe(10);
-
-      // Change session
-      rerender({ isLoading: false, sessionId: "session-2" });
+      rerender({
+        isLoading: false,
+        sessionId: "session-2",
+        loadingStartedAt: undefined,
+        finalElapsedSeconds: null,
+      });
       expect(result.current.elapsedSeconds).toBeNull();
       expect(result.current.finalElapsedSeconds).toBeNull();
     });
 
     test("resets when sessionId changes to undefined", () => {
-      const startTime = 1000000;
-      dateNowSpy = spyOn(Date, "now").mockReturnValue(startTime);
-
       const { result, rerender } = renderHook(
-        ({ isLoading, sessionId }) => useElapsedTimer(isLoading, sessionId),
-        { initialProps: { isLoading: true as boolean | undefined, sessionId: "session-1" as string | undefined } },
+        ({ isLoading, sessionId, finalElapsedSeconds }) =>
+          useElapsedTimer(isLoading, sessionId, undefined, finalElapsedSeconds),
+        {
+          initialProps: {
+            isLoading: false as boolean | undefined,
+            sessionId: "session-1" as string | undefined,
+            finalElapsedSeconds: 5,
+          },
+        },
       );
 
-      dateNowSpy.mockReturnValue(startTime + 5000);
-      rerender({ isLoading: false, sessionId: "session-1" });
+      rerender({ isLoading: false, sessionId: "session-1", finalElapsedSeconds: 5 });
       expect(result.current.finalElapsedSeconds).toBe(5);
 
-      rerender({ isLoading: false, sessionId: undefined });
+      rerender({ isLoading: false, sessionId: undefined, finalElapsedSeconds: null });
       expect(result.current.finalElapsedSeconds).toBeNull();
     });
   });
 });
+
+const setIntervalMock = (() => {
+  let callback: (() => void) | null = null;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+
+  beforeEach(() => {
+    callback = null;
+    globalThis.setInterval = (((fn: TimerHandler) => {
+      callback = fn as () => void;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown) as typeof setInterval;
+    globalThis.clearInterval = (((_id?: ReturnType<typeof setInterval>) => undefined) as unknown) as typeof clearInterval;
+  });
+
+  afterEach(() => {
+    callback = null;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  });
+
+  return {
+    advance() {
+      callback?.();
+    },
+  };
+})();
 
 function spyOn<T extends object, K extends keyof T>(obj: T, method: K) {
   const original = obj[method];

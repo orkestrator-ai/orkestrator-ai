@@ -210,6 +210,8 @@ export function CodexChatTab({
   const { elapsedSeconds, finalElapsedSeconds } = useElapsedTimer(
     session?.isLoading,
     session?.sessionId,
+    session?.loadingStartedAt,
+    session?.lastCompletedElapsedSeconds,
   );
 
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {

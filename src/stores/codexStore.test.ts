@@ -96,4 +96,29 @@ describe("codexStore message helpers", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]?.id).toBe("server-2");
   });
+
+  test("preserves timer metadata across loading transitions", () => {
+    const originalNow = Date.now;
+    Date.now = () => 1000;
+
+    try {
+      const store = useCodexStore.getState();
+      store.setSessionLoading(SESSION_KEY, true);
+
+      let session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.isLoading).toBe(true);
+      expect(session?.loadingStartedAt).toBe(1000);
+      expect(session?.lastCompletedElapsedSeconds).toBeNull();
+
+      Date.now = () => 6500;
+      store.setSessionLoading(SESSION_KEY, false);
+
+      session = useCodexStore.getState().sessions.get(SESSION_KEY);
+      expect(session?.isLoading).toBe(false);
+      expect(session?.loadingStartedAt).toBeUndefined();
+      expect(session?.lastCompletedElapsedSeconds).toBe(5);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
 });
