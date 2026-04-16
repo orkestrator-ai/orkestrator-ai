@@ -7,8 +7,12 @@ use crate::models::{
 };
 use base64::Engine;
 use chrono::Utc;
+use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -39,9 +43,20 @@ pub enum StorageError {
 /// Storage manager for persisting application data
 pub struct Storage {
     data_dir: PathBuf,
+    json_lock: Mutex<()>,
+}
+
+#[derive(Clone, Copy)]
+enum JsonBackupPolicy {
+    Never,
+    Always,
+    IfOlderThan(Duration),
 }
 
 impl Storage {
+    const MAX_JSON_BACKUPS: usize = 5;
+    const SESSIONS_BACKUP_MIN_AGE: Duration = Duration::from_secs(60);
+
     /// Create a new Storage instance, initializing the data directory if needed
     pub fn new() -> Result<Self, StorageError> {
         let data_dir = Self::get_data_dir()?;
@@ -51,12 +66,18 @@ impl Storage {
             fs::create_dir_all(&data_dir)?;
         }
 
-        Ok(Self { data_dir })
+        Ok(Self {
+            data_dir,
+            json_lock: Mutex::new(()),
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn new_for_tests(data_dir: PathBuf) -> Self {
-        Self { data_dir }
+        Self {
+            data_dir,
+            json_lock: Mutex::new(()),
+        }
     }
 
     /// Get the application data directory path
@@ -101,145 +122,203 @@ impl Storage {
         self.kanban_images_dir().join(format!("{}.webp", image_id))
     }
 
-    // --- Project Operations ---
-
-    /// Load all projects from storage, sorted by order
-    pub fn load_projects(&self) -> Result<Vec<Project>, StorageError> {
-        let path = self.projects_file();
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let contents = fs::read_to_string(&path)?;
-        let mut projects: Vec<Project> = serde_json::from_str(&contents)?;
-        // Sort by order field (lower values first)
-        projects.sort_by_key(|p| p.order);
-        Ok(projects)
-    }
-
-    /// Save all projects to storage
-    pub fn save_projects(&self, projects: &[Project]) -> Result<(), StorageError> {
-        let path = self.projects_file();
-        let contents = serde_json::to_string_pretty(projects)?;
-        fs::write(path, contents)?;
-        Ok(())
-    }
-
-    /// Add a new project
-    pub fn add_project(&self, mut project: Project) -> Result<Project, StorageError> {
-        let mut projects = self.load_projects()?;
-
-        // Check for duplicate git URL
-        if projects.iter().any(|p| p.git_url == project.git_url) {
-            return Err(StorageError::DuplicateProject(project.git_url));
-        }
-
-        // Set order to be at the end (max order + 1)
-        let max_order = projects.iter().map(|p| p.order).max().unwrap_or(-1);
-        project.order = max_order + 1;
-
-        projects.push(project.clone());
-        self.save_projects(&projects)?;
-        Ok(project)
-    }
-
-    /// Remove a project by ID
-    pub fn remove_project(&self, project_id: &str) -> Result<(), StorageError> {
-        let mut projects = self.load_projects()?;
-        let initial_len = projects.len();
-        projects.retain(|p| p.id != project_id);
-
-        if projects.len() == initial_len {
-            return Err(StorageError::ProjectNotFound(project_id.to_string()));
-        }
-
-        self.save_projects(&projects)?;
-        Ok(())
-    }
-
-    /// Get a project by ID
-    pub fn get_project(&self, project_id: &str) -> Result<Option<Project>, StorageError> {
-        let projects = self.load_projects()?;
-        Ok(projects.into_iter().find(|p| p.id == project_id))
-    }
-
-    /// Update a project
-    pub fn update_project(
+    fn with_json_lock<T>(
         &self,
-        project_id: &str,
-        updates: serde_json::Value,
-    ) -> Result<Project, StorageError> {
-        let mut projects = self.load_projects()?;
-        let project = projects
-            .iter_mut()
-            .find(|p| p.id == project_id)
-            .ok_or_else(|| StorageError::ProjectNotFound(project_id.to_string()))?;
-
-        // Apply updates (only allowed fields)
-        if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
-            project.name = name.to_string();
-        }
-        if let Some(local_path) = updates.get("localPath") {
-            project.local_path = local_path.as_str().map(String::from);
-        }
-
-        let updated = project.clone();
-        self.save_projects(&projects)?;
-        Ok(updated)
+        f: impl FnOnce() -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        let _guard = self
+            .json_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f()
     }
 
-    /// Reorder projects based on the provided order of IDs
-    /// The order field of each project is updated to match its position in the input array
-    /// Projects not in the input array are appended at the end in their current relative order
-    pub fn reorder_projects(&self, project_ids: &[String]) -> Result<Vec<Project>, StorageError> {
-        let mut projects = self.load_projects()?;
+    fn json_backup_path(path: &Path, index: usize) -> PathBuf {
+        path.with_file_name(format!(
+            "{}.bak.{}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            index
+        ))
+    }
 
-        // Create a set of provided IDs for quick lookup
-        let provided_ids: std::collections::HashSet<&String> = project_ids.iter().collect();
+    fn generate_corrupted_snapshot_path(path: &Path) -> PathBuf {
+        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+        path.with_file_name(format!(
+            "{}.corrupted.{}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            timestamp
+        ))
+    }
 
-        // Update the order field for each project based on its position in the input array
-        for (index, id) in project_ids.iter().enumerate() {
-            if let Some(project) = projects.iter_mut().find(|p| p.id == *id) {
-                project.order = index as i32;
+    fn should_rotate_json_backups(path: &Path, policy: JsonBackupPolicy) -> bool {
+        if !path.exists() {
+            return false;
+        }
+
+        match policy {
+            JsonBackupPolicy::Never => false,
+            JsonBackupPolicy::Always => true,
+            JsonBackupPolicy::IfOlderThan(min_age) => {
+                let first_backup = Self::json_backup_path(path, 1);
+                if !first_backup.exists() {
+                    return true;
+                }
+
+                let modified = match fs::metadata(&first_backup).and_then(|meta| meta.modified()) {
+                    Ok(modified) => modified,
+                    Err(error) => {
+                        warn!(
+                            path = %first_backup.display(),
+                            error = %error,
+                            "Failed to read JSON backup metadata, rotating backup"
+                        );
+                        return true;
+                    }
+                };
+
+                match modified.elapsed() {
+                    Ok(elapsed) => elapsed >= min_age,
+                    Err(error) => {
+                        warn!(
+                            path = %first_backup.display(),
+                            error = %error,
+                            "JSON backup modified time is in the future, rotating backup"
+                        );
+                        true
+                    }
+                }
+            }
+        }
+    }
+
+    fn rotate_json_backups(path: &Path, policy: JsonBackupPolicy) -> Result<(), StorageError> {
+        if !Self::should_rotate_json_backups(path, policy) {
+            return Ok(());
+        }
+
+        for index in (1..Self::MAX_JSON_BACKUPS).rev() {
+            let current = Self::json_backup_path(path, index);
+            let next = Self::json_backup_path(path, index + 1);
+
+            if next.exists() {
+                fs::remove_file(&next)?;
+            }
+
+            if current.exists() {
+                fs::rename(&current, &next)?;
             }
         }
 
-        // Handle projects not in the input array - append them at the end
-        let next_order = project_ids.len() as i32;
-        let mut missing_order = next_order;
-        for project in projects.iter_mut() {
-            if !provided_ids.contains(&project.id) {
-                project.order = missing_order;
-                missing_order += 1;
-            }
+        let first_backup = Self::json_backup_path(path, 1);
+        if first_backup.exists() {
+            fs::remove_file(&first_backup)?;
         }
 
-        self.save_projects(&projects)?;
+        if path.exists() {
+            fs::copy(path, &first_backup)?;
+        }
 
-        // Return projects sorted by new order
-        projects.sort_by_key(|p| p.order);
-        Ok(projects)
+        Ok(())
     }
 
-    // --- Environment Operations ---
+    #[cfg(windows)]
+    fn replace_file(path: &Path, temp_path: &Path) -> Result<(), StorageError> {
+        use std::iter;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
 
-    /// Attempt to recover a corrupted JSON array by finding valid JSON
-    /// Uses multiple strategies for efficiency:
-    /// 1. Try truncating at the error position and finding the last valid array close
-    /// 2. Find all ']' positions and try each one starting from the end
-    fn try_repair_json_array(
+        if !path.exists() {
+            fs::rename(temp_path, path)?;
+            return Ok(());
+        }
+
+        let encode = |value: &Path| {
+            value
+                .as_os_str()
+                .encode_wide()
+                .chain(iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+
+        let target = encode(path);
+        let replacement = encode(temp_path);
+        let replaced = unsafe {
+            ReplaceFileW(
+                target.as_ptr(),
+                replacement.as_ptr(),
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        if replaced == 0 {
+            return Err(StorageError::Io(std::io::Error::last_os_error()));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    fn replace_file(path: &Path, temp_path: &Path) -> Result<(), StorageError> {
+        fs::rename(temp_path, path)?;
+        Ok(())
+    }
+
+    fn write_atomic(
+        path: &Path,
+        contents: &str,
+        backup_policy: JsonBackupPolicy,
+    ) -> Result<(), StorageError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let temp_path = path.with_file_name(format!(
+            ".{}.{}.tmp",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+
+        let write_result = (|| -> Result<(), StorageError> {
+            let mut file = fs::File::create(&temp_path)?;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+
+            Self::rotate_json_backups(path, backup_policy)?;
+            Self::replace_file(path, &temp_path)?;
+
+            if let Some(parent) = path.parent() {
+                if let Ok(parent_dir) = fs::File::open(parent) {
+                    let _ = parent_dir.sync_all();
+                }
+            }
+
+            Ok(())
+        })();
+
+        if write_result.is_err() && temp_path.exists() {
+            let _ = fs::remove_file(&temp_path);
+        }
+
+        write_result
+    }
+
+    fn try_repair_json_array<T>(
         contents: &str,
         error_line: usize,
         _error_column: usize,
-    ) -> Option<String> {
+    ) -> Option<String>
+    where
+        T: DeserializeOwned,
+    {
         let trimmed = contents.trim();
 
-        // Must start with '[' to be a valid array
         if !trimmed.starts_with('[') {
             return None;
         }
 
-        // Strategy 1: Use error position to truncate and find the last valid ']'
-        // Find the byte position of the error line
         let mut current_line = 1;
         let mut error_byte_pos = trimmed.len();
         for (i, c) in trimmed.char_indices() {
@@ -252,25 +331,22 @@ impl Storage {
             }
         }
 
-        // Find the last ']' before the error position
         if let Some(last_bracket) = trimmed[..error_byte_pos].rfind(']') {
             let candidate = &trimmed[..=last_bracket];
-            if serde_json::from_str::<Vec<Environment>>(candidate).is_ok() {
+            if serde_json::from_str::<T>(candidate).is_ok() {
                 return Some(candidate.to_string());
             }
         }
 
-        // Strategy 2: Find all ']' positions and try each one from the end
         let bracket_positions: Vec<usize> = trimmed
             .char_indices()
             .filter(|(_, c)| *c == ']')
             .map(|(i, _)| i)
             .collect();
 
-        // Try from the last ']' backwards (most likely to be the valid end)
         for &pos in bracket_positions.iter().rev() {
             let candidate = &trimmed[..=pos];
-            if serde_json::from_str::<Vec<Environment>>(candidate).is_ok() {
+            if serde_json::from_str::<T>(candidate).is_ok() {
                 return Some(candidate.to_string());
             }
         }
@@ -278,125 +354,290 @@ impl Storage {
         None
     }
 
-    /// Generate a timestamped backup path for corrupted files
-    fn generate_backup_path(original_path: &std::path::Path) -> PathBuf {
-        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-        let backup_name = format!(
-            "{}.corrupted.{}",
-            original_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            timestamp
-        );
-        original_path.with_file_name(format!("{}.json", backup_name))
+    fn archive_invalid_json(path: &Path, contents: &str, reason: &str) {
+        let snapshot_path = Self::generate_corrupted_snapshot_path(path);
+        match fs::write(&snapshot_path, contents) {
+            Ok(_) => info!(path = %snapshot_path.display(), reason, "Archived invalid JSON file"),
+            Err(error) => warn!(
+                path = %path.display(),
+                snapshot_path = %snapshot_path.display(),
+                error = %error,
+                reason,
+                "Failed to archive invalid JSON file"
+            ),
+        }
     }
 
-    /// Helper to backup corrupted file and reset to empty array
-    fn backup_and_reset_environments(&self, contents: &str) -> Vec<Environment> {
-        let path = self.environments_file();
-        let backup_path = Self::generate_backup_path(&path);
+    fn restore_from_backups<T>(
+        &self,
+        path: &Path,
+        invalid_contents: &str,
+    ) -> Result<Option<T>, StorageError>
+    where
+        T: DeserializeOwned + Serialize,
+    {
+        for index in 1..=Self::MAX_JSON_BACKUPS {
+            let backup_path = Self::json_backup_path(path, index);
+            if !backup_path.exists() {
+                continue;
+            }
 
-        // Backup the corrupted file with timestamp
-        if let Err(backup_err) = fs::write(&backup_path, contents) {
-            warn!(error = %backup_err, "Failed to backup corrupted file");
-        } else {
-            info!(path = ?backup_path, "Backed up corrupted file");
+            let backup_contents = match fs::read_to_string(&backup_path) {
+                Ok(contents) => contents,
+                Err(error) => {
+                    warn!(
+                        path = %backup_path.display(),
+                        error = %error,
+                        "Failed to read JSON backup"
+                    );
+                    continue;
+                }
+            };
+
+            match serde_json::from_str::<T>(&backup_contents) {
+                Ok(value) => {
+                    Self::archive_invalid_json(path, invalid_contents, "restore-from-backup");
+                    Self::write_atomic(path, &backup_contents, JsonBackupPolicy::Never)?;
+                    info!(
+                        path = %path.display(),
+                        backup_path = %backup_path.display(),
+                        "Restored JSON file from backup"
+                    );
+                    return Ok(Some(value));
+                }
+                Err(error) => warn!(
+                    path = %backup_path.display(),
+                    error = %error,
+                    "Skipping invalid JSON backup"
+                ),
+            }
         }
 
-        // Write empty array to allow the app to continue
-        if let Err(write_err) = fs::write(&path, "[]") {
-            warn!(error = %write_err, "Failed to reset environments file");
-        } else {
-            info!("Reset environments.json to empty array - corrupted data backed up");
-        }
-
-        Vec::new()
+        Ok(None)
     }
 
-    /// Load all environments from storage, sorted by order
-    /// Includes recovery logic for corrupted JSON files
-    /// This function NEVER returns an error - it will always return Ok with either
-    /// recovered data or an empty array (after backing up corrupted data)
-    pub fn load_environments(&self) -> Result<Vec<Environment>, StorageError> {
-        let path = self.environments_file();
+    fn load_json_with_recovery<T, F>(&self, path: &Path, default: F) -> Result<T, StorageError>
+    where
+        T: DeserializeOwned + Serialize,
+        F: FnOnce() -> T,
+    {
         if !path.exists() {
-            return Ok(Vec::new());
+            return Ok(default());
         }
 
-        // Read file - if this fails, return empty (can't recover)
-        let contents = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Failed to read environments.json, returning empty list");
-                return Ok(Vec::new());
+        let default_value = default();
+        let default_contents = serde_json::to_string_pretty(&default_value)?;
+
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) => {
+                warn!(path = %path.display(), error = %error, "Failed to read JSON file");
+                if let Some(restored) = self.restore_from_backups::<T>(path, "")? {
+                    return Ok(restored);
+                }
+                Self::write_atomic(path, &default_contents, JsonBackupPolicy::Never)?;
+                return Ok(default_value);
             }
         };
 
-        // Try to parse normally first
-        match serde_json::from_str::<Vec<Environment>>(&contents) {
-            Ok(mut environments) => {
-                // Sort by order field (lower values first)
-                environments.sort_by_key(|e| e.order);
-                Ok(environments)
+        if contents.trim().is_empty() {
+            warn!(path = %path.display(), "JSON file is empty, attempting recovery");
+            if let Some(restored) = self.restore_from_backups::<T>(path, &contents)? {
+                return Ok(restored);
             }
-            Err(e) => {
-                // Parsing failed - attempt recovery
+            Self::archive_invalid_json(path, &contents, "empty-json");
+            Self::write_atomic(path, &default_contents, JsonBackupPolicy::Never)?;
+            return Ok(default_value);
+        }
+
+        match serde_json::from_str::<T>(&contents) {
+            Ok(value) => Ok(value),
+            Err(error) => {
                 warn!(
-                    error = %e,
-                    line = e.line(),
-                    column = e.column(),
-                    "JSON parsing failed for environments.json, attempting recovery"
+                    path = %path.display(),
+                    error = %error,
+                    line = error.line(),
+                    column = error.column(),
+                    "JSON parsing failed, attempting recovery"
                 );
 
-                if let Some(repaired) = Self::try_repair_json_array(&contents, e.line(), e.column())
+                if let Some(repaired_contents) =
+                    Self::try_repair_json_array::<T>(&contents, error.line(), error.column())
                 {
-                    // Parse the repaired content (should succeed since try_repair validates)
-                    match serde_json::from_str::<Vec<Environment>>(&repaired) {
-                        Ok(mut environments) => {
-                            info!(
-                                recovered_count = environments.len(),
-                                "Successfully recovered environments from corrupted JSON"
-                            );
-
-                            // Backup the corrupted file with timestamp
-                            let backup_path = Self::generate_backup_path(&path);
-                            if let Err(backup_err) = fs::write(&backup_path, &contents) {
-                                warn!(error = %backup_err, "Failed to backup corrupted file");
-                            } else {
-                                info!(path = ?backup_path, "Backed up corrupted file");
-                            }
-
-                            // Save the repaired content
-                            if let Err(save_err) = fs::write(&path, &repaired) {
-                                warn!(error = %save_err, "Failed to save repaired file");
-                            } else {
-                                info!("Saved repaired environments.json");
-                            }
-
-                            environments.sort_by_key(|e| e.order);
-                            Ok(environments)
+                    match serde_json::from_str::<T>(&repaired_contents) {
+                        Ok(value) => {
+                            Self::archive_invalid_json(path, &contents, "repaired-json");
+                            Self::write_atomic(path, &repaired_contents, JsonBackupPolicy::Never)?;
+                            info!(path = %path.display(), "Recovered JSON file by repairing truncated array");
+                            return Ok(value);
                         }
-                        Err(repair_err) => {
-                            // This shouldn't happen since try_repair validates, but handle it anyway
-                            warn!(error = %repair_err, "Recovery parsing failed unexpectedly, resetting to empty");
-                            Ok(self.backup_and_reset_environments(&contents))
-                        }
+                        Err(repair_error) => warn!(
+                            path = %path.display(),
+                            error = %repair_error,
+                            "Repaired JSON still failed to parse"
+                        ),
                     }
-                } else {
-                    warn!("Could not find valid JSON to recover, resetting to empty list");
-                    Ok(self.backup_and_reset_environments(&contents))
                 }
+
+                if let Some(restored) = self.restore_from_backups::<T>(path, &contents)? {
+                    return Ok(restored);
+                }
+
+                Self::archive_invalid_json(path, &contents, "reset-to-default");
+                Self::write_atomic(path, &default_contents, JsonBackupPolicy::Never)?;
+                Ok(default_value)
             }
         }
     }
 
-    /// Save all environments to storage
-    pub fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
+    // --- Project Operations ---
+
+    fn load_projects_unlocked(&self) -> Result<Vec<Project>, StorageError> {
+        let path = self.projects_file();
+        let mut projects: Vec<Project> = self.load_json_with_recovery(&path, Vec::new)?;
+        projects.sort_by_key(|p| p.order);
+        Ok(projects)
+    }
+
+    fn save_projects_unlocked(&self, projects: &[Project]) -> Result<(), StorageError> {
+        let path = self.projects_file();
+        let contents = serde_json::to_string_pretty(projects)?;
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
+    }
+
+    /// Load all projects from storage, sorted by order
+    pub fn load_projects(&self) -> Result<Vec<Project>, StorageError> {
+        self.with_json_lock(|| self.load_projects_unlocked())
+    }
+
+    /// Save all projects to storage (used in tests for bulk setup)
+    #[cfg(test)]
+    pub fn save_projects(&self, projects: &[Project]) -> Result<(), StorageError> {
+        self.with_json_lock(|| self.save_projects_unlocked(projects))
+    }
+
+    /// Add a new project
+    pub fn add_project(&self, mut project: Project) -> Result<Project, StorageError> {
+        self.with_json_lock(|| {
+            let mut projects = self.load_projects_unlocked()?;
+
+            if projects.iter().any(|p| p.git_url == project.git_url) {
+                return Err(StorageError::DuplicateProject(project.git_url));
+            }
+
+            let max_order = projects.iter().map(|p| p.order).max().unwrap_or(-1);
+            project.order = max_order + 1;
+
+            projects.push(project.clone());
+            self.save_projects_unlocked(&projects)?;
+            Ok(project)
+        })
+    }
+
+    /// Remove a project by ID
+    pub fn remove_project(&self, project_id: &str) -> Result<(), StorageError> {
+        self.with_json_lock(|| {
+            let mut projects = self.load_projects_unlocked()?;
+            let initial_len = projects.len();
+            projects.retain(|p| p.id != project_id);
+
+            if projects.len() == initial_len {
+                return Err(StorageError::ProjectNotFound(project_id.to_string()));
+            }
+
+            self.save_projects_unlocked(&projects)?;
+            Ok(())
+        })
+    }
+
+    /// Get a project by ID
+    pub fn get_project(&self, project_id: &str) -> Result<Option<Project>, StorageError> {
+        self.with_json_lock(|| {
+            let projects = self.load_projects_unlocked()?;
+            Ok(projects.into_iter().find(|p| p.id == project_id))
+        })
+    }
+
+    /// Update a project
+    pub fn update_project(
+        &self,
+        project_id: &str,
+        updates: serde_json::Value,
+    ) -> Result<Project, StorageError> {
+        self.with_json_lock(|| {
+            let mut projects = self.load_projects_unlocked()?;
+            let project = projects
+                .iter_mut()
+                .find(|p| p.id == project_id)
+                .ok_or_else(|| StorageError::ProjectNotFound(project_id.to_string()))?;
+
+            if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
+                project.name = name.to_string();
+            }
+            if let Some(local_path) = updates.get("localPath") {
+                project.local_path = local_path.as_str().map(String::from);
+            }
+
+            let updated = project.clone();
+            self.save_projects_unlocked(&projects)?;
+            Ok(updated)
+        })
+    }
+
+    /// Reorder projects based on the provided order of IDs
+    /// The order field of each project is updated to match its position in the input array
+    /// Projects not in the input array are appended at the end in their current relative order
+    pub fn reorder_projects(&self, project_ids: &[String]) -> Result<Vec<Project>, StorageError> {
+        self.with_json_lock(|| {
+            let mut projects = self.load_projects_unlocked()?;
+            let provided_ids: std::collections::HashSet<&String> = project_ids.iter().collect();
+
+            for (index, id) in project_ids.iter().enumerate() {
+                if let Some(project) = projects.iter_mut().find(|p| p.id == *id) {
+                    project.order = index as i32;
+                }
+            }
+
+            let next_order = project_ids.len() as i32;
+            let mut missing_order = next_order;
+            for project in &mut projects {
+                if !provided_ids.contains(&project.id) {
+                    project.order = missing_order;
+                    missing_order += 1;
+                }
+            }
+
+            self.save_projects_unlocked(&projects)?;
+
+            projects.sort_by_key(|p| p.order);
+            Ok(projects)
+        })
+    }
+
+    // --- Environment Operations ---
+
+    fn load_environments_unlocked(&self) -> Result<Vec<Environment>, StorageError> {
+        let path = self.environments_file();
+        let mut environments: Vec<Environment> = self.load_json_with_recovery(&path, Vec::new)?;
+        environments.sort_by_key(|e| e.order);
+        Ok(environments)
+    }
+
+    fn save_environments_unlocked(&self, environments: &[Environment]) -> Result<(), StorageError> {
         let path = self.environments_file();
         let contents = serde_json::to_string_pretty(environments)?;
-        fs::write(path, contents)?;
-        Ok(())
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
+    }
+
+    /// Load all environments from storage, sorted by order
+    pub fn load_environments(&self) -> Result<Vec<Environment>, StorageError> {
+        self.with_json_lock(|| self.load_environments_unlocked())
+    }
+
+    /// Save all environments to storage (used in tests for bulk setup)
+    #[cfg(test)]
+    pub fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
+        self.with_json_lock(|| self.save_environments_unlocked(environments))
     }
 
     /// Add a new environment
@@ -404,36 +645,39 @@ impl Storage {
         &self,
         mut environment: Environment,
     ) -> Result<Environment, StorageError> {
-        let mut environments = self.load_environments()?;
+        self.with_json_lock(|| {
+            let mut environments = self.load_environments_unlocked()?;
 
-        // Set order to be at the end within this project (max order + 1)
-        let max_order = environments
-            .iter()
-            .filter(|e| e.project_id == environment.project_id)
-            .map(|e| e.order)
-            .max()
-            .unwrap_or(-1);
-        environment.order = max_order + 1;
+            let max_order = environments
+                .iter()
+                .filter(|e| e.project_id == environment.project_id)
+                .map(|e| e.order)
+                .max()
+                .unwrap_or(-1);
+            environment.order = max_order + 1;
 
-        environments.push(environment.clone());
-        self.save_environments(&environments)?;
-        Ok(environment)
+            environments.push(environment.clone());
+            self.save_environments_unlocked(&environments)?;
+            Ok(environment)
+        })
     }
 
     /// Remove an environment by ID
     pub fn remove_environment(&self, environment_id: &str) -> Result<(), StorageError> {
-        let mut environments = self.load_environments()?;
-        let initial_len = environments.len();
-        environments.retain(|e| e.id != environment_id);
+        self.with_json_lock(|| {
+            let mut environments = self.load_environments_unlocked()?;
+            let initial_len = environments.len();
+            environments.retain(|e| e.id != environment_id);
 
-        if environments.len() == initial_len {
-            return Err(StorageError::EnvironmentNotFound(
-                environment_id.to_string(),
-            ));
-        }
+            if environments.len() == initial_len {
+                return Err(StorageError::EnvironmentNotFound(
+                    environment_id.to_string(),
+                ));
+            }
 
-        self.save_environments(&environments)?;
-        Ok(())
+            self.save_environments_unlocked(&environments)?;
+            Ok(())
+        })
     }
 
     /// Get environments for a project, sorted by order
@@ -441,19 +685,20 @@ impl Storage {
         &self,
         project_id: &str,
     ) -> Result<Vec<Environment>, StorageError> {
-        let environments = self.load_environments()?;
-        let mut filtered: Vec<Environment> = environments
-            .into_iter()
-            .filter(|e| e.project_id == project_id)
-            .collect();
-        // Already sorted by load_environments, but ensure consistency
-        filtered.sort_by_key(|e| e.order);
-        Ok(filtered)
+        self.with_json_lock(|| {
+            let environments = self.load_environments_unlocked()?;
+            let mut filtered: Vec<Environment> = environments
+                .into_iter()
+                .filter(|e| e.project_id == project_id)
+                .collect();
+            filtered.sort_by_key(|e| e.order);
+            Ok(filtered)
+        })
     }
 
     /// Get all environments
     pub fn get_all_environments(&self) -> Result<Vec<Environment>, StorageError> {
-        self.load_environments()
+        self.with_json_lock(|| self.load_environments_unlocked())
     }
 
     /// Get an environment by ID
@@ -461,8 +706,10 @@ impl Storage {
         &self,
         environment_id: &str,
     ) -> Result<Option<Environment>, StorageError> {
-        let environments = self.load_environments()?;
-        Ok(environments.into_iter().find(|e| e.id == environment_id))
+        self.with_json_lock(|| {
+            let environments = self.load_environments_unlocked()?;
+            Ok(environments.into_iter().find(|e| e.id == environment_id))
+        })
     }
 
     /// Update an environment
@@ -471,95 +718,97 @@ impl Storage {
         environment_id: &str,
         updates: serde_json::Value,
     ) -> Result<Environment, StorageError> {
-        let mut environments = self.load_environments()?;
-        let environment = environments
-            .iter_mut()
-            .find(|e| e.id == environment_id)
-            .ok_or_else(|| StorageError::EnvironmentNotFound(environment_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut environments = self.load_environments_unlocked()?;
+            let environment = environments
+                .iter_mut()
+                .find(|e| e.id == environment_id)
+                .ok_or_else(|| StorageError::EnvironmentNotFound(environment_id.to_string()))?;
 
-        // Apply updates
-        if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
-            environment.name = name.to_string();
-        }
-        if let Some(branch) = updates.get("branch").and_then(|v| v.as_str()) {
-            environment.branch = branch.to_string();
-        }
-        if let Some(status) = updates.get("status").and_then(|v| v.as_str()) {
-            environment.status = serde_json::from_value(serde_json::json!(status))
-                .unwrap_or(environment.status.clone());
-        }
-        if let Some(container_id) = updates.get("containerId") {
-            environment.container_id = container_id.as_str().map(String::from);
-        }
-        if let Some(pr_url) = updates.get("prUrl") {
-            environment.pr_url = pr_url.as_str().map(String::from);
-        }
-        if let Some(pr_state) = updates.get("prState") {
-            if let Ok(parsed_pr_state) =
-                serde_json::from_value::<Option<crate::models::PrState>>(pr_state.clone())
-            {
-                environment.pr_state = parsed_pr_state;
+            if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
+                environment.name = name.to_string();
             }
-        }
-        if let Some(has_merge_conflicts) = updates.get("hasMergeConflicts") {
-            if let Ok(parsed_has_merge_conflicts) =
-                serde_json::from_value::<Option<bool>>(has_merge_conflicts.clone())
-            {
-                environment.has_merge_conflicts = parsed_has_merge_conflicts;
+            if let Some(branch) = updates.get("branch").and_then(|v| v.as_str()) {
+                environment.branch = branch.to_string();
             }
-        }
-        if let Some(allowed_domains) = updates.get("allowedDomains") {
-            environment.allowed_domains = serde_json::from_value(allowed_domains.clone()).ok();
-        }
-        if let Some(port_mappings) = updates.get("portMappings") {
-            environment.port_mappings = serde_json::from_value(port_mappings.clone()).ok();
-        }
-        if let Some(env_type) = updates.get("environmentType").and_then(|v| v.as_str()) {
-            environment.environment_type = serde_json::from_value(serde_json::json!(env_type))
-                .unwrap_or(environment.environment_type.clone());
-        }
-        if let Some(worktree_path) = updates.get("worktreePath") {
-            environment.worktree_path = worktree_path.as_str().map(String::from);
-        }
-        if let Some(opencode_pid) = updates.get("opencodePid") {
-            environment.opencode_pid = opencode_pid.as_u64().map(|v| v as u32);
-        }
-        if let Some(claude_pid) = updates.get("claudeBridgePid") {
-            environment.claude_bridge_pid = claude_pid.as_u64().map(|v| v as u32);
-        }
-        if let Some(codex_pid) = updates.get("codexBridgePid") {
-            environment.codex_bridge_pid = codex_pid.as_u64().map(|v| v as u32);
-        }
-        if let Some(opencode_port) = updates.get("localOpencodePort") {
-            environment.local_opencode_port = opencode_port.as_u64().map(|v| v as u16);
-        }
-        if let Some(claude_port) = updates.get("localClaudePort") {
-            environment.local_claude_port = claude_port.as_u64().map(|v| v as u16);
-        }
-        if let Some(codex_port) = updates.get("localCodexPort") {
-            environment.local_codex_port = codex_port.as_u64().map(|v| v as u16);
-        }
-        if let Some(default_agent) = updates.get("defaultAgent") {
-            environment.default_agent =
-                serde_json::from_value(default_agent.clone()).ok().flatten();
-        }
-        if let Some(claude_mode) = updates.get("claudeMode") {
-            environment.claude_mode = serde_json::from_value(claude_mode.clone()).ok().flatten();
-        }
-        if let Some(opencode_mode) = updates.get("opencodeMode") {
-            environment.opencode_mode =
-                serde_json::from_value(opencode_mode.clone()).ok().flatten();
-        }
-        if let Some(entry_port) = updates.get("entryPort") {
-            environment.entry_port = entry_port.as_u64().map(|v| v as u16);
-        }
-        if let Some(host_entry_port) = updates.get("hostEntryPort") {
-            environment.host_entry_port = host_entry_port.as_u64().map(|v| v as u16);
-        }
+            if let Some(status) = updates.get("status").and_then(|v| v.as_str()) {
+                environment.status = serde_json::from_value(serde_json::json!(status))
+                    .unwrap_or(environment.status.clone());
+            }
+            if let Some(container_id) = updates.get("containerId") {
+                environment.container_id = container_id.as_str().map(String::from);
+            }
+            if let Some(pr_url) = updates.get("prUrl") {
+                environment.pr_url = pr_url.as_str().map(String::from);
+            }
+            if let Some(pr_state) = updates.get("prState") {
+                if let Ok(parsed_pr_state) =
+                    serde_json::from_value::<Option<crate::models::PrState>>(pr_state.clone())
+                {
+                    environment.pr_state = parsed_pr_state;
+                }
+            }
+            if let Some(has_merge_conflicts) = updates.get("hasMergeConflicts") {
+                if let Ok(parsed_has_merge_conflicts) =
+                    serde_json::from_value::<Option<bool>>(has_merge_conflicts.clone())
+                {
+                    environment.has_merge_conflicts = parsed_has_merge_conflicts;
+                }
+            }
+            if let Some(allowed_domains) = updates.get("allowedDomains") {
+                environment.allowed_domains = serde_json::from_value(allowed_domains.clone()).ok();
+            }
+            if let Some(port_mappings) = updates.get("portMappings") {
+                environment.port_mappings = serde_json::from_value(port_mappings.clone()).ok();
+            }
+            if let Some(env_type) = updates.get("environmentType").and_then(|v| v.as_str()) {
+                environment.environment_type = serde_json::from_value(serde_json::json!(env_type))
+                    .unwrap_or(environment.environment_type.clone());
+            }
+            if let Some(worktree_path) = updates.get("worktreePath") {
+                environment.worktree_path = worktree_path.as_str().map(String::from);
+            }
+            if let Some(opencode_pid) = updates.get("opencodePid") {
+                environment.opencode_pid = opencode_pid.as_u64().map(|v| v as u32);
+            }
+            if let Some(claude_pid) = updates.get("claudeBridgePid") {
+                environment.claude_bridge_pid = claude_pid.as_u64().map(|v| v as u32);
+            }
+            if let Some(codex_pid) = updates.get("codexBridgePid") {
+                environment.codex_bridge_pid = codex_pid.as_u64().map(|v| v as u32);
+            }
+            if let Some(opencode_port) = updates.get("localOpencodePort") {
+                environment.local_opencode_port = opencode_port.as_u64().map(|v| v as u16);
+            }
+            if let Some(claude_port) = updates.get("localClaudePort") {
+                environment.local_claude_port = claude_port.as_u64().map(|v| v as u16);
+            }
+            if let Some(codex_port) = updates.get("localCodexPort") {
+                environment.local_codex_port = codex_port.as_u64().map(|v| v as u16);
+            }
+            if let Some(default_agent) = updates.get("defaultAgent") {
+                environment.default_agent =
+                    serde_json::from_value(default_agent.clone()).ok().flatten();
+            }
+            if let Some(claude_mode) = updates.get("claudeMode") {
+                environment.claude_mode =
+                    serde_json::from_value(claude_mode.clone()).ok().flatten();
+            }
+            if let Some(opencode_mode) = updates.get("opencodeMode") {
+                environment.opencode_mode =
+                    serde_json::from_value(opencode_mode.clone()).ok().flatten();
+            }
+            if let Some(entry_port) = updates.get("entryPort") {
+                environment.entry_port = entry_port.as_u64().map(|v| v as u16);
+            }
+            if let Some(host_entry_port) = updates.get("hostEntryPort") {
+                environment.host_entry_port = host_entry_port.as_u64().map(|v| v as u16);
+            }
 
-        let updated = environment.clone();
-        self.save_environments(&environments)?;
-        Ok(updated)
+            let updated = environment.clone();
+            self.save_environments_unlocked(&environments)?;
+            Ok(updated)
+        })
     }
 
     /// Reorder environments within a project based on the provided order of IDs
@@ -570,64 +819,64 @@ impl Storage {
         project_id: &str,
         environment_ids: &[String],
     ) -> Result<Vec<Environment>, StorageError> {
-        let mut environments = self.load_environments()?;
+        self.with_json_lock(|| {
+            let mut environments = self.load_environments_unlocked()?;
+            let provided_ids: std::collections::HashSet<&String> = environment_ids.iter().collect();
 
-        // Create a set of provided IDs for quick lookup
-        let provided_ids: std::collections::HashSet<&String> = environment_ids.iter().collect();
-
-        // Update the order field for each environment based on its position in the input array
-        for (index, id) in environment_ids.iter().enumerate() {
-            if let Some(env) = environments
-                .iter_mut()
-                .find(|e| e.id == *id && e.project_id == project_id)
-            {
-                env.order = index as i32;
+            for (index, id) in environment_ids.iter().enumerate() {
+                if let Some(env) = environments
+                    .iter_mut()
+                    .find(|e| e.id == *id && e.project_id == project_id)
+                {
+                    env.order = index as i32;
+                }
             }
-        }
 
-        // Handle environments in this project not in the input array - append them at the end
-        let next_order = environment_ids.len() as i32;
-        let mut missing_order = next_order;
-        for env in environments.iter_mut() {
-            if env.project_id == project_id && !provided_ids.contains(&env.id) {
-                env.order = missing_order;
-                missing_order += 1;
+            let next_order = environment_ids.len() as i32;
+            let mut missing_order = next_order;
+            for env in &mut environments {
+                if env.project_id == project_id && !provided_ids.contains(&env.id) {
+                    env.order = missing_order;
+                    missing_order += 1;
+                }
             }
-        }
 
-        self.save_environments(&environments)?;
+            self.save_environments_unlocked(&environments)?;
 
-        // Return environments for this project, sorted by new order
-        let mut result: Vec<Environment> = environments
-            .into_iter()
-            .filter(|e| e.project_id == project_id)
-            .collect();
-        result.sort_by_key(|e| e.order);
-        Ok(result)
+            let mut result: Vec<Environment> = environments
+                .into_iter()
+                .filter(|e| e.project_id == project_id)
+                .collect();
+            result.sort_by_key(|e| e.order);
+            Ok(result)
+        })
     }
 
     // --- Config Operations ---
 
-    /// Load application config
-    pub fn load_config(&self) -> Result<AppConfig, StorageError> {
+    fn load_config_unlocked(&self) -> Result<AppConfig, StorageError> {
         let path = self.config_file();
-        if !path.exists() {
-            return Ok(AppConfig::default());
-        }
-        let contents = fs::read_to_string(&path)?;
-        let config: AppConfig = serde_json::from_str(&contents)?;
-        Ok(config)
+        self.load_json_with_recovery(&path, AppConfig::default)
     }
 
-    /// Save application config
-    pub fn save_config(&self, config: &AppConfig) -> Result<(), StorageError> {
+    fn save_config_unlocked(&self, config: &AppConfig) -> Result<(), StorageError> {
         let path = self.config_file();
         debug!(path = ?path, "Saving config");
         let contents = serde_json::to_string_pretty(config)?;
         debug!(content_length = contents.len(), "Config content length");
-        fs::write(&path, &contents)?;
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)?;
         debug!("Config file written successfully");
         Ok(())
+    }
+
+    /// Load application config
+    pub fn load_config(&self) -> Result<AppConfig, StorageError> {
+        self.with_json_lock(|| self.load_config_unlocked())
+    }
+
+    /// Save application config
+    pub fn save_config(&self, config: &AppConfig) -> Result<(), StorageError> {
+        self.with_json_lock(|| self.save_config_unlocked(config))
     }
 
     // --- Session Operations ---
@@ -635,194 +884,76 @@ impl Storage {
     /// Maximum number of sessions per environment (to prevent unbounded accumulation)
     const MAX_SESSIONS_PER_ENVIRONMENT: usize = 20;
 
-    /// Attempt to recover a corrupted JSON array of sessions
-    fn try_repair_sessions_json(
-        contents: &str,
-        error_line: usize,
-        _error_column: usize,
-    ) -> Option<String> {
-        let trimmed = contents.trim();
-
-        // Must start with '[' to be a valid array
-        if !trimmed.starts_with('[') {
-            return None;
-        }
-
-        // Strategy 1: Use error position to truncate and find the last valid ']'
-        let mut current_line = 1;
-        let mut error_byte_pos = trimmed.len();
-        for (i, c) in trimmed.char_indices() {
-            if current_line >= error_line {
-                error_byte_pos = i;
-                break;
-            }
-            if c == '\n' {
-                current_line += 1;
-            }
-        }
-
-        if let Some(last_bracket) = trimmed[..error_byte_pos].rfind(']') {
-            let candidate = &trimmed[..=last_bracket];
-            if serde_json::from_str::<Vec<Session>>(candidate).is_ok() {
-                return Some(candidate.to_string());
-            }
-        }
-
-        // Strategy 2: Find all ']' positions and try each one from the end
-        let bracket_positions: Vec<usize> = trimmed
-            .char_indices()
-            .filter(|(_, c)| *c == ']')
-            .map(|(i, _)| i)
-            .collect();
-
-        for &pos in bracket_positions.iter().rev() {
-            let candidate = &trimmed[..=pos];
-            if serde_json::from_str::<Vec<Session>>(candidate).is_ok() {
-                return Some(candidate.to_string());
-            }
-        }
-
-        None
-    }
-
-    /// Helper to backup corrupted sessions file and reset to empty array
-    fn backup_and_reset_sessions(&self, contents: &str) -> Vec<Session> {
+    fn load_sessions_unlocked(&self) -> Result<Vec<Session>, StorageError> {
         let path = self.sessions_file();
-        let backup_path = Self::generate_backup_path(&path);
-
-        if let Err(backup_err) = fs::write(&backup_path, contents) {
-            warn!(error = %backup_err, "Failed to backup corrupted sessions file");
-        } else {
-            info!(path = ?backup_path, "Backed up corrupted sessions file");
-        }
-
-        if let Err(write_err) = fs::write(&path, "[]") {
-            warn!(error = %write_err, "Failed to reset sessions file");
-        } else {
-            info!("Reset sessions.json to empty array - corrupted data backed up");
-        }
-
-        Vec::new()
+        self.load_json_with_recovery(&path, Vec::new)
     }
 
-    /// Load all sessions from storage
-    /// This function NEVER returns an error - it will always return Ok with either
-    /// recovered data or an empty array (after backing up corrupted data)
-    pub fn load_sessions(&self) -> Result<Vec<Session>, StorageError> {
-        let path = self.sessions_file();
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let contents = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Failed to read sessions.json, returning empty list");
-                return Ok(Vec::new());
-            }
-        };
-
-        match serde_json::from_str::<Vec<Session>>(&contents) {
-            Ok(sessions) => Ok(sessions),
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    line = e.line(),
-                    column = e.column(),
-                    "JSON parsing failed for sessions.json, attempting recovery"
-                );
-
-                if let Some(repaired) =
-                    Self::try_repair_sessions_json(&contents, e.line(), e.column())
-                {
-                    match serde_json::from_str::<Vec<Session>>(&repaired) {
-                        Ok(sessions) => {
-                            info!(
-                                recovered_count = sessions.len(),
-                                "Successfully recovered sessions from corrupted JSON"
-                            );
-
-                            // Backup the corrupted file with timestamp
-                            let backup_path = Self::generate_backup_path(&path);
-                            if let Err(backup_err) = fs::write(&backup_path, &contents) {
-                                warn!(error = %backup_err, "Failed to backup corrupted sessions file");
-                            } else {
-                                info!(path = ?backup_path, "Backed up corrupted sessions file");
-                            }
-
-                            if let Err(save_err) = fs::write(&path, &repaired) {
-                                warn!(error = %save_err, "Failed to save repaired sessions file");
-                            } else {
-                                info!("Saved repaired sessions.json");
-                            }
-
-                            Ok(sessions)
-                        }
-                        Err(repair_err) => {
-                            warn!(error = %repair_err, "Sessions recovery parsing failed, resetting to empty");
-                            Ok(self.backup_and_reset_sessions(&contents))
-                        }
-                    }
-                } else {
-                    warn!("Could not find valid sessions JSON to recover, resetting to empty");
-                    Ok(self.backup_and_reset_sessions(&contents))
-                }
-            }
-        }
-    }
-
-    /// Save all sessions to storage
-    pub fn save_sessions(&self, sessions: &[Session]) -> Result<(), StorageError> {
+    fn save_sessions_unlocked(&self, sessions: &[Session]) -> Result<(), StorageError> {
         let path = self.sessions_file();
         let contents = serde_json::to_string_pretty(sessions)?;
-        fs::write(path, contents)?;
-        Ok(())
+        Self::write_atomic(
+            &path,
+            &contents,
+            JsonBackupPolicy::IfOlderThan(Self::SESSIONS_BACKUP_MIN_AGE),
+        )
+    }
+
+    /// Load all sessions from storage (used in tests)
+    #[cfg(test)]
+    pub fn load_sessions(&self) -> Result<Vec<Session>, StorageError> {
+        self.with_json_lock(|| self.load_sessions_unlocked())
+    }
+
+    /// Save all sessions to storage (used in tests for bulk setup)
+    #[cfg(test)]
+    pub fn save_sessions(&self, sessions: &[Session]) -> Result<(), StorageError> {
+        self.with_json_lock(|| self.save_sessions_unlocked(sessions))
     }
 
     /// Add a new session
     /// If the environment already has MAX_SESSIONS_PER_ENVIRONMENT sessions,
     /// the oldest disconnected session is removed to make room.
     pub fn add_session(&self, mut session: Session) -> Result<Session, StorageError> {
-        let mut sessions = self.load_sessions()?;
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
 
-        // Count existing sessions for this environment
-        let env_sessions: Vec<&Session> = sessions
-            .iter()
-            .filter(|s| s.environment_id == session.environment_id)
-            .collect();
-
-        // Set order to be at the end (max order + 1) within this environment
-        let max_order = env_sessions.iter().map(|s| s.order).max().unwrap_or(-1);
-        session.order = max_order + 1;
-
-        // If at limit, remove oldest disconnected session
-        if env_sessions.len() >= Self::MAX_SESSIONS_PER_ENVIRONMENT {
-            // Find oldest disconnected session for this environment
-            let oldest_disconnected = sessions
+            let env_sessions: Vec<&Session> = sessions
                 .iter()
-                .filter(|s| {
-                    s.environment_id == session.environment_id
-                        && s.status == SessionStatus::Disconnected
-                })
-                .min_by_key(|s| s.created_at);
+                .filter(|s| s.environment_id == session.environment_id)
+                .collect();
 
-            if let Some(to_remove) = oldest_disconnected {
-                let id_to_remove = to_remove.id.clone();
-                sessions.retain(|s| s.id != id_to_remove);
-                // Also remove buffer file
-                let _ = self.delete_session_buffer(&id_to_remove);
+            let max_order = env_sessions.iter().map(|s| s.order).max().unwrap_or(-1);
+            session.order = max_order + 1;
+
+            if env_sessions.len() >= Self::MAX_SESSIONS_PER_ENVIRONMENT {
+                let oldest_disconnected = sessions
+                    .iter()
+                    .filter(|s| {
+                        s.environment_id == session.environment_id
+                            && s.status == SessionStatus::Disconnected
+                    })
+                    .min_by_key(|s| s.created_at);
+
+                if let Some(to_remove) = oldest_disconnected {
+                    let id_to_remove = to_remove.id.clone();
+                    sessions.retain(|s| s.id != id_to_remove);
+                    let _ = self.delete_session_buffer(&id_to_remove);
+                }
             }
-        }
 
-        sessions.push(session.clone());
-        self.save_sessions(&sessions)?;
-        Ok(session)
+            sessions.push(session.clone());
+            self.save_sessions_unlocked(&sessions)?;
+            Ok(session)
+        })
     }
 
     /// Get a session by ID
     pub fn get_session(&self, session_id: &str) -> Result<Option<Session>, StorageError> {
-        let sessions = self.load_sessions()?;
-        Ok(sessions.into_iter().find(|s| s.id == session_id))
+        self.with_json_lock(|| {
+            let sessions = self.load_sessions_unlocked()?;
+            Ok(sessions.into_iter().find(|s| s.id == session_id))
+        })
     }
 
     /// Get sessions for an environment, sorted by order
@@ -830,13 +961,15 @@ impl Storage {
         &self,
         environment_id: &str,
     ) -> Result<Vec<Session>, StorageError> {
-        let sessions = self.load_sessions()?;
-        let mut filtered: Vec<Session> = sessions
-            .into_iter()
-            .filter(|s| s.environment_id == environment_id)
-            .collect();
-        filtered.sort_by_key(|s| s.order);
-        Ok(filtered)
+        self.with_json_lock(|| {
+            let sessions = self.load_sessions_unlocked()?;
+            let mut filtered: Vec<Session> = sessions
+                .into_iter()
+                .filter(|s| s.environment_id == environment_id)
+                .collect();
+            filtered.sort_by_key(|s| s.order);
+            Ok(filtered)
+        })
     }
 
     /// Update session status
@@ -845,30 +978,34 @@ impl Storage {
         session_id: &str,
         status: SessionStatus,
     ) -> Result<Session, StorageError> {
-        let mut sessions = self.load_sessions()?;
-        let session = sessions
-            .iter_mut()
-            .find(|s| s.id == session_id)
-            .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let session = sessions
+                .iter_mut()
+                .find(|s| s.id == session_id)
+                .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
 
-        session.status = status;
-        let updated = session.clone();
-        self.save_sessions(&sessions)?;
-        Ok(updated)
+            session.status = status;
+            let updated = session.clone();
+            self.save_sessions_unlocked(&sessions)?;
+            Ok(updated)
+        })
     }
 
     /// Update session's last activity timestamp
     pub fn touch_session(&self, session_id: &str) -> Result<Session, StorageError> {
-        let mut sessions = self.load_sessions()?;
-        let session = sessions
-            .iter_mut()
-            .find(|s| s.id == session_id)
-            .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let session = sessions
+                .iter_mut()
+                .find(|s| s.id == session_id)
+                .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
 
-        session.touch();
-        let updated = session.clone();
-        self.save_sessions(&sessions)?;
-        Ok(updated)
+            session.touch();
+            let updated = session.clone();
+            self.save_sessions_unlocked(&sessions)?;
+            Ok(updated)
+        })
     }
 
     /// Rename a session
@@ -877,16 +1014,18 @@ impl Storage {
         session_id: &str,
         name: Option<String>,
     ) -> Result<Session, StorageError> {
-        let mut sessions = self.load_sessions()?;
-        let session = sessions
-            .iter_mut()
-            .find(|s| s.id == session_id)
-            .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let session = sessions
+                .iter_mut()
+                .find(|s| s.id == session_id)
+                .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
 
-        session.name = name;
-        let updated = session.clone();
-        self.save_sessions(&sessions)?;
-        Ok(updated)
+            session.name = name;
+            let updated = session.clone();
+            self.save_sessions_unlocked(&sessions)?;
+            Ok(updated)
+        })
     }
 
     /// Update whether a session has launched its command (e.g., Claude)
@@ -895,34 +1034,36 @@ impl Storage {
         session_id: &str,
         has_launched: bool,
     ) -> Result<Session, StorageError> {
-        let mut sessions = self.load_sessions()?;
-        let session = sessions
-            .iter_mut()
-            .find(|s| s.id == session_id)
-            .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let session = sessions
+                .iter_mut()
+                .find(|s| s.id == session_id)
+                .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))?;
 
-        session.has_launched_command = has_launched;
-        let updated = session.clone();
-        self.save_sessions(&sessions)?;
-        Ok(updated)
+            session.has_launched_command = has_launched;
+            let updated = session.clone();
+            self.save_sessions_unlocked(&sessions)?;
+            Ok(updated)
+        })
     }
 
     /// Remove a session by ID
     pub fn remove_session(&self, session_id: &str) -> Result<(), StorageError> {
-        let mut sessions = self.load_sessions()?;
-        let initial_len = sessions.len();
-        sessions.retain(|s| s.id != session_id);
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let initial_len = sessions.len();
+            sessions.retain(|s| s.id != session_id);
 
-        if sessions.len() == initial_len {
-            return Err(StorageError::SessionNotFound(session_id.to_string()));
-        }
+            if sessions.len() == initial_len {
+                return Err(StorageError::SessionNotFound(session_id.to_string()));
+            }
 
-        self.save_sessions(&sessions)?;
+            self.save_sessions_unlocked(&sessions)?;
+            let _ = self.delete_session_buffer(session_id);
 
-        // Also remove the buffer file if it exists
-        let _ = self.delete_session_buffer(session_id);
-
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Remove all sessions for an environment
@@ -930,28 +1071,26 @@ impl Storage {
         &self,
         environment_id: &str,
     ) -> Result<Vec<String>, StorageError> {
-        let sessions = self.load_sessions()?;
+        self.with_json_lock(|| {
+            let sessions = self.load_sessions_unlocked()?;
+            let session_ids: Vec<String> = sessions
+                .iter()
+                .filter(|s| s.environment_id == environment_id)
+                .map(|s| s.id.clone())
+                .collect();
 
-        // Collect session IDs to delete
-        let session_ids: Vec<String> = sessions
-            .iter()
-            .filter(|s| s.environment_id == environment_id)
-            .map(|s| s.id.clone())
-            .collect();
+            let remaining: Vec<Session> = sessions
+                .into_iter()
+                .filter(|s| s.environment_id != environment_id)
+                .collect();
+            self.save_sessions_unlocked(&remaining)?;
 
-        // Remove sessions from storage
-        let remaining: Vec<Session> = sessions
-            .into_iter()
-            .filter(|s| s.environment_id != environment_id)
-            .collect();
-        self.save_sessions(&remaining)?;
+            for session_id in &session_ids {
+                let _ = self.delete_session_buffer(session_id);
+            }
 
-        // Remove buffer files
-        for session_id in &session_ids {
-            let _ = self.delete_session_buffer(session_id);
-        }
-
-        Ok(session_ids)
+            Ok(session_ids)
+        })
     }
 
     /// Mark all sessions for an environment as disconnected
@@ -959,20 +1098,22 @@ impl Storage {
         &self,
         environment_id: &str,
     ) -> Result<Vec<Session>, StorageError> {
-        let mut sessions = self.load_sessions()?;
-        let mut updated_sessions = Vec::new();
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let mut updated_sessions = Vec::new();
 
-        for session in sessions.iter_mut() {
-            if session.environment_id == environment_id
-                && session.status == SessionStatus::Connected
-            {
-                session.status = SessionStatus::Disconnected;
-                updated_sessions.push(session.clone());
+            for session in &mut sessions {
+                if session.environment_id == environment_id
+                    && session.status == SessionStatus::Connected
+                {
+                    session.status = SessionStatus::Disconnected;
+                    updated_sessions.push(session.clone());
+                }
             }
-        }
 
-        self.save_sessions(&sessions)?;
-        Ok(updated_sessions)
+            self.save_sessions_unlocked(&sessions)?;
+            Ok(updated_sessions)
+        })
     }
 
     // --- Session Buffer Operations ---
@@ -1039,40 +1180,37 @@ impl Storage {
         environment_id: &str,
         session_ids: &[String],
     ) -> Result<Vec<Session>, StorageError> {
-        let mut sessions = self.load_sessions()?;
+        self.with_json_lock(|| {
+            let mut sessions = self.load_sessions_unlocked()?;
+            let provided_ids: std::collections::HashSet<&String> = session_ids.iter().collect();
 
-        // Create a set of provided IDs for quick lookup
-        let provided_ids: std::collections::HashSet<&String> = session_ids.iter().collect();
-
-        // Update the order field for each session based on its position in the input array
-        for (index, id) in session_ids.iter().enumerate() {
-            if let Some(session) = sessions
-                .iter_mut()
-                .find(|s| s.id == *id && s.environment_id == environment_id)
-            {
-                session.order = index as i32;
+            for (index, id) in session_ids.iter().enumerate() {
+                if let Some(session) = sessions
+                    .iter_mut()
+                    .find(|s| s.id == *id && s.environment_id == environment_id)
+                {
+                    session.order = index as i32;
+                }
             }
-        }
 
-        // Handle sessions in this environment not in the input array - append them at the end
-        let next_order = session_ids.len() as i32;
-        let mut missing_order = next_order;
-        for session in sessions.iter_mut() {
-            if session.environment_id == environment_id && !provided_ids.contains(&session.id) {
-                session.order = missing_order;
-                missing_order += 1;
+            let next_order = session_ids.len() as i32;
+            let mut missing_order = next_order;
+            for session in &mut sessions {
+                if session.environment_id == environment_id && !provided_ids.contains(&session.id) {
+                    session.order = missing_order;
+                    missing_order += 1;
+                }
             }
-        }
 
-        self.save_sessions(&sessions)?;
+            self.save_sessions_unlocked(&sessions)?;
 
-        // Return sessions for this environment, sorted by new order
-        let mut result: Vec<Session> = sessions
-            .into_iter()
-            .filter(|s| s.environment_id == environment_id)
-            .collect();
-        result.sort_by_key(|s| s.order);
-        Ok(result)
+            let mut result: Vec<Session> = sessions
+                .into_iter()
+                .filter(|s| s.environment_id == environment_id)
+                .collect();
+            result.sort_by_key(|s| s.order);
+            Ok(result)
+        })
     }
 
     /// Clean up orphaned buffer files (buffers without corresponding sessions)
@@ -1083,72 +1221,74 @@ impl Storage {
             return Ok(Vec::new());
         }
 
-        // Get all session IDs
-        let sessions = self.load_sessions()?;
-        let session_ids: std::collections::HashSet<String> =
-            sessions.iter().map(|s| s.id.clone()).collect();
+        self.with_json_lock(|| {
+            let sessions = self.load_sessions_unlocked()?;
+            let session_ids: std::collections::HashSet<String> =
+                sessions.iter().map(|s| s.id.clone()).collect();
 
-        let mut deleted = Vec::new();
+            let mut deleted = Vec::new();
 
-        // Iterate through buffer files
-        if let Ok(entries) = fs::read_dir(&buffers_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(file_name) = path.file_stem() {
-                        let session_id = file_name.to_string_lossy().to_string();
-                        // If no session exists with this ID, delete the buffer
-                        if !session_ids.contains(&session_id) {
-                            if fs::remove_file(&path).is_ok() {
-                                debug!(session_id = %session_id, "Deleted orphaned buffer file");
-                                deleted.push(session_id);
+            if let Ok(entries) = fs::read_dir(&buffers_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(file_name) = path.file_stem() {
+                            let session_id = file_name.to_string_lossy().to_string();
+                            if !session_ids.contains(&session_id) {
+                                if fs::remove_file(&path).is_ok() {
+                                    debug!(session_id = %session_id, "Deleted orphaned buffer file");
+                                    deleted.push(session_id);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        Ok(deleted)
+            Ok(deleted)
+        })
     }
 
     // --- Kanban Operations ---
 
-    /// Load all kanban tasks from storage
-    pub fn load_kanban_tasks(&self) -> Result<Vec<KanbanTask>, StorageError> {
+    fn load_kanban_tasks_unlocked(&self) -> Result<Vec<KanbanTask>, StorageError> {
         let path = self.kanban_file();
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let contents = fs::read_to_string(&path)?;
-        if contents.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let tasks: Vec<KanbanTask> = serde_json::from_str(&contents)?;
-        Ok(tasks)
+        self.load_json_with_recovery(&path, Vec::new)
     }
 
-    /// Save all kanban tasks to storage
-    pub fn save_kanban_tasks(&self, tasks: &[KanbanTask]) -> Result<(), StorageError> {
+    fn save_kanban_tasks_unlocked(&self, tasks: &[KanbanTask]) -> Result<(), StorageError> {
         let path = self.kanban_file();
         let contents = serde_json::to_string_pretty(tasks)?;
-        fs::write(path, contents)?;
-        Ok(())
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
+    }
+
+    /// Load all kanban tasks from storage (used in tests)
+    #[cfg(test)]
+    pub fn load_kanban_tasks(&self) -> Result<Vec<KanbanTask>, StorageError> {
+        self.with_json_lock(|| self.load_kanban_tasks_unlocked())
+    }
+
+    /// Save all kanban tasks to storage (used in tests for bulk setup)
+    #[cfg(test)]
+    pub fn save_kanban_tasks(&self, tasks: &[KanbanTask]) -> Result<(), StorageError> {
+        self.with_json_lock(|| self.save_kanban_tasks_unlocked(tasks))
     }
 
     /// Add a new kanban task
     pub fn add_kanban_task(&self, mut task: KanbanTask) -> Result<KanbanTask, StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        let max_order = tasks
-            .iter()
-            .filter(|t| t.project_id == task.project_id && t.status == task.status)
-            .map(|t| t.order)
-            .max()
-            .unwrap_or(-1);
-        task.order = max_order + 1;
-        tasks.push(task.clone());
-        self.save_kanban_tasks(&tasks)?;
-        Ok(task)
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let max_order = tasks
+                .iter()
+                .filter(|t| t.project_id == task.project_id && t.status == task.status)
+                .map(|t| t.order)
+                .max()
+                .unwrap_or(-1);
+            task.order = max_order + 1;
+            tasks.push(task.clone());
+            self.save_kanban_tasks_unlocked(&tasks)?;
+            Ok(task)
+        })
     }
 
     /// Update a kanban task
@@ -1165,85 +1305,88 @@ impl Storage {
         pr_state: Option<String>,
         pr_merge_commented: Option<bool>,
     ) -> Result<KanbanTask, StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        let task_index = tasks
-            .iter()
-            .position(|t| t.id == task_id)
-            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let task_index = tasks
+                .iter()
+                .position(|t| t.id == task_id)
+                .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
-        if let Some(title) = title {
-            tasks[task_index].title = title;
-        }
-        if let Some(description) = description {
-            tasks[task_index].description = description;
-        }
-        if let Some(acceptance_criteria) = acceptance_criteria {
-            tasks[task_index].acceptance_criteria = acceptance_criteria;
-        }
-        if let Some(new_status) = status {
-            if tasks[task_index].status != new_status {
-                let project_id = tasks[task_index].project_id.clone();
-                let max_order = tasks
-                    .iter()
-                    .filter(|t| {
-                        t.project_id == project_id && t.status == new_status && t.id != task_id
-                    })
-                    .map(|t| t.order)
-                    .max()
-                    .unwrap_or(-1);
-                tasks[task_index].status = new_status;
-                tasks[task_index].order = max_order + 1;
+            if let Some(title) = title {
+                tasks[task_index].title = title;
             }
-        }
-        if let Some(environment_id) = environment_id {
-            tasks[task_index].environment_id = if environment_id.is_empty() {
-                None
-            } else {
-                Some(environment_id)
-            };
-        }
-        if let Some(build_pipeline_id) = build_pipeline_id {
-            tasks[task_index].build_pipeline_id = if build_pipeline_id.is_empty() {
-                None
-            } else {
-                Some(build_pipeline_id)
-            };
-        }
-        if let Some(pr_url) = pr_url {
-            tasks[task_index].pr_url = if pr_url.is_empty() {
-                None
-            } else {
-                Some(pr_url)
-            };
-        }
-        if let Some(pr_state) = pr_state {
-            tasks[task_index].pr_state = if pr_state.is_empty() {
-                None
-            } else {
-                Some(pr_state)
-            };
-        }
-        if let Some(pr_merge_commented) = pr_merge_commented {
-            tasks[task_index].pr_merge_commented = pr_merge_commented;
-        }
+            if let Some(description) = description {
+                tasks[task_index].description = description;
+            }
+            if let Some(acceptance_criteria) = acceptance_criteria {
+                tasks[task_index].acceptance_criteria = acceptance_criteria;
+            }
+            if let Some(new_status) = status {
+                if tasks[task_index].status != new_status {
+                    let project_id = tasks[task_index].project_id.clone();
+                    let max_order = tasks
+                        .iter()
+                        .filter(|t| {
+                            t.project_id == project_id && t.status == new_status && t.id != task_id
+                        })
+                        .map(|t| t.order)
+                        .max()
+                        .unwrap_or(-1);
+                    tasks[task_index].status = new_status;
+                    tasks[task_index].order = max_order + 1;
+                }
+            }
+            if let Some(environment_id) = environment_id {
+                tasks[task_index].environment_id = if environment_id.is_empty() {
+                    None
+                } else {
+                    Some(environment_id)
+                };
+            }
+            if let Some(build_pipeline_id) = build_pipeline_id {
+                tasks[task_index].build_pipeline_id = if build_pipeline_id.is_empty() {
+                    None
+                } else {
+                    Some(build_pipeline_id)
+                };
+            }
+            if let Some(pr_url) = pr_url {
+                tasks[task_index].pr_url = if pr_url.is_empty() {
+                    None
+                } else {
+                    Some(pr_url)
+                };
+            }
+            if let Some(pr_state) = pr_state {
+                tasks[task_index].pr_state = if pr_state.is_empty() {
+                    None
+                } else {
+                    Some(pr_state)
+                };
+            }
+            if let Some(pr_merge_commented) = pr_merge_commented {
+                tasks[task_index].pr_merge_commented = pr_merge_commented;
+            }
 
-        let updated = tasks[task_index].clone();
-        self.save_kanban_tasks(&tasks)?;
-        Ok(updated)
+            let updated = tasks[task_index].clone();
+            self.save_kanban_tasks_unlocked(&tasks)?;
+            Ok(updated)
+        })
     }
 
     /// Delete a kanban task and its associated image files
     pub fn delete_kanban_task(&self, task_id: &str) -> Result<(), StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        // Find the task first so we can clean up its images
-        let task = tasks
-            .iter()
-            .find(|t| t.id == task_id)
-            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
-        self.cleanup_kanban_task_images(task);
-        tasks.retain(|t| t.id != task_id);
-        self.save_kanban_tasks(&tasks)?;
-        Ok(())
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let task = tasks
+                .iter()
+                .find(|t| t.id == task_id)
+                .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+            self.cleanup_kanban_task_images(task);
+            tasks.retain(|t| t.id != task_id);
+            self.save_kanban_tasks_unlocked(&tasks)?;
+            Ok(())
+        })
     }
 
     /// Get all kanban tasks for a project
@@ -1251,11 +1394,13 @@ impl Storage {
         &self,
         project_id: &str,
     ) -> Result<Vec<KanbanTask>, StorageError> {
-        let tasks = self.load_kanban_tasks()?;
-        Ok(tasks
-            .into_iter()
-            .filter(|t| t.project_id == project_id)
-            .collect())
+        self.with_json_lock(|| {
+            let tasks = self.load_kanban_tasks_unlocked()?;
+            Ok(tasks
+                .into_iter()
+                .filter(|t| t.project_id == project_id)
+                .collect())
+        })
     }
 
     /// Add a comment to a kanban task
@@ -1264,21 +1409,23 @@ impl Storage {
         task_id: &str,
         text: String,
     ) -> Result<KanbanTask, StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        let task = tasks
-            .iter_mut()
-            .find(|t| t.id == task_id)
-            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.id == task_id)
+                .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
-        let comment = KanbanComment {
-            id: uuid::Uuid::new_v4().to_string(),
-            text,
-            created_at: Utc::now(),
-        };
-        task.comments.push(comment);
-        let updated = task.clone();
-        self.save_kanban_tasks(&tasks)?;
-        Ok(updated)
+            let comment = KanbanComment {
+                id: uuid::Uuid::new_v4().to_string(),
+                text,
+                created_at: Utc::now(),
+            };
+            task.comments.push(comment);
+            let updated = task.clone();
+            self.save_kanban_tasks_unlocked(&tasks)?;
+            Ok(updated)
+        })
     }
 
     /// Delete a comment from a kanban task
@@ -1287,16 +1434,18 @@ impl Storage {
         task_id: &str,
         comment_id: &str,
     ) -> Result<KanbanTask, StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        let task = tasks
-            .iter_mut()
-            .find(|t| t.id == task_id)
-            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.id == task_id)
+                .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
-        task.comments.retain(|c| c.id != comment_id);
-        let updated = task.clone();
-        self.save_kanban_tasks(&tasks)?;
-        Ok(updated)
+            task.comments.retain(|c| c.id != comment_id);
+            let updated = task.clone();
+            self.save_kanban_tasks_unlocked(&tasks)?;
+            Ok(updated)
+        })
     }
 
     /// Convert image bytes to WebP format, resizing so no dimension exceeds 2000px.
@@ -1340,42 +1489,39 @@ impl Storage {
         filename: String,
         data: String,
     ) -> Result<KanbanTask, StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        let task = tasks
-            .iter_mut()
-            .find(|t| t.id == task_id)
-            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.id == task_id)
+                .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
-        // Decode base64 input
-        let raw_bytes = base64::engine::general_purpose::STANDARD
-            .decode(&data)
-            .map_err(|e| StorageError::ImageProcessing(format!("Invalid base64 data: {}", e)))?;
+            let raw_bytes = base64::engine::general_purpose::STANDARD.decode(&data).map_err(
+                |e| StorageError::ImageProcessing(format!("Invalid base64 data: {}", e)),
+            )?;
+            let webp_bytes = self.convert_to_webp(&raw_bytes)?;
 
-        // Convert to WebP
-        let webp_bytes = self.convert_to_webp(&raw_bytes)?;
+            let images_dir = self.kanban_images_dir();
+            if !images_dir.exists() {
+                fs::create_dir_all(&images_dir)?;
+            }
 
-        // Ensure images directory exists
-        let images_dir = self.kanban_images_dir();
-        if !images_dir.exists() {
-            fs::create_dir_all(&images_dir)?;
-        }
+            let image_id = uuid::Uuid::new_v4().to_string();
+            let image_path = self.kanban_image_file(&image_id);
+            fs::write(&image_path, &webp_bytes)?;
 
-        // Write WebP file to disk
-        let image_id = uuid::Uuid::new_v4().to_string();
-        let image_path = self.kanban_image_file(&image_id);
-        fs::write(&image_path, &webp_bytes)?;
+            debug!(image_id = %image_id, path = %image_path.display(), size_bytes = webp_bytes.len(), "Saved kanban image as WebP");
 
-        debug!(image_id = %image_id, path = %image_path.display(), size_bytes = webp_bytes.len(), "Saved kanban image as WebP");
-
-        let image = KanbanImage {
-            id: image_id,
-            filename,
-            created_at: Utc::now(),
-        };
-        task.images.push(image);
-        let updated = task.clone();
-        self.save_kanban_tasks(&tasks)?;
-        Ok(updated)
+            let image = KanbanImage {
+                id: image_id,
+                filename,
+                created_at: Utc::now(),
+            };
+            task.images.push(image);
+            let updated = task.clone();
+            self.save_kanban_tasks_unlocked(&tasks)?;
+            Ok(updated)
+        })
     }
 
     /// Delete an image from a kanban task and remove the file from disk.
@@ -1384,25 +1530,26 @@ impl Storage {
         task_id: &str,
         image_id: &str,
     ) -> Result<KanbanTask, StorageError> {
-        let mut tasks = self.load_kanban_tasks()?;
-        let task = tasks
-            .iter_mut()
-            .find(|t| t.id == task_id)
-            .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
+        self.with_json_lock(|| {
+            let mut tasks = self.load_kanban_tasks_unlocked()?;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.id == task_id)
+                .ok_or_else(|| StorageError::KanbanTaskNotFound(task_id.to_string()))?;
 
-        task.images.retain(|i| i.id != image_id);
-        let updated = task.clone();
-        self.save_kanban_tasks(&tasks)?;
+            task.images.retain(|i| i.id != image_id);
+            let updated = task.clone();
+            self.save_kanban_tasks_unlocked(&tasks)?;
 
-        // Remove the file from disk (best-effort)
-        let image_path = self.kanban_image_file(image_id);
-        if image_path.exists() {
-            if let Err(e) = fs::remove_file(&image_path) {
-                warn!(image_id = %image_id, error = %e, "Failed to delete kanban image file");
+            let image_path = self.kanban_image_file(image_id);
+            if image_path.exists() {
+                if let Err(e) = fs::remove_file(&image_path) {
+                    warn!(image_id = %image_id, error = %e, "Failed to delete kanban image file");
+                }
             }
-        }
 
-        Ok(updated)
+            Ok(updated)
+        })
     }
 
     /// Read a kanban image file from disk and return its data as base64-encoded WebP.
@@ -1433,38 +1580,41 @@ impl Storage {
         self.data_dir.join("project-notes.json")
     }
 
-    /// Load all project notes
-    pub fn load_project_notes(&self) -> Result<Vec<ProjectNotes>, StorageError> {
+    fn load_project_notes_unlocked(&self) -> Result<Vec<ProjectNotes>, StorageError> {
         let path = self.project_notes_file();
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let contents = fs::read_to_string(&path)?;
-        if contents.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let notes: Vec<ProjectNotes> = serde_json::from_str(&contents)?;
-        Ok(notes)
+        self.load_json_with_recovery(&path, Vec::new)
     }
 
-    fn save_project_notes(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
+    fn save_project_notes_unlocked(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
         let path = self.project_notes_file();
         let contents = serde_json::to_string_pretty(notes)?;
-        fs::write(path, contents)?;
-        Ok(())
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
+    }
+
+    /// Load all project notes (used in tests)
+    #[cfg(test)]
+    pub fn load_project_notes(&self) -> Result<Vec<ProjectNotes>, StorageError> {
+        self.with_json_lock(|| self.load_project_notes_unlocked())
+    }
+
+    #[cfg(test)]
+    fn save_project_notes(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
+        self.with_json_lock(|| self.save_project_notes_unlocked(notes))
     }
 
     /// Get notes for a specific project
     pub fn get_project_notes(&self, project_id: &str) -> Result<ProjectNotes, StorageError> {
-        let notes = self.load_project_notes()?;
-        Ok(notes
-            .into_iter()
-            .find(|n| n.project_id == project_id)
-            .unwrap_or(ProjectNotes {
-                project_id: project_id.to_string(),
-                content: String::new(),
-                updated_at: Utc::now(),
-            }))
+        self.with_json_lock(|| {
+            let notes = self.load_project_notes_unlocked()?;
+            Ok(notes
+                .into_iter()
+                .find(|n| n.project_id == project_id)
+                .unwrap_or(ProjectNotes {
+                    project_id: project_id.to_string(),
+                    content: String::new(),
+                    updated_at: Utc::now(),
+                }))
+        })
     }
 
     /// Save notes for a specific project
@@ -1473,32 +1623,31 @@ impl Storage {
         project_id: &str,
         content: String,
     ) -> Result<ProjectNotes, StorageError> {
-        let mut all_notes = self.load_project_notes()?;
-        let now = Utc::now();
+        self.with_json_lock(|| {
+            let mut all_notes = self.load_project_notes_unlocked()?;
+            let now = Utc::now();
 
-        if let Some(existing) = all_notes.iter_mut().find(|n| n.project_id == project_id) {
-            existing.content = content;
-            existing.updated_at = now;
-        } else {
-            all_notes.push(ProjectNotes {
-                project_id: project_id.to_string(),
-                content,
-                updated_at: now,
-            });
-        }
+            if let Some(existing) = all_notes.iter_mut().find(|n| n.project_id == project_id) {
+                existing.content = content;
+                existing.updated_at = now;
+            } else {
+                all_notes.push(ProjectNotes {
+                    project_id: project_id.to_string(),
+                    content,
+                    updated_at: now,
+                });
+            }
 
-        let updated = all_notes
-            .iter()
-            .find(|n| n.project_id == project_id)
-            .unwrap()
-            .clone();
-        self.save_project_notes(&all_notes)?;
-        Ok(updated)
+            let updated = all_notes
+                .iter()
+                .find(|n| n.project_id == project_id)
+                .unwrap()
+                .clone();
+            self.save_project_notes_unlocked(&all_notes)?;
+            Ok(updated)
+        })
     }
 }
-
-// Thread-safe global storage instance using OnceLock with Mutex for initialization
-use std::sync::{Mutex, OnceLock};
 
 static STORAGE: OnceLock<Result<Storage, String>> = OnceLock::new();
 static INIT_LOCK: Mutex<()> = Mutex::new(());
@@ -1528,11 +1677,22 @@ pub fn get_config() -> Result<AppConfig, StorageError> {
 mod tests {
     use super::*;
     use crate::models::{EnvironmentStatus, Session, SessionStatus, SessionType};
+    use filetime::{set_file_mtime, FileTime};
     use tempfile::tempdir;
 
     fn create_test_storage() -> Storage {
         let temp_dir = tempdir().unwrap();
         Storage::new_for_tests(temp_dir.keep())
+    }
+
+    fn create_test_png_base64() -> String {
+        let image = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        let dynamic = image::DynamicImage::ImageRgba8(image);
+        let mut bytes = Vec::new();
+        dynamic
+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
     // --- Project Tests ---
@@ -1646,6 +1806,46 @@ mod tests {
         assert!(ids.contains(&project1.id.as_str()));
         assert!(ids.contains(&project3.id.as_str()));
         assert!(!ids.contains(&project2.id.as_str()));
+    }
+
+    #[test]
+    fn test_save_and_reorder_projects() {
+        let storage = create_test_storage();
+
+        let mut project_a = Project::new("https://github.com/test/a.git".to_string(), None);
+        let mut project_b = Project::new("https://github.com/test/b.git".to_string(), None);
+        let mut project_c = Project::new("https://github.com/test/c.git".to_string(), None);
+        project_a.order = 2;
+        project_b.order = 0;
+        project_c.order = 1;
+
+        storage
+            .save_projects(&[project_a.clone(), project_b.clone(), project_c.clone()])
+            .unwrap();
+
+        let loaded = storage.load_projects().unwrap();
+        let loaded_ids: Vec<&str> = loaded.iter().map(|project| project.id.as_str()).collect();
+        assert_eq!(
+            loaded_ids,
+            vec![
+                project_b.id.as_str(),
+                project_c.id.as_str(),
+                project_a.id.as_str()
+            ]
+        );
+
+        let reordered = storage
+            .reorder_projects(&[project_c.id.clone(), project_a.id.clone()])
+            .unwrap();
+        let reordered_ids: Vec<&str> = reordered.iter().map(|project| project.id.as_str()).collect();
+        assert_eq!(
+            reordered_ids,
+            vec![
+                project_c.id.as_str(),
+                project_a.id.as_str(),
+                project_b.id.as_str()
+            ]
+        );
     }
 
     // --- Environment Tests ---
@@ -1885,6 +2085,48 @@ mod tests {
         let result = storage.update_environment("nonexistent", updates);
 
         assert!(matches!(result, Err(StorageError::EnvironmentNotFound(_))));
+    }
+
+    #[test]
+    fn test_save_get_all_and_reorder_environments() {
+        let storage = create_test_storage();
+
+        let mut env_a = Environment::new("project-1".to_string());
+        let mut env_b = Environment::new("project-1".to_string());
+        let mut env_c = Environment::new("project-2".to_string());
+        env_a.order = 2;
+        env_b.order = 0;
+        env_c.order = 1;
+
+        storage
+            .save_environments(&[env_a.clone(), env_b.clone(), env_c.clone()])
+            .unwrap();
+
+        let all = storage.get_all_environments().unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, env_b.id);
+
+        let reordered = storage
+            .reorder_environments("project-1", &[env_a.id.clone()])
+            .unwrap();
+        let reordered_ids: Vec<&str> = reordered.iter().map(|env| env.id.as_str()).collect();
+        assert_eq!(reordered_ids, vec![env_a.id.as_str(), env_b.id.as_str()]);
+    }
+
+    #[test]
+    fn test_load_environments_repairs_invalid_array_without_backup() {
+        let storage = create_test_storage();
+
+        let env = Environment::new("project-1".to_string());
+        storage.save_environments(&[env.clone()]).unwrap();
+
+        let path = storage.environments_file();
+        let valid_contents = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{valid_contents}\ntrailing-garbage")).unwrap();
+
+        let repaired = storage.load_environments().unwrap();
+        assert_eq!(repaired.len(), 1);
+        assert_eq!(repaired[0].id, env.id);
     }
 
     // --- Config Tests ---
@@ -2228,6 +2470,129 @@ mod tests {
         assert!(sessions.is_empty());
     }
 
+    #[test]
+    fn test_save_rename_launch_and_reorder_sessions() {
+        let storage = create_test_storage();
+
+        let mut session_a = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        let mut session_b = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
+        session_a.order = 1;
+        session_b.order = 0;
+
+        storage
+            .save_sessions(&[session_a.clone(), session_b.clone()])
+            .unwrap();
+        assert_eq!(storage.load_sessions().unwrap().len(), 2);
+
+        let renamed = storage
+            .rename_session(&session_a.id, Some("Renamed session".to_string()))
+            .unwrap();
+        assert_eq!(renamed.name.as_deref(), Some("Renamed session"));
+
+        let launched = storage
+            .set_session_has_launched_command(&session_a.id, true)
+            .unwrap();
+        assert!(launched.has_launched_command);
+
+        let reordered = storage
+            .reorder_sessions("env-1", &[session_a.id.clone()])
+            .unwrap();
+        let reordered_ids: Vec<&str> = reordered.iter().map(|session| session.id.as_str()).collect();
+        assert_eq!(reordered_ids, vec![session_a.id.as_str(), session_b.id.as_str()]);
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_buffers_removes_only_unknown_sessions() {
+        let storage = create_test_storage();
+
+        let session = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        storage.add_session(session.clone()).unwrap();
+        storage
+            .save_session_buffer(&session.id, "keep this buffer")
+            .unwrap();
+        storage
+            .save_session_buffer("orphan-session", "remove this buffer")
+            .unwrap();
+
+        let deleted = storage.cleanup_orphaned_buffers().unwrap();
+        assert_eq!(deleted, vec!["orphan-session".to_string()]);
+        assert!(storage.load_session_buffer(&session.id).unwrap().is_some());
+        assert!(storage.load_session_buffer("orphan-session").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_sessions_backups_rotate_only_after_minimum_age() {
+        let storage = create_test_storage();
+
+        let session_a = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        storage.save_sessions(&[session_a.clone()]).unwrap();
+
+        let session_b = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
+        storage
+            .save_sessions(&[session_a.clone(), session_b.clone()])
+            .unwrap();
+
+        let sessions_path = storage.sessions_file();
+        let backup_path = Storage::json_backup_path(&sessions_path, 1);
+        assert!(backup_path.exists());
+        let first_backup: Vec<Session> =
+            serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+        assert_eq!(first_backup.len(), 1);
+
+        let session_c = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-3".to_string(),
+            SessionType::Opencode,
+        );
+        storage
+            .save_sessions(&[session_a.clone(), session_b.clone(), session_c.clone()])
+            .unwrap();
+
+        let throttled_backup: Vec<Session> =
+            serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+        assert_eq!(throttled_backup.len(), 1);
+
+        let old_mtime = FileTime::from_unix_time(
+            (Utc::now() - chrono::TimeDelta::seconds(61)).timestamp(),
+            0,
+        );
+        set_file_mtime(&backup_path, old_mtime).unwrap();
+
+        storage
+            .save_sessions(&[session_a, session_b, session_c])
+            .unwrap();
+
+        let rotated_backup: Vec<Session> =
+            serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+        assert_eq!(rotated_backup.len(), 3);
+    }
+
     // --- Kanban PR Metadata Tests ---
 
     #[test]
@@ -2402,5 +2767,482 @@ mod tests {
         assert!(task.pr_url.is_none());
         assert!(task.pr_state.is_none());
         assert!(!task.pr_merge_commented);
+    }
+
+    #[test]
+    fn test_save_comment_image_and_delete_kanban_tasks() {
+        let storage = create_test_storage();
+
+        let task_a = KanbanTask::new(
+            "proj-1".to_string(),
+            "Task A".to_string(),
+            "desc".to_string(),
+        );
+        let task_b = KanbanTask::new(
+            "proj-1".to_string(),
+            "Task B".to_string(),
+            "desc".to_string(),
+        );
+
+        storage
+            .save_kanban_tasks(&[task_a.clone(), task_b.clone()])
+            .unwrap();
+        assert_eq!(storage.load_kanban_tasks().unwrap().len(), 2);
+
+        let with_comment = storage
+            .add_kanban_comment(&task_a.id, "first comment".to_string())
+            .unwrap();
+        assert_eq!(with_comment.comments.len(), 1);
+
+        let comment_id = with_comment.comments[0].id.clone();
+        let without_comment = storage
+            .delete_kanban_comment(&task_a.id, &comment_id)
+            .unwrap();
+        assert!(without_comment.comments.is_empty());
+
+        let with_image = storage
+            .add_kanban_image(
+                &task_a.id,
+                "pixel.png".to_string(),
+                create_test_png_base64(),
+            )
+            .unwrap();
+        assert_eq!(with_image.images.len(), 1);
+
+        let image_id = with_image.images[0].id.clone();
+        let image_path = storage.kanban_image_file(&image_id);
+        assert!(image_path.exists());
+        let encoded = storage.get_kanban_image_data(&image_id).unwrap();
+        assert!(!encoded.is_empty());
+
+        let without_image = storage.delete_kanban_image(&task_a.id, &image_id).unwrap();
+        assert!(without_image.images.is_empty());
+        assert!(!image_path.exists());
+
+        let with_image_again = storage
+            .add_kanban_image(
+                &task_a.id,
+                "pixel.png".to_string(),
+                create_test_png_base64(),
+            )
+            .unwrap();
+        let task_image_path = storage.kanban_image_file(&with_image_again.images[0].id);
+        assert!(task_image_path.exists());
+
+        storage.delete_kanban_task(&task_a.id).unwrap();
+        assert!(!task_image_path.exists());
+
+        let remaining = storage.get_kanban_tasks_by_project("proj-1").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, task_b.id);
+    }
+
+    #[test]
+    fn test_project_notes_crud() {
+        let storage = create_test_storage();
+
+        let default_notes = storage.get_project_notes("proj-1").unwrap();
+        assert_eq!(default_notes.project_id, "proj-1");
+        assert!(default_notes.content.is_empty());
+        assert!(storage.load_project_notes().unwrap().is_empty());
+
+        let saved = storage
+            .save_project_notes_for_project("proj-1", "hello world".to_string())
+            .unwrap();
+        assert_eq!(saved.content, "hello world");
+
+        let all_notes = storage.load_project_notes().unwrap();
+        assert_eq!(all_notes.len(), 1);
+        assert_eq!(all_notes[0].content, "hello world");
+
+        let fetched = storage.get_project_notes("proj-1").unwrap();
+        assert_eq!(fetched.content, "hello world");
+    }
+
+    #[test]
+    fn test_should_rotate_never_policy_returns_false() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        // Never policy returns false even when the file exists
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+        assert!(path.exists());
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Never
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_never_policy_returns_false_when_file_missing() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Never
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_always_policy_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+        assert!(path.exists());
+
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Always
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_always_policy_returns_false_when_file_missing() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::Always
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_no_backup_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+
+        // No .bak.1 exists yet — should rotate
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_recent_backup_returns_false() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        // Create a file and its first backup (recently modified)
+        std::fs::write(&path, "[]").unwrap();
+        let backup = Storage::json_backup_path(&path, 1);
+        std::fs::write(&backup, "[]").unwrap();
+
+        assert!(!Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_old_backup_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        std::fs::write(&path, "[]").unwrap();
+        let backup = Storage::json_backup_path(&path, 1);
+        std::fs::write(&backup, "[]").unwrap();
+
+        // Set backup mtime to 61 seconds ago
+        let old_mtime = FileTime::from_unix_time(
+            (Utc::now() - chrono::TimeDelta::seconds(61)).timestamp(),
+            0,
+        );
+        set_file_mtime(&backup, old_mtime).unwrap();
+
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_should_rotate_if_older_than_future_mtime_returns_true() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        std::fs::write(&path, "[]").unwrap();
+        let backup = Storage::json_backup_path(&path, 1);
+        std::fs::write(&backup, "[]").unwrap();
+
+        // Set backup mtime to the future
+        let future_mtime = FileTime::from_unix_time(
+            (Utc::now() + chrono::TimeDelta::seconds(3600)).timestamp(),
+            0,
+        );
+        set_file_mtime(&backup, future_mtime).unwrap();
+
+        assert!(Storage::should_rotate_json_backups(
+            &path,
+            JsonBackupPolicy::IfOlderThan(Duration::from_secs(60))
+        ));
+    }
+
+    #[test]
+    fn test_replace_file_creates_new_when_target_missing() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("new-file.json");
+        let temp = storage.data_dir.join("temp-file.json");
+
+        std::fs::write(&temp, "new-content").unwrap();
+        assert!(!path.exists());
+
+        Storage::replace_file(&path, &temp).unwrap();
+
+        assert!(path.exists());
+        assert!(!temp.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-content");
+    }
+
+    #[test]
+    fn test_replace_file_overwrites_existing() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("existing.json");
+        let temp = storage.data_dir.join("replacement.json");
+
+        std::fs::write(&path, "old-content").unwrap();
+        std::fs::write(&temp, "new-content").unwrap();
+
+        Storage::replace_file(&path, &temp).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-content");
+        assert!(!temp.exists());
+    }
+
+    #[test]
+    fn test_write_atomic_creates_parent_dirs() {
+        let storage = create_test_storage();
+        let nested = storage.data_dir.join("a").join("b").join("c.json");
+
+        Storage::write_atomic(&nested, "[]", JsonBackupPolicy::Never).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&nested).unwrap(), "[]");
+    }
+
+    #[test]
+    fn test_write_atomic_cleans_up_temp_on_backup_failure() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("test.json");
+
+        // First write succeeds
+        Storage::write_atomic(&path, "[1]", JsonBackupPolicy::Never).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1]");
+
+        // Second write also succeeds with Never policy
+        Storage::write_atomic(&path, "[1,2]", JsonBackupPolicy::Never).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1,2]");
+
+        // No leftover .tmp files
+        let tmp_files: Vec<_> = std::fs::read_dir(&storage.data_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(tmp_files.is_empty(), "leftover temp files: {:?}", tmp_files);
+    }
+
+    #[test]
+    fn test_archive_invalid_json_creates_snapshot() {
+        let storage = create_test_storage();
+        let path = storage.data_dir.join("test.json");
+
+        Storage::archive_invalid_json(&path, "broken-content", "test-reason");
+
+        let snapshots: Vec<_> = std::fs::read_dir(&storage.data_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("test.json.corrupted.")
+            })
+            .collect();
+        assert_eq!(snapshots.len(), 1);
+
+        let content = std::fs::read_to_string(snapshots[0].path()).unwrap();
+        assert_eq!(content, "broken-content");
+    }
+
+    #[test]
+    fn test_restore_from_backups_skips_invalid_and_finds_valid() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        // Create the main file (will be "corrupt")
+        std::fs::write(&path, "corrupt").unwrap();
+
+        // .bak.1 is invalid
+        let bak1 = Storage::json_backup_path(&path, 1);
+        std::fs::write(&bak1, "also-invalid").unwrap();
+
+        // .bak.2 is invalid
+        let bak2 = Storage::json_backup_path(&path, 2);
+        std::fs::write(&bak2, "still-invalid").unwrap();
+
+        // .bak.3 is valid
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        let valid_json = serde_json::to_string_pretty(&vec![&project]).unwrap();
+        let bak3 = Storage::json_backup_path(&path, 3);
+        std::fs::write(&bak3, &valid_json).unwrap();
+
+        let restored: Option<Vec<Project>> =
+            storage.restore_from_backups(&path, "corrupt").unwrap();
+
+        assert!(restored.is_some());
+        let projects = restored.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, project.id);
+
+        // The valid backup should have been written to the main file
+        let restored_main: Vec<Project> =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(restored_main.len(), 1);
+    }
+
+    #[test]
+    fn test_restore_from_backups_returns_none_when_all_invalid() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        std::fs::write(&path, "corrupt").unwrap();
+
+        let bak1 = Storage::json_backup_path(&path, 1);
+        std::fs::write(&bak1, "invalid-1").unwrap();
+
+        let bak2 = Storage::json_backup_path(&path, 2);
+        std::fs::write(&bak2, "invalid-2").unwrap();
+
+        let restored: Option<Vec<Project>> =
+            storage.restore_from_backups(&path, "corrupt").unwrap();
+
+        assert!(restored.is_none());
+    }
+
+    #[test]
+    fn test_rotate_json_backups_never_policy_is_noop() {
+        let storage = create_test_storage();
+        let path = storage.projects_file();
+
+        let project = Project::new("https://github.com/test/repo.git".to_string(), None);
+        storage.add_project(project).unwrap();
+
+        Storage::rotate_json_backups(&path, JsonBackupPolicy::Never).unwrap();
+
+        let bak1 = Storage::json_backup_path(&path, 1);
+        assert!(!bak1.exists());
+    }
+
+    #[test]
+    fn test_json_backup_rotation_keeps_last_five_versions() {
+        let storage = create_test_storage();
+
+        for version in 0..7 {
+            storage
+                .save_project_notes_for_project("proj-1", format!("version-{version}"))
+                .unwrap();
+        }
+
+        let notes_path = storage.project_notes_file();
+        for index in 1..=Storage::MAX_JSON_BACKUPS {
+            let backup_path = Storage::json_backup_path(&notes_path, index);
+            assert!(
+                backup_path.exists(),
+                "missing backup {}",
+                backup_path.display()
+            );
+
+            let notes: Vec<ProjectNotes> =
+                serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+            assert_eq!(notes.len(), 1);
+            assert_eq!(notes[0].content, format!("version-{}", 6 - index));
+        }
+
+        assert!(!Storage::json_backup_path(&notes_path, Storage::MAX_JSON_BACKUPS + 1).exists());
+    }
+
+    #[test]
+    fn test_load_config_restores_from_backup_when_current_file_is_invalid() {
+        let storage = create_test_storage();
+
+        let config_v1 = AppConfig::default();
+        storage.save_config(&config_v1).unwrap();
+
+        let mut config_v2 = AppConfig::default();
+        config_v2.global.debug_logging = true;
+        storage.save_config(&config_v2).unwrap();
+
+        let config_path = storage.config_file();
+        std::fs::write(&config_path, "{ not valid json").unwrap();
+
+        let restored = storage.load_config().unwrap();
+        assert!(!restored.global.debug_logging);
+
+        let current: AppConfig =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert!(!current.global.debug_logging);
+
+        let archived_count = std::fs::read_dir(&storage.data_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("config.json.corrupted.")
+            })
+            .count();
+        assert_eq!(archived_count, 1);
+    }
+
+    #[test]
+    fn test_load_kanban_tasks_restores_from_backup_when_current_file_is_invalid() {
+        let storage = create_test_storage();
+
+        let first = KanbanTask::new(
+            "proj-1".to_string(),
+            "First task".to_string(),
+            "desc".to_string(),
+        );
+        storage.add_kanban_task(first).unwrap();
+
+        let second = KanbanTask::new(
+            "proj-1".to_string(),
+            "Second task".to_string(),
+            "desc".to_string(),
+        );
+        storage.add_kanban_task(second).unwrap();
+
+        let kanban_path = storage.kanban_file();
+        std::fs::write(&kanban_path, "{ not valid json").unwrap();
+
+        let restored = storage.load_kanban_tasks().unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].title, "First task");
+
+        let current: Vec<KanbanTask> =
+            serde_json::from_str(&std::fs::read_to_string(&kanban_path).unwrap()).unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].title, "First task");
+
+        let archived_count = std::fs::read_dir(&storage.data_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("kanban.json.corrupted.")
+            })
+            .count();
+        assert_eq!(archived_count, 1);
     }
 }
