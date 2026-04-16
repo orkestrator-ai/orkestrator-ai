@@ -86,8 +86,8 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       ? global.terminalScrollback
       : DEFAULT_TERMINAL_SCROLLBACK
   );
-  const [experimentalCollatedCodexSubagents, setExperimentalCollatedCodexSubagents] = useState(
-    global.experimentalCollatedCodexSubagents ?? false
+  const [experimentalCodexRawEventLogging, setExperimentalCodexRawEventLogging] = useState(
+    global.experimentalCodexRawEventLogging ?? true
   );
   const [debugLogging, setDebugLogging] = useState(global.debugLogging ?? false);
   const [logDirectory, setLogDirectory] = useState<string | null>(null);
@@ -123,7 +123,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         ? global.terminalScrollback
         : DEFAULT_TERMINAL_SCROLLBACK
     );
-    setExperimentalCollatedCodexSubagents(global.experimentalCollatedCodexSubagents ?? false);
+    setExperimentalCodexRawEventLogging(global.experimentalCodexRawEventLogging ?? true);
     setDebugLogging(global.debugLogging ?? false);
   }, [global]);
 
@@ -152,13 +152,13 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       terminalFontSize !== terminalAppearance.fontSize ||
       terminalBackgroundColor !== terminalAppearance.backgroundColor ||
       terminalScrollback !== (global.terminalScrollback ?? DEFAULT_TERMINAL_SCROLLBACK) ||
-      experimentalCollatedCodexSubagents !== (global.experimentalCollatedCodexSubagents ?? false) ||
+      experimentalCodexRawEventLogging !== (global.experimentalCodexRawEventLogging ?? true) ||
       debugLogging !== (global.debugLogging ?? false);
     setHasChanges(changed);
     if (changed) {
       setSaveSuccess(false);
     }
-  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, codexMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, experimentalCollatedCodexSubagents, debugLogging, global]);
+  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, codexMode, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, experimentalCodexRawEventLogging, debugLogging, global]);
 
   // Validate domains on change
   const validateDomainsLocally = useCallback((domainsText: string) => {
@@ -242,7 +242,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         codexMode: CodexMode;
         terminalAppearance: TerminalAppearance;
         terminalScrollback: number;
-        experimentalCollatedCodexSubagents: boolean;
+        experimentalCodexRawEventLogging: boolean;
         debugLogging: boolean;
       } = {
         containerResources: { cpuCores, memoryGb },
@@ -262,7 +262,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
           backgroundColor: terminalBackgroundColor,
         },
         terminalScrollback,
-        experimentalCollatedCodexSubagents,
+        experimentalCodexRawEventLogging,
         debugLogging,
       };
 
@@ -322,7 +322,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         ? global.terminalScrollback
         : DEFAULT_TERMINAL_SCROLLBACK
     );
-    setExperimentalCollatedCodexSubagents(global.experimentalCollatedCodexSubagents ?? false);
+    setExperimentalCodexRawEventLogging(global.experimentalCodexRawEventLogging ?? true);
     setDebugLogging(global.debugLogging ?? false);
   };
 
@@ -852,11 +852,6 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
           </button>
         </div>
       )}
-      {debugLogging && (
-        <p className="text-xs text-muted-foreground">
-          When enabled, Codex native mode also captures raw bridge event output to dedicated debug files for transcript validation.
-        </p>
-      )}
       <p className="text-xs text-muted-foreground/60">
         Requires app restart to take effect
       </p>
@@ -866,42 +861,59 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
   const renderExperimental = () => (
     <div className="max-w-2xl space-y-4">
       <div>
-        <h3 className="text-sm font-medium text-foreground">Collated Codex Subagents</h3>
+        <h3 className="text-sm font-medium text-foreground">Codex Raw Event Logging</h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Experimentally groups transcript-derived Codex subagent activity into collapsible message sections without changing the base chronological message order.
+          Captures the additional raw Codex bridge events used to validate transcript-derived subagent rendering.
         </p>
       </div>
       <button
         type="button"
-        onClick={() => setExperimentalCollatedCodexSubagents(!experimentalCollatedCodexSubagents)}
+        onClick={() => setExperimentalCodexRawEventLogging(!experimentalCodexRawEventLogging)}
         className={cn(
           "max-w-xs w-full p-3 rounded-lg border-2 text-left transition-colors",
-          experimentalCollatedCodexSubagents
+          experimentalCodexRawEventLogging
             ? "border-primary bg-primary/5"
             : "border-transparent bg-zinc-900 hover:border-zinc-600"
         )}
       >
         <div className="flex items-center justify-between">
           <span className="font-medium text-sm">
-            {experimentalCollatedCodexSubagents ? "Enabled" : "Disabled"}
+            {experimentalCodexRawEventLogging ? "Enabled" : "Disabled"}
           </span>
           <div
             className={cn(
               "w-9 h-5 rounded-full transition-colors relative",
-              experimentalCollatedCodexSubagents ? "bg-primary" : "bg-muted-foreground/30"
+              experimentalCodexRawEventLogging ? "bg-primary" : "bg-muted-foreground/30"
             )}
           >
             <div
               className={cn(
                 "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
-                experimentalCollatedCodexSubagents ? "translate-x-4" : "translate-x-0.5"
+                experimentalCodexRawEventLogging ? "translate-x-4" : "translate-x-0.5"
               )}
             />
           </div>
         </div>
       </button>
       <p className="text-xs text-muted-foreground">
-        Leave this off if you want the existing Codex message behavior. Turn on debug logging as well if you want raw Codex bridge outputs captured to disk for validating this experiment.
+        Leave this enabled while validating subagent transcript rendering. Turn it off later if you no longer want to persist the extra Codex event payloads.
+      </p>
+      {experimentalCodexRawEventLogging && logDirectory && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground">Local environment logs will be saved under:</p>
+          <button
+            type="button"
+            onClick={() => { if (logDirectory) tauri.revealInFileManager(logDirectory).catch(() => {}); }}
+            className="flex items-center gap-1.5 text-xs text-primary hover:underline font-mono truncate max-w-full"
+            title={`${logDirectory}/codex-raw`}
+          >
+            <FolderOpen className="h-3 w-3 shrink-0" />
+            <span className="truncate">{logDirectory}/codex-raw</span>
+          </button>
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground/60">
+        Requires bridge restart to take effect. Local environment logs are written under the app log directory in `codex-raw/`.
       </p>
     </div>
   );

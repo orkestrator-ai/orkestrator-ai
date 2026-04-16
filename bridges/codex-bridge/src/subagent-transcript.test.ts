@@ -10,6 +10,41 @@ function recordsFromLines(lines: string[]): TranscriptRecord[] {
   return parseTranscriptRecords(lines);
 }
 
+describe("parseTranscriptRecords", () => {
+  test("skips invalid lines and non-object payloads", () => {
+    const records = parseTranscriptRecords([
+      "not-json",
+      JSON.stringify({
+        timestamp: "2026-04-16T11:17:23.623Z",
+        type: "response_item",
+        payload: "invalid",
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:17:24.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+        },
+      }),
+    ]);
+
+    expect(records).toEqual([
+      {
+        timestamp: "2026-04-16T11:17:23.623Z",
+        type: "response_item",
+        payload: undefined,
+      },
+      {
+        timestamp: "2026-04-16T11:17:24.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+        },
+      },
+    ]);
+  });
+});
+
 describe("deriveSubagentPartsFromTranscriptRecords", () => {
   test("creates a folded subagent part and hydrates child actions", () => {
     const parentRecords = recordsFromLines([
@@ -370,6 +405,198 @@ describe("deriveSubagentPartsFromTranscriptRecords", () => {
       parentRecords,
       childRecordsByAgentId,
     );
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.toolState).toBe("failure");
+  });
+
+  for (const eventType of ["task_error", "task_aborted", "task_cancelled"]) {
+    test(`marks subagents as failed on ${eventType}`, () => {
+      const parentRecords = recordsFromLines([
+        JSON.stringify({
+          timestamp: "2026-04-16T11:17:23.623Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "spawn_agent",
+            arguments: JSON.stringify({
+              agent_type: "worker",
+              message: "Handle the failure",
+            }),
+            call_id: "call-spawn-extra-failure",
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-04-16T11:17:23.681Z",
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "call-spawn-extra-failure",
+            output: JSON.stringify({
+              agent_id: "agent-extra-failure",
+              nickname: "Shannon",
+            }),
+          },
+        }),
+      ]);
+
+      const childRecordsByAgentId = new Map<string, TranscriptRecord[]>([
+        [
+          "agent-extra-failure",
+          recordsFromLines([
+            JSON.stringify({
+              timestamp: "2026-04-16T11:17:23.681Z",
+              type: "session_meta",
+              payload: {
+                id: "agent-extra-failure",
+                agent_nickname: "Shannon",
+                agent_role: "worker",
+              },
+            }),
+            JSON.stringify({
+              timestamp: "2026-04-16T11:19:00.119Z",
+              type: "event_msg",
+              payload: {
+                type: eventType,
+              },
+            }),
+          ]),
+        ],
+      ]);
+
+      const parts = deriveSubagentPartsFromTranscriptRecords(
+        parentRecords,
+        childRecordsByAgentId,
+      );
+
+      expect(parts).toHaveLength(1);
+      expect(parts[0]?.toolState).toBe("failure");
+    });
+  }
+
+  test("uses wait_agent failure results when child completion records are missing", () => {
+    const parentRecords = recordsFromLines([
+      JSON.stringify({
+        timestamp: "2026-04-16T11:17:23.623Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "spawn_agent",
+          arguments: JSON.stringify({
+            agent_type: "worker",
+            message: "Inspect the bridge",
+          }),
+          call_id: "call-spawn-wait-failure",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:17:23.681Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-spawn-wait-failure",
+          output: JSON.stringify({
+            agent_id: "agent-wait-failure",
+            nickname: "Hopper",
+          }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:18:23.681Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "wait_agent",
+          arguments: JSON.stringify({
+            targets: ["agent-wait-failure"],
+            timeout_ms: 300000,
+          }),
+          call_id: "call-wait-failure",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:18:24.681Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-wait-failure",
+          output: JSON.stringify({
+            status: {
+              "agent-wait-failure": {
+                failed: "Exited 1",
+              },
+            },
+            timed_out: false,
+          }),
+        },
+      }),
+    ]);
+
+    const parts = deriveSubagentPartsFromTranscriptRecords(parentRecords, new Map());
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.toolState).toBe("failure");
+  });
+
+  test("uses wait_agent cancellation results when child completion records are missing", () => {
+    const parentRecords = recordsFromLines([
+      JSON.stringify({
+        timestamp: "2026-04-16T11:17:23.623Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "spawn_agent",
+          arguments: JSON.stringify({
+            agent_type: "worker",
+            message: "Inspect the bridge",
+          }),
+          call_id: "call-spawn-wait-cancelled",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:17:23.681Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-spawn-wait-cancelled",
+          output: JSON.stringify({
+            agent_id: "agent-wait-cancelled",
+            nickname: "Hopper",
+          }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:18:23.681Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "wait_agent",
+          arguments: JSON.stringify({
+            targets: ["agent-wait-cancelled"],
+            timeout_ms: 300000,
+          }),
+          call_id: "call-wait-cancelled",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-04-16T11:18:24.681Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-wait-cancelled",
+          output: JSON.stringify({
+            status: {
+              "agent-wait-cancelled": {
+                cancelled: true,
+              },
+            },
+            timed_out: false,
+          }),
+        },
+      }),
+    ]);
+
+    const parts = deriveSubagentPartsFromTranscriptRecords(parentRecords, new Map());
 
     expect(parts).toHaveLength(1);
     expect(parts[0]?.toolState).toBe("failure");

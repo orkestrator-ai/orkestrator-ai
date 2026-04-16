@@ -73,7 +73,7 @@ const DEFAULT_CONFIG: AppConfig = {
       backgroundColor: TERMINAL_BACKGROUND_COLOR,
     },
     terminalScrollback: DEFAULT_TERMINAL_SCROLLBACK,
-    experimentalCollatedCodexSubagents: false,
+    experimentalCodexRawEventLogging: true,
   },
   repositories: {},
 };

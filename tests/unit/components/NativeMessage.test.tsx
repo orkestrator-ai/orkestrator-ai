@@ -113,4 +113,115 @@ describe("NativeMessage", () => {
     expect(screen.getByText("$ rg -n \"codex\" src")).toBeTruthy();
     expect(screen.getByText("matches")).toBeTruthy();
   });
+
+  test("renders success and failure subagent states when no activity was captured", () => {
+    const message: NativeMessageType = {
+      id: "msg-subagent-empty-states",
+      role: "assistant",
+      content: "Main agent response",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "subagent",
+          content: "Hopper",
+          subagentId: "agent-success",
+          subagentName: "Hopper",
+          subagentRole: "explorer",
+          subagentActionCount: 0,
+          toolState: "success",
+          subagentActions: [],
+        },
+        {
+          type: "subagent",
+          content: "Shannon",
+          subagentId: "agent-failure",
+          subagentName: "Shannon",
+          subagentRole: "worker",
+          subagentActionCount: 0,
+          toolState: "failure",
+          subagentActions: [],
+        },
+      ],
+    };
+
+    render(<NativeMessage message={message} />);
+
+    expect(screen.getByText("Success")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getAllByText("No activity captured.")).toHaveLength(2);
+  });
+
+  test("shows waiting preview when a pending subagent has no actions", () => {
+    const message: NativeMessageType = {
+      id: "msg-subagent-waiting",
+      role: "assistant",
+      content: "Main agent response",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "subagent",
+          content: "Lovelace",
+          subagentId: "agent-pending",
+          subagentName: "Lovelace",
+          subagentRole: "explorer",
+          subagentActionCount: 0,
+          toolState: "pending",
+          subagentActions: [],
+        },
+      ],
+    };
+
+    render(<NativeMessage message={message} />);
+
+    expect(screen.getByText("Waiting for activity.")).toBeTruthy();
+  });
+
+  test("uses text updates and tool titles as subagent preview fallbacks", () => {
+    const message: NativeMessageType = {
+      id: "msg-subagent-preview-fallbacks",
+      role: "assistant",
+      content: "Main agent response",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "subagent",
+          content: "Turing",
+          subagentId: "agent-text-preview",
+          subagentName: "Turing",
+          subagentRole: "worker",
+          subagentActionCount: 0,
+          toolState: "success",
+          subagentActions: [
+            {
+              type: "text",
+              content: "Summarized the repository layout.",
+            },
+          ],
+        },
+        {
+          type: "subagent",
+          content: "Kay",
+          subagentId: "agent-title-preview",
+          subagentName: "Kay",
+          subagentRole: "explorer",
+          subagentActionCount: 1,
+          toolState: "success",
+          subagentActions: [
+            {
+              type: "tool-invocation",
+              content: "exec_command",
+              toolName: "exec_command",
+              toolTitle: "grep",
+              toolState: "success",
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<NativeMessage message={message} />);
+
+    expect(screen.getByText("Summarized the repository layout.")).toBeTruthy();
+    expect(screen.getByText("grep")).toBeTruthy();
+  });
 });

@@ -666,13 +666,44 @@ pub async fn get_local_claude_status(
 }
 
 /// Start the Codex bridge server for a local environment
+fn build_local_codex_bridge_env_vars(
+    worktree_path: &str,
+    port: u16,
+    bundled_bun_path: Option<&str>,
+    raw_log_dir: Option<&str>,
+) -> HashMap<String, String> {
+    let mut env_vars = HashMap::new();
+    env_vars.insert("PORT".to_string(), port.to_string());
+    env_vars.insert("HOSTNAME".to_string(), "127.0.0.1".to_string());
+    env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+    env_vars.insert(
+        "PATH".to_string(),
+        build_comprehensive_path(bundled_bun_path),
+    );
+    env_vars.insert("CWD".to_string(), worktree_path.to_string());
+
+    if let Some(raw_log_dir) = raw_log_dir {
+        env_vars.insert(
+            "ORKESTRATOR_CODEX_RAW_LOG_DIR".to_string(),
+            raw_log_dir.to_string(),
+        );
+    }
+
+    if let Ok(openai_api_key) = std::env::var("OPENAI_API_KEY") {
+        if !openai_api_key.trim().is_empty() {
+            env_vars.insert("OPENAI_API_KEY".to_string(), openai_api_key);
+        }
+    }
+
+    env_vars
+}
+
 pub async fn start_local_codex_bridge(
     environment_id: &str,
     worktree_path: &str,
     port: u16,
     bridge_path: &str,
     bundled_bun_path: Option<&str>,
-    experimental_collated_codex_subagents: bool,
     raw_log_dir: Option<&str>,
 ) -> Result<LocalServerStartResult, String> {
     wait_for_startup_cleanup().await;
@@ -705,35 +736,8 @@ pub async fn start_local_codex_bridge(
         }
     }
 
-    let mut env_vars = HashMap::new();
-    env_vars.insert("PORT".to_string(), port.to_string());
-    env_vars.insert("HOSTNAME".to_string(), "127.0.0.1".to_string());
-    env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
-    env_vars.insert(
-        "PATH".to_string(),
-        build_comprehensive_path(bundled_bun_path),
-    );
-    env_vars.insert("CWD".to_string(), worktree_path.to_string());
-    env_vars.insert(
-        "ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS".to_string(),
-        if experimental_collated_codex_subagents {
-            "1".to_string()
-        } else {
-            "0".to_string()
-        },
-    );
-    if let Some(raw_log_dir) = raw_log_dir {
-        env_vars.insert(
-            "ORKESTRATOR_CODEX_RAW_LOG_DIR".to_string(),
-            raw_log_dir.to_string(),
-        );
-    }
-
-    if let Ok(openai_api_key) = std::env::var("OPENAI_API_KEY") {
-        if !openai_api_key.trim().is_empty() {
-            env_vars.insert("OPENAI_API_KEY".to_string(), openai_api_key);
-        }
-    }
+    let env_vars =
+        build_local_codex_bridge_env_vars(worktree_path, port, bundled_bun_path, raw_log_dir);
 
     let entry_point = format!("{}/dist/index.js", bridge_path);
     ensure_bridge_ready("codex-bridge", bridge_path, &entry_point).await?;
@@ -1704,5 +1708,33 @@ mod tests {
             Some("/tmp/opencode-data")
         );
         assert_eq!(extract_env_var(process, "HOME"), None);
+    }
+
+    #[test]
+    fn test_build_local_codex_bridge_env_vars_includes_raw_log_dir_when_enabled() {
+        let env_vars = build_local_codex_bridge_env_vars(
+            "/tmp/worktree",
+            4321,
+            Some("/tmp/bun"),
+            Some("/tmp/logs/codex-raw"),
+        );
+
+        assert_eq!(env_vars.get("PORT").map(String::as_str), Some("4321"));
+        assert_eq!(env_vars.get("CWD").map(String::as_str), Some("/tmp/worktree"));
+        assert_eq!(
+            env_vars
+                .get("ORKESTRATOR_CODEX_RAW_LOG_DIR")
+                .map(String::as_str),
+            Some("/tmp/logs/codex-raw")
+        );
+        assert!(!env_vars.contains_key("ORKESTRATOR_EXPERIMENTAL_COLLATED_CODEX_SUBAGENTS"));
+    }
+
+    #[test]
+    fn test_build_local_codex_bridge_env_vars_omits_raw_log_dir_when_disabled() {
+        let env_vars =
+            build_local_codex_bridge_env_vars("/tmp/worktree", 4321, Some("/tmp/bun"), None);
+
+        assert!(!env_vars.contains_key("ORKESTRATOR_CODEX_RAW_LOG_DIR"));
     }
 }

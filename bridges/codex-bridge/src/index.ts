@@ -20,11 +20,10 @@ import {
 } from "@openai/codex-sdk";
 import { summarizeTodoList, mapTodoArgs } from "./todo-helpers.js";
 import {
-  deriveSubagentPartsFromTranscriptRecords,
   mergeSubagentPartsIntoMessageParts,
-  type TranscriptRecord,
   type TranscriptSubagentPart,
 } from "./subagent-transcript.js";
+import { deriveTranscriptSubagentPartsForTurn } from "./subagent-transcript-parts.js";
 import { readCachedTranscript } from "./transcript-cache.js";
 
 type ToolState = "success" | "failure" | "pending";
@@ -189,7 +188,6 @@ const sessions = new Map<string, SessionState>();
 const subscribers = new Set<(event: SseEvent) => void>();
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-const experimentalCollatedCodexSubagents = true;
 const codexRawLogDir = normalizeOptionalEnvPath("ORKESTRATOR_CODEX_RAW_LOG_DIR");
 
 function normalizeOptionalEnvPath(name: string): string | null {
@@ -1439,76 +1437,12 @@ export async function itemToParts(
 async function buildTranscriptSubagentParts(
   session: SessionState,
 ): Promise<NormalizedPart[]> {
-  if (!session.threadId || !session.currentTurnStartedAt) {
-    return [];
-  }
-
-  const parentMeta = await getPersistedSessionMeta(session.threadId);
-  if (!parentMeta?.transcriptPath) {
-    return [];
-  }
-
-  const turnStartedAt = new Date(session.currentTurnStartedAt).getTime();
-  if (Number.isNaN(turnStartedAt)) {
-    return [];
-  }
-
-  const parentTranscript = await readCachedTranscript(parentMeta.transcriptPath);
-  const parentRecords = parentTranscript.records.filter((record) => {
-    if (!record.timestamp) {
-      return false;
-    }
-
-    const timestamp = new Date(record.timestamp).getTime();
-    return !Number.isNaN(timestamp) && timestamp >= turnStartedAt;
+  const transcriptParts = await deriveTranscriptSubagentPartsForTurn({
+    threadId: session.threadId,
+    currentTurnStartedAt: session.currentTurnStartedAt,
+    loadSessionMeta: (threadId) => getPersistedSessionMeta(threadId),
+    loadTranscript: (path) => readCachedTranscript(path),
   });
-
-  if (parentRecords.length === 0) {
-    return [];
-  }
-
-  const childRecordsByAgentId = new Map<string, TranscriptRecord[]>();
-
-  for (const record of parentRecords) {
-    if (
-      record.type !== "response_item"
-      || record.payload?.type !== "function_call_output"
-      || typeof record.payload?.output !== "string"
-    ) {
-      continue;
-    }
-
-    let parsedOutput: { agent_id?: unknown };
-    try {
-      parsedOutput = JSON.parse(record.payload.output) as { agent_id?: unknown };
-    } catch {
-      continue;
-    }
-
-    const agentId =
-      typeof parsedOutput.agent_id === "string" && parsedOutput.agent_id.length > 0
-        ? parsedOutput.agent_id
-        : null;
-    if (!agentId || childRecordsByAgentId.has(agentId)) {
-      continue;
-    }
-
-    const childMeta = await getPersistedSessionMeta(agentId);
-    if (!childMeta?.transcriptPath) {
-      childRecordsByAgentId.set(agentId, []);
-      continue;
-    }
-
-    childRecordsByAgentId.set(
-      agentId,
-      (await readCachedTranscript(childMeta.transcriptPath)).records,
-    );
-  }
-
-  const transcriptParts = deriveSubagentPartsFromTranscriptRecords(
-    parentRecords,
-    childRecordsByAgentId,
-  );
 
   return transcriptParts.map((part: TranscriptSubagentPart) => ({
     type: "subagent",
@@ -1692,7 +1626,6 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
     await writeCodexRawLog(session.id, {
       kind: "stream.start",
       threadId: session.threadId ?? null,
-      experimentalCollatedCodexSubagents,
     });
 
     for await (const event of streamed.events) {

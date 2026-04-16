@@ -60,7 +60,7 @@ describe("GlobalSettings", () => {
             backgroundColor: "#000000",
           },
           terminalScrollback: 5000,
-          experimentalCollatedCodexSubagents: false,
+          experimentalCodexRawEventLogging: true,
           debugLogging: false,
         },
         repositories: {},
@@ -96,16 +96,16 @@ describe("GlobalSettings", () => {
     });
   });
 
-  test("saves experimental collated Codex subagents changes", async () => {
+  test("saves experimental Codex raw event logging changes", async () => {
     render(<GlobalSettings activeSection="experimental" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Disabled" }));
+    fireEvent.click(screen.getByRole("button", { name: "Enabled" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() => {
       expect(mockUpdateGlobalConfig).toHaveBeenCalledWith(
         expect.objectContaining({
-          experimentalCollatedCodexSubagents: true,
+          experimentalCodexRawEventLogging: false,
         })
       );
     });

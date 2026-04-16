@@ -1,2 +1,6 @@
 [test]
 preload = ["./tests/setup.ts"]
+pathIgnorePatterns = [
+  "bridges/**/dist/**",
+  "src-tauri/target/**",
+]
