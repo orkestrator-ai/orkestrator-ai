@@ -418,10 +418,11 @@ pub async fn create_worktree(
 
     loop {
         attempt += 1;
-        let branch_exists = branch_exists(source_repo_path, &target_branch).await?;
-        let branch_in_use = branch_checked_out(source_repo_path, &target_branch).await?;
+        let local_exists = branch_exists(source_repo_path, &target_branch).await?;
+        let in_use = branch_checked_out(source_repo_path, &target_branch).await?;
+        let on_remote = remote_branch_exists(source_repo_path, &target_branch).await?;
 
-        if branch_exists && branch_in_use {
+        if local_exists && in_use {
             debug!(
                 branch = %target_branch,
                 "Branch is already checked out in another worktree; generating a new name"
@@ -431,14 +432,26 @@ pub async fn create_worktree(
             continue;
         }
 
-        if branch_exists {
-            debug!(branch = %target_branch, "Branch exists; reusing existing branch for worktree");
+        // If branch only exists on the remote, avoid reusing it — it may have
+        // an associated PR from a previous environment.
+        if !local_exists && on_remote {
+            debug!(
+                branch = %target_branch,
+                "Branch exists on remote but not locally; generating a new name to avoid PR collision"
+            );
+            target_branch =
+                generate_unique_branch_name(source_repo_path, branch_name, attempt).await?;
+            continue;
+        }
+
+        if local_exists {
+            debug!(branch = %target_branch, "Branch exists locally; reusing for worktree");
         }
 
         // Create the worktree
-        // If branch exists, reuse it: git worktree add <path> <branch>
+        // If branch exists locally, reuse it: git worktree add <path> <branch>
         // Otherwise create a new branch: git worktree add -b <branch> <path> <start-point>
-        let output = if branch_exists {
+        let output = if local_exists {
             Command::new("git")
                 .args(["worktree", "add", &worktree_path_str, &target_branch])
                 .current_dir(source_repo_path)
@@ -518,6 +531,21 @@ async fn branch_exists(repo_path: &str, branch_name: &str) -> Result<bool, Workt
     Ok(output.status.success())
 }
 
+async fn remote_branch_exists(repo_path: &str, branch_name: &str) -> Result<bool, WorktreeError> {
+    let output = Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            &format!("refs/remotes/origin/{}", branch_name),
+        ])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .map_err(|e| WorktreeError::WorktreeCreationFailed(e.to_string()))?;
+
+    Ok(output.status.success())
+}
+
 async fn branch_checked_out(repo_path: &str, branch_name: &str) -> Result<bool, WorktreeError> {
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
@@ -544,7 +572,8 @@ async fn generate_unique_branch_name(
         let candidate = format!("{}-{}", base_name, idx);
         let exists = branch_exists(repo_path, &candidate).await?;
         let in_use = branch_checked_out(repo_path, &candidate).await?;
-        if !exists && !in_use {
+        let on_remote = remote_branch_exists(repo_path, &candidate).await?;
+        if !exists && !in_use && !on_remote {
             return Ok(candidate);
         }
     }
@@ -1158,6 +1187,153 @@ mod tests {
 
         let result = add_to_git_exclude(temp_dir.path().to_str().unwrap(), ".orkestrator").await;
         assert!(result.is_err());
+    }
+
+    /// Helper: create a bare "remote" repo, clone it locally, and make an
+    /// initial commit so there is a valid default branch.  Returns (remote_dir,
+    /// local_dir, default_branch) – both `TempDir` so the caller controls lifetimes.
+    async fn setup_repo_with_remote() -> (TempDir, TempDir, String) {
+        let remote_dir = TempDir::new().unwrap();
+        let local_dir = TempDir::new().unwrap();
+
+        // Init bare remote
+        run_git(remote_dir.path(), &["init", "--bare"]).await;
+
+        // Clone into local_dir (needs parent to exist)
+        let local_path = local_dir.path().to_str().unwrap();
+        let remote_path = remote_dir.path().to_str().unwrap();
+        Command::new("git")
+            .args(["clone", remote_path, local_path])
+            .output()
+            .await
+            .unwrap();
+
+        // Configure identity
+        run_git(local_dir.path(), &["config", "user.email", "t@t.com"]).await;
+        run_git(local_dir.path(), &["config", "user.name", "T"]).await;
+
+        // Initial commit on the default branch
+        std::fs::write(local_dir.path().join("init.txt"), "x").unwrap();
+        run_git(local_dir.path(), &["add", "."]).await;
+        run_git(local_dir.path(), &["commit", "-m", "init"]).await;
+        run_git(local_dir.path(), &["push", "-u", "origin", "HEAD"]).await;
+
+        // Detect default branch name (could be main or master)
+        let output = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(local_dir.path())
+            .output()
+            .await
+            .unwrap();
+        let default_branch =
+            String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        (remote_dir, local_dir, default_branch)
+    }
+
+    #[tokio::test]
+    async fn test_remote_branch_exists_returns_true_for_pushed_branch() {
+        let (_remote, local, _default_branch) = setup_repo_with_remote().await;
+        let local_path = local.path().to_str().unwrap();
+
+        // Create and push a branch
+        run_git(local.path(), &["checkout", "-b", "pushed-branch"]).await;
+        std::fs::write(local.path().join("f.txt"), "y").unwrap();
+        run_git(local.path(), &["add", "."]).await;
+        run_git(local.path(), &["commit", "-m", "push"]).await;
+        run_git(local.path(), &["push", "origin", "pushed-branch"]).await;
+
+        assert!(remote_branch_exists(local_path, "pushed-branch")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_remote_branch_exists_returns_false_for_local_only_branch() {
+        let (_remote, local, _default_branch) = setup_repo_with_remote().await;
+        let local_path = local.path().to_str().unwrap();
+
+        run_git(local.path(), &["checkout", "-b", "local-only"]).await;
+
+        assert!(!remote_branch_exists(local_path, "local-only")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_remote_branch_exists_returns_false_for_nonexistent_branch() {
+        let (_remote, local, _default_branch) = setup_repo_with_remote().await;
+        let local_path = local.path().to_str().unwrap();
+
+        assert!(!remote_branch_exists(local_path, "does-not-exist")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_generate_unique_branch_name_avoids_remote_branches() {
+        let (_remote, local, default_branch) = setup_repo_with_remote().await;
+        let local_path = local.path().to_str().unwrap();
+
+        // Create and push feat-1 to remote (then delete locally)
+        run_git(local.path(), &["checkout", "-b", "feat-1"]).await;
+        std::fs::write(local.path().join("f1.txt"), "1").unwrap();
+        run_git(local.path(), &["add", "."]).await;
+        run_git(local.path(), &["commit", "-m", "f1"]).await;
+        run_git(local.path(), &["push", "origin", "feat-1"]).await;
+        run_git(local.path(), &["checkout", &default_branch]).await;
+        run_git(local.path(), &["branch", "-D", "feat-1"]).await;
+
+        // generate_unique_branch_name starts from attempt=1, generating "feat-1"
+        // but feat-1 exists on remote, so it should skip to feat-2
+        let result = generate_unique_branch_name(local_path, "feat", 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            result, "feat-2",
+            "Should skip feat-1 (on remote) and return feat-2"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_worktree_avoids_remote_only_branch() {
+        let (_remote, local, default_branch) = setup_repo_with_remote().await;
+        let local_path = local.path().to_str().unwrap();
+
+        // Push a branch to remote then delete locally — simulates a previous
+        // environment whose branch was cleaned up locally but still exists on origin
+        run_git(local.path(), &["checkout", "-b", "my-feature"]).await;
+        std::fs::write(local.path().join("feat.txt"), "f").unwrap();
+        run_git(local.path(), &["add", "."]).await;
+        run_git(local.path(), &["commit", "-m", "feat"]).await;
+        run_git(local.path(), &["push", "origin", "my-feature"]).await;
+        run_git(local.path(), &["checkout", &default_branch]).await;
+        run_git(local.path(), &["branch", "-D", "my-feature"]).await;
+
+        // Create a worktree requesting branch "my-feature" — should get a
+        // different name because my-feature exists on remote.
+        // Args: (source_repo_path, branch_name, project_name, base_branch_override)
+        let result = create_worktree(
+            local_path,
+            "my-feature",
+            "test-project",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(
+            result.branch, "my-feature",
+            "Should not reuse a branch that exists only on remote"
+        );
+        assert!(
+            result.branch.starts_with("my-feature-"),
+            "Should be a suffixed variant, got: {}",
+            result.branch
+        );
+
+        // Clean up the worktree
+        let _ = delete_worktree(local_path, &result.path).await;
     }
 
     #[tokio::test]

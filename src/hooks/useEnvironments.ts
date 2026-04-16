@@ -95,6 +95,20 @@ export function useEnvironments(
         console.log("[useEnvironments] Received environment-renamed event:", event.payload);
         const { environment_id, new_name, new_branch } = event.payload;
 
+        // If the branch changed, clear stale PR state so monitoring starts
+        // fresh for the new branch. Without this, a merged/closed PR from
+        // the old branch would be preserved indefinitely.
+        const currentEnv = useEnvironmentStore.getState().getEnvironmentById(environment_id);
+        if (currentEnv && currentEnv.branch !== new_branch && currentEnv.prUrl) {
+          console.log(
+            `[useEnvironments] Branch changed (${currentEnv.branch} -> ${new_branch}), clearing stale PR state`
+          );
+          tauri.clearEnvironmentPr(environment_id).catch((err) => {
+            console.warn("[useEnvironments] Failed to clear PR state after branch rename:", err);
+          });
+          setPRInStore(environment_id, null, null, null);
+        }
+
         // Update the environment in the store with the new name and branch
         updateEnvironmentInStore(environment_id, {
           name: new_name,
@@ -110,7 +124,7 @@ export function useEnvironments(
         unlisten();
       }
     };
-  }, [listenForRenameEvents, updateEnvironmentInStore]);
+  }, [listenForRenameEvents, updateEnvironmentInStore, setPRInStore]);
 
   const loadEnvironments = useCallback(
     async (pid: string) => {

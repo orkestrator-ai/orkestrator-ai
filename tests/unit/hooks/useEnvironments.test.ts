@@ -16,6 +16,7 @@ const mockStopEnvironment = mock<(environmentId: string) => Promise<void>>(() =>
 const mockSyncEnvironmentStatus = mock<(environmentId: string) => Promise<Environment>>((environmentId) =>
   Promise.resolve(createMockEnvironment({ id: environmentId, containerId: "container-123", status: "running" }))
 );
+const mockClearEnvironmentPr = mock<(environmentId: string) => Promise<void>>(() => Promise.resolve());
 
 mock.module("@/lib/tauri", () => ({
   getEnvironments: mockGetEnvironments,
@@ -25,7 +26,12 @@ mock.module("@/lib/tauri", () => ({
   startEnvironment: mockStartEnvironment,
   stopEnvironment: mockStopEnvironment,
   syncEnvironmentStatus: mockSyncEnvironmentStatus,
+  clearEnvironmentPr: mockClearEnvironmentPr,
 }));
+
+// Capture the event listener callback registered via listen()
+import { listen } from "@tauri-apps/api/event";
+const mockListen = listen as ReturnType<typeof mock>;
 
 // Import hook AFTER mocking
 import { useEnvironments } from "../../../src/hooks/useEnvironments";
@@ -47,6 +53,8 @@ describe("useEnvironments", () => {
     mockStartEnvironment.mockClear();
     mockStopEnvironment.mockClear();
     mockSyncEnvironmentStatus.mockClear();
+    mockClearEnvironmentPr.mockClear();
+    mockListen.mockClear();
 
     // Reset to default implementations
     mockGetEnvironments.mockImplementation(() => Promise.resolve([]));
@@ -60,6 +68,8 @@ describe("useEnvironments", () => {
     mockSyncEnvironmentStatus.mockImplementation((environmentId) =>
       Promise.resolve(createMockEnvironment({ id: environmentId, containerId: "container-123", status: "running" }))
     );
+    mockClearEnvironmentPr.mockImplementation(() => Promise.resolve());
+    mockListen.mockImplementation(() => Promise.resolve(() => {}));
   });
 
   test("returns empty environments when no projectId", () => {
@@ -423,5 +433,203 @@ describe("useEnvironments", () => {
 
     expect(result.current.error).toBe("Network error");
     expect(result.current.environments).toEqual([]);
+  });
+
+  // --- environment-renamed event listener tests ---
+
+  test("environment-renamed event updates name and branch in store", async () => {
+    const existingEnv = createMockEnvironment({
+      id: "env-1",
+      projectId: "project-1",
+      name: "old-name",
+      branch: "old-name",
+    });
+
+    useEnvironmentStore.setState({
+      environments: [existingEnv],
+      isLoading: false,
+      error: null,
+    });
+
+    mockGetEnvironments.mockImplementation(() => Promise.resolve([existingEnv]));
+
+    // Capture the listener callback when listen is called
+    let capturedCallback: ((event: unknown) => void) | null = null;
+    mockListen.mockImplementation((_eventName: string, cb: (event: unknown) => void) => {
+      capturedCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    const { result } = renderHook(() => useEnvironments("project-1"));
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    // The listener should have been registered
+    expect(capturedCallback).not.toBeNull();
+
+    // Fire the event
+    act(() => {
+      capturedCallback!({
+        payload: {
+          environment_id: "env-1",
+          new_name: "new-name",
+          new_branch: "new-name",
+        },
+      });
+    });
+
+    // The store should be updated
+    const updated = result.current.allEnvironments.find((e) => e.id === "env-1");
+    expect(updated?.name).toBe("new-name");
+    expect(updated?.branch).toBe("new-name");
+  });
+
+  test("environment-renamed event clears PR state when branch changes", async () => {
+    const existingEnv = createMockEnvironment({
+      id: "env-1",
+      projectId: "project-1",
+      name: "old-name",
+      branch: "old-branch",
+      prUrl: "https://github.com/test/repo/pull/42",
+      prState: "open" as Environment["prState"],
+    });
+
+    useEnvironmentStore.setState({
+      environments: [existingEnv],
+      isLoading: false,
+      error: null,
+    });
+
+    mockGetEnvironments.mockImplementation(() => Promise.resolve([existingEnv]));
+
+    let capturedCallback: ((event: unknown) => void) | null = null;
+    mockListen.mockImplementation((_eventName: string, cb: (event: unknown) => void) => {
+      capturedCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    const { result } = renderHook(() => useEnvironments("project-1"));
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(capturedCallback).not.toBeNull();
+
+    // Fire renamed event with a different branch
+    act(() => {
+      capturedCallback!({
+        payload: {
+          environment_id: "env-1",
+          new_name: "new-name",
+          new_branch: "new-branch",
+        },
+      });
+    });
+
+    // PR state should be cleared
+    const updated = result.current.allEnvironments.find((e) => e.id === "env-1");
+    expect(updated?.prUrl).toBeNull();
+    expect(updated?.prState).toBeNull();
+
+    // clearEnvironmentPr should have been called
+    expect(mockClearEnvironmentPr).toHaveBeenCalledWith("env-1");
+  });
+
+  test("environment-renamed event does not clear PR state when branch unchanged", async () => {
+    const existingEnv = createMockEnvironment({
+      id: "env-1",
+      projectId: "project-1",
+      name: "old-name",
+      branch: "same-branch",
+      prUrl: "https://github.com/test/repo/pull/42",
+      prState: "open" as Environment["prState"],
+    });
+
+    useEnvironmentStore.setState({
+      environments: [existingEnv],
+      isLoading: false,
+      error: null,
+    });
+
+    mockGetEnvironments.mockImplementation(() => Promise.resolve([existingEnv]));
+
+    let capturedCallback: ((event: unknown) => void) | null = null;
+    mockListen.mockImplementation((_eventName: string, cb: (event: unknown) => void) => {
+      capturedCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    const { result } = renderHook(() => useEnvironments("project-1"));
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    // Fire renamed event with the same branch (only name changed)
+    act(() => {
+      capturedCallback!({
+        payload: {
+          environment_id: "env-1",
+          new_name: "new-name",
+          new_branch: "same-branch",
+        },
+      });
+    });
+
+    // PR state should be preserved
+    const updated = result.current.allEnvironments.find((e) => e.id === "env-1");
+    expect(updated?.prUrl).toBe("https://github.com/test/repo/pull/42");
+    expect(updated?.prState).toBe("open");
+
+    // clearEnvironmentPr should NOT have been called
+    expect(mockClearEnvironmentPr).not.toHaveBeenCalled();
+  });
+
+  test("environment-renamed event does not clear PR state when no existing PR", async () => {
+    const existingEnv = createMockEnvironment({
+      id: "env-1",
+      projectId: "project-1",
+      name: "old-name",
+      branch: "old-branch",
+      prUrl: null,
+      prState: null,
+    });
+
+    useEnvironmentStore.setState({
+      environments: [existingEnv],
+      isLoading: false,
+      error: null,
+    });
+
+    mockGetEnvironments.mockImplementation(() => Promise.resolve([existingEnv]));
+
+    let capturedCallback: ((event: unknown) => void) | null = null;
+    mockListen.mockImplementation((_eventName: string, cb: (event: unknown) => void) => {
+      capturedCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    const { result } = renderHook(() => useEnvironments("project-1"));
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    // Fire renamed event with a different branch but no existing PR
+    act(() => {
+      capturedCallback!({
+        payload: {
+          environment_id: "env-1",
+          new_name: "new-name",
+          new_branch: "new-branch",
+        },
+      });
+    });
+
+    // clearEnvironmentPr should NOT have been called (no PR to clear)
+    expect(mockClearEnvironmentPr).not.toHaveBeenCalled();
   });
 });
