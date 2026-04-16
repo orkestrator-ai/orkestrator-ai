@@ -12,6 +12,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -45,8 +46,16 @@ pub struct Storage {
     json_lock: Mutex<()>,
 }
 
+#[derive(Clone, Copy)]
+enum JsonBackupPolicy {
+    Never,
+    Always,
+    IfOlderThan(Duration),
+}
+
 impl Storage {
     const MAX_JSON_BACKUPS: usize = 5;
+    const SESSIONS_BACKUP_MIN_AGE: Duration = Duration::from_secs(60);
 
     /// Create a new Storage instance, initializing the data directory if needed
     pub fn new() -> Result<Self, StorageError> {
@@ -141,7 +150,52 @@ impl Storage {
         ))
     }
 
-    fn rotate_json_backups(path: &Path) -> Result<(), StorageError> {
+    fn should_rotate_json_backups(path: &Path, policy: JsonBackupPolicy) -> bool {
+        if !path.exists() {
+            return false;
+        }
+
+        match policy {
+            JsonBackupPolicy::Never => false,
+            JsonBackupPolicy::Always => true,
+            JsonBackupPolicy::IfOlderThan(min_age) => {
+                let first_backup = Self::json_backup_path(path, 1);
+                if !first_backup.exists() {
+                    return true;
+                }
+
+                let modified = match fs::metadata(&first_backup).and_then(|meta| meta.modified()) {
+                    Ok(modified) => modified,
+                    Err(error) => {
+                        warn!(
+                            path = %first_backup.display(),
+                            error = %error,
+                            "Failed to read JSON backup metadata, rotating backup"
+                        );
+                        return true;
+                    }
+                };
+
+                match modified.elapsed() {
+                    Ok(elapsed) => elapsed >= min_age,
+                    Err(error) => {
+                        warn!(
+                            path = %first_backup.display(),
+                            error = %error,
+                            "JSON backup modified time is in the future, rotating backup"
+                        );
+                        true
+                    }
+                }
+            }
+        }
+    }
+
+    fn rotate_json_backups(path: &Path, policy: JsonBackupPolicy) -> Result<(), StorageError> {
+        if !Self::should_rotate_json_backups(path, policy) {
+            return Ok(());
+        }
+
         for index in (1..Self::MAX_JSON_BACKUPS).rev() {
             let current = Self::json_backup_path(path, index);
             let next = Self::json_backup_path(path, index + 1);
@@ -167,7 +221,56 @@ impl Storage {
         Ok(())
     }
 
-    fn write_atomic(path: &Path, contents: &str, rotate_backups: bool) -> Result<(), StorageError> {
+    #[cfg(windows)]
+    fn replace_file(path: &Path, temp_path: &Path) -> Result<(), StorageError> {
+        use std::iter;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+
+        if !path.exists() {
+            fs::rename(temp_path, path)?;
+            return Ok(());
+        }
+
+        let encode = |value: &Path| {
+            value
+                .as_os_str()
+                .encode_wide()
+                .chain(iter::once(0))
+                .collect::<Vec<u16>>()
+        };
+
+        let target = encode(path);
+        let replacement = encode(temp_path);
+        let replaced = unsafe {
+            ReplaceFileW(
+                target.as_ptr(),
+                replacement.as_ptr(),
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        if replaced == 0 {
+            return Err(StorageError::Io(std::io::Error::last_os_error()));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    fn replace_file(path: &Path, temp_path: &Path) -> Result<(), StorageError> {
+        fs::rename(temp_path, path)?;
+        Ok(())
+    }
+
+    fn write_atomic(
+        path: &Path,
+        contents: &str,
+        backup_policy: JsonBackupPolicy,
+    ) -> Result<(), StorageError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -183,18 +286,8 @@ impl Storage {
             file.write_all(contents.as_bytes())?;
             file.sync_all()?;
 
-            if rotate_backups && path.exists() {
-                Self::rotate_json_backups(path)?;
-            }
-
-            #[cfg(windows)]
-            {
-                if path.exists() {
-                    fs::remove_file(path)?;
-                }
-            }
-
-            fs::rename(&temp_path, path)?;
+            Self::rotate_json_backups(path, backup_policy)?;
+            Self::replace_file(path, &temp_path)?;
 
             if let Some(parent) = path.parent() {
                 if let Ok(parent_dir) = fs::File::open(parent) {
@@ -304,7 +397,7 @@ impl Storage {
             match serde_json::from_str::<T>(&backup_contents) {
                 Ok(value) => {
                     Self::archive_invalid_json(path, invalid_contents, "restore-from-backup");
-                    Self::write_atomic(path, &backup_contents, false)?;
+                    Self::write_atomic(path, &backup_contents, JsonBackupPolicy::Never)?;
                     info!(
                         path = %path.display(),
                         backup_path = %backup_path.display(),
@@ -342,7 +435,7 @@ impl Storage {
                 if let Some(restored) = self.restore_from_backups::<T>(path, "")? {
                     return Ok(restored);
                 }
-                Self::write_atomic(path, &default_contents, false)?;
+                Self::write_atomic(path, &default_contents, JsonBackupPolicy::Never)?;
                 return Ok(default_value);
             }
         };
@@ -353,7 +446,7 @@ impl Storage {
                 return Ok(restored);
             }
             Self::archive_invalid_json(path, &contents, "empty-json");
-            Self::write_atomic(path, &default_contents, false)?;
+            Self::write_atomic(path, &default_contents, JsonBackupPolicy::Never)?;
             return Ok(default_value);
         }
 
@@ -374,7 +467,7 @@ impl Storage {
                     match serde_json::from_str::<T>(&repaired_contents) {
                         Ok(value) => {
                             Self::archive_invalid_json(path, &contents, "repaired-json");
-                            Self::write_atomic(path, &repaired_contents, false)?;
+                            Self::write_atomic(path, &repaired_contents, JsonBackupPolicy::Never)?;
                             info!(path = %path.display(), "Recovered JSON file by repairing truncated array");
                             return Ok(value);
                         }
@@ -391,7 +484,7 @@ impl Storage {
                 }
 
                 Self::archive_invalid_json(path, &contents, "reset-to-default");
-                Self::write_atomic(path, &default_contents, false)?;
+                Self::write_atomic(path, &default_contents, JsonBackupPolicy::Never)?;
                 Ok(default_value)
             }
         }
@@ -409,7 +502,7 @@ impl Storage {
     fn save_projects_unlocked(&self, projects: &[Project]) -> Result<(), StorageError> {
         let path = self.projects_file();
         let contents = serde_json::to_string_pretty(projects)?;
-        Self::write_atomic(&path, &contents, true)
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
     }
 
     /// Load all projects from storage, sorted by order
@@ -532,7 +625,7 @@ impl Storage {
     fn save_environments_unlocked(&self, environments: &[Environment]) -> Result<(), StorageError> {
         let path = self.environments_file();
         let contents = serde_json::to_string_pretty(environments)?;
-        Self::write_atomic(&path, &contents, true)
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
     }
 
     /// Load all environments from storage, sorted by order
@@ -769,7 +862,7 @@ impl Storage {
         debug!(path = ?path, "Saving config");
         let contents = serde_json::to_string_pretty(config)?;
         debug!(content_length = contents.len(), "Config content length");
-        Self::write_atomic(&path, &contents, true)?;
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)?;
         debug!("Config file written successfully");
         Ok(())
     }
@@ -797,7 +890,11 @@ impl Storage {
     fn save_sessions_unlocked(&self, sessions: &[Session]) -> Result<(), StorageError> {
         let path = self.sessions_file();
         let contents = serde_json::to_string_pretty(sessions)?;
-        Self::write_atomic(&path, &contents, true)
+        Self::write_atomic(
+            &path,
+            &contents,
+            JsonBackupPolicy::IfOlderThan(Self::SESSIONS_BACKUP_MIN_AGE),
+        )
     }
 
     /// Load all sessions from storage
@@ -1158,7 +1255,7 @@ impl Storage {
     fn save_kanban_tasks_unlocked(&self, tasks: &[KanbanTask]) -> Result<(), StorageError> {
         let path = self.kanban_file();
         let contents = serde_json::to_string_pretty(tasks)?;
-        Self::write_atomic(&path, &contents, true)
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
     }
 
     /// Load all kanban tasks from storage
@@ -1485,7 +1582,7 @@ impl Storage {
     fn save_project_notes_unlocked(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
         let path = self.project_notes_file();
         let contents = serde_json::to_string_pretty(notes)?;
-        Self::write_atomic(&path, &contents, true)
+        Self::write_atomic(&path, &contents, JsonBackupPolicy::Always)
     }
 
     /// Load all project notes
@@ -1572,11 +1669,22 @@ pub fn get_config() -> Result<AppConfig, StorageError> {
 mod tests {
     use super::*;
     use crate::models::{EnvironmentStatus, Session, SessionStatus, SessionType};
+    use filetime::{set_file_mtime, FileTime};
     use tempfile::tempdir;
 
     fn create_test_storage() -> Storage {
         let temp_dir = tempdir().unwrap();
         Storage::new_for_tests(temp_dir.keep())
+    }
+
+    fn create_test_png_base64() -> String {
+        let image = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        let dynamic = image::DynamicImage::ImageRgba8(image);
+        let mut bytes = Vec::new();
+        dynamic
+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
     // --- Project Tests ---
@@ -1690,6 +1798,46 @@ mod tests {
         assert!(ids.contains(&project1.id.as_str()));
         assert!(ids.contains(&project3.id.as_str()));
         assert!(!ids.contains(&project2.id.as_str()));
+    }
+
+    #[test]
+    fn test_save_and_reorder_projects() {
+        let storage = create_test_storage();
+
+        let mut project_a = Project::new("https://github.com/test/a.git".to_string(), None);
+        let mut project_b = Project::new("https://github.com/test/b.git".to_string(), None);
+        let mut project_c = Project::new("https://github.com/test/c.git".to_string(), None);
+        project_a.order = 2;
+        project_b.order = 0;
+        project_c.order = 1;
+
+        storage
+            .save_projects(&[project_a.clone(), project_b.clone(), project_c.clone()])
+            .unwrap();
+
+        let loaded = storage.load_projects().unwrap();
+        let loaded_ids: Vec<&str> = loaded.iter().map(|project| project.id.as_str()).collect();
+        assert_eq!(
+            loaded_ids,
+            vec![
+                project_b.id.as_str(),
+                project_c.id.as_str(),
+                project_a.id.as_str()
+            ]
+        );
+
+        let reordered = storage
+            .reorder_projects(&[project_c.id.clone(), project_a.id.clone()])
+            .unwrap();
+        let reordered_ids: Vec<&str> = reordered.iter().map(|project| project.id.as_str()).collect();
+        assert_eq!(
+            reordered_ids,
+            vec![
+                project_c.id.as_str(),
+                project_a.id.as_str(),
+                project_b.id.as_str()
+            ]
+        );
     }
 
     // --- Environment Tests ---
@@ -1929,6 +2077,48 @@ mod tests {
         let result = storage.update_environment("nonexistent", updates);
 
         assert!(matches!(result, Err(StorageError::EnvironmentNotFound(_))));
+    }
+
+    #[test]
+    fn test_save_get_all_and_reorder_environments() {
+        let storage = create_test_storage();
+
+        let mut env_a = Environment::new("project-1".to_string());
+        let mut env_b = Environment::new("project-1".to_string());
+        let mut env_c = Environment::new("project-2".to_string());
+        env_a.order = 2;
+        env_b.order = 0;
+        env_c.order = 1;
+
+        storage
+            .save_environments(&[env_a.clone(), env_b.clone(), env_c.clone()])
+            .unwrap();
+
+        let all = storage.get_all_environments().unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, env_b.id);
+
+        let reordered = storage
+            .reorder_environments("project-1", &[env_a.id.clone()])
+            .unwrap();
+        let reordered_ids: Vec<&str> = reordered.iter().map(|env| env.id.as_str()).collect();
+        assert_eq!(reordered_ids, vec![env_a.id.as_str(), env_b.id.as_str()]);
+    }
+
+    #[test]
+    fn test_load_environments_repairs_invalid_array_without_backup() {
+        let storage = create_test_storage();
+
+        let env = Environment::new("project-1".to_string());
+        storage.save_environments(&[env.clone()]).unwrap();
+
+        let path = storage.environments_file();
+        let valid_contents = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{valid_contents}\ntrailing-garbage")).unwrap();
+
+        let repaired = storage.load_environments().unwrap();
+        assert_eq!(repaired.len(), 1);
+        assert_eq!(repaired[0].id, env.id);
     }
 
     // --- Config Tests ---
@@ -2272,6 +2462,129 @@ mod tests {
         assert!(sessions.is_empty());
     }
 
+    #[test]
+    fn test_save_rename_launch_and_reorder_sessions() {
+        let storage = create_test_storage();
+
+        let mut session_a = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        let mut session_b = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
+        session_a.order = 1;
+        session_b.order = 0;
+
+        storage
+            .save_sessions(&[session_a.clone(), session_b.clone()])
+            .unwrap();
+        assert_eq!(storage.load_sessions().unwrap().len(), 2);
+
+        let renamed = storage
+            .rename_session(&session_a.id, Some("Renamed session".to_string()))
+            .unwrap();
+        assert_eq!(renamed.name.as_deref(), Some("Renamed session"));
+
+        let launched = storage
+            .set_session_has_launched_command(&session_a.id, true)
+            .unwrap();
+        assert!(launched.has_launched_command);
+
+        let reordered = storage
+            .reorder_sessions("env-1", &[session_a.id.clone()])
+            .unwrap();
+        let reordered_ids: Vec<&str> = reordered.iter().map(|session| session.id.as_str()).collect();
+        assert_eq!(reordered_ids, vec![session_a.id.as_str(), session_b.id.as_str()]);
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_buffers_removes_only_unknown_sessions() {
+        let storage = create_test_storage();
+
+        let session = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        storage.add_session(session.clone()).unwrap();
+        storage
+            .save_session_buffer(&session.id, "keep this buffer")
+            .unwrap();
+        storage
+            .save_session_buffer("orphan-session", "remove this buffer")
+            .unwrap();
+
+        let deleted = storage.cleanup_orphaned_buffers().unwrap();
+        assert_eq!(deleted, vec!["orphan-session".to_string()]);
+        assert!(storage.load_session_buffer(&session.id).unwrap().is_some());
+        assert!(storage.load_session_buffer("orphan-session").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_sessions_backups_rotate_only_after_minimum_age() {
+        let storage = create_test_storage();
+
+        let session_a = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-1".to_string(),
+            SessionType::Plain,
+        );
+        storage.save_sessions(&[session_a.clone()]).unwrap();
+
+        let session_b = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-2".to_string(),
+            SessionType::Claude,
+        );
+        storage
+            .save_sessions(&[session_a.clone(), session_b.clone()])
+            .unwrap();
+
+        let sessions_path = storage.sessions_file();
+        let backup_path = Storage::json_backup_path(&sessions_path, 1);
+        assert!(backup_path.exists());
+        let first_backup: Vec<Session> =
+            serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+        assert_eq!(first_backup.len(), 1);
+
+        let session_c = Session::new(
+            "env-1".to_string(),
+            "container-1".to_string(),
+            "tab-3".to_string(),
+            SessionType::Opencode,
+        );
+        storage
+            .save_sessions(&[session_a.clone(), session_b.clone(), session_c.clone()])
+            .unwrap();
+
+        let throttled_backup: Vec<Session> =
+            serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+        assert_eq!(throttled_backup.len(), 1);
+
+        let old_mtime = FileTime::from_unix_time(
+            (Utc::now() - chrono::TimeDelta::seconds(61)).timestamp(),
+            0,
+        );
+        set_file_mtime(&backup_path, old_mtime).unwrap();
+
+        storage
+            .save_sessions(&[session_a, session_b, session_c])
+            .unwrap();
+
+        let rotated_backup: Vec<Session> =
+            serde_json::from_str(&std::fs::read_to_string(&backup_path).unwrap()).unwrap();
+        assert_eq!(rotated_backup.len(), 3);
+    }
+
     // --- Kanban PR Metadata Tests ---
 
     #[test]
@@ -2446,6 +2759,96 @@ mod tests {
         assert!(task.pr_url.is_none());
         assert!(task.pr_state.is_none());
         assert!(!task.pr_merge_commented);
+    }
+
+    #[test]
+    fn test_save_comment_image_and_delete_kanban_tasks() {
+        let storage = create_test_storage();
+
+        let task_a = KanbanTask::new(
+            "proj-1".to_string(),
+            "Task A".to_string(),
+            "desc".to_string(),
+        );
+        let task_b = KanbanTask::new(
+            "proj-1".to_string(),
+            "Task B".to_string(),
+            "desc".to_string(),
+        );
+
+        storage
+            .save_kanban_tasks(&[task_a.clone(), task_b.clone()])
+            .unwrap();
+        assert_eq!(storage.load_kanban_tasks().unwrap().len(), 2);
+
+        let with_comment = storage
+            .add_kanban_comment(&task_a.id, "first comment".to_string())
+            .unwrap();
+        assert_eq!(with_comment.comments.len(), 1);
+
+        let comment_id = with_comment.comments[0].id.clone();
+        let without_comment = storage
+            .delete_kanban_comment(&task_a.id, &comment_id)
+            .unwrap();
+        assert!(without_comment.comments.is_empty());
+
+        let with_image = storage
+            .add_kanban_image(
+                &task_a.id,
+                "pixel.png".to_string(),
+                create_test_png_base64(),
+            )
+            .unwrap();
+        assert_eq!(with_image.images.len(), 1);
+
+        let image_id = with_image.images[0].id.clone();
+        let image_path = storage.kanban_image_file(&image_id);
+        assert!(image_path.exists());
+        let encoded = storage.get_kanban_image_data(&image_id).unwrap();
+        assert!(!encoded.is_empty());
+
+        let without_image = storage.delete_kanban_image(&task_a.id, &image_id).unwrap();
+        assert!(without_image.images.is_empty());
+        assert!(!image_path.exists());
+
+        let with_image_again = storage
+            .add_kanban_image(
+                &task_a.id,
+                "pixel.png".to_string(),
+                create_test_png_base64(),
+            )
+            .unwrap();
+        let task_image_path = storage.kanban_image_file(&with_image_again.images[0].id);
+        assert!(task_image_path.exists());
+
+        storage.delete_kanban_task(&task_a.id).unwrap();
+        assert!(!task_image_path.exists());
+
+        let remaining = storage.get_kanban_tasks_by_project("proj-1").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, task_b.id);
+    }
+
+    #[test]
+    fn test_project_notes_crud() {
+        let storage = create_test_storage();
+
+        let default_notes = storage.get_project_notes("proj-1").unwrap();
+        assert_eq!(default_notes.project_id, "proj-1");
+        assert!(default_notes.content.is_empty());
+        assert!(storage.load_project_notes().unwrap().is_empty());
+
+        let saved = storage
+            .save_project_notes_for_project("proj-1", "hello world".to_string())
+            .unwrap();
+        assert_eq!(saved.content, "hello world");
+
+        let all_notes = storage.load_project_notes().unwrap();
+        assert_eq!(all_notes.len(), 1);
+        assert_eq!(all_notes[0].content, "hello world");
+
+        let fetched = storage.get_project_notes("proj-1").unwrap();
+        assert_eq!(fetched.content, "hello world");
     }
 
     #[test]

@@ -64,9 +64,13 @@ portable-pty = "0.8"
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["signal", "process"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+
 # Note: macOS keychain access now uses the `security` CLI tool instead of
 # the security-framework crate. This allows us to retrieve credentials by
 # service name only, without needing to know the account name.
 
 [dev-dependencies]
+filetime = "0.2"
 tempfile = "3"

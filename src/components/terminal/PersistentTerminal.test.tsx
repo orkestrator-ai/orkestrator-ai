@@ -160,7 +160,11 @@ function createMockTerminal(): MockTerminal {
  * Creates mock terminal data. Uses structural typing — the mock satisfies the
  * PersistentTerminalData interface shape without importing the real xterm types.
  */
-function createTerminalData() {
+function createTerminalData(options?: {
+  containerId?: string | null;
+  environmentId?: string;
+  serializedBuffer?: string;
+}) {
   storedContainerElement = document.createElement("div");
   const xtermNode = document.createElement("div");
   xtermNode.className = "xterm";
@@ -168,11 +172,11 @@ function createTerminalData() {
 
   return {
     tabId: "tab-1",
-    containerId: "container-1",
-    environmentId: "env-1",
+    containerId: options?.containerId ?? "container-1",
+    environmentId: options?.environmentId ?? "env-1",
     terminal: createMockTerminal(),
     fitAddon: { fit: mock(() => {}) },
-    serializeAddon: { serialize: mock(() => "") },
+    serializeAddon: { serialize: mock(() => options?.serializedBuffer ?? "") },
     webLinksAddon: {},
     portalElement: document.createElement("div"),
     containerElement: storedContainerElement,
@@ -190,6 +194,12 @@ describe("PersistentTerminal", () => {
     portalStoreActions.setTerminalContainer.mockClear();
     portalStoreActions.setTerminalPane.mockClear();
     portalStoreActions.recreateTerminal.mockClear();
+    persistentSessionStore.createSession.mockClear();
+    persistentSessionStore.updateSessionActivity.mockClear();
+    persistentSessionStore.updateSessionStatus.mockClear();
+    persistentSessionStore.loadSessionsForEnvironment.mockClear();
+    persistentSessionStore.saveSessionBuffer.mockClear();
+    persistentSessionStore.getSessionsByEnvironment = () => [];
 
     // Reset real stores to controlled state
     useTerminalSessionStore.setState({
@@ -366,5 +376,98 @@ describe("PersistentTerminal", () => {
 
     expect(usePaneLayoutStore.getState().environments.get("env-1")?.activePaneId).toBe("pane-1");
     expect(usePaneLayoutStore.getState().activeEnvironmentId).toBe("env-2");
+  });
+
+  it("creates persistent sessions for local terminals with an empty container id", async () => {
+    useEnvironmentStore.setState({
+      environments: [
+        {
+          id: "env-1",
+          projectId: "project-1",
+          name: "local-env",
+          branch: "main",
+          containerId: null,
+          status: "running",
+          prUrl: null,
+          prState: null,
+          hasMergeConflicts: null,
+          createdAt: "2024-01-01T00:00:00.000Z",
+          networkAccessMode: "restricted",
+          order: 0,
+          environmentType: "local",
+          worktreePath: "/tmp/local-env",
+        },
+      ],
+    });
+
+    usePaneLayoutStore.setState({
+      environments: new Map([
+        ["env-1", {
+          root: {
+            kind: "leaf",
+            id: "pane-1",
+            tabs: [{ id: "tab-1", type: "claude" }],
+            activeTabId: "tab-1",
+          },
+          activePaneId: "pane-1",
+          containerId: null,
+        }],
+      ]),
+      activeEnvironmentId: "env-1",
+    });
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData({ containerId: null })}
+        tabId="tab-1"
+        tabType="claude"
+        containerId={null}
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(persistentSessionStore.createSession).toHaveBeenCalledWith(
+        "env-1",
+        "",
+        "tab-1",
+        "claude",
+      );
+    });
+  });
+
+  it("persists serialized buffers for persistent sessions on cleanup", async () => {
+    const view = render(
+      <PersistentTerminal
+        terminalData={createTerminalData({ serializedBuffer: "persisted-buffer" })}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(persistentSessionStore.createSession).toHaveBeenCalled();
+    });
+
+    view.unmount();
+
+    await waitFor(() => {
+      expect(persistentSessionStore.saveSessionBuffer).toHaveBeenCalledWith(
+        "persistent-1",
+        "persisted-buffer",
+      );
+    });
   });
 });
