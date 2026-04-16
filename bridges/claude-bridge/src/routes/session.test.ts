@@ -37,7 +37,8 @@ const mockGetSessionMessages = mock(() => [
   { id: "msg-1", role: "assistant", content: "Hello", parts: [], timestamp: "2026-01-01T00:00:00Z" },
 ]);
 
-const mockSendPrompt = mock(async () => {});
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockSendPrompt = mock(async (..._args: any[]) => {});
 const mockAbortSession = mock(() => true);
 const mockDeleteSession = mock((id: string) => id === "s-1");
 const mockGetPendingQuestions = mock(() => []);
@@ -72,6 +73,11 @@ import session from "./session.js";
 const app = new Hono();
 app.route("/session", session);
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function jsonBody(res: Response): Promise<any> {
+  return res.json();
+}
+
 function jsonRequest(method: string, path: string, body?: unknown) {
   const init: RequestInit = { method };
   if (body !== undefined) {
@@ -100,7 +106,7 @@ describe("session routes", () => {
     test("creates a session and returns 201", async () => {
       const res = await jsonRequest("POST", "/session/create", { title: "Test" });
       expect(res.status).toBe(201);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.sessionId).toBe("s-1");
       expect(data.title).toBe("Test");
     });
@@ -116,7 +122,7 @@ describe("session routes", () => {
     test("returns session list", async () => {
       const res = await app.request("/session/list");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.sessions).toHaveLength(1);
       expect(data.sessions[0].id).toBe("s-1");
     });
@@ -127,7 +133,7 @@ describe("session routes", () => {
     test("returns session details", async () => {
       const res = await app.request("/session/s-1");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.id).toBe("s-1");
     });
 
@@ -142,7 +148,7 @@ describe("session routes", () => {
     test("returns messages for existing session", async () => {
       const res = await app.request("/session/s-1/messages");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.messages).toHaveLength(1);
     });
 
@@ -159,7 +165,7 @@ describe("session routes", () => {
         prompt: "Hello Claude",
       });
       expect(res.status).toBe(202);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.status).toBe("processing");
     });
 
@@ -244,7 +250,7 @@ describe("session routes", () => {
     test("returns aborted status", async () => {
       const res = await jsonRequest("POST", "/session/s-1/abort");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.status).toBe("aborted");
     });
 
@@ -259,7 +265,7 @@ describe("session routes", () => {
     test("returns deleted status", async () => {
       const res = await jsonRequest("DELETE", "/session/s-1");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.status).toBe("deleted");
     });
 
@@ -274,7 +280,7 @@ describe("session routes", () => {
     test("returns questions for session", async () => {
       const res = await app.request("/session/s-1/questions");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.questions).toEqual([]);
     });
 
@@ -289,7 +295,7 @@ describe("session routes", () => {
     test("returns init data for session", async () => {
       const res = await app.request("/session/s-1/init");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.initData).toBeDefined();
       expect(data.initData.mcpServers).toEqual([]);
     });
@@ -307,7 +313,7 @@ describe("session routes", () => {
         approved: true,
       });
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.status).toBe("approved");
     });
 
@@ -317,7 +323,7 @@ describe("session routes", () => {
         feedback: "needs work",
       });
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.status).toBe("rejected");
     });
 
@@ -341,7 +347,7 @@ describe("session routes", () => {
     test("returns approvals for session", async () => {
       const res = await app.request("/session/s-1/plan-approvals");
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await jsonBody(res);
       expect(data.approvals).toEqual([]);
     });
 
