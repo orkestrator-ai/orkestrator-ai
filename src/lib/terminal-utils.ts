@@ -43,16 +43,25 @@ export const ENVIRONMENT_SETUP_FAILED_MARKER = "=== Workspace Setup Failed ===";
 /** OSC identifier used for invisible setup-complete signalling via xterm.js */
 export const SETUP_DONE_OSC_ID = 9999;
 
-/** The data payload sent inside the OSC sequence */
+/** OSC payload emitted on successful setup completion */
 export const SETUP_DONE_OSC_DATA = "setup_done";
 
+/** OSC payload emitted when setup commands exit non-zero */
+export const SETUP_FAILED_OSC_DATA = "setup_failed";
+
 /**
- * Shell command that emits an invisible OSC escape sequence to signal setup completion.
- * xterm.js consumes OSC sequences without rendering them, so the marker is invisible.
- * The shell echo of the printf command shows literal text, not escape bytes, so it
- * cannot trigger the OSC handler — only the actual execution does.
+ * Shell commands that emit an invisible OSC escape sequence to signal setup
+ * completion. xterm.js consumes OSC sequences without rendering them, so the
+ * marker is invisible. The shell echo of the printf command shows literal text,
+ * not escape bytes, so it cannot trigger the OSC handler — only the actual
+ * execution does.
+ *
+ * Both success and failure variants exist so completion is always detected even
+ * when a setup step exits non-zero. Persistence is still gated on the success
+ * variant.
  */
 export const SETUP_DONE_PRINTF_CMD = `printf '\\033]${SETUP_DONE_OSC_ID};${SETUP_DONE_OSC_DATA}\\007'`;
+export const SETUP_FAILED_PRINTF_CMD = `printf '\\033]${SETUP_DONE_OSC_ID};${SETUP_FAILED_OSC_DATA}\\007'`;
 
 /** Patterns that indicate a shell prompt is ready */
 export const SHELL_PROMPT_PATTERNS: (string | RegExp)[] = [

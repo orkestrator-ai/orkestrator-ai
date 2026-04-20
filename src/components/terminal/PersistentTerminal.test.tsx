@@ -572,6 +572,32 @@ describe("PersistentTerminal", () => {
     expect(onSetupComplete).toHaveBeenCalledWith({ persistSetupComplete: true });
   });
 
+  it("signals completion without persistence when the OSC failure marker arrives", async () => {
+    const onSetupComplete = mock((_payload: { persistSetupComplete: boolean }) => {});
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="plain"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={true}
+        paneId="pane-1"
+        isSetupTab={true}
+        onSetupComplete={onSetupComplete}
+      />
+    );
+
+    await act(async () => {
+      expect(terminalOscHandler?.("setup_failed")).toBe(true);
+    });
+    expect(onSetupComplete).toHaveBeenCalledWith({ persistSetupComplete: false });
+  });
+
   it("treats the manual setup-complete button as a runtime-only override", async () => {
     const onSetupComplete = mock((_payload: { persistSetupComplete: boolean }) => {});
     const view = render(
