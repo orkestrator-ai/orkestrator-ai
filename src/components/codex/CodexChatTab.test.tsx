@@ -394,8 +394,14 @@ describe("CodexChatTab", () => {
     fireEvent.click(screen.getByTestId("codex-send"));
 
     await waitFor(() => {
-      expect(screen.queryByText(composeText)).not.toBeNull();
-      expect(screen.queryByText("Naming environment...")).not.toBeNull();
+      const messages =
+        useCodexStore.getState().sessions.get(SESSION_KEY)?.messages ?? [];
+      expect(
+        messages.some((message) => message.content === composeText),
+      ).toBe(true);
+      expect(
+        messages.some((message) => message.content === "Naming environment..."),
+      ).toBe(true);
       expect(mockSendPrompt).not.toHaveBeenCalled();
     });
 
@@ -411,7 +417,11 @@ describe("CodexChatTab", () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByText("Naming environment...")).toBeNull();
+      const messages =
+        useCodexStore.getState().sessions.get(SESSION_KEY)?.messages ?? [];
+      expect(
+        messages.some((message) => message.content === "Naming environment..."),
+      ).toBe(false);
     });
   });
 
