@@ -1,8 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect } from "react";
-import type { ClaudeMessage as ClaudeMessageType } from "../../../src/lib/claude-client";
+import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType } from "../../../src/lib/claude-client";
 import { TerminalProvider, useTerminalContext } from "../../../src/contexts/TerminalContext";
+import { CLAUDE_AUTH_LOGIN_COMMAND } from "../../../src/lib/claude-auth";
 
 mock.module("@/lib/tauri", () => ({
   openInBrowser: async () => {},
@@ -76,7 +77,7 @@ describe("ClaudeMessage", () => {
   test("shows a Claude auth login action for authentication failures", () => {
     const createTab = mock(() => {});
     const message: ClaudeMessageType = {
-      id: "error-auth",
+      id: `${ERROR_MESSAGE_PREFIX}auth`,
       role: "assistant",
       content: "Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"}}",
       timestamp: "2026-03-07T12:00:00.000Z",
@@ -88,19 +89,63 @@ describe("ClaudeMessage", () => {
       ],
     };
 
-    render(
+    const { container } = render(
       <TerminalContextHarness createTab={createTab}>
         <ClaudeMessage message={message} />
       </TerminalContextHarness>,
     );
+    const view = within(container);
 
-    expect(screen.getByText("Claude is not authenticated. Run claude auth login to continue.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Run claude auth login" })).toBeTruthy();
+    expect(view.getByText("Claude is not authenticated. Run claude auth login to continue.")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Run claude auth login" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Run claude auth login" }));
+    fireEvent.click(view.getByRole("button", { name: "Run claude auth login" }));
 
     expect(createTab).toHaveBeenCalledWith("plain", {
-      initialCommands: ["claude auth login"],
+      initialCommands: [CLAUDE_AUTH_LOGIN_COMMAND],
     });
+  });
+
+  test("renders auth errors safely when no terminal context is available", () => {
+    const message: ClaudeMessageType = {
+      id: `${ERROR_MESSAGE_PREFIX}auth-no-context`,
+      role: "assistant",
+      content: "authentication_error: Invalid authentication credentials",
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: "authentication_error: Invalid authentication credentials",
+        },
+      ],
+    };
+
+    const { container } = render(<ClaudeMessage message={message} />);
+    const view = within(container);
+
+    const button = view.getByRole("button", { name: `Run ${CLAUDE_AUTH_LOGIN_COMMAND}` });
+    expect(button).toBeTruthy();
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("keeps generic error messages unchanged for non-auth failures", () => {
+    const message: ClaudeMessageType = {
+      id: `${ERROR_MESSAGE_PREFIX}generic`,
+      role: "assistant",
+      content: "Something went wrong while sending the prompt.",
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: "Something went wrong while sending the prompt.",
+        },
+      ],
+    };
+
+    const { container } = render(<ClaudeMessage message={message} />);
+    const view = within(container);
+
+    expect(view.getByText("Something went wrong while sending the prompt.")).toBeTruthy();
+    expect(view.queryByRole("button", { name: `Run ${CLAUDE_AUTH_LOGIN_COMMAND}` })).toBeNull();
   });
 });
