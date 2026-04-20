@@ -55,11 +55,15 @@ export function MessageShell({
 interface MessageErrorAlertProps {
   content: string;
   timestampLabel: string;
+  details?: string;
+  action?: ReactNode;
 }
 
 export function MessageErrorAlert({
   content,
   timestampLabel,
+  details,
+  action,
 }: MessageErrorAlertProps) {
   return (
     <div className="px-2 @sm:px-4 py-3">
@@ -70,6 +74,12 @@ export function MessageErrorAlert({
             <div className="text-sm text-destructive whitespace-pre-wrap break-words">
               {content}
             </div>
+            {details ? (
+              <div className="text-xs text-destructive/75 whitespace-pre-wrap break-words mt-2">
+                {details}
+              </div>
+            ) : null}
+            {action ? <div className="mt-3">{action}</div> : null}
             <div className="text-[10px] text-destructive/60 mt-1">
               {timestampLabel}
             </div>

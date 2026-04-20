@@ -6,12 +6,13 @@ import { cn } from "@/lib/utils";
 import { openInBrowser, readFileBase64 } from "@/lib/tauri";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { useTerminalContext } from "@/contexts/TerminalContext";
+import { useOptionalTerminalContext, useTerminalContext } from "@/contexts/TerminalContext";
 import { useFilesPanelStore } from "@/stores";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType, type ClaudeMessagePart, type ToolDiffMetadata } from "@/lib/claude-client";
 import { toast } from "sonner";
 import { processPartsInOrder } from "@/lib/claude-task-utils";
 import { isEditTool } from "@/lib/tool-names";
+import { CLAUDE_AUTH_LOGIN_COMMAND, isClaudeAuthenticationError } from "@/lib/claude-auth";
 import { TodoToolPart, TOOL_STATE_COLORS } from "@/components/todo/TodoToolPart";
 import { isTodoTool } from "@/lib/todo-tool";
 import { MessageErrorAlert, MessageShell } from "@/components/chat/MessageShell";
@@ -1127,9 +1128,11 @@ export const ClaudeMessage = memo(function ClaudeMessage({
   previousMessage = null,
   isStreaming = false,
 }: ClaudeMessageProps) {
+  const terminalContext = useOptionalTerminalContext();
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isError = message.id.startsWith(ERROR_MESSAGE_PREFIX);
+  const isAuthError = isError && isClaudeAuthenticationError(message.content);
   const isContinuation =
     !isUser &&
     !isSystem &&
@@ -1159,9 +1162,24 @@ export const ClaudeMessage = memo(function ClaudeMessage({
 
   // Render error messages with special styling
   if (isError) {
+    const authLoginButton = isAuthError ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="border-destructive/30 bg-background/70 text-foreground hover:bg-background"
+        disabled={!terminalContext?.createTab}
+        onClick={() => terminalContext?.createTab?.("plain", { initialCommands: [CLAUDE_AUTH_LOGIN_COMMAND] })}
+      >
+        Run {CLAUDE_AUTH_LOGIN_COMMAND}
+      </Button>
+    ) : undefined;
+
     return (
       <MessageErrorAlert
-        content={message.content}
+        content={isAuthError ? "Claude is not authenticated. Run claude auth login to continue." : message.content}
+        details={isAuthError ? message.content : undefined}
+        action={authLoginButton}
         timestampLabel={formatTime(message.timestamp)}
       />
     );

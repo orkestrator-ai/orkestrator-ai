@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import {
   MessageShell,
   MessageErrorAlert,
@@ -151,5 +151,20 @@ describe("MessageErrorAlert", () => {
     ) as HTMLElement;
     expect(errorText).not.toBeNull();
     expect(errorText.textContent).toContain("A very long error message");
+  });
+
+  test("renders optional details and action content", () => {
+    render(
+      <MessageErrorAlert
+        content="Authentication failed"
+        details="Original API error details"
+        action={<button type="button">Retry login</button>}
+        timestampLabel="2:00 PM"
+      />,
+    );
+
+    expect(screen.getByText("Authentication failed")).toBeTruthy();
+    expect(screen.getByText("Original API error details")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry login" })).toBeTruthy();
   });
 });
