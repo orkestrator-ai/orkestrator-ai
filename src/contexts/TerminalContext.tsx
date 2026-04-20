@@ -131,3 +131,7 @@ export function useTerminalContext(): TerminalContextValue {
   }
   return context;
 }
+
+export function useOptionalTerminalContext(): TerminalContextValue | null {
+  return useContext(TerminalContext);
+}
