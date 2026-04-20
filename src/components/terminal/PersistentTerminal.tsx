@@ -28,7 +28,9 @@ import {
   SETUP_COMPLETE_MARKER,
   SETUP_DONE_OSC_ID,
   SETUP_DONE_OSC_DATA,
+  SETUP_FAILED_OSC_DATA,
   SETUP_DONE_PRINTF_CMD,
+  SETUP_FAILED_PRINTF_CMD,
 } from "@/lib/terminal-utils";
 import {
   forceTerminalVisibilityRedraw,
@@ -392,10 +394,17 @@ export function PersistentTerminal({
     if (!isSetupTab) return;
 
     const disposable = terminal.parser.registerOscHandler(SETUP_DONE_OSC_ID, (data) => {
-      if (data === SETUP_DONE_OSC_DATA && !setupCompleteRef.current) {
-        console.log("[PersistentTerminal] Setup scripts completed (OSC) for tab:", tabId);
+      if (setupCompleteRef.current) return true;
+      if (data === SETUP_DONE_OSC_DATA || data === SETUP_FAILED_OSC_DATA) {
+        const succeeded = data === SETUP_DONE_OSC_DATA;
+        console.log(
+          "[PersistentTerminal] Setup scripts completed (OSC) for tab:",
+          tabId,
+          "succeeded:",
+          succeeded,
+        );
         setupCompleteRef.current = true;
-        onSetupComplete?.({ persistSetupComplete: true });
+        onSetupComplete?.({ persistSetupComplete: succeeded });
       }
       return true;
     });
@@ -1114,7 +1123,15 @@ export function PersistentTerminal({
           // Join all commands with && to run sequentially
           const combinedCommand = initialCommands.join(" && ");
           if (isSetupTab) {
-            writeRef.current(`(${combinedCommand}) && ${SETUP_DONE_PRINTF_CMD}\n`);
+            // Always fire an OSC on completion so the UI unblocks even on
+            // failure. Success vs failure is signalled via the OSC payload,
+            // and persistence is gated on the success variant only.
+            // Note: `A && B || C` would emit both markers if B (printf) ever
+            // exits non-zero; the OSC handler's setupCompleteRef guard makes
+            // the second a no-op, so this stays correct.
+            writeRef.current(
+              `(${combinedCommand}) && ${SETUP_DONE_PRINTF_CMD} || ${SETUP_FAILED_PRINTF_CMD}\n`,
+            );
           } else {
             writeRef.current(combinedCommand + "\n");
           }
