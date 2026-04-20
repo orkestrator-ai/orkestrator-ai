@@ -23,6 +23,7 @@ import {
   ENVIRONMENT_READY_MARKER,
   ENVIRONMENT_READY_MARKER_ALT_TILDE,
   ENVIRONMENT_READY_MARKER_ALT_DASH,
+  ENVIRONMENT_ALREADY_READY_MARKER,
   SETUP_COMPLETE_MARKER,
   SETUP_DONE_OSC_ID,
   SETUP_DONE_OSC_DATA,
@@ -330,12 +331,15 @@ export function PersistentTerminal({
           // 1. Shell prompts (➜) appear between setup commands
           // 2. Git clone output contains "workspace", "main", etc.
           // 3. We need to wait for ALL setup scripts in orkestrator-ai.json to complete
+          // 4. Reused containers short-circuit setup and emit "Workspace already set up."
           const readyDetected =
             strippedBuffer.includes(ENVIRONMENT_READY_MARKER) ||
             dataBufferRef.current.includes(ENVIRONMENT_READY_MARKER) ||
             // Also check for alternate marker formats (with different delimiters)
             strippedBuffer.includes(ENVIRONMENT_READY_MARKER_ALT_TILDE) ||
             strippedBuffer.includes(ENVIRONMENT_READY_MARKER_ALT_DASH) ||
+            // Reused containers exit early without printing "Workspace Ready"
+            strippedBuffer.includes(ENVIRONMENT_ALREADY_READY_MARKER) ||
             // Setup complete marker appears right before "Workspace Ready"
             strippedBuffer.includes(SETUP_COMPLETE_MARKER);
 

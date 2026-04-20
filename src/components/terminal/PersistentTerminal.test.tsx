@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 // Mock modules that require a real Tauri runtime or have side effects.
 // IMPORTANT: Do NOT mock @/stores (barrel) or @/lib/tauri here — doing so
@@ -15,18 +15,22 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 const resizeMock = mock(async () => {});
 const connectMock = mock(async () => {});
 const writeMock = mock(async () => {});
+let terminalOnData: ((data: Uint8Array) => void) | undefined;
 
 mock.module("@/hooks/useTerminal", () => ({
-  useTerminal: () => ({
-    sessionId: "session-1",
-    isConnected: true,
-    isConnecting: false,
-    error: null,
-    connect: connectMock,
-    disconnect: mock(async () => {}),
-    resize: resizeMock,
-    write: writeMock,
-  }),
+  useTerminal: (options: { onData?: (data: Uint8Array) => void }) => {
+    terminalOnData = options.onData;
+    return {
+      sessionId: "session-1",
+      isConnected: true,
+      isConnecting: false,
+      error: null,
+      connect: connectMock,
+      disconnect: mock(async () => {}),
+      resize: resizeMock,
+      write: writeMock,
+    };
+  },
 }));
 
 mock.module("@/hooks/useAgentState", () => ({
@@ -192,6 +196,7 @@ describe("PersistentTerminal", () => {
     resizeMock.mockClear();
     connectMock.mockClear();
     writeMock.mockClear();
+    terminalOnData = undefined;
     portalStoreActions.markTerminalOpened.mockClear();
     portalStoreActions.setTerminalContainer.mockClear();
     portalStoreActions.setTerminalPane.mockClear();
@@ -464,6 +469,34 @@ describe("PersistentTerminal", () => {
         "tab-1",
         "claude",
       );
+    });
+  });
+
+  it("marks a reused container as ready when setup reports it is already set up", async () => {
+    const onReady = mock(() => {});
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="plain"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={true}
+        paneId="pane-1"
+        onReady={onReady}
+      />
+    );
+
+    await act(async () => {
+      terminalOnData?.(new TextEncoder().encode("Workspace already set up.\n"));
+    });
+
+    await waitFor(() => {
+      expect(onReady).toHaveBeenCalled();
     });
   });
 

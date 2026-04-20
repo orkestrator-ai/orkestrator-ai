@@ -33,9 +33,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useProjects } from "@/hooks/useProjects";
 import { useEnvironments } from "@/hooks/useEnvironments";
-import { useUIStore, useClaudeOptionsStore, useConfigStore, useEnvironmentStore } from "@/stores";
+import { useUIStore, useClaudeOptionsStore, useConfigStore } from "@/stores";
 import { RepositorySettings } from "@/components/settings/RepositorySettings";
-import { shouldResolveSetupCommandsOnSelection } from "@/lib/setup-commands";
 import { updateEnvironmentAgentSettings } from "@/lib/tauri";
 import { useEnvironmentDiffStats } from "@/hooks/useEnvironmentDiffStats";
 import type { Environment, Project } from "@/types";
@@ -79,8 +78,6 @@ export function HierarchicalSidebar() {
     collapseEmptyProjects,
     setProjectCollapsed,
   } = useUIStore();
-
-  const { setSetupCommandsResolved } = useEnvironmentStore();
 
   const isMultiSelectMode = selectedEnvironmentIds.length >= 1;
 
@@ -403,13 +400,11 @@ export function HierarchicalSidebar() {
             .catch((err) => {
               console.error("[HierarchicalSidebar] Failed to auto-start local environment:", err);
             });
-        } else if (shouldResolveSetupCommandsOnSelection(environment)) {
-          // Already-started local environment: mark setup commands as resolved
-          // so TerminalContainer can proceed with tab creation.
-          // This is needed because setupCommandsResolved is runtime-only state
-          // that's lost on app restart or when re-selecting an environment.
-          setSetupCommandsResolved(environment.id, true);
         }
+        // Already-started local environments: TerminalContainer's effect decides
+        // whether to auto-resolve (setup previously complete) or re-run setup
+        // (previously incomplete). Persisted `setupScriptsComplete` also seeds
+        // `setupCommandsResolved` during env hydration in the store.
       }
     }
   };

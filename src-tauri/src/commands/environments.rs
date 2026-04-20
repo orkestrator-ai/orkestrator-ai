@@ -1076,6 +1076,49 @@ pub async fn set_environment_debug_mode(
         .map_err(storage_error_to_string)
 }
 
+/// Fetch the `setupLocal` commands declared in a local environment's
+/// `orkestrator-ai.json` without touching container/worktree state.
+///
+/// Used when re-running setup on first activation after an app restart for
+/// an environment whose setup didn't complete in the previous session.
+/// Returns `None` for non-local environments or when no commands are declared.
+#[tauri::command]
+pub async fn get_setup_commands(environment_id: String) -> Result<Option<Vec<String>>, String> {
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    let environment = storage
+        .get_environment(&environment_id)
+        .map_err(storage_error_to_string)?
+        .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
+
+    if !environment.is_local() {
+        return Ok(None);
+    }
+
+    let Some(worktree_path) = environment.worktree_path.as_deref() else {
+        return Ok(None);
+    };
+
+    Ok(fetch_setup_commands(worktree_path, &environment_id).await)
+}
+
+/// Persist whether setup scripts have completed for an environment.
+///
+/// Used so the UI can skip the "waiting for setup" state across app restarts
+/// and re-run setup on the next app session when it didn't finish last time.
+#[tauri::command]
+pub async fn set_environment_setup_complete(
+    environment_id: String,
+    complete: bool,
+) -> Result<Environment, String> {
+    let storage = get_storage().map_err(storage_error_to_string)?;
+    storage
+        .update_environment(
+            &environment_id,
+            json!({ "setupScriptsComplete": complete }),
+        )
+        .map_err(storage_error_to_string)
+}
+
 /// Update per-environment agent settings (default agent, claude mode, opencode mode, codex mode)
 /// Pass None for any field to use the global config default
 #[tauri::command]

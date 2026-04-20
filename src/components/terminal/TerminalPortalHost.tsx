@@ -12,6 +12,7 @@ import {
   DEFAULT_TERMINAL_SCROLLBACK,
   resolveTerminalBackgroundColor,
 } from "@/constants/terminal";
+import { markSetupScriptsComplete } from "@/lib/setup-commands";
 
 // Terminal tab types that need PersistentTerminal instances.
 // Using an allowlist ensures new non-terminal TabType variants don't accidentally spawn PTY sessions.
@@ -91,12 +92,17 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
   const handleWorkspaceReady = useCallback(() => {
     console.log("[TerminalPortalHost] handleWorkspaceReady called - setting workspace ready for environment:", environmentId);
     setWorkspaceReady(environmentId, true);
+    // Container workspace initialization finished — persist so next app session
+    // doesn't re-show the "waiting for setup" state for this environment.
+    markSetupScriptsComplete(environmentId);
   }, [environmentId, setWorkspaceReady]);
 
   // Handle setup scripts completion - fires when setup tab's marker is detected
   const handleSetupComplete = useCallback(() => {
     console.log("[TerminalPortalHost] handleSetupComplete called - clearing setupScriptsRunning for environment:", environmentId);
     setSetupScriptsRunning(environmentId, false);
+    // Local setup scripts finished — persist for next app session.
+    markSetupScriptsComplete(environmentId);
   }, [environmentId, setSetupScriptsRunning]);
 
   // Build a map of tabId -> paneId for all terminal tabs

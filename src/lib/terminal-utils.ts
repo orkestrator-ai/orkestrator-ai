@@ -33,6 +33,7 @@ export const ENVIRONMENT_READY_MARKER = "=== Workspace Ready ===";
 /** Alternate marker formats for workspace ready detection */
 export const ENVIRONMENT_READY_MARKER_ALT_TILDE = "~~~ Workspace Ready ~~~";
 export const ENVIRONMENT_READY_MARKER_ALT_DASH = "--- Workspace Ready ---";
+export const ENVIRONMENT_ALREADY_READY_MARKER = "Workspace already set up.";
 
 /** Marker that appears right before "Workspace Ready" in setup scripts */
 export const SETUP_COMPLETE_MARKER = "Container setup completed successfully!";

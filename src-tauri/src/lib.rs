@@ -257,6 +257,8 @@ pub fn run() {
             update_environment_status,
             set_environment_pr,
             set_environment_debug_mode,
+            set_environment_setup_complete,
+            get_setup_commands,
             rename_environment,
             rename_environment_from_prompt,
             get_environment_status,

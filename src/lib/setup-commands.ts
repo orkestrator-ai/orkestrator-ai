@@ -1,4 +1,5 @@
-import type { Environment } from "@/types";
+import { useEnvironmentStore } from "@/stores/environmentStore";
+import * as tauri from "@/lib/tauri";
 
 interface ShouldAutoResolveSetupCommandsOptions {
   isLocalEnvironment: boolean;
@@ -6,15 +7,6 @@ interface ShouldAutoResolveSetupCommandsOptions {
   setupCommandsResolved: boolean;
   hasPendingCommands: boolean;
 }
-
-/**
- * A local environment with an existing worktree has already completed start flow,
- * so setup command resolution can be marked as known immediately.
- */
-export const shouldResolveSetupCommandsOnSelection = (
-  environment: Environment
-): boolean =>
-  environment.environmentType === "local" && Boolean(environment.worktreePath);
 
 /**
  * Auto-resolve setup command state when local environment is already ready and
@@ -35,6 +27,25 @@ export const shouldAutoResolveSetupCommands = ({
  * Determines whether setup is still pending for a given environment type.
  * Used to gate agent initialization and show the "waiting for setup" UI.
  */
+/**
+ * Persist that setup scripts have completed for an environment, and reflect
+ * that in the in-memory store. Safe to call repeatedly; no-ops if already
+ * marked complete. Fire-and-forget: errors are logged but not thrown.
+ */
+export function markSetupScriptsComplete(environmentId: string): void {
+  const store = useEnvironmentStore.getState();
+  const env = store.getEnvironmentById(environmentId);
+  if (env?.setupScriptsComplete) return;
+
+  store.updateEnvironment(environmentId, { setupScriptsComplete: true });
+  tauri.setEnvironmentSetupComplete(environmentId, true).catch((err) => {
+    console.error(
+      "[setup-commands] Failed to persist setupScriptsComplete:",
+      err
+    );
+  });
+}
+
 export function isSetupPending(params: {
   isLocal: boolean;
   setupCommandsResolved: boolean;

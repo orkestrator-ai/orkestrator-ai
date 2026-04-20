@@ -1,57 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Environment } from "../types";
-import {
-  shouldAutoResolveSetupCommands,
-  shouldResolveSetupCommandsOnSelection,
-} from "./setup-commands";
-
-const createEnvironment = (
-  overrides: Partial<Environment> = {}
-): Environment => ({
-  id: "env-1",
-  projectId: "project-1",
-  name: "test-env",
-  branch: "main",
-  containerId: null,
-  status: "stopped",
-  prUrl: null,
-  prState: null,
-  hasMergeConflicts: null,
-  createdAt: new Date().toISOString(),
-  networkAccessMode: "restricted",
-  order: 0,
-  environmentType: "local",
-  ...overrides,
-});
-
-describe("shouldResolveSetupCommandsOnSelection", () => {
-  test("returns true for local environments with an existing worktree", () => {
-    const environment = createEnvironment({
-      environmentType: "local",
-      worktreePath: "/tmp/worktrees/test-env",
-    });
-
-    expect(shouldResolveSetupCommandsOnSelection(environment)).toBe(true);
-  });
-
-  test("returns false for local environments without a worktree", () => {
-    const environment = createEnvironment({
-      environmentType: "local",
-      worktreePath: undefined,
-    });
-
-    expect(shouldResolveSetupCommandsOnSelection(environment)).toBe(false);
-  });
-
-  test("returns false for containerized environments", () => {
-    const environment = createEnvironment({
-      environmentType: "containerized",
-      worktreePath: "/tmp/worktrees/test-env",
-    });
-
-    expect(shouldResolveSetupCommandsOnSelection(environment)).toBe(false);
-  });
-});
+import { shouldAutoResolveSetupCommands } from "./setup-commands";
 
 describe("shouldAutoResolveSetupCommands", () => {
   test("returns true when local environment is ready and no commands are pending", () => {
