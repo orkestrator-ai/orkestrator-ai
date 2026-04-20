@@ -236,6 +236,13 @@ pub struct Environment {
     /// Per-environment Codex mode override (None = use global config)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_mode: Option<CodexMode>,
+
+    /// Whether setup scripts (from orkestrator-ai.json setupLocal or container
+    /// workspace initialization) have completed for this environment. Persisted
+    /// so native chat tabs can skip the "waiting for setup" UI after app restart,
+    /// and so incomplete setup can be re-run on the next app session.
+    #[serde(default)]
+    pub setup_scripts_complete: bool,
 }
 
 /// Default branch for backward compatibility with existing environments
@@ -342,6 +349,7 @@ impl Environment {
             claude_mode: None,
             opencode_mode: None,
             codex_mode: None,
+            setup_scripts_complete: false,
         }
     }
 
@@ -381,6 +389,7 @@ impl Environment {
             claude_mode: None,
             opencode_mode: None,
             codex_mode: None,
+            setup_scripts_complete: false,
         }
     }
 
@@ -420,6 +429,7 @@ impl Environment {
             claude_mode: None,
             opencode_mode: None,
             codex_mode: None,
+            setup_scripts_complete: false,
         }
     }
 

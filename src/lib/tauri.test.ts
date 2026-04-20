@@ -1,0 +1,35 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import { invoke } from "@tauri-apps/api/core";
+import { getSetupCommands, setEnvironmentSetupComplete } from "./tauri";
+
+const invokeMock = invoke as unknown as {
+  mockReset: () => void;
+  mockResolvedValue: (value: unknown) => void;
+  mock: { calls: unknown[][] };
+};
+
+describe("tauri setup wrappers", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+  });
+
+  test("calls the setup-complete Tauri command with the expected payload", async () => {
+    await setEnvironmentSetupComplete("env-1", true);
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["set_environment_setup_complete", { environmentId: "env-1", complete: true }],
+    ]);
+  });
+
+  test("calls the get-setup-commands Tauri command with the environment id", async () => {
+    invokeMock.mockResolvedValue(["bun install"]);
+
+    const commands = await getSetupCommands("env-1");
+
+    expect(commands).toEqual(["bun install"]);
+    expect(invokeMock.mock.calls).toEqual([
+      ["get_setup_commands", { environmentId: "env-1" }],
+    ]);
+  });
+});

@@ -1,60 +1,60 @@
-import { describe, expect, test } from "bun:test";
-import type { Environment } from "../types";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { invoke } from "@tauri-apps/api/core";
+import { waitFor } from "@testing-library/react";
+import { useEnvironmentStore } from "@/stores/environmentStore";
+import type { Environment } from "@/types";
 import {
+  isSetupPending,
+  markSetupScriptsComplete,
   shouldAutoResolveSetupCommands,
-  shouldResolveSetupCommandsOnSelection,
 } from "./setup-commands";
 
-const createEnvironment = (
-  overrides: Partial<Environment> = {}
-): Environment => ({
-  id: "env-1",
-  projectId: "project-1",
-  name: "test-env",
-  branch: "main",
-  containerId: null,
-  status: "stopped",
-  prUrl: null,
-  prState: null,
-  hasMergeConflicts: null,
-  createdAt: new Date().toISOString(),
-  networkAccessMode: "restricted",
-  order: 0,
-  environmentType: "local",
-  ...overrides,
-});
+const invokeMock = invoke as unknown as {
+  mockReset: () => void;
+  mockResolvedValue: (value: unknown) => void;
+  mockRejectedValue: (value: unknown) => void;
+  mockImplementation: (implementation: (...args: unknown[]) => unknown) => void;
+  mock: { calls: unknown[][] };
+};
 
-describe("shouldResolveSetupCommandsOnSelection", () => {
-  test("returns true for local environments with an existing worktree", () => {
-    const environment = createEnvironment({
-      environmentType: "local",
-      worktreePath: "/tmp/worktrees/test-env",
+function createEnvironment(overrides: Partial<Environment> = {}): Environment {
+  return {
+    id: "env-1",
+    projectId: "project-1",
+    name: "test-env",
+    branch: "main",
+    containerId: null,
+    status: "stopped",
+    prUrl: null,
+    prState: null,
+    hasMergeConflicts: null,
+    createdAt: new Date().toISOString(),
+    networkAccessMode: "restricted",
+    order: 0,
+    environmentType: "local",
+    ...overrides,
+  };
+}
+
+describe("setup-commands", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+
+    useEnvironmentStore.setState({
+      environments: [createEnvironment()],
+      isLoading: false,
+      error: null,
+      workspaceReadyEnvironments: new Set<string>(),
+      deletingEnvironments: new Set<string>(),
+      pendingSetupCommands: new Map<string, string[]>(),
+      setupCommandsResolved: new Set<string>(),
+      setupScriptsRunning: new Set<string>(),
+      sessionActivated: new Set<string>(),
     });
-
-    expect(shouldResolveSetupCommandsOnSelection(environment)).toBe(true);
   });
 
-  test("returns false for local environments without a worktree", () => {
-    const environment = createEnvironment({
-      environmentType: "local",
-      worktreePath: undefined,
-    });
-
-    expect(shouldResolveSetupCommandsOnSelection(environment)).toBe(false);
-  });
-
-  test("returns false for containerized environments", () => {
-    const environment = createEnvironment({
-      environmentType: "containerized",
-      worktreePath: "/tmp/worktrees/test-env",
-    });
-
-    expect(shouldResolveSetupCommandsOnSelection(environment)).toBe(false);
-  });
-});
-
-describe("shouldAutoResolveSetupCommands", () => {
-  test("returns true when local environment is ready and no commands are pending", () => {
+  test("auto-resolves only when a ready local environment has no pending commands", () => {
     expect(
       shouldAutoResolveSetupCommands({
         isLocalEnvironment: true,
@@ -63,9 +63,7 @@ describe("shouldAutoResolveSetupCommands", () => {
         hasPendingCommands: false,
       })
     ).toBe(true);
-  });
 
-  test("returns false when pending setup commands still exist", () => {
     expect(
       shouldAutoResolveSetupCommands({
         isLocalEnvironment: true,
@@ -74,20 +72,7 @@ describe("shouldAutoResolveSetupCommands", () => {
         hasPendingCommands: true,
       })
     ).toBe(false);
-  });
 
-  test("returns false when setup commands are already resolved", () => {
-    expect(
-      shouldAutoResolveSetupCommands({
-        isLocalEnvironment: true,
-        isLocalEnvironmentReady: true,
-        setupCommandsResolved: true,
-        hasPendingCommands: false,
-      })
-    ).toBe(false);
-  });
-
-  test("returns false for non-local environments", () => {
     expect(
       shouldAutoResolveSetupCommands({
         isLocalEnvironment: false,
@@ -96,5 +81,107 @@ describe("shouldAutoResolveSetupCommands", () => {
         hasPendingCommands: false,
       })
     ).toBe(false);
+  });
+
+  test("treats local setup as pending until commands are resolved and no setup is running", () => {
+    expect(
+      isSetupPending({
+        isLocal: true,
+        setupCommandsResolved: false,
+        hasPendingSetupCommands: false,
+        setupScriptsRunning: false,
+        workspaceReady: true,
+      })
+    ).toBe(true);
+
+    expect(
+      isSetupPending({
+        isLocal: true,
+        setupCommandsResolved: true,
+        hasPendingSetupCommands: true,
+        setupScriptsRunning: false,
+        workspaceReady: true,
+      })
+    ).toBe(true);
+
+    expect(
+      isSetupPending({
+        isLocal: true,
+        setupCommandsResolved: true,
+        hasPendingSetupCommands: false,
+        setupScriptsRunning: false,
+        workspaceReady: false,
+      })
+    ).toBe(false);
+  });
+
+  test("uses workspace readiness for containerized environments", () => {
+    expect(
+      isSetupPending({
+        isLocal: false,
+        setupCommandsResolved: true,
+        hasPendingSetupCommands: false,
+        setupScriptsRunning: false,
+        workspaceReady: false,
+      })
+    ).toBe(true);
+
+    expect(
+      isSetupPending({
+        isLocal: false,
+        setupCommandsResolved: false,
+        hasPendingSetupCommands: true,
+        setupScriptsRunning: true,
+        workspaceReady: true,
+      })
+    ).toBe(false);
+  });
+
+  test("persists setup completion before updating store state", async () => {
+    const updatedEnvironment = createEnvironment({ setupScriptsComplete: true });
+    invokeMock.mockResolvedValue(updatedEnvironment);
+
+    markSetupScriptsComplete("env-1");
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["set_environment_setup_complete", { environmentId: "env-1", complete: true }],
+    ]);
+    await waitFor(() => {
+      expect(useEnvironmentStore.getState().getEnvironmentById("env-1")?.setupScriptsComplete).toBe(true);
+    });
+  });
+
+  test("keeps setup incomplete in memory when persistence fails", async () => {
+    invokeMock.mockRejectedValue(new Error("disk full"));
+
+    markSetupScriptsComplete("env-1");
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(useEnvironmentStore.getState().getEnvironmentById("env-1")?.setupScriptsComplete).toBeUndefined();
+  });
+
+  test("deduplicates concurrent completion writes", async () => {
+    let resolveInvoke: ((value: unknown) => void) | undefined;
+    const pendingInvoke = new Promise((resolve) => {
+      resolveInvoke = resolve;
+    });
+    invokeMock.mockImplementation(() => pendingInvoke);
+
+    markSetupScriptsComplete("env-1");
+    markSetupScriptsComplete("env-1");
+
+    expect(invokeMock.mock.calls).toHaveLength(1);
+
+    resolveInvoke?.(createEnvironment({ setupScriptsComplete: true }));
+    await pendingInvoke;
+
+    await waitFor(() => {
+      expect(useEnvironmentStore.getState().getEnvironmentById("env-1")?.setupScriptsComplete).toBe(true);
+    });
   });
 });

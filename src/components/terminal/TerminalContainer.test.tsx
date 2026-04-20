@@ -6,6 +6,32 @@ import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 
+const markSetupScriptsCompleteMock = mock(() => {});
+const getSetupCommandsMock = mock(async (): Promise<string[] | null> => null);
+
+mock.module("@/lib/setup-commands", () => ({
+  shouldAutoResolveSetupCommands: ({
+    isLocalEnvironment,
+    isLocalEnvironmentReady,
+    setupCommandsResolved,
+    hasPendingCommands,
+  }: {
+    isLocalEnvironment: boolean;
+    isLocalEnvironmentReady: boolean;
+    setupCommandsResolved: boolean;
+    hasPendingCommands: boolean;
+  }) =>
+    isLocalEnvironment &&
+    isLocalEnvironmentReady &&
+    !setupCommandsResolved &&
+    !hasPendingCommands,
+  markSetupScriptsComplete: markSetupScriptsCompleteMock,
+}));
+
+mock.module("@/lib/tauri", () => ({
+  getSetupCommands: getSetupCommandsMock,
+}));
+
 mock.module("@/components/pane-layout", () => ({
   PaneTree: () => null,
 }));
@@ -80,7 +106,12 @@ describe("TerminalContainer", () => {
       pendingSetupCommands: new Map(),
       setupCommandsResolved: new Set(),
       setupScriptsRunning: new Set(),
+      sessionActivated: new Set(),
     });
+
+    markSetupScriptsCompleteMock.mockClear();
+    getSetupCommandsMock.mockReset();
+    getSetupCommandsMock.mockResolvedValue(null);
 
     useConfigStore.setState((state) => ({
       ...state,
@@ -227,5 +258,96 @@ describe("TerminalContainer", () => {
       expect(envHidden.root.tabs[0]?.type).toBe("codex-native");
       expect(envHidden.root.tabs[0]?.initialPrompt).toBe("Ship it");
     });
+
+    expect(markSetupScriptsCompleteMock).toHaveBeenCalledWith("env-hidden");
+  });
+
+  test("re-runs setup commands for previously incomplete local environments", async () => {
+    getSetupCommandsMock.mockResolvedValue(["bun install"]);
+
+    useEnvironmentStore.setState((state) => ({
+      ...state,
+      environments: state.environments.map((env) =>
+        env.id === "env-hidden"
+          ? {
+              ...env,
+              containerId: null,
+              environmentType: "local",
+              worktreePath: "/tmp/env-hidden-worktree",
+              setupScriptsComplete: false,
+            }
+          : env
+      ),
+    }));
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId={null}
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(1);
+      expect(envHidden.root.tabs[0]?.isSetupTab).toBe(true);
+      expect(envHidden.root.tabs[0]?.initialCommands).toEqual(["bun install"]);
+    });
+
+    expect(getSetupCommandsMock).toHaveBeenCalledWith("env-hidden");
+    expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-hidden")).toBe(
+      true
+    );
+  });
+
+  test("does not persist completion when rerun setup command fetch fails", async () => {
+    getSetupCommandsMock.mockRejectedValue(new Error("unavailable"));
+
+    useEnvironmentStore.setState((state) => ({
+      ...state,
+      environments: state.environments.map((env) =>
+        env.id === "env-hidden"
+          ? {
+              ...env,
+              containerId: null,
+              environmentType: "local",
+              worktreePath: "/tmp/env-hidden-worktree",
+              setupScriptsComplete: false,
+            }
+          : env
+      ),
+    }));
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId={null}
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(1);
+      expect(envHidden.root.tabs[0]?.type).toBe("plain");
+      expect(envHidden.root.tabs[0]?.isSetupTab).toBeUndefined();
+    });
+
+    expect(markSetupScriptsCompleteMock).not.toHaveBeenCalled();
   });
 });

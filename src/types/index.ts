@@ -89,6 +89,12 @@ export interface Environment {
   opencodeMode?: OpenCodeMode;
   /** Per-environment Codex mode override (undefined = use global config) */
   codexMode?: CodexMode;
+  /**
+   * Whether setup scripts have completed for this environment. Persisted so
+   * native chat tabs can skip the "waiting for setup" UI after app restart,
+   * and so incomplete setup can be re-run on the next app session.
+   */
+  setupScriptsComplete?: boolean;
 }
 
 /** Result of testing a domain for DNS resolution */

@@ -27,7 +27,8 @@ import {
 } from "@/components/ui/context-menu";
 import { FilePlus2, Play, Terminal as TerminalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { shouldAutoResolveSetupCommands } from "@/lib/setup-commands";
+import { markSetupScriptsComplete, shouldAutoResolveSetupCommands } from "@/lib/setup-commands";
+import * as tauri from "@/lib/tauri";
 import { createOrkestratorScriptPrompt } from "@/prompts";
 import { PaneTree } from "@/components/pane-layout";
 import { TerminalPortalHost } from "./TerminalPortalHost";
@@ -135,18 +136,23 @@ export function TerminalContainer({
 
   // Get workspace ready state - needed early for native OpenCode launch
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
-  const isWorkspaceReady = useEnvironmentStore((state) => state.isWorkspaceReady);
-  const getEnvironmentById = useEnvironmentStore((state) => state.getEnvironmentById);
   const consumePendingSetupCommands = useEnvironmentStore((state) => state.consumePendingSetupCommands);
-  const isSetupCommandsResolved = useEnvironmentStore((state) => state.isSetupCommandsResolved);
   const setSetupCommandsResolved = useEnvironmentStore((state) => state.setSetupCommandsResolved);
   const setSetupScriptsRunning = useEnvironmentStore((state) => state.setSetupScriptsRunning);
-  // Subscribe to setup commands resolved state - needed for local environments to know when we can create tabs
-  const setupCommandsResolved = isSetupCommandsResolved(environmentId);
-  const workspaceReady = isWorkspaceReady(environmentId);
+  const setupCommandsResolved = useEnvironmentStore(
+    (state) => state.setupCommandsResolved.has(environmentId)
+  );
+  const workspaceReady = useEnvironmentStore(
+    (state) => state.workspaceReadyEnvironments.has(environmentId)
+  );
+  const hasPendingSetupCommands = useEnvironmentStore(
+    (state) => state.pendingSetupCommands.has(environmentId)
+  );
 
   // Check if this is a local environment (no container)
-  const environment = getEnvironmentById(environmentId);
+  const environment = useEnvironmentStore(
+    (state) => state.environments.find((env) => env.id === environmentId)
+  );
   const isLocalEnvironment = environment?.environmentType === "local";
   const createScriptPrompt = createOrkestratorScriptPrompt(isLocalEnvironment);
   // For local environments, worktreePath must be set before terminal can work
@@ -193,6 +199,7 @@ export function TerminalContainer({
   // Track the initial prompt to pass to the first tab
   const initialPromptRef = useRef<string | undefined>(undefined);
   const previousContainerIdRef = useRef<string | null>(null);
+  const rerunSetupFetchFailedRef = useRef(false);
 
   // Track pending native agent launch (after workspace setup completes)
   const pendingNativeAgentRef = useRef<{
@@ -210,28 +217,73 @@ export function TerminalContainer({
     }
   }, [isActive, environmentId, setActiveEnvironment]);
 
-  // Auto-resolve setup commands for already-running local environments.
-  // setupCommandsResolved is runtime-only state (not persisted), so it's lost on app restart.
-  // When the app starts with a local environment that was previously started (has worktreePath),
-  // no one calls setSetupCommandsResolved, causing the init effect below to block forever.
-  // Fix: if the environment is already running and no one has pending setup commands, resolve immediately.
+  // Decide setup-resolution for a running local environment on first activation
+  // this app session. Handles three cases:
+  //   1. Setup was marked complete in a prior session -> auto-resolve, no re-run.
+  //   2. Setup was incomplete in a prior session -> fetch setup commands and
+  //      re-populate pendingSetupCommands so the init effect runs them. Guarded
+  //      by sessionActivated so re-selecting the env within the same session
+  //      does not re-trigger.
+  //   3. No pending commands and not first activation -> resolve (the normal
+  //      start-env flow already covered setup within this session).
   useEffect(() => {
-    const hasPendingCommands = useEnvironmentStore
-      .getState()
-      .pendingSetupCommands.has(environmentId);
+    const store = useEnvironmentStore.getState();
 
     if (
-      shouldAutoResolveSetupCommands({
+      !shouldAutoResolveSetupCommands({
         isLocalEnvironment,
         isLocalEnvironmentReady,
         setupCommandsResolved,
-        hasPendingCommands,
+        hasPendingCommands: hasPendingSetupCommands,
       })
     ) {
-      console.log("[TerminalContainer] Auto-resolving setup commands for already-running local environment:", environmentId);
-      setSetupCommandsResolved(environmentId, true);
+      return;
     }
-  }, [isLocalEnvironment, isLocalEnvironmentReady, setupCommandsResolved, environmentId, setSetupCommandsResolved]);
+
+    const env = store.getEnvironmentById(environmentId);
+    const firstActivation = store.markSessionActivated(environmentId);
+    rerunSetupFetchFailedRef.current = false;
+
+    if (!firstActivation || env?.setupScriptsComplete) {
+      console.log(
+        "[TerminalContainer] Auto-resolving setup commands for local environment:",
+        environmentId,
+        { firstActivation, persistedComplete: env?.setupScriptsComplete },
+      );
+      setSetupCommandsResolved(environmentId, true);
+      return;
+    }
+
+    console.log(
+      "[TerminalContainer] Re-running setup for previously-incomplete local environment:",
+      environmentId,
+    );
+    tauri
+      .getSetupCommands(environmentId)
+      .then((commands) => {
+        rerunSetupFetchFailedRef.current = false;
+        if (commands && commands.length > 0) {
+          store.setPendingSetupCommands(environmentId, commands);
+        }
+        store.setSetupCommandsResolved(environmentId, true);
+      })
+      .catch((err) => {
+        rerunSetupFetchFailedRef.current = true;
+        console.error(
+          "[TerminalContainer] Failed to fetch setup commands for re-run:",
+          err,
+        );
+        // Unblock the UI so the env isn't stuck waiting forever.
+        store.setSetupCommandsResolved(environmentId, true);
+      });
+  }, [
+    isLocalEnvironment,
+    isLocalEnvironmentReady,
+    setupCommandsResolved,
+    hasPendingSetupCommands,
+    environmentId,
+    setSetupCommandsResolved,
+  ]);
 
   // DnD sensors
   const sensors = useSensors(
@@ -362,7 +414,11 @@ export function TerminalContainer({
           };
           addTab("default", initialTab, environmentId);
         } else if (useNativeOpenCode || useNativeClaude || useNativeCodex) {
-          // Local + native mode + no setup commands: directly create native tab
+          // Local + native mode + no setup commands: directly create native tab.
+          // No setup to run means setup is trivially "complete" for this env.
+          if (!rerunSetupFetchFailedRef.current) {
+            markSetupScriptsComplete(environmentId);
+          }
           console.log(
             "[TerminalContainer] Local environment - directly creating native",
             useNativeClaude ? "Claude" : useNativeCodex ? "Codex" : "OpenCode",
@@ -394,7 +450,11 @@ export function TerminalContainer({
             addTab("default", initialTab, environmentId);
           }
         } else {
-          // Local + terminal mode + no setup commands: create terminal tab
+          // Local + terminal mode + no setup commands: create terminal tab.
+          // No setup to run means setup is trivially "complete" for this env.
+          if (!rerunSetupFetchFailedRef.current) {
+            markSetupScriptsComplete(environmentId);
+          }
           console.log("[TerminalContainer] Local environment - creating terminal tab with initial type:", initialTabType);
           const initialTab: TabInfo = {
             id: "default",

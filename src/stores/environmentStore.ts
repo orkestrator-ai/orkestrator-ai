@@ -5,6 +5,37 @@ import type { Environment, EnvironmentStatus, PrState } from "@/types";
 const sortByOrder = (environments: Environment[]): Environment[] =>
   [...environments].sort((a, b) => a.order - b.order);
 
+/**
+ * Seed the runtime readiness sets from each environment's persisted
+ * `setupScriptsComplete` flag. This avoids the "waiting for setup scripts"
+ * UI on app restart for environments that finished setup in a prior session.
+ */
+const hydrateReadinessFromPersisted = (
+  environments: Environment[],
+  currentEnvironments: Environment[],
+  currentSetupCommandsResolved: Set<string>,
+  currentWorkspaceReady: Set<string>
+): { setupCommandsResolved: Set<string>; workspaceReadyEnvironments: Set<string> } => {
+  const setupCommandsResolved = new Set(currentSetupCommandsResolved);
+  const workspaceReadyEnvironments = new Set(currentWorkspaceReady);
+  const previousEnvironmentsById = new Map(
+    currentEnvironments.map((environment) => [environment.id, environment])
+  );
+  for (const env of environments) {
+    if (env.setupScriptsComplete) {
+      setupCommandsResolved.add(env.id);
+      workspaceReadyEnvironments.add(env.id);
+      continue;
+    }
+
+    if (previousEnvironmentsById.get(env.id)?.setupScriptsComplete) {
+      setupCommandsResolved.delete(env.id);
+      workspaceReadyEnvironments.delete(env.id);
+    }
+  }
+  return { setupCommandsResolved, workspaceReadyEnvironments };
+};
+
 interface EnvironmentState {
   // State
   environments: Environment[];
@@ -20,6 +51,12 @@ interface EnvironmentState {
   setupCommandsResolved: Set<string>;
   /** Runtime state: tracks environments where setup scripts are currently executing in a terminal */
   setupScriptsRunning: Set<string>;
+  /**
+   * Runtime state: environments that have been activated at least once this
+   * app session. Used to trigger a one-shot setup re-run when opening an
+   * environment whose persisted `setupScriptsComplete` is false.
+   */
+  sessionActivated: Set<string>;
 
   // Actions
   setEnvironments: (environments: Environment[]) => void;
@@ -52,6 +89,12 @@ interface EnvironmentState {
   setSetupCommandsResolved: (environmentId: string, resolved: boolean) => void;
   /** Mark whether setup scripts are currently running for an environment */
   setSetupScriptsRunning: (environmentId: string, isRunning: boolean) => void;
+  /**
+   * Record that an environment has been activated this app session. Returns
+   * true if this was the first activation (so callers can perform one-shot
+   * work like re-running setup scripts).
+   */
+  markSessionActivated: (environmentId: string) => boolean;
 
   // Selectors
   getEnvironmentById: (environmentId: string) => Environment | undefined;
@@ -76,21 +119,55 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
   pendingSetupCommands: new Map<string, string[]>(),
   setupCommandsResolved: new Set<string>(),
   setupScriptsRunning: new Set<string>(),
+  sessionActivated: new Set<string>(),
 
   // Actions
-  setEnvironments: (environments) => set({ environments: sortByOrder(environments) }),
+  setEnvironments: (environments) =>
+    set((state) => {
+      const seeded = hydrateReadinessFromPersisted(
+        environments,
+        state.environments,
+        state.setupCommandsResolved,
+        state.workspaceReadyEnvironments
+      );
+      return {
+        environments: sortByOrder(environments),
+        setupCommandsResolved: seeded.setupCommandsResolved,
+        workspaceReadyEnvironments: seeded.workspaceReadyEnvironments,
+      };
+    }),
 
   mergeEnvironmentsForProject: (projectId, newEnvs) =>
     set((state) => {
       // Keep environments from other projects, replace this project's environments
       const otherEnvs = state.environments.filter((e) => e.projectId !== projectId);
-      return { environments: sortByOrder([...otherEnvs, ...newEnvs]) };
+      const seeded = hydrateReadinessFromPersisted(
+        newEnvs,
+        state.environments,
+        state.setupCommandsResolved,
+        state.workspaceReadyEnvironments
+      );
+      return {
+        environments: sortByOrder([...otherEnvs, ...newEnvs]),
+        setupCommandsResolved: seeded.setupCommandsResolved,
+        workspaceReadyEnvironments: seeded.workspaceReadyEnvironments,
+      };
     }),
 
   addEnvironment: (environment) =>
-    set((state) => ({
-      environments: sortByOrder([...state.environments, environment]),
-    })),
+    set((state) => {
+      const seeded = hydrateReadinessFromPersisted(
+        [environment],
+        state.environments,
+        state.setupCommandsResolved,
+        state.workspaceReadyEnvironments
+      );
+      return {
+        environments: sortByOrder([...state.environments, environment]),
+        setupCommandsResolved: seeded.setupCommandsResolved,
+        workspaceReadyEnvironments: seeded.workspaceReadyEnvironments,
+      };
+    }),
 
   removeEnvironment: (environmentId) =>
     set((state) => {
@@ -110,6 +187,9 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
       const newSetupRunning = new Set(state.setupScriptsRunning);
       newSetupRunning.delete(environmentId);
 
+      const newSessionActivated = new Set(state.sessionActivated);
+      newSessionActivated.delete(environmentId);
+
       return {
         environments: state.environments.filter((e) => e.id !== environmentId),
         workspaceReadyEnvironments: newWorkspaceReady,
@@ -117,17 +197,39 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
         pendingSetupCommands: newPendingCommands,
         setupCommandsResolved: newSetupResolved,
         setupScriptsRunning: newSetupRunning,
+        sessionActivated: newSessionActivated,
       };
     }),
 
   updateEnvironment: (environmentId, updates) =>
-    set((state) => ({
-      environments: sortByOrder(
-        state.environments.map((e) =>
-          e.id === environmentId ? { ...e, ...updates } : e
-        )
-      ),
-    })),
+    set((state) => {
+      const nextState: Pick<EnvironmentState, "environments"> &
+        Partial<Pick<EnvironmentState, "setupCommandsResolved" | "workspaceReadyEnvironments">> = {
+        environments: sortByOrder(
+          state.environments.map((e) =>
+            e.id === environmentId ? { ...e, ...updates } : e
+          )
+        ),
+      };
+
+      if (typeof updates.setupScriptsComplete === "boolean") {
+        const setupCommandsResolved = new Set(state.setupCommandsResolved);
+        const workspaceReadyEnvironments = new Set(state.workspaceReadyEnvironments);
+
+        if (updates.setupScriptsComplete) {
+          setupCommandsResolved.add(environmentId);
+          workspaceReadyEnvironments.add(environmentId);
+        } else {
+          setupCommandsResolved.delete(environmentId);
+          workspaceReadyEnvironments.delete(environmentId);
+        }
+
+        nextState.setupCommandsResolved = setupCommandsResolved;
+        nextState.workspaceReadyEnvironments = workspaceReadyEnvironments;
+      }
+
+      return nextState;
+    }),
 
   updateEnvironmentStatus: (environmentId, status) =>
     set((state) => ({
@@ -241,6 +343,17 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
       }
       return { setupScriptsRunning: newSet };
     }),
+
+  markSessionActivated: (environmentId) => {
+    const alreadyActivated = get().sessionActivated.has(environmentId);
+    if (alreadyActivated) return false;
+    set((state) => {
+      const newSet = new Set(state.sessionActivated);
+      newSet.add(environmentId);
+      return { sessionActivated: newSet };
+    });
+    return true;
+  },
 
   // Selectors
   getEnvironmentById: (environmentId) =>

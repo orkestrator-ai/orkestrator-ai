@@ -66,6 +66,7 @@ export function useEnvironments(
     setDeleting,
     setPendingSetupCommands,
     setSetupCommandsResolved,
+    setWorkspaceReady,
   } = useEnvironmentStore();
 
   const {
@@ -228,6 +229,7 @@ export function useEnvironments(
       // triggers isLocalEnvironmentReady=true and the auto-resolve fires before
       // real setup commands are stored.
       if (isLocal) {
+        setWorkspaceReady(environmentId, false);
         setSetupCommandsResolved(environmentId, false);
         setPendingSetupCommands(environmentId, []);
       }
@@ -287,7 +289,7 @@ export function useEnvironments(
         throw new Error(message);
       }
     },
-    [updateStatusInStore, updateEnvironmentInStore, setError, showError, setPendingSetupCommands, setSetupCommandsResolved]
+    [updateStatusInStore, updateEnvironmentInStore, setError, showError, setPendingSetupCommands, setSetupCommandsResolved, setWorkspaceReady]
   );
 
   const stopEnvironment = useCallback(

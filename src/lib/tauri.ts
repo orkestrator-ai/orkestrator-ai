@@ -236,6 +236,21 @@ export async function setEnvironmentPr(
   return invoke<Environment>("set_environment_pr", { environmentId, prUrl, prState, hasMergeConflicts });
 }
 
+export async function setEnvironmentSetupComplete(
+  environmentId: string,
+  complete: boolean
+): Promise<Environment> {
+  return invoke<Environment>("set_environment_setup_complete", { environmentId, complete });
+}
+
+/**
+ * Read-only fetch of a local environment's setupLocal commands from its
+ * orkestrator-ai.json. Returns null for non-local envs or when no commands.
+ */
+export async function getSetupCommands(environmentId: string): Promise<string[] | null> {
+  return invoke<string[] | null>("get_setup_commands", { environmentId });
+}
+
 /** Detect PR URL and state for the environment's branch (uses --head to check correct branch) */
 export async function detectPr(containerId: string, branch: string): Promise<PrDetectionResult | null> {
   return invoke<PrDetectionResult | null>("detect_pr", { containerId, branch });

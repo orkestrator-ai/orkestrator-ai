@@ -30,6 +30,8 @@ describe("environmentStore", () => {
       deletingEnvironments: new Set<string>(),
       pendingSetupCommands: new Map<string, string[]>(),
       setupCommandsResolved: new Set<string>(),
+      setupScriptsRunning: new Set<string>(),
+      sessionActivated: new Set<string>(),
     });
   });
 
@@ -125,5 +127,141 @@ describe("environmentStore", () => {
 
     expect(firstSetRef).toBe(secondSetRef);
     expect(secondSetRef.has("env-1")).toBe(false);
+  });
+
+  test("setEnvironments hydrates readiness sets from setupScriptsComplete", () => {
+    const completeLocal = createEnvironment({
+      id: "env-complete-local",
+      environmentType: "local",
+      setupScriptsComplete: true,
+    });
+    const completeContainer = createEnvironment({
+      id: "env-complete-container",
+      environmentType: "containerized",
+      setupScriptsComplete: true,
+    });
+    const incomplete = createEnvironment({
+      id: "env-incomplete",
+      environmentType: "local",
+      setupScriptsComplete: false,
+    });
+
+    useEnvironmentStore
+      .getState()
+      .setEnvironments([completeLocal, completeContainer, incomplete]);
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-complete-local")).toBe(true);
+    expect(state.workspaceReadyEnvironments.has("env-complete-container")).toBe(
+      true
+    );
+    expect(state.setupCommandsResolved.has("env-incomplete")).toBe(false);
+    expect(state.workspaceReadyEnvironments.has("env-incomplete")).toBe(false);
+  });
+
+  test("addEnvironment hydrates readiness sets when setupScriptsComplete is true", () => {
+    const env = createEnvironment({
+      id: "env-complete",
+      environmentType: "local",
+      setupScriptsComplete: true,
+    });
+
+    useEnvironmentStore.getState().addEnvironment(env);
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-complete")).toBe(true);
+    expect(state.workspaceReadyEnvironments.has("env-complete")).toBe(true);
+  });
+
+  test("mergeEnvironmentsForProject hydrates readiness from newly merged envs", () => {
+    const env = createEnvironment({
+      id: "env-complete",
+      projectId: "project-1",
+      environmentType: "local",
+      setupScriptsComplete: true,
+    });
+
+    useEnvironmentStore
+      .getState()
+      .mergeEnvironmentsForProject("project-1", [env]);
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-complete")).toBe(true);
+  });
+
+  test("setEnvironments clears stale hydrated readiness when setupScriptsComplete becomes false", () => {
+    const complete = createEnvironment({ id: "env-1", setupScriptsComplete: true });
+    const incomplete = createEnvironment({ id: "env-1", setupScriptsComplete: false });
+
+    const store = useEnvironmentStore.getState();
+    store.setEnvironments([complete]);
+    store.setEnvironments([incomplete]);
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-1")).toBe(false);
+    expect(state.workspaceReadyEnvironments.has("env-1")).toBe(false);
+  });
+
+  test("updateEnvironment treats setupScriptsComplete as authoritative when false", () => {
+    const store = useEnvironmentStore.getState();
+    store.addEnvironment(createEnvironment({ id: "env-1", setupScriptsComplete: true }));
+
+    store.updateEnvironment("env-1", { setupScriptsComplete: false });
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-1")).toBe(false);
+    expect(state.workspaceReadyEnvironments.has("env-1")).toBe(false);
+  });
+
+  test("consumePendingSetupCommands returns and clears pending commands", () => {
+    const store = useEnvironmentStore.getState();
+
+    store.setPendingSetupCommands("env-1", ["bun install", "bun test"]);
+
+    expect(store.consumePendingSetupCommands("env-1")).toEqual([
+      "bun install",
+      "bun test",
+    ]);
+    expect(useEnvironmentStore.getState().pendingSetupCommands.has("env-1")).toBe(
+      false
+    );
+  });
+
+  test("setSetupScriptsRunning updates the running selector", () => {
+    const store = useEnvironmentStore.getState();
+
+    store.setSetupScriptsRunning("env-1", true);
+    expect(store.isSetupScriptsRunning("env-1")).toBe(true);
+
+    store.setSetupScriptsRunning("env-1", false);
+    expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-1")).toBe(
+      false
+    );
+  });
+
+  test("markSessionActivated returns true only on first call per environment", () => {
+    const store = useEnvironmentStore.getState();
+
+    expect(store.markSessionActivated("env-1")).toBe(true);
+    expect(store.markSessionActivated("env-1")).toBe(false);
+    expect(store.markSessionActivated("env-2")).toBe(true);
+
+    const state = useEnvironmentStore.getState();
+    expect(state.sessionActivated.has("env-1")).toBe(true);
+    expect(state.sessionActivated.has("env-2")).toBe(true);
+  });
+
+  test("removeEnvironment clears sessionActivated for the environment", () => {
+    const store = useEnvironmentStore.getState();
+    store.addEnvironment(createEnvironment({ id: "env-1" }));
+    store.markSessionActivated("env-1");
+    expect(useEnvironmentStore.getState().sessionActivated.has("env-1")).toBe(
+      true
+    );
+
+    store.removeEnvironment("env-1");
+    expect(useEnvironmentStore.getState().sessionActivated.has("env-1")).toBe(
+      false
+    );
   });
 });
