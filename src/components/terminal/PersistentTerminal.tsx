@@ -1126,6 +1126,9 @@ export function PersistentTerminal({
             // Always fire an OSC on completion so the UI unblocks even on
             // failure. Success vs failure is signalled via the OSC payload,
             // and persistence is gated on the success variant only.
+            // Note: `A && B || C` would emit both markers if B (printf) ever
+            // exits non-zero; the OSC handler's setupCompleteRef guard makes
+            // the second a no-op, so this stays correct.
             writeRef.current(
               `(${combinedCommand}) && ${SETUP_DONE_PRINTF_CMD} || ${SETUP_FAILED_PRINTF_CMD}\n`,
             );

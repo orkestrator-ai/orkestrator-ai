@@ -624,7 +624,7 @@ describe("PersistentTerminal", () => {
     expect(onSetupComplete).toHaveBeenCalledWith({ persistSetupComplete: false });
   });
 
-  it("uses a success-only setup completion command wrapper", async () => {
+  it("emits success and failure OSC markers for setup completion", async () => {
     render(
       <PersistentTerminal
         terminalData={createTerminalData()}
@@ -647,9 +647,13 @@ describe("PersistentTerminal", () => {
     });
 
     const writes = (writeMock as any).mock.calls.map((call: unknown[]) => call[0]);
-    expect(writes.some((entry: unknown) =>
+    const setupWrite = writes.find((entry: unknown) =>
       typeof entry === "string" && entry.includes("(false && echo ok) && printf")
-    )).toBe(true);
+    );
+    expect(setupWrite).toBeDefined();
+    expect(setupWrite).toContain("setup_done");
+    expect(setupWrite).toContain("|| printf");
+    expect(setupWrite).toContain("setup_failed");
   });
 
   it("persists serialized buffers for persistent sessions on cleanup", async () => {
