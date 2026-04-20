@@ -522,21 +522,22 @@ if [ -f /workspace/orkestrator-ai.json ]; then
         fi
         set -e
 
-        echo ""
-        if [ $SCRIPT_EXIT -eq 0 ]; then
-            echo -e "${GREEN}Container setup completed successfully!${NC}"
-        else
-            echo -e "${YELLOW}Container setup exited with code $SCRIPT_EXIT${NC}"
-        fi
-    else
-        echo "  No container setup defined (setupContainer field is empty)"
-    fi
+echo ""
+if [ $SCRIPT_EXIT -eq 0 ]; then
+    echo -e "${GREEN}Container setup completed successfully!${NC}"
+    touch /tmp/.workspace-setup-complete
+else
+    echo -e "${YELLOW}Container setup exited with code $SCRIPT_EXIT${NC}"
+    echo "=== Workspace Setup Failed ==="
+fi
+else
+    echo "  No container setup defined (setupContainer field is empty)"
+    touch /tmp/.workspace-setup-complete
+fi
 else
     echo "  No orkestrator-ai.json found"
+    touch /tmp/.workspace-setup-complete
 fi
-
-# Mark setup complete
-touch /tmp/.workspace-setup-complete
 
 echo ""
 echo -e "${GREEN}=== Workspace Ready ===${NC}"

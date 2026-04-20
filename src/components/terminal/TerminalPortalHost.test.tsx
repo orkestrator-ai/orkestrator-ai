@@ -1,0 +1,222 @@
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { useEffect } from "react";
+import { render, waitFor } from "@testing-library/react";
+import * as realPersistentTerminal from "./PersistentTerminal";
+import { useConfigStore } from "@/stores/configStore";
+import { useEnvironmentStore } from "@/stores/environmentStore";
+import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
+
+const persistentTerminalSnapshot = { ...realPersistentTerminal };
+const markSetupScriptsCompleteMock = mock(() => {});
+const createTerminalMock = mock(() => {});
+const disposeTerminalMock = mock(() => {});
+
+let terminalBehavior:
+  | ((props: {
+      onReady?: (payload: { persistSetupComplete: boolean }) => void;
+      onSetupComplete?: (payload: { persistSetupComplete: boolean }) => void;
+    }) => void)
+  | undefined;
+
+mock.module("@/lib/setup-commands", () => ({
+  markSetupScriptsComplete: markSetupScriptsCompleteMock,
+}));
+
+mock.module("./PersistentTerminal", () => ({
+  PersistentTerminal: (props: {
+    onReady?: (payload: { persistSetupComplete: boolean }) => void;
+    onSetupComplete?: (payload: { persistSetupComplete: boolean }) => void;
+  }) => {
+    useEffect(() => {
+      terminalBehavior?.(props);
+    }, [props]);
+    return null;
+  },
+}));
+
+mock.module("@/stores/terminalPortalStore", () => ({
+  useTerminalPortalStore: <T,>(selector?: (state: {
+    terminals: Map<string, {
+      environmentId: string;
+      tabId: string;
+      portalElement: HTMLDivElement;
+      containerElement: HTMLDivElement;
+      isOpened: boolean;
+    }>;
+    createTerminal: typeof createTerminalMock;
+    disposeTerminal: typeof disposeTerminalMock;
+    hasTerminal: (environmentId: string, tabId: string) => boolean;
+  }) => T) => {
+    const state = {
+      terminals: new Map([
+        [
+          "env-1::default",
+          {
+            environmentId: "env-1",
+            tabId: "default",
+            portalElement: document.createElement("div"),
+            containerElement: document.createElement("div"),
+            isOpened: true,
+          },
+        ],
+      ]),
+      createTerminal: createTerminalMock,
+      disposeTerminal: disposeTerminalMock,
+      hasTerminal: () => true,
+    };
+
+    return selector ? selector(state) : state;
+  },
+}));
+
+const { TerminalPortalHost } = await import("./TerminalPortalHost");
+
+afterAll(() => {
+  mock.module("./PersistentTerminal", () => persistentTerminalSnapshot);
+});
+
+describe("TerminalPortalHost", () => {
+  beforeEach(() => {
+    terminalBehavior = undefined;
+    markSetupScriptsCompleteMock.mockClear();
+    createTerminalMock.mockClear();
+    disposeTerminalMock.mockClear();
+
+    useConfigStore.setState({
+      config: {
+        version: "1.0",
+        global: {
+          containerResources: { cpuCores: 2, memoryGb: 4 },
+          envFilePatterns: [],
+          allowedDomains: [],
+          defaultAgent: "claude",
+          opencodeModel: "",
+          codexModel: "",
+          codexReasoningEffort: "medium",
+          opencodeMode: "terminal",
+          claudeMode: "terminal",
+          codexMode: "terminal",
+          terminalAppearance: {
+            fontFamily: "Fira Code",
+            fontSize: 14,
+            backgroundColor: "#000000",
+          },
+          terminalScrollback: 5000,
+        },
+        repositories: {},
+      },
+    });
+
+    usePaneLayoutStore.setState({
+      environments: new Map([
+        [
+          "env-1",
+          {
+            root: {
+              kind: "leaf",
+              id: "default",
+              tabs: [{ id: "default", type: "plain", isSetupTab: true }],
+              activeTabId: "default",
+            },
+            activePaneId: "default",
+            containerId: "container-1",
+          },
+        ],
+      ]),
+      activeEnvironmentId: "env-1",
+    });
+
+    useEnvironmentStore.setState({
+      environments: [
+        {
+          id: "env-1",
+          projectId: "project-1",
+          name: "env-1",
+          branch: "main",
+          containerId: "container-1",
+          status: "running",
+          prUrl: null,
+          prState: null,
+          hasMergeConflicts: null,
+          createdAt: "2024-01-01T00:00:00.000Z",
+          networkAccessMode: "restricted",
+          order: 0,
+          environmentType: "containerized",
+        },
+      ],
+      workspaceReadyEnvironments: new Set<string>(),
+      deletingEnvironments: new Set<string>(),
+      pendingSetupCommands: new Map<string, string[]>(),
+      setupCommandsResolved: new Set<string>(),
+      setupScriptsRunning: new Set<string>(["env-1"]),
+      sessionActivated: new Set<string>(),
+      isLoading: false,
+      error: null,
+    });
+  });
+
+  test("persists completion when a container terminal reports successful readiness", async () => {
+    terminalBehavior = ({ onReady }) => {
+      onReady?.({ persistSetupComplete: true });
+    };
+
+    render(<TerminalPortalHost environmentId="env-1" containerId="container-1" />);
+
+    await waitFor(() => {
+      expect(useEnvironmentStore.getState().isWorkspaceReady("env-1")).toBe(true);
+    });
+
+    expect(markSetupScriptsCompleteMock).toHaveBeenCalledWith("env-1");
+  });
+
+  test("does not persist completion when a local terminal only becomes shell-ready", async () => {
+    useEnvironmentStore.setState((state) => ({
+      ...state,
+      environments: state.environments.map((environment) => ({
+        ...environment,
+        environmentType: "local",
+        containerId: null,
+      })),
+    }));
+
+    terminalBehavior = ({ onReady }) => {
+      onReady?.({ persistSetupComplete: false });
+    };
+
+    render(<TerminalPortalHost environmentId="env-1" containerId={null} />);
+
+    await waitFor(() => {
+      expect(useEnvironmentStore.getState().isWorkspaceReady("env-1")).toBe(true);
+    });
+
+    expect(markSetupScriptsCompleteMock).not.toHaveBeenCalled();
+  });
+
+  test("keeps manual setup completion runtime-only", async () => {
+    terminalBehavior = ({ onSetupComplete }) => {
+      onSetupComplete?.({ persistSetupComplete: false });
+    };
+
+    render(<TerminalPortalHost environmentId="env-1" containerId="container-1" />);
+
+    await waitFor(() => {
+      expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-1")).toBe(false);
+    });
+
+    expect(markSetupScriptsCompleteMock).not.toHaveBeenCalled();
+  });
+
+  test("persists automatic setup completion", async () => {
+    terminalBehavior = ({ onSetupComplete }) => {
+      onSetupComplete?.({ persistSetupComplete: true });
+    };
+
+    render(<TerminalPortalHost environmentId="env-1" containerId="container-1" />);
+
+    await waitFor(() => {
+      expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-1")).toBe(false);
+    });
+
+    expect(markSetupScriptsCompleteMock).toHaveBeenCalledWith("env-1");
+  });
+});

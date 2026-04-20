@@ -38,6 +38,8 @@ export const ENVIRONMENT_ALREADY_READY_MARKER = "Workspace already set up.";
 /** Marker that appears right before "Workspace Ready" in setup scripts */
 export const SETUP_COMPLETE_MARKER = "Container setup completed successfully!";
 
+export const ENVIRONMENT_SETUP_FAILED_MARKER = "=== Workspace Setup Failed ===";
+
 /** OSC identifier used for invisible setup-complete signalling via xterm.js */
 export const SETUP_DONE_OSC_ID = 9999;
 

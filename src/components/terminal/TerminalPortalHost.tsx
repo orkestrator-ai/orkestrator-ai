@@ -69,6 +69,9 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
   // Get workspace ready and setup scripts running setters from environment store
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
   const setSetupScriptsRunning = useEnvironmentStore((state) => state.setSetupScriptsRunning);
+  const isLocalEnvironment = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.environmentType === "local"
+  );
 
   const terminalAppearance = useConfigStore(
     (state) => state.config.global.terminalAppearance
@@ -89,20 +92,21 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
   // Handle workspace ready callback - fires when any terminal becomes ready
   // Always set the state to true - this ensures the state is updated even if it was
   // reset to false by TerminalContainer for a new container startup
-  const handleWorkspaceReady = useCallback(() => {
+  const handleWorkspaceReady = useCallback((payload: { persistSetupComplete: boolean }) => {
     console.log("[TerminalPortalHost] handleWorkspaceReady called - setting workspace ready for environment:", environmentId);
     setWorkspaceReady(environmentId, true);
-    // Container workspace initialization finished — persist so next app session
-    // doesn't re-show the "waiting for setup" state for this environment.
-    markSetupScriptsComplete(environmentId);
-  }, [environmentId, setWorkspaceReady]);
+    if (!isLocalEnvironment && payload.persistSetupComplete) {
+      markSetupScriptsComplete(environmentId);
+    }
+  }, [environmentId, isLocalEnvironment, setWorkspaceReady]);
 
   // Handle setup scripts completion - fires when setup tab's marker is detected
-  const handleSetupComplete = useCallback(() => {
+  const handleSetupComplete = useCallback((payload: { persistSetupComplete: boolean }) => {
     console.log("[TerminalPortalHost] handleSetupComplete called - clearing setupScriptsRunning for environment:", environmentId);
     setSetupScriptsRunning(environmentId, false);
-    // Local setup scripts finished — persist for next app session.
-    markSetupScriptsComplete(environmentId);
+    if (payload.persistSetupComplete) {
+      markSetupScriptsComplete(environmentId);
+    }
   }, [environmentId, setSetupScriptsRunning]);
 
   // Build a map of tabId -> paneId for all terminal tabs

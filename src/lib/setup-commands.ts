@@ -1,6 +1,8 @@
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import * as tauri from "@/lib/tauri";
 
+const setupCompletionPersistenceInFlight = new Set<string>();
+
 interface ShouldAutoResolveSetupCommandsOptions {
   isLocalEnvironment: boolean;
   isLocalEnvironmentReady: boolean;
@@ -35,15 +37,25 @@ export const shouldAutoResolveSetupCommands = ({
 export function markSetupScriptsComplete(environmentId: string): void {
   const store = useEnvironmentStore.getState();
   const env = store.getEnvironmentById(environmentId);
-  if (env?.setupScriptsComplete) return;
+  if (!env || env.setupScriptsComplete || setupCompletionPersistenceInFlight.has(environmentId)) {
+    return;
+  }
 
-  store.updateEnvironment(environmentId, { setupScriptsComplete: true });
-  tauri.setEnvironmentSetupComplete(environmentId, true).catch((err) => {
-    console.error(
-      "[setup-commands] Failed to persist setupScriptsComplete:",
-      err
-    );
-  });
+  setupCompletionPersistenceInFlight.add(environmentId);
+  tauri
+    .setEnvironmentSetupComplete(environmentId, true)
+    .then((updatedEnvironment) => {
+      store.updateEnvironment(environmentId, updatedEnvironment);
+    })
+    .catch((err) => {
+      console.error(
+        "[setup-commands] Failed to persist setupScriptsComplete:",
+        err
+      );
+    })
+    .finally(() => {
+      setupCompletionPersistenceInFlight.delete(environmentId);
+    });
 }
 
 export function isSetupPending(params: {

@@ -24,6 +24,7 @@ import {
   ENVIRONMENT_READY_MARKER_ALT_TILDE,
   ENVIRONMENT_READY_MARKER_ALT_DASH,
   ENVIRONMENT_ALREADY_READY_MARKER,
+  ENVIRONMENT_SETUP_FAILED_MARKER,
   SETUP_COMPLETE_MARKER,
   SETUP_DONE_OSC_ID,
   SETUP_DONE_OSC_DATA,
@@ -65,8 +66,8 @@ interface PersistentTerminalProps {
   initialCommands?: string[];
   paneId: string;
   isSetupTab?: boolean;
-  onReady?: () => void;
-  onSetupComplete?: () => void;
+  onReady?: (payload: { persistSetupComplete: boolean }) => void;
+  onSetupComplete?: (payload: { persistSetupComplete: boolean }) => void;
   onWrite?: (write: (data: string) => Promise<void>) => void;
 }
 
@@ -321,7 +322,7 @@ export function PersistentTerminal({
             console.log("[PersistentTerminal] Local environment ready detected for first tab:", tabId);
             setIsEnvironmentReady(true);
             dataBufferRef.current = "";
-            onReady?.();
+            onReady?.({ persistSetupComplete: false });
           } else if (dataBufferRef.current.length > 1024) {
             dataBufferRef.current = dataBufferRef.current.slice(-512);
           }
@@ -333,6 +334,8 @@ export function PersistentTerminal({
           // 3. We need to wait for ALL setup scripts in orkestrator-ai.json to complete
           // 4. Reused containers short-circuit setup and emit "Workspace already set up."
           const readyDetected =
+            strippedBuffer.includes(ENVIRONMENT_SETUP_FAILED_MARKER) ||
+            dataBufferRef.current.includes(ENVIRONMENT_SETUP_FAILED_MARKER) ||
             strippedBuffer.includes(ENVIRONMENT_READY_MARKER) ||
             dataBufferRef.current.includes(ENVIRONMENT_READY_MARKER) ||
             // Also check for alternate marker formats (with different delimiters)
@@ -344,10 +347,13 @@ export function PersistentTerminal({
             strippedBuffer.includes(SETUP_COMPLETE_MARKER);
 
           if (readyDetected) {
+            const setupFailed =
+              strippedBuffer.includes(ENVIRONMENT_SETUP_FAILED_MARKER) ||
+              dataBufferRef.current.includes(ENVIRONMENT_SETUP_FAILED_MARKER);
             console.log("[PersistentTerminal] Environment ready detected for tab:", tabId, "isFirstTab:", isFirstTab);
             setIsEnvironmentReady(true);
             dataBufferRef.current = "";
-            onReady?.();
+            onReady?.({ persistSetupComplete: !setupFailed });
           }
 
           // Keep buffer from growing indefinitely, but use a larger window to catch markers
@@ -389,7 +395,7 @@ export function PersistentTerminal({
       if (data === SETUP_DONE_OSC_DATA && !setupCompleteRef.current) {
         console.log("[PersistentTerminal] Setup scripts completed (OSC) for tab:", tabId);
         setupCompleteRef.current = true;
-        onSetupComplete?.();
+        onSetupComplete?.({ persistSetupComplete: true });
       }
       return true;
     });
@@ -613,7 +619,7 @@ export function PersistentTerminal({
       if (!isFirstTab || hadExistingSessionAtMountRef.current) {
         setIsEnvironmentReady(true);
         console.log("[PersistentTerminal] Reconnection complete, calling onReady for tab:", tabId);
-        onReady?.();
+        onReady?.({ persistSetupComplete: false });
       } else {
         // Leave isEnvironmentReady as false so handleData can detect setup completion
         console.log("[PersistentTerminal] First tab on new environment, waiting for setup detection before calling onReady, tab:", tabId);
@@ -1108,9 +1114,7 @@ export function PersistentTerminal({
           // Join all commands with && to run sequentially
           const combinedCommand = initialCommands.join(" && ");
           if (isSetupTab) {
-            // Wrap in subshell so the completion signal always fires, even on failure.
-            // The printf emits an invisible OSC escape sequence detected by xterm.js.
-            writeRef.current(`(${combinedCommand}); ${SETUP_DONE_PRINTF_CMD}\n`);
+            writeRef.current(`(${combinedCommand}) && ${SETUP_DONE_PRINTF_CMD}\n`);
           } else {
             writeRef.current(combinedCommand + "\n");
           }
@@ -1144,7 +1148,7 @@ export function PersistentTerminal({
       console.log("[PersistentTerminal] Manually marking setup complete for tab:", tabId);
       setupCompleteRef.current = true;
       setManuallyCompleted(true);
-      onSetupComplete?.();
+      onSetupComplete?.({ persistSetupComplete: false });
     }
   }, [tabId, onSetupComplete]);
 

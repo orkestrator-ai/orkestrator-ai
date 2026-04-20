@@ -189,6 +189,56 @@ describe("environmentStore", () => {
     expect(state.setupCommandsResolved.has("env-complete")).toBe(true);
   });
 
+  test("setEnvironments clears stale hydrated readiness when setupScriptsComplete becomes false", () => {
+    const complete = createEnvironment({ id: "env-1", setupScriptsComplete: true });
+    const incomplete = createEnvironment({ id: "env-1", setupScriptsComplete: false });
+
+    const store = useEnvironmentStore.getState();
+    store.setEnvironments([complete]);
+    store.setEnvironments([incomplete]);
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-1")).toBe(false);
+    expect(state.workspaceReadyEnvironments.has("env-1")).toBe(false);
+  });
+
+  test("updateEnvironment treats setupScriptsComplete as authoritative when false", () => {
+    const store = useEnvironmentStore.getState();
+    store.addEnvironment(createEnvironment({ id: "env-1", setupScriptsComplete: true }));
+
+    store.updateEnvironment("env-1", { setupScriptsComplete: false });
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-1")).toBe(false);
+    expect(state.workspaceReadyEnvironments.has("env-1")).toBe(false);
+  });
+
+  test("consumePendingSetupCommands returns and clears pending commands", () => {
+    const store = useEnvironmentStore.getState();
+
+    store.setPendingSetupCommands("env-1", ["bun install", "bun test"]);
+
+    expect(store.consumePendingSetupCommands("env-1")).toEqual([
+      "bun install",
+      "bun test",
+    ]);
+    expect(useEnvironmentStore.getState().pendingSetupCommands.has("env-1")).toBe(
+      false
+    );
+  });
+
+  test("setSetupScriptsRunning updates the running selector", () => {
+    const store = useEnvironmentStore.getState();
+
+    store.setSetupScriptsRunning("env-1", true);
+    expect(store.isSetupScriptsRunning("env-1")).toBe(true);
+
+    store.setSetupScriptsRunning("env-1", false);
+    expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-1")).toBe(
+      false
+    );
+  });
+
   test("markSessionActivated returns true only on first call per environment", () => {
     const store = useEnvironmentStore.getState();
 

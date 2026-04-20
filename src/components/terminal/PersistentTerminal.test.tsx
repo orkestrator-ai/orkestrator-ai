@@ -16,6 +16,7 @@ const resizeMock = mock(async () => {});
 const connectMock = mock(async () => {});
 const writeMock = mock(async () => {});
 let terminalOnData: ((data: Uint8Array) => void) | undefined;
+let terminalOscHandler: ((data: string) => boolean) | undefined;
 
 mock.module("@/hooks/useTerminal", () => ({
   useTerminal: (options: { onData?: (data: Uint8Array) => void }) => {
@@ -135,6 +136,9 @@ type MockTerminal = {
   clear: ReturnType<typeof mock>;
   write: ReturnType<typeof mock>;
   scrollToBottom: ReturnType<typeof mock>;
+  parser: {
+    registerOscHandler: ReturnType<typeof mock>;
+  };
 };
 
 function createMockTerminal(): MockTerminal {
@@ -158,6 +162,12 @@ function createMockTerminal(): MockTerminal {
     clear: mock(() => {}),
     write: mock(() => {}),
     scrollToBottom: mock(() => {}),
+    parser: {
+      registerOscHandler: mock((_: number, handler: (data: string) => boolean) => {
+        terminalOscHandler = handler;
+        return { dispose: mock(() => {}) };
+      }),
+    },
   };
 }
 
@@ -197,6 +207,7 @@ describe("PersistentTerminal", () => {
     connectMock.mockClear();
     writeMock.mockClear();
     terminalOnData = undefined;
+    terminalOscHandler = undefined;
     portalStoreActions.markTerminalOpened.mockClear();
     portalStoreActions.setTerminalContainer.mockClear();
     portalStoreActions.setTerminalPane.mockClear();
@@ -473,7 +484,7 @@ describe("PersistentTerminal", () => {
   });
 
   it("marks a reused container as ready when setup reports it is already set up", async () => {
-    const onReady = mock(() => {});
+    const onReady = mock((_payload: { persistSetupComplete: boolean }) => {});
 
     render(
       <PersistentTerminal
@@ -498,6 +509,121 @@ describe("PersistentTerminal", () => {
     await waitFor(() => {
       expect(onReady).toHaveBeenCalled();
     });
+
+    expect(onReady).toHaveBeenCalledWith({ persistSetupComplete: true });
+  });
+
+  it("does not persist completion when container setup fails", async () => {
+    const onReady = mock((_payload: { persistSetupComplete: boolean }) => {});
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="plain"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={true}
+        paneId="pane-1"
+        onReady={onReady}
+      />
+    );
+
+    await act(async () => {
+      terminalOnData?.(new TextEncoder().encode("=== Workspace Setup Failed ===\n=== Workspace Ready ===\n"));
+    });
+
+    await waitFor(() => {
+      expect(onReady).toHaveBeenCalledWith({ persistSetupComplete: false });
+    });
+  });
+
+  it("only signals setup completion when the OSC success marker arrives", async () => {
+    const onSetupComplete = mock((_payload: { persistSetupComplete: boolean }) => {});
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="plain"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={true}
+        paneId="pane-1"
+        isSetupTab={true}
+        onSetupComplete={onSetupComplete}
+      />
+    );
+
+    await act(async () => {
+      expect(terminalOscHandler?.("unexpected")).toBe(true);
+    });
+    expect(onSetupComplete).not.toHaveBeenCalled();
+
+    await act(async () => {
+      expect(terminalOscHandler?.("setup_done")).toBe(true);
+    });
+    expect(onSetupComplete).toHaveBeenCalledWith({ persistSetupComplete: true });
+  });
+
+  it("treats the manual setup-complete button as a runtime-only override", async () => {
+    const onSetupComplete = mock((_payload: { persistSetupComplete: boolean }) => {});
+    const view = render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="plain"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={true}
+        paneId="pane-1"
+        isSetupTab={true}
+        onSetupComplete={onSetupComplete}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(view.getByText("Mark setup complete"));
+    });
+
+    expect(onSetupComplete).toHaveBeenCalledWith({ persistSetupComplete: false });
+  });
+
+  it("uses a success-only setup completion command wrapper", async () => {
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="plain"
+        containerId="container-1"
+        environmentId="env-1"
+        initialCommands={["false", "echo ok"]}
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        paneId="pane-1"
+        isSetupTab={true}
+      />
+    );
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalled();
+    });
+
+    const writes = (writeMock as any).mock.calls.map((call: unknown[]) => call[0]);
+    expect(writes.some((entry: unknown) =>
+      typeof entry === "string" && entry.includes("(false && echo ok) && printf")
+    )).toBe(true);
   });
 
   it("persists serialized buffers for persistent sessions on cleanup", async () => {

@@ -12,15 +12,25 @@ const sortByOrder = (environments: Environment[]): Environment[] =>
  */
 const hydrateReadinessFromPersisted = (
   environments: Environment[],
+  currentEnvironments: Environment[],
   currentSetupCommandsResolved: Set<string>,
   currentWorkspaceReady: Set<string>
 ): { setupCommandsResolved: Set<string>; workspaceReadyEnvironments: Set<string> } => {
   const setupCommandsResolved = new Set(currentSetupCommandsResolved);
   const workspaceReadyEnvironments = new Set(currentWorkspaceReady);
+  const previousEnvironmentsById = new Map(
+    currentEnvironments.map((environment) => [environment.id, environment])
+  );
   for (const env of environments) {
     if (env.setupScriptsComplete) {
       setupCommandsResolved.add(env.id);
       workspaceReadyEnvironments.add(env.id);
+      continue;
+    }
+
+    if (previousEnvironmentsById.get(env.id)?.setupScriptsComplete) {
+      setupCommandsResolved.delete(env.id);
+      workspaceReadyEnvironments.delete(env.id);
     }
   }
   return { setupCommandsResolved, workspaceReadyEnvironments };
@@ -116,6 +126,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
     set((state) => {
       const seeded = hydrateReadinessFromPersisted(
         environments,
+        state.environments,
         state.setupCommandsResolved,
         state.workspaceReadyEnvironments
       );
@@ -132,6 +143,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
       const otherEnvs = state.environments.filter((e) => e.projectId !== projectId);
       const seeded = hydrateReadinessFromPersisted(
         newEnvs,
+        state.environments,
         state.setupCommandsResolved,
         state.workspaceReadyEnvironments
       );
@@ -146,6 +158,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
     set((state) => {
       const seeded = hydrateReadinessFromPersisted(
         [environment],
+        state.environments,
         state.setupCommandsResolved,
         state.workspaceReadyEnvironments
       );
@@ -189,13 +202,34 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
     }),
 
   updateEnvironment: (environmentId, updates) =>
-    set((state) => ({
-      environments: sortByOrder(
-        state.environments.map((e) =>
-          e.id === environmentId ? { ...e, ...updates } : e
-        )
-      ),
-    })),
+    set((state) => {
+      const nextState: Pick<EnvironmentState, "environments"> &
+        Partial<Pick<EnvironmentState, "setupCommandsResolved" | "workspaceReadyEnvironments">> = {
+        environments: sortByOrder(
+          state.environments.map((e) =>
+            e.id === environmentId ? { ...e, ...updates } : e
+          )
+        ),
+      };
+
+      if (typeof updates.setupScriptsComplete === "boolean") {
+        const setupCommandsResolved = new Set(state.setupCommandsResolved);
+        const workspaceReadyEnvironments = new Set(state.workspaceReadyEnvironments);
+
+        if (updates.setupScriptsComplete) {
+          setupCommandsResolved.add(environmentId);
+          workspaceReadyEnvironments.add(environmentId);
+        } else {
+          setupCommandsResolved.delete(environmentId);
+          workspaceReadyEnvironments.delete(environmentId);
+        }
+
+        nextState.setupCommandsResolved = setupCommandsResolved;
+        nextState.workspaceReadyEnvironments = workspaceReadyEnvironments;
+      }
+
+      return nextState;
+    }),
 
   updateEnvironmentStatus: (environmentId, status) =>
     set((state) => ({

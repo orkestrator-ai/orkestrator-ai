@@ -42,7 +42,7 @@ import {
   createFixPrompt,
 } from "@/prompts";
 import { parseVerificationResult } from "@/lib/parse-verification-result";
-import { isSetupPending, markSetupScriptsComplete } from "@/lib/setup-commands";
+import { isSetupPending } from "@/lib/setup-commands";
 import { useKanbanStore } from "@/stores/kanbanStore";
 import { usePrMonitorStore } from "@/stores/prMonitorStore";
 import { resolveActiveBuildPipelineAgent } from "@/lib/build-pipeline-agent";
@@ -1304,9 +1304,6 @@ function ClaudeBuildChatTab({ data, isActive }: BuildChatTabProps) {
             } else {
               useEnvironmentStore.getState().setWorkspaceReady(environmentId, true);
             }
-            // User explicitly skipped waiting — persist so future sessions
-            // don't block the agent tabs on this environment.
-            markSetupScriptsComplete(environmentId);
           }}
         >
           Skip waiting
