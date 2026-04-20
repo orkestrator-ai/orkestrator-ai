@@ -240,6 +240,22 @@ describe("getBackgroundProcessingEnvironments", () => {
     expect(result).toEqual([]);
   });
 
+  test("treats paused pipelines as background processing candidates", () => {
+    const env = makeEnv("e1");
+    const pipelines = new Map([
+      ["p1", makePipeline("p1", "e1", "paused")],
+    ]);
+
+    const result = getBackgroundProcessingEnvironments(
+      pipelines,
+      [env],
+      null,
+      [],
+    );
+
+    expect(result).toEqual([env]);
+  });
+
   test("returns the union of pipeline and setup-running environments without duplicates", () => {
     const env1 = makeEnv("e1");
     const env2 = makeEnv("e2");
