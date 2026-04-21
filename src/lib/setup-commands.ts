@@ -38,13 +38,22 @@ export function markSetupScriptsComplete(environmentId: string): void {
   const store = useEnvironmentStore.getState();
   const env = store.getEnvironmentById(environmentId);
   if (!env || env.setupScriptsComplete || setupCompletionPersistenceInFlight.has(environmentId)) {
+    console.debug(
+      "[setup-commands] markSetupScriptsComplete skipped",
+      { environmentId, hasEnv: !!env, alreadyComplete: env?.setupScriptsComplete, inFlight: setupCompletionPersistenceInFlight.has(environmentId) }
+    );
     return;
   }
 
+  console.debug("[setup-commands] markSetupScriptsComplete persisting", { environmentId });
   setupCompletionPersistenceInFlight.add(environmentId);
   tauri
     .setEnvironmentSetupComplete(environmentId, true)
     .then((updatedEnvironment) => {
+      console.debug(
+        "[setup-commands] markSetupScriptsComplete persisted",
+        { environmentId, setupScriptsComplete: updatedEnvironment.setupScriptsComplete }
+      );
       store.updateEnvironment(environmentId, updatedEnvironment);
     })
     .catch((err) => {
@@ -56,6 +65,28 @@ export function markSetupScriptsComplete(environmentId: string): void {
     .finally(() => {
       setupCompletionPersistenceInFlight.delete(environmentId);
     });
+}
+
+/**
+ * Force the runtime setup-pending gates open for an environment without
+ * persisting completion. Intended for the user-facing "skip waiting" override
+ * when detection fails to fire. Covers both container and local envs.
+ */
+export function forceResolveSetupRuntime(environmentId: string): void {
+  const store = useEnvironmentStore.getState();
+  const env = store.getEnvironmentById(environmentId);
+  const isLocal = env?.environmentType === "local";
+  console.warn(
+    "[setup-commands] forceResolveSetupRuntime invoked (manual override)",
+    { environmentId, isLocal }
+  );
+  if (isLocal) {
+    store.setSetupScriptsRunning(environmentId, false);
+    store.setSetupCommandsResolved(environmentId, true);
+    store.consumePendingSetupCommands(environmentId);
+  } else {
+    store.setWorkspaceReady(environmentId, true);
+  }
 }
 
 export function isSetupPending(params: {
