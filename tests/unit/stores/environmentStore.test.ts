@@ -232,6 +232,20 @@ describe("environmentStore", () => {
     expect(state.workspaceReadyEnvironments.has("env-1")).toBe(true);
   });
 
+  test("updateEnvironment populates readiness sets when setupScriptsComplete transitions false→true", () => {
+    // Guards the positive side of the passenger-value fix: a genuine
+    // false→true transition (e.g. backend persisted setup complete) must
+    // still hydrate the runtime readiness sets.
+    const store = useEnvironmentStore.getState();
+    store.addEnvironment(createEnvironment({ id: "env-1", setupScriptsComplete: false }));
+
+    store.updateEnvironment("env-1", { setupScriptsComplete: true });
+
+    const state = useEnvironmentStore.getState();
+    expect(state.setupCommandsResolved.has("env-1")).toBe(true);
+    expect(state.workspaceReadyEnvironments.has("env-1")).toBe(true);
+  });
+
   test("consumePendingSetupCommands returns and clears pending commands", () => {
     const store = useEnvironmentStore.getState();
 

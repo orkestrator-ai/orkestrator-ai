@@ -307,15 +307,6 @@ export function PersistentTerminal({
 
       const text = new TextDecoder().decode(data);
 
-      // Surface the setup-complete OSC bytes in logs so we can tell whether the
-      // sequence actually reaches the frontend when the OSC handler never fires.
-      if (isSetupTab && text.includes(`\x1b]${SETUP_DONE_OSC_ID};`)) {
-        console.log(
-          "[PersistentTerminal] Setup OSC bytes observed in data stream",
-          { tabId, environmentId, length: data.length }
-        );
-      }
-
       // For first tab only: detect environment ready state
       if (isFirstTab && !isEnvironmentReady) {
         dataBufferRef.current += text;
@@ -393,7 +384,7 @@ export function PersistentTerminal({
         }
       }
     },
-    [terminal, isFirstTab, isLocalEnvironment, isEnvironmentReady, tabId, environmentId, isSetupTab, onReady]
+    [terminal, isFirstTab, isLocalEnvironment, isEnvironmentReady, tabId, onReady]
   );
 
   // Register an invisible OSC escape handler for setup completion detection.
@@ -402,15 +393,7 @@ export function PersistentTerminal({
   useEffect(() => {
     if (!isSetupTab) return;
 
-    console.log(
-      "[PersistentTerminal] Registering setup OSC handler",
-      { tabId, environmentId, oscId: SETUP_DONE_OSC_ID }
-    );
     const disposable = terminal.parser.registerOscHandler(SETUP_DONE_OSC_ID, (data) => {
-      console.log(
-        "[PersistentTerminal] OSC handler fired",
-        { tabId, environmentId, data, alreadyComplete: setupCompleteRef.current }
-      );
       if (setupCompleteRef.current) return true;
       if (data === SETUP_DONE_OSC_DATA || data === SETUP_FAILED_OSC_DATA) {
         const succeeded = data === SETUP_DONE_OSC_DATA;
@@ -426,14 +409,8 @@ export function PersistentTerminal({
       return true;
     });
 
-    return () => {
-      console.log(
-        "[PersistentTerminal] Disposing setup OSC handler",
-        { tabId, environmentId }
-      );
-      disposable.dispose();
-    };
-  }, [terminal, isSetupTab, tabId, environmentId, onSetupComplete]);
+    return () => disposable.dispose();
+  }, [terminal, isSetupTab, tabId, onSetupComplete]);
 
   // Determine user based on tab type - root tabs connect as orkroot
   const terminalUser = tabType === "root" ? ROOT_TERMINAL_USER : undefined;

@@ -29,12 +29,6 @@ const hydrateReadinessFromPersisted = (
     }
 
     if (previousEnvironmentsById.get(env.id)?.setupScriptsComplete) {
-      if (workspaceReadyEnvironments.has(env.id)) {
-        console.warn(
-          "[environmentStore] hydrateReadinessFromPersisted clearing workspaceReady (prev was complete, new is not)",
-          { environmentId: env.id }
-        );
-      }
       setupCommandsResolved.delete(env.id);
       workspaceReadyEnvironments.delete(env.id);
     }
@@ -290,15 +284,6 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   setWorkspaceReady: (environmentId, isReady) =>
     set((state) => {
-      const wasReady = state.workspaceReadyEnvironments.has(environmentId);
-      if (wasReady && !isReady) {
-        console.warn(
-          "[environmentStore] setWorkspaceReady(false) clobbering true value",
-          { environmentId, stack: new Error().stack }
-        );
-      } else if (!wasReady && isReady) {
-        console.log("[environmentStore] setWorkspaceReady(true)", { environmentId });
-      }
       const newSet = new Set(state.workspaceReadyEnvironments);
       if (isReady) {
         newSet.add(environmentId);
