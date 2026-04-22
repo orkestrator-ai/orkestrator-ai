@@ -97,9 +97,32 @@ describe("useVirtuosoScrollState", () => {
       expect(result.current.scrollProps.followOutput(true)).toBe("smooth");
     });
 
-    test("returns false when isAtBottom is false", () => {
+    test("returns 'smooth' while stick intent is still true even if not at bottom", () => {
+      // Content growth can push the viewport off-bottom without disengaging
+      // stick intent. followOutput should still auto-scroll.
       const { result } = renderHook(() => useVirtuosoScrollState());
-      expect(result.current.scrollProps.followOutput(false)).toBe(false);
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(false);
+      });
+      expect(result.current.scrollProps.followOutput(false)).toBe("smooth");
+    });
+
+    test("returns false after a user-initiated scroll up releases stick intent", () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+      const el = document.createElement("div");
+      document.body.appendChild(el);
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+        act(() => {
+          el.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        });
+        act(() => {
+          result.current.scrollProps.atBottomStateChange(false);
+        });
+        expect(result.current.scrollProps.followOutput(false)).toBe(false);
+      } finally {
+        document.body.removeChild(el);
+      }
     });
   });
 
@@ -301,7 +324,7 @@ describe("useVirtuosoScrollState", () => {
   });
 
   describe("scroll state persistence", () => {
-    test("persists state when isActive changes to false", () => {
+    test("persists and restores snapshot when user had scrolled up (not sticky)", () => {
       const mockSnapshot = { ranges: [], scrollTop: 500 } as any;
       const { result, rerender } = renderHook(
         ({ isActive }) =>
@@ -309,20 +332,55 @@ describe("useVirtuosoScrollState", () => {
         { initialProps: { isActive: true } }
       );
 
-      // Set up a mock ref that provides a snapshot
+      // Simulate a user scroll up so stick intent is released; the snapshot
+      // should then be restored on remount.
+      const el = document.createElement("div");
+      document.body.appendChild(el);
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+        act(() => {
+          el.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        });
+
+        result.current.virtuosoRef.current = {
+          scrollToIndex: () => {},
+          getState: (cb: (state: any) => void) => cb(mockSnapshot),
+        } as any;
+
+        rerender({ isActive: false });
+
+        const { result: result2 } = renderHook(() =>
+          useVirtuosoScrollState({ persistKey: "test-key" })
+        );
+        expect(result2.current.scrollProps.restoreStateFrom).toEqual(
+          mockSnapshot,
+        );
+      } finally {
+        document.body.removeChild(el);
+      }
+    });
+
+    test("skips snapshot restore when user was sticky (snaps to new bottom instead)", () => {
+      const mockSnapshot = { ranges: [], scrollTop: 500 } as any;
+      const { result, rerender } = renderHook(
+        ({ isActive }) =>
+          useVirtuosoScrollState({ isActive, persistKey: "sticky-key" }),
+        { initialProps: { isActive: true } }
+      );
+
       result.current.virtuosoRef.current = {
         scrollToIndex: () => {},
         getState: (cb: (state: any) => void) => cb(mockSnapshot),
       } as any;
 
-      // Switch to inactive
+      // Default intent is sticky; deactivating persists {snapshot, wantsStick:true}.
       rerender({ isActive: false });
 
-      // Now mount a new hook instance — it should restore the persisted state
       const { result: result2 } = renderHook(() =>
-        useVirtuosoScrollState({ persistKey: "test-key" })
+        useVirtuosoScrollState({ persistKey: "sticky-key" })
       );
-      expect(result2.current.scrollProps.restoreStateFrom).toEqual(mockSnapshot);
+      expect(result2.current.scrollProps.restoreStateFrom).toBeUndefined();
+      clearPersistedVirtuosoState("sticky-key");
     });
 
     test("does not persist when no persistKey is provided", () => {
@@ -370,7 +428,6 @@ describe("useVirtuosoScrollState", () => {
 
   describe("clearPersistedVirtuosoState", () => {
     test("clears persisted state for a given key", () => {
-      // Persist some state first
       const mockSnapshot = { ranges: [], scrollTop: 200 } as any;
       const { result, rerender } = renderHook(
         ({ isActive }) =>
@@ -378,27 +435,38 @@ describe("useVirtuosoScrollState", () => {
         { initialProps: { isActive: true } }
       );
 
-      result.current.virtuosoRef.current = {
-        scrollToIndex: () => {},
-        getState: (cb: (state: any) => void) => cb(mockSnapshot),
-      } as any;
+      // Release stick intent so the snapshot will be restored on remount.
+      const el = document.createElement("div");
+      document.body.appendChild(el);
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+        act(() => {
+          el.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        });
 
-      rerender({ isActive: false });
+        result.current.virtuosoRef.current = {
+          scrollToIndex: () => {},
+          getState: (cb: (state: any) => void) => cb(mockSnapshot),
+        } as any;
 
-      // Verify it was persisted
-      const { result: before } = renderHook(() =>
-        useVirtuosoScrollState({ persistKey: "test-key" })
-      );
-      expect(before.current.scrollProps.restoreStateFrom).toEqual(mockSnapshot);
+        rerender({ isActive: false });
 
-      // Clear it
-      clearPersistedVirtuosoState("test-key");
+        const { result: before } = renderHook(() =>
+          useVirtuosoScrollState({ persistKey: "test-key" })
+        );
+        expect(before.current.scrollProps.restoreStateFrom).toEqual(
+          mockSnapshot,
+        );
 
-      // Verify it's gone
-      const { result: after } = renderHook(() =>
-        useVirtuosoScrollState({ persistKey: "test-key" })
-      );
-      expect(after.current.scrollProps.restoreStateFrom).toBeUndefined();
+        clearPersistedVirtuosoState("test-key");
+
+        const { result: after } = renderHook(() =>
+          useVirtuosoScrollState({ persistKey: "test-key" })
+        );
+        expect(after.current.scrollProps.restoreStateFrom).toBeUndefined();
+      } finally {
+        document.body.removeChild(el);
+      }
     });
   });
 });
