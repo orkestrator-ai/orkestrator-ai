@@ -890,18 +890,28 @@ pub struct SystemPruneResult {
 }
 
 // Global Docker client instance
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
-static DOCKER_CLIENT: OnceLock<Result<DockerClient, String>> = OnceLock::new();
+static DOCKER_CLIENT: OnceLock<Mutex<Option<&'static DockerClient>>> = OnceLock::new();
 
 /// Get the global Docker client instance
 pub fn get_docker_client() -> Result<&'static DockerClient, DockerError> {
-    let result = DOCKER_CLIENT.get_or_init(|| DockerClient::new().map_err(|e| e.to_string()));
+    let client_slot = DOCKER_CLIENT.get_or_init(|| Mutex::new(None));
 
-    match result {
-        Ok(client) => Ok(client),
-        Err(e) => Err(DockerError::ConnectionFailed(e.clone())),
+    // Hold the lock across construction so concurrent first-callers don't each
+    // build (and leak) their own DockerClient. Only cache successful
+    // connections — if the app starts before Docker is running, later retries
+    // must be able to create a fresh client.
+    let mut cached = client_slot
+        .lock()
+        .map_err(|_| DockerError::OperationFailed("Docker client mutex poisoned".to_string()))?;
+
+    if let Some(client) = *cached {
+        return Ok(client);
     }
+
+    let client = Box::leak(Box::new(DockerClient::new()?));
+    Ok(*cached.insert(client))
 }
 
 #[cfg(test)]
