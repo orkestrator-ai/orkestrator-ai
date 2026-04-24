@@ -426,6 +426,169 @@ describe("useVirtuosoScrollState", () => {
     });
   });
 
+  describe("persisted stick intent regression", () => {
+    test("persisted wantsStick=false does not get re-cleared when user later reaches bottom", () => {
+      // Regression: an earlier implementation seeded stick intent via a
+      // render-time conditional write. After atBottomStateChange(true)
+      // re-engaged stick, the next render would see persisted.wantsStick=false
+      // and clobber the ref back to false, silently breaking the
+      // "reaching bottom re-engages stick" invariant.
+      const mockSnapshot = { ranges: [], scrollTop: 500 } as any;
+      const { result, rerender } = renderHook(
+        ({ isActive }) =>
+          useVirtuosoScrollState({ isActive, persistKey: "regress-key" }),
+        { initialProps: { isActive: true } }
+      );
+
+      const el = document.createElement("div");
+      document.body.appendChild(el);
+      try {
+        // Release stick so the persisted entry records wantsStick=false.
+        act(() => result.current.scrollProps.scrollerRef(el));
+        act(() => {
+          el.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        });
+
+        result.current.virtuosoRef.current = {
+          scrollToIndex: () => {},
+          getState: (cb: (state: any) => void) => cb(mockSnapshot),
+        } as any;
+
+        rerender({ isActive: false });
+
+        // Remount: persisted has wantsStick=false, so restoreStateFrom is set
+        // and initial followOutput(false) returns false.
+        const { result: result2 } = renderHook(() =>
+          useVirtuosoScrollState({ persistKey: "regress-key" })
+        );
+        expect(result2.current.scrollProps.followOutput(false)).toBe(false);
+
+        // User scrolls to the bottom — stick should re-engage.
+        act(() => {
+          result2.current.scrollProps.atBottomStateChange(true);
+        });
+
+        // Rerender multiple times to catch any render-time clobber.
+        act(() => {
+          result2.current.scrollProps.atBottomStateChange(false);
+        });
+        act(() => {
+          result2.current.scrollProps.atBottomStateChange(true);
+        });
+        act(() => {
+          result2.current.scrollProps.atBottomStateChange(false);
+        });
+
+        // followOutput should still report stick intent true even though we're
+        // not at bottom — this would fail if the render-time clobber returned.
+        expect(result2.current.scrollProps.followOutput(false)).toBe("smooth");
+      } finally {
+        document.body.removeChild(el);
+        clearPersistedVirtuosoState("regress-key");
+      }
+    });
+  });
+
+  describe("scrollToBottom post-scroll watch window", () => {
+    test("re-issues scrollTo when scrollHeight grows after landing at bottom", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const el = document.createElement("div");
+      let mockScrollHeight = 1000;
+      Object.defineProperty(el, "scrollHeight", {
+        get: () => mockScrollHeight,
+        configurable: true,
+      });
+      document.body.appendChild(el);
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+
+        act(() => {
+          result.current.scrollToBottom();
+        });
+
+        // Let the initial retry → finish() fire the first scrollTo.
+        act(() => {
+          result.current.scrollProps.atBottomStateChange(true);
+        });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+        expect(scrollToCalls).toHaveLength(1);
+
+        // Simulate late-rendering footer content growing the scroll height.
+        // The watch loop runs on rAF; advance by waiting a couple of frames.
+        mockScrollHeight = 1200;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        });
+
+        // The watch window should detect the scrollHeight change and re-issue
+        // a smooth scrollTo so the new footer content stays in view.
+        expect(scrollToCalls.length).toBeGreaterThanOrEqual(2);
+        expect(scrollToCalls[scrollToCalls.length - 1]).toEqual({
+          top: 10_000_000,
+          behavior: "smooth",
+        });
+      } finally {
+        document.body.removeChild(el);
+      }
+    });
+
+    test("stops watching scrollHeight after the watch window expires", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const el = document.createElement("div");
+      let mockScrollHeight = 1000;
+      Object.defineProperty(el, "scrollHeight", {
+        get: () => mockScrollHeight,
+        configurable: true,
+      });
+      document.body.appendChild(el);
+
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+
+        act(() => {
+          result.current.scrollToBottom();
+        });
+        act(() => {
+          result.current.scrollProps.atBottomStateChange(true);
+        });
+
+        // Wait well past POST_SCROLL_WATCH_MS (400ms) so the window closes.
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        });
+        const callsAfterWindow = scrollToCalls.length;
+
+        // A growth after the window should NOT trigger another scrollTo.
+        mockScrollHeight = 1500;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        });
+        expect(scrollToCalls.length).toBe(callsAfterWindow);
+      } finally {
+        document.body.removeChild(el);
+      }
+    });
+  });
+
   describe("clearPersistedVirtuosoState", () => {
     test("clears persisted state for a given key", () => {
       const mockSnapshot = { ranges: [], scrollTop: 200 } as any;

@@ -100,26 +100,25 @@ export function useVirtuosoScrollState(
   const scrollerElRef = useRef<HTMLElement | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
-  /**
-   * Intent: the user wants new content to auto-scroll into view. Only
-   * flipped false by a user-initiated scroll up (wheel/touch/keyboard);
-   * content growth that pushes the viewport off-bottom leaves it true.
-   */
-  const wantsStickRef = useRef(true);
-  const lastScrollTopRef = useRef(0);
-  const mountedRef = useRef(true);
-  const scrollInFlightRef = useRef(false);
-
   // Resolve persisted state once on mount.
   const [persisted] = useState<PersistedEntry | undefined>(() =>
     persistKey ? persistedStates.get(persistKey) : undefined
   );
 
-  // Seed stick intent from persisted state (ref only, no rerender).
-  if (persisted && wantsStickRef.current === true && !persisted.wantsStick) {
-    // Idempotent: only applies on first render when default (true) mismatches persisted.
-    wantsStickRef.current = persisted.wantsStick;
-  }
+  /**
+   * Intent: the user wants new content to auto-scroll into view. Only
+   * flipped false by a user-initiated scroll up (wheel/touch/keyboard);
+   * content growth that pushes the viewport off-bottom leaves it true.
+   *
+   * Lazy-init from persisted state so we seed exactly once. A render-time
+   * conditional write would re-clear the ref on every rerender after the
+   * user reaches bottom (atBottomStateChange sets true → rerender → render
+   * sees persisted.wantsStick=false → clears again).
+   */
+  const wantsStickRef = useRef<boolean>(persisted?.wantsStick ?? true);
+  const lastScrollTopRef = useRef(0);
+  const mountedRef = useRef(true);
+  const scrollInFlightRef = useRef(false);
 
   // If the user was sticky, skip snapshot restore — the activation effect
   // below will scroll them to the new bottom instead of the old position.
@@ -258,6 +257,11 @@ export function useVirtuosoScrollState(
     };
 
     attempt();
+    // Deps intentionally empty: reads only refs (virtuosoRef, scrollerElRef,
+    // mountedRef, scrollInFlightRef, isAtBottomRef, wantsStickRef). Adding
+    // scrollerEl here would recreate the callback whenever the scroller
+    // mounts, which in turn would retrigger the ResizeObserver effect and
+    // reobserve from scratch on each mount.
   }, []);
 
   // User-scroll-up detection: only a user action can release stick intent.
@@ -314,6 +318,9 @@ export function useVirtuosoScrollState(
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
+        // Skip when Virtuoso already has us at bottom — followOutput handles
+        // that case, so issuing our own scroll would churn while streaming.
+        if (isAtBottomRef.current) return;
         if (wantsStickRef.current && !scrollInFlightRef.current) {
           scrollToBottom();
         }
@@ -332,6 +339,10 @@ export function useVirtuosoScrollState(
     };
     observeChildren();
 
+    // Watches for added/removed direct children so the ResizeObserver can
+    // start observing them. Deeper-subtree size changes are already caught
+    // by the RO via the children we observe (their scrollHeight reflects
+    // descendant layout), so subtree: true would just duplicate callbacks.
     const mutationObserver =
       typeof MutationObserver !== "undefined"
         ? new MutationObserver(() => {
