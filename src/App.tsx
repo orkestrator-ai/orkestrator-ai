@@ -80,26 +80,31 @@ function App() {
   console.log("[App] selectedProjectId:", selectedProjectId);
   console.log("[App] projectEnvironments:", projectEnvironments.length);
 
+  const refreshDockerAvailability = useCallback(async (source: "startup" | "retry") => {
+    const available = await checkDocker();
+    console.log(`[App] Docker ${source} check:`, available);
+    setDockerAvailable(available);
+
+    if (!available) return available;
+
+    try {
+      const clearedIds = await syncAllEnvironmentsWithDocker();
+      if (clearedIds.length > 0) {
+        console.log("[App] Cleared orphaned container references:", clearedIds);
+      }
+    } catch (error) {
+      console.error("[App] Failed to sync environments with Docker:", error);
+      // Non-fatal - continue with app startup
+    }
+
+    return available;
+  }, []);
+
   // Check Docker availability on startup and sync environments
   useEffect(() => {
     const initDocker = async () => {
       try {
-        const available = await checkDocker();
-        console.log("[App] Docker available:", available);
-        setDockerAvailable(available);
-
-        // If Docker is available, sync environments to clean up orphaned container references
-        if (available) {
-          try {
-            const clearedIds = await syncAllEnvironmentsWithDocker();
-            if (clearedIds.length > 0) {
-              console.log("[App] Cleared orphaned container references:", clearedIds);
-            }
-          } catch (error) {
-            console.error("[App] Failed to sync environments with Docker:", error);
-            // Non-fatal - continue with app startup
-          }
-        }
+        await refreshDockerAvailability("startup");
       } catch (error) {
         console.error("[App] Docker check failed:", error);
         setDockerAvailable(false);
@@ -107,7 +112,7 @@ function App() {
     };
 
     initDocker();
-  }, []);
+  }, [refreshDockerAvailability]);
 
   // Check CLI availability after Docker is confirmed available
   // Checks: Claude CLI, OpenCode CLI (fallback), and GitHub CLI
@@ -175,9 +180,7 @@ function App() {
   const handleRetryDockerCheck = async () => {
     setIsCheckingDocker(true);
     try {
-      const available = await checkDocker();
-      console.log("[App] Docker retry check:", available);
-      setDockerAvailable(available);
+      await refreshDockerAvailability("retry");
     } catch (error) {
       console.error("[App] Docker retry check failed:", error);
       setDockerAvailable(false);
