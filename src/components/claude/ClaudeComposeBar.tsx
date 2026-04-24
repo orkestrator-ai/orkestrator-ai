@@ -427,14 +427,27 @@ export function ClaudeComposeBar({
     removeAttachment(sessionKey, id);
   };
 
-  const handleModelChange = (modelId: string) => {
-    setSelectedModel(sessionKey, modelId);
-  };
-
   // Get display name for selected model - default to first model if none selected
   const effectiveSelectedModel = selectedModel ?? models[0]?.id;
   const selectedModelObj = models.find((m) => m.id === effectiveSelectedModel);
   const selectedModelName = selectedModelObj?.name ?? (models.length > 0 ? models[0]?.name : "No models");
+  const selectedModelSupportsFastMode = selectedModelObj?.supportsFastMode !== false;
+
+  const handleModelChange = (modelId: string) => {
+    setSelectedModel(sessionKey, modelId);
+    const nextModel = models.find((m) => m.id === modelId);
+    if (nextModel?.supportsFastMode === false && isFastMode(sessionKey)) {
+      setFastMode(sessionKey, false);
+    }
+  };
+
+  // Defensively reset fast mode if the selected model doesn't support it
+  // (e.g. model catalog loaded after a stale preference, or bundled defaults changed).
+  useEffect(() => {
+    if (selectedModelObj && !selectedModelSupportsFastMode && fastModeEnabled) {
+      setFastMode(sessionKey, false);
+    }
+  }, [selectedModelObj, selectedModelSupportsFastMode, fastModeEnabled, sessionKey, setFastMode]);
 
   return (
     <div className="shrink-0 border-t border-border bg-background p-3">
@@ -641,7 +654,7 @@ export function ClaudeComposeBar({
         </DropdownMenu>
 
         {/* Fast mode toggle — only shown when the selected model supports it. */}
-        {selectedModelObj?.supportsFastMode !== false && (
+        {selectedModelSupportsFastMode && (
           <button
             type="button"
             disabled={disabled}

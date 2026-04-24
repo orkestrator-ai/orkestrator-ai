@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFile, mkdir, readFile, readdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -25,6 +25,16 @@ import {
 } from "./subagent-transcript.js";
 import { deriveTranscriptSubagentPartsForTurn } from "./subagent-transcript-parts.js";
 import { readCachedTranscript } from "./transcript-cache.js";
+import {
+  DEFAULT_REASONING_EFFORT,
+  MODEL_REASONING_EFFORTS,
+  ModelCatalogCache,
+  REASONING_DESCRIPTIONS,
+  REASONING_LABELS,
+  normalizeReasoningOptions,
+  parseModelCatalog,
+  type BridgeModel,
+} from "./models-cache.js";
 
 type ToolState = "success" | "failure" | "pending";
 type MessageRole = "user" | "assistant" | "system";
@@ -85,37 +95,6 @@ interface SseEvent {
     | "message.updated";
   sessionId?: string;
   data?: Record<string, unknown>;
-}
-
-interface ModelCacheReasoningLevel {
-  effort?: unknown;
-  description?: unknown;
-}
-
-interface ModelCacheEntry {
-  slug?: unknown;
-  display_name?: unknown;
-  description?: unknown;
-  visibility?: unknown;
-  supported_in_api?: unknown;
-  supported_reasoning_levels?: unknown;
-}
-
-interface ModelCachePayload {
-  models?: unknown;
-}
-
-interface BridgeModel {
-  id: string;
-  name: string;
-  description?: string;
-  reasoningEfforts: ModelReasoningEffort[];
-  reasoningOptions: Array<{
-    effort: ModelReasoningEffort;
-    label: string;
-    description?: string;
-  }>;
-  defaultReasoningEffort: ModelReasoningEffort;
 }
 
 interface BridgeSlashCommand {
@@ -273,28 +252,6 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   });
 }
 
-const MODEL_REASONING_EFFORTS = new Set<ModelReasoningEffort>([
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
-const DEFAULT_REASONING_EFFORT: ModelReasoningEffort = "medium";
-const REASONING_LABELS: Record<ModelReasoningEffort, string> = {
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-};
-const REASONING_DESCRIPTIONS: Record<ModelReasoningEffort, string> = {
-  minimal: "Shortest reasoning path for the fastest possible responses",
-  low: "Fast responses with lighter reasoning",
-  medium: "Balances speed and reasoning depth for everyday tasks",
-  high: "Greater reasoning depth for complex problems",
-  xhigh: "Extra high reasoning depth for complex problems",
-};
 const BUILTIN_SLASH_COMMANDS: BuiltinSlashCommand[] = [
   {
     name: "/help",
@@ -1142,151 +1099,82 @@ function emitLocalAssistantResponse(
   });
 }
 
-function normalizeReasoningOptions(
-  value: unknown,
-): Array<{ effort: ModelReasoningEffort; label: string; description?: string }> {
-  if (!Array.isArray(value)) {
-    return [
-      {
-        effort: DEFAULT_REASONING_EFFORT,
-        label: REASONING_LABELS[DEFAULT_REASONING_EFFORT],
-        description: REASONING_DESCRIPTIONS[DEFAULT_REASONING_EFFORT],
-      },
-    ];
-  }
-
-  const options: Array<{
-    effort: ModelReasoningEffort;
-    label: string;
-    description?: string;
-  }> = [];
-
-  for (const entry of value) {
-    const rawEffort =
-      typeof (entry as ModelCacheReasoningLevel | null)?.effort === "string"
-        ? (entry as ModelCacheReasoningLevel).effort
-        : undefined;
-
-    if (
-      typeof rawEffort !== "string"
-      || !MODEL_REASONING_EFFORTS.has(rawEffort as ModelReasoningEffort)
-    ) {
-      continue;
-    }
-
-    const effort = rawEffort as ModelReasoningEffort;
-    const description =
-      typeof (entry as ModelCacheReasoningLevel | null)?.description === "string"
-        ? ((entry as ModelCacheReasoningLevel).description as string)
-        : undefined;
-
-    options.push({
-      effort,
-      label: REASONING_LABELS[effort],
-      description: description ?? REASONING_DESCRIPTIONS[effort],
-    });
-  }
-
-  return options.length > 0
-    ? options
-    : [
-        {
-          effort: DEFAULT_REASONING_EFFORT,
-          label: REASONING_LABELS[DEFAULT_REASONING_EFFORT],
-          description: REASONING_DESCRIPTIONS[DEFAULT_REASONING_EFFORT],
-        },
-      ];
+// Persisted model catalog cache lives in the Orkestrator-owned subdirectory of
+// the Codex home so it survives bridge restarts without colliding with the
+// CLI's own `models_cache.json`.
+function bridgeCacheDir(): string {
+  return join(getCodexHomeDir(), "orkestrator-bridge");
 }
 
-function parseModelCatalog(raw: string): BridgeModel[] {
-  const parsed = JSON.parse(raw) as ModelCachePayload;
-  if (!Array.isArray(parsed.models)) {
-    return [];
-  }
-
-  return parsed.models
-    .map((entry) => entry as ModelCacheEntry)
-    .filter(
-      (entry) =>
-        typeof entry.slug === "string"
-        && entry.slug.trim().length > 0
-        && (entry.visibility === undefined || entry.visibility === "list")
-        && entry.supported_in_api !== false,
-    )
-    .map((entry) => {
-      const slug = entry.slug as string;
-      const displayName =
-        typeof entry.display_name === "string" && entry.display_name.trim().length > 0
-          ? entry.display_name.trim()
-          : slug.trim();
-      const reasoningOptions = normalizeReasoningOptions(
-        entry.supported_reasoning_levels,
-      );
-      const reasoningEfforts = reasoningOptions.map((option) => option.effort);
-      return {
-        id: slug.trim(),
-        name: displayName,
-        description:
-          typeof entry.description === "string" && entry.description.trim().length > 0
-            ? entry.description.trim()
-            : undefined,
-        reasoningEfforts,
-        reasoningOptions,
-        defaultReasoningEffort: reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
-          ? DEFAULT_REASONING_EFFORT
-          : reasoningEfforts[0] ?? DEFAULT_REASONING_EFFORT,
-      } satisfies BridgeModel;
-    });
+function bridgeCachePath(): string {
+  return join(bridgeCacheDir(), "models-cache.json");
 }
 
-// Memoize the live catalog for 5 minutes — `codex debug models` does an upstream
-// refresh on the first invocation each session and is slow; subsequent calls are fast.
-let liveModelCache: { at: number; models: BridgeModel[] } | null = null;
-const LIVE_MODEL_TTL_MS = 5 * 60 * 1000;
-
-async function fetchLiveModelsFromCli(): Promise<BridgeModel[] | null> {
-  const codexPath = process.env.CODEX_PATH || "codex";
+async function readPersistedBridgeCache(): Promise<BridgeModel[] | null> {
   try {
-    const { stdout } = await execFile(codexPath, ["debug", "models"], {
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: 15_000,
-    });
-    const models = parseModelCatalog(stdout);
-    return models.length > 0 ? models : null;
-  } catch (error) {
-    console.warn("[codex-bridge] `codex debug models` failed:", error instanceof Error ? error.message : error);
+    const raw = await readFile(bridgeCachePath(), "utf8");
+    const parsed = JSON.parse(raw) as { models?: BridgeModel[] };
+    return Array.isArray(parsed.models) && parsed.models.length > 0 ? parsed.models : null;
+  } catch {
     return null;
   }
 }
 
-async function getAvailableModels(): Promise<{ models: BridgeModel[]; source: "cache" | "fallback" }> {
-  // 1. Try the in-memory TTL cache.
-  if (liveModelCache && Date.now() - liveModelCache.at < LIVE_MODEL_TTL_MS) {
-    return { models: liveModelCache.models, source: "cache" };
+async function writePersistedBridgeCache(models: BridgeModel[]): Promise<void> {
+  try {
+    await mkdir(bridgeCacheDir(), { recursive: true });
+    await writeFile(
+      bridgeCachePath(),
+      JSON.stringify({ at: Date.now(), models }, null, 2),
+    );
+  } catch (error) {
+    console.warn(
+      "[codex-bridge] Failed to persist model cache:",
+      error instanceof Error ? error.message : error,
+    );
   }
+}
 
-  // 2. Shell out to `codex debug models` — this is the authoritative catalog
-  //    maintained by the CLI itself.
-  const liveModels = await fetchLiveModelsFromCli();
-  if (liveModels) {
-    liveModelCache = { at: Date.now(), models: liveModels };
-    return { models: liveModels, source: "cache" };
-  }
-
-  // 3. Fall back to the CLI's on-disk cache (may be stale but usable offline
-  //    or when the `debug models` subcommand is missing on older binaries).
+async function readCodexCliModelCache(): Promise<BridgeModel[] | null> {
   try {
     const raw = await readFile(join(getCodexHomeDir(), "models_cache.json"), "utf8");
-    const cachedModels = parseModelCatalog(raw);
-    if (cachedModels.length > 0) {
-      return { models: cachedModels, source: "cache" };
-    }
+    const models = parseModelCatalog(raw);
+    return models.length > 0 ? models : null;
   } catch {
-    // fall through to hardcoded fallback
+    return null;
   }
+}
 
-  // 4. Last resort: hardcoded fallback shipped with the bridge.
-  return { models: FALLBACK_MODELS, source: "fallback" };
+async function fetchLiveModelsFromCli(): Promise<BridgeModel[] | null> {
+  const codexPath = process.env.CODEX_PATH || "codex";
+  try {
+    // Background-only path — the generous timeout is safe because this never
+    // blocks a response to the client (see ModelCatalogCache).
+    const { stdout } = await execFile(codexPath, ["debug", "models"], {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    const models = parseModelCatalog(stdout);
+    return models.length > 0 ? models : null;
+  } catch (error) {
+    console.warn(
+      "[codex-bridge] `codex debug models` failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
+const modelCatalogCache = new ModelCatalogCache({
+  fetchFromCli: fetchLiveModelsFromCli,
+  readPersistedCache: readPersistedBridgeCache,
+  writePersistedCache: writePersistedBridgeCache,
+  readCodexCliCache: readCodexCliModelCache,
+  fallback: FALLBACK_MODELS,
+});
+
+async function getAvailableModels(): Promise<{ models: BridgeModel[]; source: "cache" | "fallback" }> {
+  return modelCatalogCache.get();
 }
 
 function buildThreadOptions(body: Record<string, unknown>): ThreadOptions {

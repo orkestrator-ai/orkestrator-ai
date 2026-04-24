@@ -563,6 +563,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             const planModeEnabled = isPlanMode(sessionKey);
             const fastModeEnabled = isFastMode(sessionKey);
             const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
+            const modelSupportsFastMode = useClaudeStore
+              .getState()
+              .models.find((m) => m.id === selectedModel)?.supportsFastMode !== false;
 
             // Start SSE subscription first so we can receive the response
             startSharedEventSubscription(bridgeClient);
@@ -572,7 +575,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               model: selectedModel,
               effort: effortLevel,
               permissionMode,
-              fastMode: fastModeEnabled,
+              fastMode: fastModeEnabled && modelSupportsFastMode,
             });
 
             if (!success) {
@@ -996,12 +999,17 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       // - plan mode false -> "bypassPermissions" (all tools auto-approved)
       const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
 
+      // Guard: only honor fast mode if the selected model supports it.
+      const modelSupportsFastMode = useClaudeStore
+        .getState()
+        .models.find((m) => m.id === selectedModel)?.supportsFastMode !== false;
+
       const success = await sendPrompt(client, session.sessionId, text, {
         model: selectedModel,
         attachments: sdkAttachments.length > 0 ? sdkAttachments : undefined,
         effort,
         permissionMode,
-        fastMode: fastModeEnabled,
+        fastMode: fastModeEnabled && modelSupportsFastMode,
       });
 
       if (!success) {
