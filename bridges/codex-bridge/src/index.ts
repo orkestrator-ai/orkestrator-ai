@@ -60,6 +60,7 @@ interface SessionState {
   id: string;
   title?: string;
   conversationMode: ConversationMode;
+  fastMode: boolean;
   thread: Thread;
   threadOptions: ThreadOptions;
   threadId?: string | null;
@@ -180,9 +181,21 @@ type SlashCommandDefinition = PromptSlashCommand | BuiltinSlashCommand;
 type ConversationMode = "build" | "plan";
 
 const app = new Hono();
-const codex = new Codex({
-  codexPathOverride: process.env.CODEX_PATH || "codex",
+const codexPathOverride = process.env.CODEX_PATH || "codex";
+const codex = new Codex({ codexPathOverride });
+// Fast-mode variant: passes `--config service_tier=fast` to the Codex CLI,
+// which enables the ~1.5x-faster service tier (higher credit rate).
+// See https://developers.openai.com/codex/speed
+const codexFast = new Codex({
+  codexPathOverride,
+  config: { service_tier: "fast" },
 });
+function getCodex(fastMode: boolean): Codex {
+  return fastMode ? codexFast : codex;
+}
+function resolveFastMode(body: Record<string, unknown>): boolean {
+  return body.fastMode === true;
+}
 const execFile = promisify(execFileCallback);
 const sessions = new Map<string, SessionState>();
 const subscribers = new Set<(event: SseEvent) => void>();
@@ -1185,57 +1198,95 @@ function normalizeReasoningOptions(
       ];
 }
 
-async function getAvailableModels(): Promise<{ models: BridgeModel[]; source: "cache" | "fallback" }> {
-  const cachePath = join(getCodexHomeDir(), "models_cache.json");
-
-  try {
-    const raw = await readFile(cachePath, "utf8");
-    const parsed = JSON.parse(raw) as ModelCachePayload;
-    if (!Array.isArray(parsed.models)) {
-      return { models: FALLBACK_MODELS, source: "fallback" };
-    }
-
-    const models = parsed.models
-      .map((entry) => entry as ModelCacheEntry)
-      .filter(
-        (entry) =>
-          typeof entry.slug === "string"
-          && entry.slug.trim().length > 0
-          && (entry.visibility === undefined || entry.visibility === "list")
-          && entry.supported_in_api !== false,
-      )
-      .map((entry) => {
-        const slug = entry.slug as string;
-        const displayName =
-          typeof entry.display_name === "string" && entry.display_name.trim().length > 0
-            ? entry.display_name.trim()
-            : slug.trim();
-        const reasoningOptions = normalizeReasoningOptions(
-          entry.supported_reasoning_levels,
-        );
-        const reasoningEfforts = reasoningOptions.map((option) => option.effort);
-        return {
-          id: slug.trim(),
-          name: displayName,
-          description:
-            typeof entry.description === "string" && entry.description.trim().length > 0
-              ? entry.description.trim()
-              : undefined,
-          reasoningEfforts,
-          reasoningOptions,
-          defaultReasoningEffort: reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
-            ? DEFAULT_REASONING_EFFORT
-            : reasoningEfforts[0] ?? DEFAULT_REASONING_EFFORT,
-        } satisfies BridgeModel;
-      });
-
-    return {
-      models: models.length > 0 ? models : FALLBACK_MODELS,
-      source: models.length > 0 ? "cache" : "fallback",
-    };
-  } catch {
-    return { models: FALLBACK_MODELS, source: "fallback" };
+function parseModelCatalog(raw: string): BridgeModel[] {
+  const parsed = JSON.parse(raw) as ModelCachePayload;
+  if (!Array.isArray(parsed.models)) {
+    return [];
   }
+
+  return parsed.models
+    .map((entry) => entry as ModelCacheEntry)
+    .filter(
+      (entry) =>
+        typeof entry.slug === "string"
+        && entry.slug.trim().length > 0
+        && (entry.visibility === undefined || entry.visibility === "list")
+        && entry.supported_in_api !== false,
+    )
+    .map((entry) => {
+      const slug = entry.slug as string;
+      const displayName =
+        typeof entry.display_name === "string" && entry.display_name.trim().length > 0
+          ? entry.display_name.trim()
+          : slug.trim();
+      const reasoningOptions = normalizeReasoningOptions(
+        entry.supported_reasoning_levels,
+      );
+      const reasoningEfforts = reasoningOptions.map((option) => option.effort);
+      return {
+        id: slug.trim(),
+        name: displayName,
+        description:
+          typeof entry.description === "string" && entry.description.trim().length > 0
+            ? entry.description.trim()
+            : undefined,
+        reasoningEfforts,
+        reasoningOptions,
+        defaultReasoningEffort: reasoningEfforts.includes(DEFAULT_REASONING_EFFORT)
+          ? DEFAULT_REASONING_EFFORT
+          : reasoningEfforts[0] ?? DEFAULT_REASONING_EFFORT,
+      } satisfies BridgeModel;
+    });
+}
+
+// Memoize the live catalog for 5 minutes — `codex debug models` does an upstream
+// refresh on the first invocation each session and is slow; subsequent calls are fast.
+let liveModelCache: { at: number; models: BridgeModel[] } | null = null;
+const LIVE_MODEL_TTL_MS = 5 * 60 * 1000;
+
+async function fetchLiveModelsFromCli(): Promise<BridgeModel[] | null> {
+  const codexPath = process.env.CODEX_PATH || "codex";
+  try {
+    const { stdout } = await execFile(codexPath, ["debug", "models"], {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 15_000,
+    });
+    const models = parseModelCatalog(stdout);
+    return models.length > 0 ? models : null;
+  } catch (error) {
+    console.warn("[codex-bridge] `codex debug models` failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+async function getAvailableModels(): Promise<{ models: BridgeModel[]; source: "cache" | "fallback" }> {
+  // 1. Try the in-memory TTL cache.
+  if (liveModelCache && Date.now() - liveModelCache.at < LIVE_MODEL_TTL_MS) {
+    return { models: liveModelCache.models, source: "cache" };
+  }
+
+  // 2. Shell out to `codex debug models` — this is the authoritative catalog
+  //    maintained by the CLI itself.
+  const liveModels = await fetchLiveModelsFromCli();
+  if (liveModels) {
+    liveModelCache = { at: Date.now(), models: liveModels };
+    return { models: liveModels, source: "cache" };
+  }
+
+  // 3. Fall back to the CLI's on-disk cache (may be stale but usable offline
+  //    or when the `debug models` subcommand is missing on older binaries).
+  try {
+    const raw = await readFile(join(getCodexHomeDir(), "models_cache.json"), "utf8");
+    const cachedModels = parseModelCatalog(raw);
+    if (cachedModels.length > 0) {
+      return { models: cachedModels, source: "cache" };
+    }
+  } catch {
+    // fall through to hardcoded fallback
+  }
+
+  // 4. Last resort: hardcoded fallback shipped with the bridge.
+  return { models: FALLBACK_MODELS, source: "fallback" };
 }
 
 function buildThreadOptions(body: Record<string, unknown>): ThreadOptions {
@@ -1755,13 +1806,15 @@ app.post("/session/create", async (c) => {
   const title = typeof body.title === "string" ? body.title : undefined;
   const sessionId = createSessionId();
   const conversationMode = resolveConversationMode(body);
+  const fastMode = resolveFastMode(body);
   const threadOptions = buildThreadOptions(body);
-  const thread = codex.startThread(threadOptions);
+  const thread = getCodex(fastMode).startThread(threadOptions);
 
   sessions.set(sessionId, {
     id: sessionId,
     title,
     conversationMode,
+    fastMode,
     thread,
     threadOptions,
     threadId: null,
@@ -1789,8 +1842,9 @@ app.post("/session/resume", async (c) => {
   }
 
   const conversationMode = resolveConversationMode(body);
+  const fastMode = resolveFastMode(body);
   const threadOptions = buildThreadOptions(body);
-  const thread = codex.resumeThread(threadId, threadOptions);
+  const thread = getCodex(fastMode).resumeThread(threadId, threadOptions);
   const hydrated = await hydrateMessagesFromPersistedSession(threadId);
   const sessionId = createSessionId();
 
@@ -1798,6 +1852,7 @@ app.post("/session/resume", async (c) => {
     id: sessionId,
     title: hydrated.title,
     conversationMode,
+    fastMode,
     thread,
     threadOptions,
     threadId,
@@ -1838,10 +1893,12 @@ app.post("/session/:id/config", async (c) => {
   // otherwise we start a fresh thread.
   const body = await c.req.json().catch(() => ({}));
   session.conversationMode = resolveConversationMode(body);
+  session.fastMode = resolveFastMode(body);
   session.threadOptions = buildThreadOptions(body);
+  const sessionCodex = getCodex(session.fastMode);
   session.thread = session.threadId
-    ? codex.resumeThread(session.threadId, session.threadOptions)
-    : codex.startThread(session.threadOptions);
+    ? sessionCodex.resumeThread(session.threadId, session.threadOptions)
+    : sessionCodex.startThread(session.threadOptions);
 
   return c.json({ status: "updated" });
 });

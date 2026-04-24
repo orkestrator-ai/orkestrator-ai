@@ -75,7 +75,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   const initialPromptSentRef = useRef(false);
   const isProcessingQueueRef = useRef(false);
   const slashCmdCleanupRef = useRef<(() => void) | null>(null);
-  const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => Promise<void>) | null>(null);
+  const handleSendRef = useRef<((text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean, fastModeEnabled: boolean) => Promise<void>) | null>(null);
 
   const {
     setClient,
@@ -101,6 +101,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
     getEffort,
     isPlanMode,
     setPlanMode,
+    isFastMode,
     getSessionKeyBySdkSessionId,
     addToQueue,
     removeFromQueue,
@@ -560,6 +561,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             const selectedModel = getSelectedModel(sessionKey);
             const effortLevel = getEffort(sessionKey);
             const planModeEnabled = isPlanMode(sessionKey);
+            const fastModeEnabled = isFastMode(sessionKey);
             const permissionMode = planModeEnabled ? "plan" : "bypassPermissions";
 
             // Start SSE subscription first so we can receive the response
@@ -570,6 +572,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
               model: selectedModel,
               effort: effortLevel,
               permissionMode,
+              fastMode: fastModeEnabled,
             });
 
             if (!success) {
@@ -943,7 +946,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   startSharedEventSubscriptionRef.current = startSharedEventSubscription;
 
   const handleSend = useCallback(
-    async (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => {
+    async (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean, fastModeEnabled: boolean) => {
       if (!client || !session) return;
 
       const selectedModel = getSelectedModel(sessionKey);
@@ -998,6 +1001,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         attachments: sdkAttachments.length > 0 ? sdkAttachments : undefined,
         effort,
         permissionMode,
+        fastMode: fastModeEnabled,
       });
 
       if (!success) {
@@ -1012,13 +1016,14 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   // Handle adding a message to the queue when Claude is busy
   const handleQueue = useCallback(
-    (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean) => {
+    (text: string, attachments: ClaudeAttachment[], effort: import("@/lib/claude-client").ClaudeEffortLevel, planModeEnabled: boolean, fastModeEnabled: boolean) => {
       addToQueue(sessionKey, {
         id: crypto.randomUUID(),
         text,
         attachments,
         effort,
         planModeEnabled,
+        fastModeEnabled,
       });
     },
     [sessionKey, addToQueue]
@@ -1080,6 +1085,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
   // Compute effort and plan mode values outside useEffect to avoid function reference dependencies
   const effortValue = getEffort(sessionKey);
   const planModeEnabledValue = isPlanMode(sessionKey);
+  const fastModeEnabledValue = isFastMode(sessionKey);
 
   // Send initial prompt on RECONNECTION to existing session only.
   // New sessions handle initial prompt directly in initialize() to avoid race conditions.
@@ -1101,9 +1107,9 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
       // Also clear the initialPrompt from the pane store to prevent re-submission on remount
       clearTabInitialPrompt(tabId, environmentId);
       console.debug("[ClaudeChatTab] Sending initial prompt on reconnection for tab:", tabId);
-      handleSendRef.current?.(initialPrompt, [], effortValue, planModeEnabledValue);
+      handleSendRef.current?.(initialPrompt, [], effortValue, planModeEnabledValue, fastModeEnabledValue);
     }
-  }, [connectionState, client, session, initialPrompt, tabId, effortValue, planModeEnabledValue, clearTabInitialPrompt, environmentId]);
+  }, [connectionState, client, session, initialPrompt, tabId, effortValue, planModeEnabledValue, fastModeEnabledValue, clearTabInitialPrompt, environmentId]);
 
   // Process queued messages when session becomes idle
   useEffect(() => {
@@ -1130,7 +1136,8 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
           nextMessage.text,
           nextMessage.attachments,
           nextMessage.effort,
-          nextMessage.planModeEnabled
+          nextMessage.planModeEnabled,
+          nextMessage.fastModeEnabled
         );
 
         // Handle completion/errors and reset the processing flag

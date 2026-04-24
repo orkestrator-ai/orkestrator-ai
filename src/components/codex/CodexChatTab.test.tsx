@@ -674,6 +674,7 @@ describe("CodexChatTab", () => {
       model: MOCK_MODELS[0]!.id,
       mode: "build",
       reasoningEffort: "medium",
+      fastMode: false,
     });
 
     render(

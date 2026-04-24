@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback, type KeyboardEvent } from "react";
-import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ChevronUp, ArrowUp, Check, Square } from "lucide-react";
+import { X, Plus, FileText, Image as ImageIcon, ChevronDown, ChevronUp, ArrowUp, Check, Square, Zap } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,7 +50,7 @@ interface ClaudeComposeBarProps {
   /** Container ID for containerized environments, undefined for local */
   containerId?: string;
   models: ClaudeModel[];
-  onSend: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean) => void;
+  onSend: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean, fastModeEnabled: boolean) => void;
   disabled?: boolean;
   /** Whether Claude is currently processing a query */
   isLoading?: boolean;
@@ -59,7 +59,7 @@ interface ClaudeComposeBarProps {
   /** Callback when stop button is clicked */
   onStop?: () => void;
   /** Callback when a message should be added to the queue */
-  onQueue?: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean) => void;
+  onQueue?: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean, fastModeEnabled: boolean) => void;
 }
 
 const MAX_LINES = 12;
@@ -102,6 +102,8 @@ export function ClaudeComposeBar({
     setEffort,
     isPlanMode,
     setPlanMode,
+    isFastMode,
+    setFastMode,
     getQueuedMessages,
     removeQueueItem,
     moveQueueItem,
@@ -122,6 +124,7 @@ export function ClaudeComposeBar({
   const selectedModel = getSelectedModel(sessionKey);
   const effort = getEffort(sessionKey);
   const planModeEnabled = isPlanMode(sessionKey);
+  const fastModeEnabled = isFastMode(sessionKey);
   const queuedMessages = getQueuedMessages(sessionKey);
 
   // Get worktree path for local environments
@@ -363,15 +366,16 @@ export function ClaudeComposeBar({
       // Read current values directly from store to avoid stale closures
       const currentEffort = getEffort(sessionKey);
       const currentPlanModeEnabled = isPlanMode(sessionKey);
+      const currentFastModeEnabled = isFastMode(sessionKey);
 
       // Serialize mentions: replace @filename with full relative path
       const serializedText = serializeForLLM(text.trim(), mentions);
 
       // If loading and onQueue is provided, add to queue instead of sending immediately
       if (isLoading && onQueue) {
-        onQueue(serializedText, attachments, currentEffort, currentPlanModeEnabled);
+        onQueue(serializedText, attachments, currentEffort, currentPlanModeEnabled, currentFastModeEnabled);
       } else {
-        onSend(serializedText, attachments, currentEffort, currentPlanModeEnabled);
+        onSend(serializedText, attachments, currentEffort, currentPlanModeEnabled, currentFastModeEnabled);
       }
       setText("");
       setMentions([]);
@@ -412,10 +416,11 @@ export function ClaudeComposeBar({
       setDraftMentions(sessionKey, []);
       setEffort(sessionKey, message.effort);
       setPlanMode(sessionKey, message.planModeEnabled);
+      setFastMode(sessionKey, message.fastModeEnabled);
       setQueueDialogOpen(false);
       inputRef.current?.focus();
     },
-    [removeQueueItem, sessionKey, clearAttachments, addAttachment, setDraftText, setDraftMentions, setEffort, setPlanMode]
+    [removeQueueItem, sessionKey, clearAttachments, addAttachment, setDraftText, setDraftMentions, setEffort, setPlanMode, setFastMode]
   );
 
   const handleRemoveAttachment = (id: string) => {
@@ -635,6 +640,30 @@ export function ClaudeComposeBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* Fast mode toggle — only shown when the selected model supports it. */}
+        {selectedModelObj?.supportsFastMode !== false && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setFastMode(sessionKey, !fastModeEnabled)}
+            className={cn(
+              "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
+              fastModeEnabled
+                ? "text-amber-500 hover:text-amber-400 bg-amber-500/10 hover:bg-amber-500/15"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            )}
+            title={
+              fastModeEnabled
+                ? "Fast mode on — lower latency, higher credit rate"
+                : "Enable fast mode (lower latency, higher credit rate)"
+            }
+            aria-pressed={fastModeEnabled}
+          >
+            <Zap className={cn("w-3 h-3", fastModeEnabled && "fill-current")} />
+            <span>Fast</span>
+          </button>
+        )}
+
         <ContextUsageWheel usage={contextUsage} className="ml-1" />
 
         {/* Spacer */}
@@ -723,6 +752,7 @@ export function ClaudeComposeBar({
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                           <span>Effort: {EFFORT_LABELS[message.effort]}</span>
                           {message.planModeEnabled && <span>Plan mode</span>}
+                          {message.fastModeEnabled && <span>Fast mode</span>}
                           {message.attachments.length > 0 && (
                             <span>
                               {message.attachments.length} attachment

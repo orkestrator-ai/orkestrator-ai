@@ -244,7 +244,7 @@ describe("ClaudeComposeBar", () => {
     fireEvent.click(screen.getByTitle("Send message"));
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("Ship the release", [], "high", false);
+      expect(onSend).toHaveBeenCalledWith("Ship the release", [], "high", false, false);
     });
     expect(useClaudeStore.getState().getDraftText(SESSION_KEY)).toBe("");
   });
@@ -257,7 +257,7 @@ describe("ClaudeComposeBar", () => {
     fireEvent.click(screen.getByTitle("Add to queue"));
 
     await waitFor(() => {
-      expect(onQueue).toHaveBeenCalledWith("Queue this next", [], "high", false);
+      expect(onQueue).toHaveBeenCalledWith("Queue this next", [], "high", false, false);
     });
   });
 
@@ -307,7 +307,7 @@ describe("ClaudeComposeBar", () => {
     fireEvent.click(screen.getByTitle("Send message"));
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("@app -> src/app.ts", [], "high", false);
+      expect(onSend).toHaveBeenCalledWith("@app -> src/app.ts", [], "high", false, false);
     });
   });
 
