@@ -93,7 +93,12 @@ RUN npm install -g @openai/codex
 # Copy and build Claude Bridge Server
 COPY --chown=node:node bridges/claude-bridge /opt/claude-bridge
 WORKDIR /opt/claude-bridge
-RUN npm install && npm run build && npm prune --production
+# Delete musl variants so the SDK picks the glibc binary matching our Debian base.
+# The SDK prefers musl first on Linux, but node:20 is glibc — without this, spawns fail
+# with "Claude Code native binary not found". If switching to an Alpine/musl base, invert.
+RUN npm install \
+ && rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl \
+ && npm run build && npm prune --production
 
 # Copy and build Codex Bridge Server
 COPY --chown=node:node bridges/codex-bridge /opt/codex-bridge
