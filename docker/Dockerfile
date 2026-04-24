@@ -79,16 +79,24 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 
+# Keep these in sync with the pinned SDK versions. tests/unit/version-drift.test.ts enforces Codex/OpenCode.
+#   CODEX_CLI_VERSION     ↔ @openai/codex-sdk in bridges/codex-bridge/package.json (and scripts/download-codex.sh)
+#   OPENCODE_CLI_VERSION  ↔ @opencode-ai/sdk in package.json (and scripts/download-opencode.sh)
+# Claude CLI has its own release train distinct from @anthropic-ai/claude-agent-sdk, so it tracks a tag.
+ARG CLAUDE_CLI_VERSION=latest
+ARG CODEX_CLI_VERSION=0.124.0
+ARG OPENCODE_CLI_VERSION=1.14.22
+
 # Install Claude using native installer
-RUN curl -fsSL https://claude.ai/install.sh | bash -s latest
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CLI_VERSION"
 ENV PATH="/home/node/.local/bin:$PATH"
 RUN claude install
 
 # Install OpenCode
-RUN curl -fsSL https://opencode.ai/install | bash
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "$OPENCODE_CLI_VERSION"
 
 # Install Codex CLI
-RUN npm install -g @openai/codex
+RUN npm install -g "@openai/codex@${CODEX_CLI_VERSION}"
 
 # Copy and build Claude Bridge Server
 COPY --chown=node:node bridges/claude-bridge /opt/claude-bridge
