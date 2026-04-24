@@ -642,14 +642,15 @@ describe("PersistentTerminal", () => {
       />
     );
 
+    let setupWrite: string | undefined;
     await waitFor(() => {
-      expect(writeMock).toHaveBeenCalled();
+      const writes = (writeMock as any).mock.calls.map((call: unknown[]) => call[0]);
+      setupWrite = writes.find((entry: unknown) =>
+        typeof entry === "string" && entry.includes("(false && echo ok) && printf")
+      );
+      expect(setupWrite).toBeDefined();
     });
 
-    const writes = (writeMock as any).mock.calls.map((call: unknown[]) => call[0]);
-    const setupWrite = writes.find((entry: unknown) =>
-      typeof entry === "string" && entry.includes("(false && echo ok) && printf")
-    );
     expect(setupWrite).toBeDefined();
     expect(setupWrite).toContain("setup_done");
     expect(setupWrite).toContain("|| printf");

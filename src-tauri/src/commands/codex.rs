@@ -4,7 +4,7 @@
 use crate::docker;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(not(debug_assertions))]
 use tauri::Manager;
 use tracing::{debug, error, info, warn};
@@ -86,6 +86,92 @@ fn resolve_codex_bridge_path(#[allow(unused)] app_handle: &tauri::AppHandle) -> 
     PathBuf::from("bridges").join("codex-bridge")
 }
 
+fn collect_dist_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    let entries = fs::read_dir(dir).map_err(|e| {
+        format!(
+            "Failed to read Codex bridge dist directory {}: {}",
+            dir.display(),
+            e
+        )
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            format!(
+                "Failed to read Codex bridge dist entry in {}: {}",
+                dir.display(),
+                e
+            )
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|e| {
+            format!(
+                "Failed to inspect Codex bridge dist entry {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+
+        if file_type.is_dir() {
+            files.extend(collect_dist_files(&path)?);
+        } else if file_type.is_file() {
+            files.push(path);
+        }
+    }
+
+    Ok(files)
+}
+
+fn resolve_container_dist_path(dist_path: &Path, dist_file_path: &Path) -> Result<String, String> {
+    let relative_path = dist_file_path.strip_prefix(dist_path).map_err(|e| {
+        format!(
+            "Failed to resolve Codex bridge dist path {} relative to {}: {}",
+            dist_file_path.display(),
+            dist_path.display(),
+            e
+        )
+    })?;
+
+    Ok(format!(
+        "/opt/codex-bridge/dist/{}",
+        relative_path.to_string_lossy().replace('\\', "/")
+    ))
+}
+
+fn build_codex_bridge_start_command(raw_event_logging: bool) -> String {
+    let command = r#"
+        cd /workspace
+        rm -f /tmp/codex-bridge.log
+        mkdir -p /tmp/orkestrator-ai
+        source /etc/profile 2>/dev/null || true
+        source ~/.profile 2>/dev/null || true
+        source ~/.bashrc 2>/dev/null || true
+        source ~/.zshrc 2>/dev/null || true
+        [ -d /usr/local/share/npm-global/bin ] && export PATH="/usr/local/share/npm-global/bin:$PATH"
+        [ -d ~/.bun/bin ] && export PATH="$HOME/.bun/bin:$PATH"
+        [ -d ~/.local/bin ] && export PATH="$HOME/.local/bin:$PATH"
+        export PORT=4098
+        export HOSTNAME=0.0.0.0
+        export CWD=/workspace
+        export CODEX_PATH="$(command -v codex 2>/dev/null || echo codex)"
+        export ORKESTRATOR_CODEX_RAW_LOG_DIR="%CODEX_RAW_LOG_DIR%"
+        setsid node /opt/codex-bridge/dist/index.js > /tmp/codex-bridge.log 2>&1 &
+        disown
+        sleep 0.5
+        echo "Started Codex bridge server"
+    "#;
+
+    command.replace(
+        "%CODEX_RAW_LOG_DIR%",
+        if raw_event_logging {
+            CONTAINER_CODEX_RAW_LOG_DIR
+        } else {
+            ""
+        },
+    )
+}
+
 async fn ensure_codex_bridge_present(
     app_handle: &tauri::AppHandle,
     client: &crate::docker::client::DockerClient,
@@ -105,7 +191,7 @@ async fn ensure_codex_bridge_present(
 
     let bridge_path = resolve_codex_bridge_path(app_handle);
     let package_json_path = bridge_path.join("package.json");
-    let dist_index_path = bridge_path.join("dist").join("index.js");
+    let dist_path = bridge_path.join("dist");
 
     let package_json = fs::read(&package_json_path).map_err(|e| {
         format!(
@@ -114,18 +200,22 @@ async fn ensure_codex_bridge_present(
             e
         )
     })?;
-    let dist_index = fs::read(&dist_index_path).map_err(|e| {
-        format!(
-            "Failed to read Codex bridge dist from {}: {}",
-            dist_index_path.display(),
-            e
-        )
-    })?;
+    let dist_files = collect_dist_files(&dist_path)?;
+    if dist_files.is_empty() {
+        return Err(format!(
+            "Codex bridge dist directory is empty: {}",
+            dist_path.display()
+        ));
+    }
 
     client
         .exec_in_container(
             container_id,
-            vec!["bash", "-lc", "mkdir -p /opt/codex-bridge/dist"],
+            vec![
+                "bash",
+                "-lc",
+                "rm -rf /opt/codex-bridge/dist && mkdir -p /opt/codex-bridge/dist",
+            ],
             None,
         )
         .await
@@ -141,10 +231,37 @@ async fn ensure_codex_bridge_present(
         .await
         .map_err(|e| format!("Failed to upload Codex bridge package.json: {}", e))?;
 
-    client
-        .upload_file_to_container(container_id, "/opt/codex-bridge/dist/index.js", dist_index)
-        .await
-        .map_err(|e| format!("Failed to upload Codex bridge bundle: {}", e))?;
+    for dist_file_path in dist_files {
+        let container_path = resolve_container_dist_path(&dist_path, &dist_file_path)?;
+        let dist_file = fs::read(&dist_file_path).map_err(|e| {
+            format!(
+                "Failed to read Codex bridge dist file {}: {}",
+                dist_file_path.display(),
+                e
+            )
+        })?;
+        if let Some(parent) = Path::new(&container_path).parent() {
+            let parent = parent.to_string_lossy().to_string();
+            client
+                .exec_in_container(container_id, vec!["mkdir", "-p", &parent], None)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to create Codex bridge dist directory {}: {}",
+                        parent, e
+                    )
+                })?;
+        }
+        client
+            .upload_file_to_container(container_id, &container_path, dist_file)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to upload Codex bridge dist file {}: {}",
+                    container_path, e
+                )
+            })?;
+    }
 
     let (_, _, node_modules_exit_code) = client
         .exec_command_with_status(
@@ -228,36 +345,7 @@ pub async fn start_codex_server(
     ensure_codex_bridge_present(&app_handle, &client, &container_id).await?;
     let raw_event_logging = load_codex_bridge_raw_event_logging()?;
 
-    let command = r#"
-        cd /workspace
-        rm -f /tmp/codex-bridge.log
-        mkdir -p /tmp/orkestrator-ai
-        source /etc/profile 2>/dev/null || true
-        source ~/.profile 2>/dev/null || true
-        source ~/.bashrc 2>/dev/null || true
-        source ~/.zshrc 2>/dev/null || true
-        [ -d /usr/local/share/npm-global/bin ] && export PATH="/usr/local/share/npm-global/bin:$PATH"
-        [ -d ~/.bun/bin ] && export PATH="$HOME/.bun/bin:$PATH"
-        [ -d ~/.local/bin ] && export PATH="$HOME/.local/bin:$PATH"
-        export PORT=4098
-        export HOSTNAME=0.0.0.0
-        export CWD=/workspace
-        export CODEX_PATH="$(command -v codex 2>/dev/null || echo codex)"
-        export ORKESTRATOR_CODEX_RAW_LOG_DIR="%CODEX_RAW_LOG_DIR%"
-        setsid node /opt/codex-bridge/dist/index.js > /tmp/codex-bridge.log 2>&1 &
-        disown
-        sleep 0.5
-        echo "Started Codex bridge server"
-    "#;
-    let command = command
-        .replace(
-            "%CODEX_RAW_LOG_DIR%",
-            if raw_event_logging {
-                CONTAINER_CODEX_RAW_LOG_DIR
-            } else {
-                ""
-            },
-        );
+    let command = build_codex_bridge_start_command(raw_event_logging);
 
     let exec_result = client
         .exec_in_container(&container_id, vec!["bash", "-c", &command], None)
@@ -412,4 +500,104 @@ pub async fn get_codex_server_status(container_id: String) -> Result<CodexServer
         running,
         host_port: if running { Some(host_port) } else { None },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs as std_fs;
+    use tempfile::tempdir;
+
+    fn relative_paths(root: &Path, files: Vec<PathBuf>) -> Vec<String> {
+        let mut paths: Vec<String> = files
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(root)
+                    .expect("file should be under root")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn collect_dist_files_recurses_and_returns_only_files() {
+        let temp = tempdir().expect("create temp dir");
+        let dist = temp.path().join("dist");
+        let nested = dist.join("chunks");
+        std_fs::create_dir_all(&nested).expect("create nested dir");
+        std_fs::write(dist.join("index.js"), "entry").expect("write entry");
+        std_fs::write(nested.join("worker.js"), "worker").expect("write nested file");
+        std_fs::create_dir_all(dist.join("empty-dir")).expect("create empty dir");
+
+        let files = collect_dist_files(&dist).expect("collect files");
+
+        assert_eq!(
+            relative_paths(&dist, files),
+            vec!["chunks/worker.js".to_string(), "index.js".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_dist_files_returns_empty_for_empty_directory() {
+        let temp = tempdir().expect("create temp dir");
+
+        let files = collect_dist_files(temp.path()).expect("collect empty directory");
+
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn collect_dist_files_reports_missing_directory() {
+        let temp = tempdir().expect("create temp dir");
+        let missing = temp.path().join("missing-dist");
+
+        let error = collect_dist_files(&missing).expect_err("missing directory should error");
+
+        assert!(error.contains("Failed to read Codex bridge dist directory"));
+        assert!(error.contains("missing-dist"));
+    }
+
+    #[test]
+    fn resolve_container_dist_path_preserves_nested_relative_path() {
+        let dist = Path::new("/repo/bridges/codex-bridge/dist");
+        let file = dist.join("chunks").join("worker.js");
+
+        let container_path = resolve_container_dist_path(dist, &file).expect("resolve path");
+
+        assert_eq!(container_path, "/opt/codex-bridge/dist/chunks/worker.js");
+    }
+
+    #[test]
+    fn resolve_container_dist_path_rejects_files_outside_dist() {
+        let dist = Path::new("/repo/bridges/codex-bridge/dist");
+        let file = Path::new("/repo/bridges/codex-bridge/package.json");
+
+        let error = resolve_container_dist_path(dist, file).expect_err("outside file should error");
+
+        assert!(error.contains("Failed to resolve Codex bridge dist path"));
+    }
+
+    #[test]
+    fn build_codex_bridge_start_command_includes_raw_log_dir_when_enabled() {
+        let command = build_codex_bridge_start_command(true);
+
+        assert!(command.contains(&format!(
+            "export ORKESTRATOR_CODEX_RAW_LOG_DIR=\"{}\"",
+            CONTAINER_CODEX_RAW_LOG_DIR
+        )));
+        assert!(command.contains("setsid node /opt/codex-bridge/dist/index.js"));
+        assert!(!command.contains("%CODEX_RAW_LOG_DIR%"));
+    }
+
+    #[test]
+    fn build_codex_bridge_start_command_omits_raw_log_dir_when_disabled() {
+        let command = build_codex_bridge_start_command(false);
+
+        assert!(command.contains("export ORKESTRATOR_CODEX_RAW_LOG_DIR=\"\""));
+        assert!(!command.contains(CONTAINER_CODEX_RAW_LOG_DIR));
+        assert!(!command.contains("%CODEX_RAW_LOG_DIR%"));
+    }
 }
