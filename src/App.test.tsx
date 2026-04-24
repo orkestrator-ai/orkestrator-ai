@@ -113,7 +113,8 @@ mock.module("@/components/errors", () => ({
 }));
 
 mock.module("@/components/ui/alert-dialog", () => ({
-  AlertDialog: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  AlertDialog: ({ children, open }: { children: React.ReactNode; open?: boolean }) =>
+    open ? <>{children}</> : null,
   AlertDialogAction: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
     <button type="button" {...props}>{children}</button>
   ),
@@ -144,8 +145,11 @@ mock.module("@/hooks", () => ({
   }),
 }));
 
+const mockCheckDocker = mock(async () => true);
+const mockSyncAllEnvironmentsWithDocker = mock(async () => [] as string[]);
+
 mock.module("@/lib/tauri", () => ({
-  checkDocker: mock(async () => true),
+  checkDocker: mockCheckDocker,
   checkClaudeCli: mock(async () => true),
   checkClaudeConfig: mock(async () => true),
   checkCodexCli: mock(async () => true),
@@ -153,7 +157,7 @@ mock.module("@/lib/tauri", () => ({
   checkGithubCli: mock(async () => true),
   getAvailableAiCli: mock(async () => "claude"),
   getConfig: mock(async () => mockConfig),
-  syncAllEnvironmentsWithDocker: mock(async () => []),
+  syncAllEnvironmentsWithDocker: mockSyncAllEnvironmentsWithDocker,
 }));
 
 mock.module("sonner", () => ({
@@ -264,6 +268,10 @@ describe("App background processing mounts", () => {
     cleanup();
     mockStartEnvironment.mockClear();
     mockExit.mockClear();
+    mockCheckDocker.mockClear();
+    mockCheckDocker.mockImplementation(async () => true);
+    mockSyncAllEnvironmentsWithDocker.mockClear();
+    mockSyncAllEnvironmentsWithDocker.mockImplementation(async () => []);
   });
 
   afterEach(() => {
@@ -305,6 +313,53 @@ describe("App background processing mounts", () => {
 
     await waitFor(() => {
       expect(screen.getAllByTestId("terminal-env-visible")).toHaveLength(1);
+    });
+  });
+});
+
+describe("App Docker availability", () => {
+  beforeEach(() => {
+    cleanup();
+    mockStartEnvironment.mockClear();
+    mockExit.mockClear();
+    mockCheckDocker.mockClear();
+    mockCheckDocker.mockImplementation(async () => true);
+    mockSyncAllEnvironmentsWithDocker.mockClear();
+    mockSyncAllEnvironmentsWithDocker.mockImplementation(async () => []);
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+  });
+
+  test("retry rechecks Docker and syncs environments after Docker becomes available", async () => {
+    // Startup: Docker unavailable. Retry: Docker now available.
+    mockCheckDocker.mockImplementationOnce(async () => false);
+    mockCheckDocker.mockImplementationOnce(async () => true);
+    mockSyncAllEnvironmentsWithDocker.mockImplementation(async () => ["env-stale"]);
+
+    resetStores({
+      environments: [],
+      selectedProjectId: null,
+      selectedEnvironmentId: null,
+    });
+
+    render(<App />);
+
+    // Wait for the startup check to flip dockerAvailable to false.
+    await waitFor(() => {
+      expect(mockCheckDocker).toHaveBeenCalledTimes(1);
+    });
+    // Startup check should NOT have triggered sync because Docker was unavailable.
+    expect(mockSyncAllEnvironmentsWithDocker).not.toHaveBeenCalled();
+
+    const retry = screen.getByRole("button", { name: /retry/i });
+    retry.click();
+
+    await waitFor(() => {
+      expect(mockCheckDocker).toHaveBeenCalledTimes(2);
+      expect(mockSyncAllEnvironmentsWithDocker).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -898,23 +898,20 @@ static DOCKER_CLIENT: OnceLock<Mutex<Option<&'static DockerClient>>> = OnceLock:
 pub fn get_docker_client() -> Result<&'static DockerClient, DockerError> {
     let client_slot = DOCKER_CLIENT.get_or_init(|| Mutex::new(None));
 
-    {
-        let cached = client_slot
-            .lock()
-            .map_err(|_| DockerError::OperationFailed("Docker client mutex poisoned".to_string()))?;
-        if let Some(client) = *cached {
-            return Ok(client);
-        }
-    }
-
-    // Only cache successful connections. If the app starts before Docker is
-    // running, later retries must be able to create a fresh client.
-    let client = Box::leak(Box::new(DockerClient::new()?));
+    // Hold the lock across construction so concurrent first-callers don't each
+    // build (and leak) their own DockerClient. Only cache successful
+    // connections — if the app starts before Docker is running, later retries
+    // must be able to create a fresh client.
     let mut cached = client_slot
         .lock()
         .map_err(|_| DockerError::OperationFailed("Docker client mutex poisoned".to_string()))?;
 
-    Ok(*cached.get_or_insert(client))
+    if let Some(client) = *cached {
+        return Ok(client);
+    }
+
+    let client = Box::leak(Box::new(DockerClient::new()?));
+    Ok(*cached.insert(client))
 }
 
 #[cfg(test)]
