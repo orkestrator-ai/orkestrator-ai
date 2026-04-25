@@ -114,7 +114,9 @@ RUN npm install \
 # Copy and build Codex Bridge Server
 COPY --chown=node:node bridges/codex-bridge /opt/codex-bridge
 WORKDIR /opt/codex-bridge
-RUN npm install && npm run build && npm prune --production
+RUN npm install \
+ && npm run build \
+ && npm prune --production
 WORKDIR /workspace
 
 # Copy and set up firewall scripts
