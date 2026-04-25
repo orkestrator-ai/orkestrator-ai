@@ -31,6 +31,7 @@ describe("useVirtuosoScrollState", () => {
 
       expect(typeof scrollProps.followOutput).toBe("function");
       expect(typeof scrollProps.atBottomStateChange).toBe("function");
+      expect(typeof scrollProps.totalListHeightChanged).toBe("function");
       expect(typeof scrollProps.atBottomThreshold).toBe("number");
       expect(scrollProps.atBottomThreshold).toBe(50);
     });
@@ -127,6 +128,122 @@ describe("useVirtuosoScrollState", () => {
   });
 
   describe("scrollToBottom", () => {
+    test("scrolls when total list height grows while sticky", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToIndexCalls: any[] = [];
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollProps.totalListHeightChanged(1200);
+      });
+
+      expect(scrollToIndexCalls).toHaveLength(1);
+
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(true);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      expect(scrollToCalls).toEqual([
+        {
+          top: 10_000_000,
+          behavior: "smooth",
+        },
+      ]);
+    });
+
+    test("does not scroll on total list height changes after user scrolls up", () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+      const el = document.createElement("div");
+      document.body.appendChild(el);
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+        act(() => {
+          el.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        });
+        act(() => {
+          result.current.scrollProps.totalListHeightChanged(1200);
+        });
+
+        expect(scrollToIndexCalls).toHaveLength(0);
+      } finally {
+        document.body.removeChild(el);
+      }
+    });
+
+    test("does not scroll on total list height changes while inactive", () => {
+      const { result } = renderHook(() =>
+        useVirtuosoScrollState({ isActive: false })
+      );
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollProps.totalListHeightChanged(1200);
+      });
+
+      expect(scrollToIndexCalls).toHaveLength(0);
+    });
+
+    test("does not stack scrollToBottom calls while one is in-flight", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      // Stay non-bottom so the retry loop keeps scrollInFlightRef true.
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(false);
+      });
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollToBottom();
+      });
+      const callsAfterStart = scrollToIndexCalls.length;
+      expect(callsAfterStart).toBeGreaterThan(0);
+
+      // Capture how many retry calls have accumulated, then fire
+      // totalListHeightChanged a few times — the in-flight guard should
+      // prevent any of them from kicking off a fresh scrollToBottom.
+      act(() => {
+        result.current.scrollProps.totalListHeightChanged(1200);
+        result.current.scrollProps.totalListHeightChanged(1300);
+        result.current.scrollProps.totalListHeightChanged(1400);
+      });
+
+      // The only scrollToIndex calls should come from the original retry
+      // loop, not from the totalListHeightChanged invocations. Allow the
+      // retry loop a single tick of slack so we capture its natural cadence,
+      // not three extra immediate-from-totalListHeightChanged calls.
+      const callsAfterTotalListHeight = scrollToIndexCalls.length;
+      expect(callsAfterTotalListHeight - callsAfterStart).toBeLessThanOrEqual(1);
+    });
+
     test("calls scrollToIndex then scrollTo on the virtuoso ref", async () => {
       const { result } = renderHook(() => useVirtuosoScrollState());
 
@@ -295,6 +412,23 @@ describe("useVirtuosoScrollState", () => {
       expect(result.current.isAtBottom).toBe(true);
     });
 
+    test("is a no-op when the virtuoso handle is incomplete", () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollToBottom();
+      });
+
+      expect(scrollToIndexCalls).toHaveLength(0);
+      expect(result.current.isAtBottom).toBe(true);
+    });
+
     test("scheduled scrollTo does not fire after unmount", async () => {
       const { result, unmount } = renderHook(() => useVirtuosoScrollState());
 
@@ -320,6 +454,253 @@ describe("useVirtuosoScrollState", () => {
       });
 
       expect(scrollToCalls).toHaveLength(0);
+    });
+  });
+
+  describe("ResizeObserver fallback", () => {
+    type ObserverHarness = {
+      resizeObserved: Element[];
+      resizeCallback?: ResizeObserverCallback;
+      mutationObserveCalls: Array<{
+        target: Node;
+        options?: MutationObserverInit;
+      }>;
+      mutationCallback?: (
+        records: MutationRecord[],
+        observer: MutationObserver
+      ) => void;
+      restore: () => void;
+    };
+
+    function installObservers(): ObserverHarness {
+      const originalResizeObserver = globalThis.ResizeObserver;
+      const originalMutationObserver = globalThis.MutationObserver;
+      const harness: ObserverHarness = {
+        resizeObserved: [],
+        mutationObserveCalls: [],
+        restore: () => {
+          (globalThis as any).ResizeObserver = originalResizeObserver;
+          (globalThis as any).MutationObserver = originalMutationObserver;
+        },
+      };
+
+      class MockResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          harness.resizeCallback = callback;
+        }
+
+        observe(element: Element) {
+          harness.resizeObserved.push(element);
+        }
+
+        disconnect() {}
+      }
+
+      class MockMutationObserver {
+        constructor(
+          callback: (
+            records: MutationRecord[],
+            observer: MutationObserver
+          ) => void
+        ) {
+          harness.mutationCallback = callback;
+        }
+
+        observe(target: Node, options?: MutationObserverInit) {
+          harness.mutationObserveCalls.push({ target, options });
+        }
+
+        disconnect() {}
+      }
+
+      (globalThis as any).ResizeObserver = MockResizeObserver;
+      (globalThis as any).MutationObserver = MockMutationObserver;
+      return harness;
+    }
+
+    test("observes subtree mutations and scrolls while sticky", async () => {
+      const harness = installObservers();
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+      const scroller = document.createElement("div");
+      const directChild = document.createElement("div");
+      scroller.appendChild(directChild);
+      document.body.appendChild(scroller);
+
+      const scrollToIndexCalls: any[] = [];
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(scroller));
+
+        expect(harness.resizeObserved).toContain(directChild);
+        expect(harness.mutationObserveCalls).toEqual([
+          {
+            target: scroller,
+            options: { childList: true, subtree: true },
+          },
+        ]);
+        expect(harness.mutationCallback).toBeDefined();
+
+        act(() => {
+          harness.mutationCallback?.([], {} as MutationObserver);
+        });
+
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+
+        expect(scrollToIndexCalls).toHaveLength(1);
+        expect(scrollToCalls).toEqual([
+          {
+            top: 10_000_000,
+            behavior: "smooth",
+          },
+        ]);
+      } finally {
+        unmount();
+        document.body.removeChild(scroller);
+        harness.restore();
+      }
+    });
+
+    test("scrolls when ResizeObserver fires while at bottom and sticky", async () => {
+      // Locks in the contract that footer-only growth (which leaves Virtuoso
+      // reporting atBottom=true) still triggers a follow-up scroll. The
+      // earlier implementation short-circuited on isAtBottomRef.current, which
+      // missed late-rendering footer content because followOutput only fires
+      // on data-item changes.
+      const harness = installObservers();
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+      const scroller = document.createElement("div");
+      scroller.appendChild(document.createElement("div"));
+      document.body.appendChild(scroller);
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(scroller));
+        // Default state: isAtBottom=true, wantsStick=true.
+        expect(result.current.isAtBottom).toBe(true);
+
+        act(() => {
+          harness.resizeCallback?.([], {} as ResizeObserver);
+        });
+
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+
+        expect(scrollToIndexCalls).toHaveLength(1);
+      } finally {
+        unmount();
+        document.body.removeChild(scroller);
+        harness.restore();
+      }
+    });
+
+    test("skips re-observing direct children on deep subtree mutations", async () => {
+      const harness = installObservers();
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+      const scroller = document.createElement("div");
+      const directChild = document.createElement("div");
+      const grandchild = document.createElement("span");
+      directChild.appendChild(grandchild);
+      scroller.appendChild(directChild);
+      document.body.appendChild(scroller);
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(scroller));
+
+        // After mounting, the only observed element is the existing direct
+        // child. Capture that baseline before firing the deep mutation.
+        const observedBeforeDeepMutation = harness.resizeObserved.length;
+        expect(observedBeforeDeepMutation).toBe(1);
+
+        // Add a new grandchild and dispatch a record whose target is the
+        // direct child (not the scroller) — observeChildren() should NOT run.
+        const newGrandchild = document.createElement("em");
+        directChild.appendChild(newGrandchild);
+        const deepRecord = {
+          type: "childList",
+          target: directChild,
+          addedNodes: [newGrandchild] as unknown as NodeList,
+          removedNodes: [] as unknown as NodeList,
+        } as unknown as MutationRecord;
+
+        act(() => {
+          harness.mutationCallback?.([deepRecord], {} as MutationObserver);
+        });
+
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+
+        // observeChildren() must not have re-walked: still just the original
+        // direct child, no new observe() entries.
+        expect(harness.resizeObserved.length).toBe(observedBeforeDeepMutation);
+        // schedule() must still have run, so a sticky scroll fired.
+        expect(scrollToIndexCalls).toHaveLength(1);
+      } finally {
+        unmount();
+        document.body.removeChild(scroller);
+        harness.restore();
+      }
+    });
+
+    test("re-observes direct children when a direct child is added", () => {
+      const harness = installObservers();
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+      const scroller = document.createElement("div");
+      const initialChild = document.createElement("div");
+      scroller.appendChild(initialChild);
+      document.body.appendChild(scroller);
+
+      result.current.virtuosoRef.current = {
+        scrollToIndex: () => {},
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(scroller));
+        expect(harness.resizeObserved).toEqual([initialChild]);
+
+        const newChild = document.createElement("div");
+        scroller.appendChild(newChild);
+        const directRecord = {
+          type: "childList",
+          target: scroller,
+          addedNodes: [newChild] as unknown as NodeList,
+          removedNodes: [] as unknown as NodeList,
+        } as unknown as MutationRecord;
+
+        act(() => {
+          harness.mutationCallback?.([directRecord], {} as MutationObserver);
+        });
+
+        expect(harness.resizeObserved).toEqual([initialChild, newChild]);
+      } finally {
+        unmount();
+        document.body.removeChild(scroller);
+        harness.restore();
+      }
     });
   });
 
