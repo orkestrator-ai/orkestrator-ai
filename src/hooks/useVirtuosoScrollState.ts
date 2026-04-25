@@ -271,14 +271,19 @@ export function useVirtuosoScrollState(
     // reobserve from scratch on each mount.
   }, []);
 
+  const isActiveRef = useRef(isActive);
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
   const totalListHeightChanged = useCallback(
     (_height: number) => {
-      if (!isActive) return;
+      if (!isActiveRef.current) return;
       if (wantsStickRef.current && !scrollInFlightRef.current) {
         scrollToBottom();
       }
     },
-    [isActive, scrollToBottom]
+    [scrollToBottom]
   );
 
   // User-scroll-up detection: only a user action can release stick intent.
@@ -334,6 +339,12 @@ export function useVirtuosoScrollState(
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
+        if (!isActiveRef.current) return;
+        // Note: we deliberately do NOT skip when isAtBottomRef.current is true.
+        // followOutput only fires on data-item changes, so footer-only growth
+        // (thinking indicator, late-rendering cards) leaves Virtuoso reporting
+        // atBottom=true while the new content sits below the viewport. The
+        // scrollInFlightRef guard prevents stacking with an in-flight retry.
         if (wantsStickRef.current && !scrollInFlightRef.current) {
           scrollToBottom();
         }
@@ -354,11 +365,16 @@ export function useVirtuosoScrollState(
 
     // Watch the subtree because footer content is nested inside Virtuoso's
     // internal viewport/list wrappers, not always added as a direct child of
-    // the scroller.
+    // the scroller. Only re-walk direct children when a direct child was
+    // actually added — deep-subtree mutations can't change the direct-child
+    // set, so `observeChildren()` would be wasted work in that case.
     const mutationObserver =
       typeof MutationObserver !== "undefined"
-        ? new MutationObserver(() => {
-            observeChildren();
+        ? new MutationObserver((records) => {
+            const directChildAdded = records.some(
+              (r) => r.target === scrollerEl && r.addedNodes.length > 0
+            );
+            if (directChildAdded) observeChildren();
             schedule();
           })
         : null;
