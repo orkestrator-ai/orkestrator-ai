@@ -187,6 +187,25 @@ describe("useVirtuosoScrollState", () => {
       }
     });
 
+    test("does not scroll on total list height changes while inactive", () => {
+      const { result } = renderHook(() =>
+        useVirtuosoScrollState({ isActive: false })
+      );
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollProps.totalListHeightChanged(1200);
+      });
+
+      expect(scrollToIndexCalls).toHaveLength(0);
+    });
+
     test("calls scrollToIndex then scrollTo on the virtuoso ref", async () => {
       const { result } = renderHook(() => useVirtuosoScrollState());
 
@@ -355,6 +374,23 @@ describe("useVirtuosoScrollState", () => {
       expect(result.current.isAtBottom).toBe(true);
     });
 
+    test("is a no-op when the virtuoso handle is incomplete", () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollToBottom();
+      });
+
+      expect(scrollToIndexCalls).toHaveLength(0);
+      expect(result.current.isAtBottom).toBe(true);
+    });
+
     test("scheduled scrollTo does not fire after unmount", async () => {
       const { result, unmount } = renderHook(() => useVirtuosoScrollState());
 
@@ -380,6 +416,100 @@ describe("useVirtuosoScrollState", () => {
       });
 
       expect(scrollToCalls).toHaveLength(0);
+    });
+  });
+
+  describe("ResizeObserver fallback", () => {
+    test("observes subtree mutations and scrolls while sticky", async () => {
+      const originalResizeObserver = globalThis.ResizeObserver;
+      const originalMutationObserver = globalThis.MutationObserver;
+      const resizeObserved: Element[] = [];
+      const mutationObserveCalls: Array<{
+        target: Node;
+        options?: MutationObserverInit;
+      }> = [];
+      let mutationCallback:
+        | ((
+            records: MutationRecord[],
+            observer: MutationObserver
+          ) => void)
+        | undefined;
+
+      class MockResizeObserver {
+        observe(element: Element) {
+          resizeObserved.push(element);
+        }
+
+        disconnect() {}
+      }
+
+      class MockMutationObserver {
+        constructor(
+          callback: (
+            records: MutationRecord[],
+            observer: MutationObserver
+          ) => void
+        ) {
+          mutationCallback = callback;
+        }
+
+        observe(target: Node, options?: MutationObserverInit) {
+          mutationObserveCalls.push({ target, options });
+        }
+
+        disconnect() {}
+      }
+
+      (globalThis as any).ResizeObserver = MockResizeObserver;
+      (globalThis as any).MutationObserver = MockMutationObserver;
+
+      const { result, unmount } = renderHook(() => useVirtuosoScrollState());
+      const scroller = document.createElement("div");
+      const directChild = document.createElement("div");
+      scroller.appendChild(directChild);
+      document.body.appendChild(scroller);
+
+      const scrollToIndexCalls: any[] = [];
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(scroller));
+
+        expect(resizeObserved).toContain(directChild);
+        expect(mutationObserveCalls).toEqual([
+          {
+            target: scroller,
+            options: { childList: true, subtree: true },
+          },
+        ]);
+        expect(mutationCallback).toBeDefined();
+
+        act(() => {
+          mutationCallback?.([], {} as MutationObserver);
+        });
+
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        });
+
+        expect(scrollToIndexCalls).toHaveLength(1);
+        expect(scrollToCalls).toEqual([
+          {
+            top: 10_000_000,
+            behavior: "smooth",
+          },
+        ]);
+      } finally {
+        unmount();
+        document.body.removeChild(scroller);
+        (globalThis as any).ResizeObserver = originalResizeObserver;
+        (globalThis as any).MutationObserver = originalMutationObserver;
+      }
     });
   });
 
