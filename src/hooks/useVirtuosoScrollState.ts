@@ -70,6 +70,7 @@ interface UseVirtuosoScrollStateReturn {
     followOutput: (isAtBottom: boolean) => "smooth" | false;
     atBottomStateChange: (atBottom: boolean) => void;
     atBottomThreshold: number;
+    totalListHeightChanged: (height: number) => void;
     restoreStateFrom: StateSnapshot | undefined;
     scrollerRef: (el: HTMLElement | Window | null) => void;
   };
@@ -171,6 +172,12 @@ export function useVirtuosoScrollState(
   const scrollToBottom = useCallback(() => {
     const handle = virtuosoRef.current;
     if (!handle) return;
+    if (
+      typeof handle.scrollToIndex !== "function" ||
+      typeof handle.scrollTo !== "function"
+    ) {
+      return;
+    }
     // Clicking the scroll-down button (or any programmatic call) is an
     // explicit stick signal.
     wantsStickRef.current = true;
@@ -264,6 +271,16 @@ export function useVirtuosoScrollState(
     // reobserve from scratch on each mount.
   }, []);
 
+  const totalListHeightChanged = useCallback(
+    (_height: number) => {
+      if (!isActive) return;
+      if (wantsStickRef.current && !scrollInFlightRef.current) {
+        scrollToBottom();
+      }
+    },
+    [isActive, scrollToBottom]
+  );
+
   // User-scroll-up detection: only a user action can release stick intent.
   // Virtuoso's own programmatic scrolls (followOutput, scrollToIndex) do not
   // fire wheel/touch/keydown events, so this cleanly separates the two.
@@ -306,10 +323,9 @@ export function useVirtuosoScrollState(
     };
   }, [scrollerEl]);
 
-  // ResizeObserver: when content grows (e.g. footer gains a thinking
+  // ResizeObserver fallback: when content grows (e.g. footer gains a thinking
   // indicator or question card) and the user still wants stick, scroll to
-  // the new bottom. This is the primary mechanism that keeps late-rendering
-  // footer content in view — followOutput only fires on data-item changes.
+  // the new bottom. followOutput only fires on data-item changes.
   useEffect(() => {
     if (!scrollerEl || typeof ResizeObserver === "undefined") return;
 
@@ -318,9 +334,6 @@ export function useVirtuosoScrollState(
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        // Skip when Virtuoso already has us at bottom — followOutput handles
-        // that case, so issuing our own scroll would churn while streaming.
-        if (isAtBottomRef.current) return;
         if (wantsStickRef.current && !scrollInFlightRef.current) {
           scrollToBottom();
         }
@@ -339,10 +352,9 @@ export function useVirtuosoScrollState(
     };
     observeChildren();
 
-    // Watches for added/removed direct children so the ResizeObserver can
-    // start observing them. Deeper-subtree size changes are already caught
-    // by the RO via the children we observe (their scrollHeight reflects
-    // descendant layout), so subtree: true would just duplicate callbacks.
+    // Watch the subtree because footer content is nested inside Virtuoso's
+    // internal viewport/list wrappers, not always added as a direct child of
+    // the scroller.
     const mutationObserver =
       typeof MutationObserver !== "undefined"
         ? new MutationObserver(() => {
@@ -352,7 +364,7 @@ export function useVirtuosoScrollState(
         : null;
     mutationObserver?.observe(scrollerEl, {
       childList: true,
-      subtree: false,
+      subtree: true,
     });
 
     return () => {
@@ -383,6 +395,7 @@ export function useVirtuosoScrollState(
       followOutput,
       atBottomStateChange,
       atBottomThreshold: AT_BOTTOM_THRESHOLD,
+      totalListHeightChanged,
       restoreStateFrom,
       scrollerRef,
     },

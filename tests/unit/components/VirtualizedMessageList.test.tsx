@@ -179,6 +179,7 @@ describe("VirtualizedMessageList", () => {
     const followOutput = (atBottom: boolean) =>
       atBottom ? ("smooth" as const) : false;
     const atBottomStateChange = () => {};
+    const totalListHeightChanged = () => {};
     const restoreState = { ranges: [], scrollTop: 100 } as any;
 
     render(
@@ -190,6 +191,7 @@ describe("VirtualizedMessageList", () => {
           followOutput,
           atBottomStateChange,
           atBottomThreshold: 75,
+          totalListHeightChanged,
           restoreStateFrom: restoreState,
         }}
         virtuosoRef={createRef<VirtuosoHandle>()}
@@ -199,6 +201,7 @@ describe("VirtualizedMessageList", () => {
     expect(lastVirtuosoProps.followOutput).toBe(followOutput);
     expect(lastVirtuosoProps.atBottomStateChange).toBe(atBottomStateChange);
     expect(lastVirtuosoProps.atBottomThreshold).toBe(75);
+    expect(lastVirtuosoProps.totalListHeightChanged).toBe(totalListHeightChanged);
     expect(lastVirtuosoProps.restoreStateFrom).toBe(restoreState);
   });
 

@@ -31,6 +31,7 @@ describe("useVirtuosoScrollState", () => {
 
       expect(typeof scrollProps.followOutput).toBe("function");
       expect(typeof scrollProps.atBottomStateChange).toBe("function");
+      expect(typeof scrollProps.totalListHeightChanged).toBe("function");
       expect(typeof scrollProps.atBottomThreshold).toBe("number");
       expect(scrollProps.atBottomThreshold).toBe(50);
     });
@@ -127,6 +128,65 @@ describe("useVirtuosoScrollState", () => {
   });
 
   describe("scrollToBottom", () => {
+    test("scrolls when total list height grows while sticky", async () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+
+      const scrollToIndexCalls: any[] = [];
+      const scrollToCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: (opts: any) => scrollToCalls.push(opts),
+        getState: () => {},
+      } as any;
+
+      act(() => {
+        result.current.scrollProps.totalListHeightChanged(1200);
+      });
+
+      expect(scrollToIndexCalls).toHaveLength(1);
+
+      act(() => {
+        result.current.scrollProps.atBottomStateChange(true);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      expect(scrollToCalls).toEqual([
+        {
+          top: 10_000_000,
+          behavior: "smooth",
+        },
+      ]);
+    });
+
+    test("does not scroll on total list height changes after user scrolls up", () => {
+      const { result } = renderHook(() => useVirtuosoScrollState());
+      const el = document.createElement("div");
+      document.body.appendChild(el);
+
+      const scrollToIndexCalls: any[] = [];
+      result.current.virtuosoRef.current = {
+        scrollToIndex: (opts: any) => scrollToIndexCalls.push(opts),
+        scrollTo: () => {},
+        getState: () => {},
+      } as any;
+
+      try {
+        act(() => result.current.scrollProps.scrollerRef(el));
+        act(() => {
+          el.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+        });
+        act(() => {
+          result.current.scrollProps.totalListHeightChanged(1200);
+        });
+
+        expect(scrollToIndexCalls).toHaveLength(0);
+      } finally {
+        document.body.removeChild(el);
+      }
+    });
+
     test("calls scrollToIndex then scrollTo on the virtuoso ref", async () => {
       const { result } = renderHook(() => useVirtuosoScrollState());
 

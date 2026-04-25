@@ -16,6 +16,7 @@ interface VirtualizedMessageListProps<TMessage> {
     followOutput: (isAtBottom: boolean) => "smooth" | false;
     atBottomStateChange: (atBottom: boolean) => void;
     atBottomThreshold: number;
+    totalListHeightChanged?: (height: number) => void;
     restoreStateFrom: StateSnapshot | undefined;
     scrollerRef?: (el: HTMLElement | Window | null) => void;
   };
@@ -85,6 +86,7 @@ export function VirtualizedMessageList<TMessage>({
         followOutput={scrollProps.followOutput}
         atBottomStateChange={scrollProps.atBottomStateChange}
         atBottomThreshold={scrollProps.atBottomThreshold}
+        totalListHeightChanged={scrollProps.totalListHeightChanged}
         restoreStateFrom={scrollProps.restoreStateFrom}
         scrollerRef={scrollProps.scrollerRef}
         increaseViewportBy={{ top: 400, bottom: 200 }}
