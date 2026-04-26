@@ -776,6 +776,36 @@ describe("CodexChatTab", () => {
     resolveAbort?.(true);
   });
 
+  test("stop logs a failed abort after clearing local loading state", async () => {
+    const originalError = console.error;
+    const consoleError = mock(() => {});
+    console.error = consoleError as unknown as typeof console.error;
+    mockAbortSession.mockImplementation(async () => false);
+    useCodexStore.getState().setSessionLoading(SESSION_KEY, true);
+    useCodexStore.getState().setSessionError(SESSION_KEY, "Previous error");
+
+    try {
+      render(
+        <CodexChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("codex-stop"));
+
+      await waitFor(() => {
+        const session = useCodexStore.getState().sessions.get(SESSION_KEY);
+        expect(session?.isLoading).toBe(false);
+        expect(session?.error).toBeUndefined();
+        expect(consoleError).toHaveBeenCalledWith("[CodexChatTab] Failed to abort session");
+      });
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   describe("fast mode toggle", () => {
     test("persists fast mode in the store when the bridge accepts the config change", async () => {
       render(

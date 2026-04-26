@@ -160,7 +160,7 @@ interface BuiltinSlashCommand extends BridgeSlashCommand {
 type SlashCommandDefinition = PromptSlashCommand | BuiltinSlashCommand;
 type ConversationMode = "build" | "plan";
 
-const app = new Hono();
+export const app = new Hono();
 const codexPathOverride = process.env.CODEX_PATH || "codex";
 const codex = new Codex({ codexPathOverride });
 // Fast-mode variant: passes `--config service_tier=fast` to the Codex CLI,
@@ -1673,6 +1673,11 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
   }
 }
 
+export const __testing = {
+  runPrompt: runPrompt as (session: any, prompt: string) => Promise<void>,
+  sessions: sessions as Map<string, any>,
+};
+
 app.use(
   "*",
   cors({
@@ -1975,8 +1980,10 @@ app.get("/event/subscribe", (c) => {
 const port = parseInt(process.env.PORT || "4098", 10);
 const hostname = process.env.HOSTNAME || "0.0.0.0";
 
-serve({
-  fetch: app.fetch,
-  port,
-  hostname,
-});
+if (process.env.CODEX_BRIDGE_NO_SERVER !== "1") {
+  serve({
+    fetch: app.fetch,
+    port,
+    hostname,
+  });
+}
