@@ -81,6 +81,7 @@ interface SessionState {
   currentAssistantMessageId?: string;
   currentItems: Map<string, ThreadItem>;
   currentItemOrder: string[];
+  currentTurnId?: string;
   currentTurnStartedAt?: string;
   pendingAttachments: PromptAttachmentInput[];
   lastAccessed: number;
@@ -1074,6 +1075,7 @@ function emitLocalAssistantResponse(
   session.error = undefined;
   session.currentItems.clear();
   session.currentItemOrder = [];
+  session.currentTurnId = undefined;
   session.currentTurnStartedAt = undefined;
   session.abortController = undefined;
   session.currentAssistantMessageId = undefined;
@@ -1532,13 +1534,17 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
     wrapPromptForConversationMode(executionPrompt, session.conversationMode),
     attachments,
   );
+  const turnId = crypto.randomUUID();
+  const abortController = new AbortController();
+  const isCurrentTurn = () => session.currentTurnId === turnId;
 
   session.status = "running";
   session.error = undefined;
   session.currentItems.clear();
   session.currentItemOrder = [];
+  session.currentTurnId = turnId;
   session.currentTurnStartedAt = new Date().toISOString();
-  session.abortController = new AbortController();
+  session.abortController = abortController;
 
   session.messages.push(createUserMessage(prompt, attachments));
   session.pendingAttachments = [];
@@ -1560,7 +1566,7 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
 
   try {
     const streamed = await session.thread.runStreamed(executionInput, {
-      signal: session.abortController.signal,
+      signal: abortController.signal,
     });
     await writeCodexRawLog(session.id, {
       kind: "stream.start",
@@ -1568,6 +1574,10 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
     });
 
     for await (const event of streamed.events) {
+      if (!isCurrentTurn()) {
+        return;
+      }
+
       await writeCodexRawLog(session.id, {
         kind: "stream.event",
         threadId: session.threadId ?? null,
@@ -1576,6 +1586,9 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       });
 
       if (event.type === "thread.started") {
+        if (!isCurrentTurn()) {
+          return;
+        }
         session.threadId = event.thread_id;
         await writeCodexRawLog(session.id, {
           kind: "thread.started",
@@ -1585,6 +1598,9 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       }
 
       if (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed") {
+        if (!isCurrentTurn()) {
+          return;
+        }
         if (!session.currentItems.has(event.item.id)) {
           session.currentItemOrder.push(event.item.id);
         }
@@ -1595,6 +1611,9 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       }
 
       if (event.type === "turn.failed" || event.type === "error") {
+        if (!isCurrentTurn()) {
+          return;
+        }
         const error =
           event.type === "turn.failed" ? event.error.message : event.message;
         session.status = "error";
@@ -1614,6 +1633,10 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       }
     }
 
+    if (!isCurrentTurn()) {
+      return;
+    }
+
     await rebuildAssistantMessage(session);
     session.status = "idle";
     emit({ type: "message.updated", sessionId: session.id });
@@ -1623,6 +1646,10 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       data: { title: session.title },
     });
   } catch (error) {
+    if (abortController.signal.aborted || !isCurrentTurn()) {
+      return;
+    }
+
     const message = error instanceof Error ? error.message : "Codex execution failed";
     session.status = "error";
     session.error = message;
@@ -1637,9 +1664,12 @@ async function runPrompt(session: SessionState, prompt: string): Promise<void> {
       data: { error: message },
     });
   } finally {
-    session.pendingAttachments = [];
-    session.currentTurnStartedAt = undefined;
-    session.abortController = undefined;
+    if (isCurrentTurn()) {
+      session.pendingAttachments = [];
+      session.currentTurnId = undefined;
+      session.currentTurnStartedAt = undefined;
+      session.abortController = undefined;
+    }
   }
 }
 
@@ -1882,7 +1912,11 @@ app.post("/session/:id/abort", (c) => {
 
   session.abortController?.abort();
   session.status = "idle";
+  session.error = undefined;
+  session.currentTurnId = undefined;
   session.currentTurnStartedAt = undefined;
+  session.abortController = undefined;
+  session.pendingAttachments = [];
   emit({ type: "session.idle", sessionId: session.id, data: { title: session.title } });
   return c.json({ status: "aborted" });
 });
