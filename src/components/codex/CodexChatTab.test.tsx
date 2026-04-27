@@ -521,6 +521,35 @@ describe("CodexChatTab", () => {
     });
   });
 
+  test("initializes and sends initialPrompt while the Codex tab is inactive", async () => {
+    const initialPrompt = "Run the background setup audit";
+    seedPaneLayout(initialPrompt);
+    useCodexStore.setState((state) => ({
+      ...state,
+      clients: new Map(),
+      sessions: new Map(),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+        initialPrompt={initialPrompt}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalled();
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        SESSION_ID,
+        initialPrompt,
+        { attachments: undefined },
+      );
+    });
+  });
+
   test("only renames on the first prompt once the session has messages", async () => {
     mockGetSessionMessages.mockImplementation(async () => [createMessage("assistant-1", "Ready")]);
 

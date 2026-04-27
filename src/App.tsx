@@ -7,7 +7,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { TerminalContainer } from "@/components/terminal";
 import { KanbanBoard } from "@/components/kanban";
 import { TerminalProvider } from "@/contexts";
-import { useUIStore, useEnvironmentStore, useConfigStore, useClaudeOptionsStore } from "@/stores";
+import {
+  getAllLeaves,
+  useUIStore,
+  useEnvironmentStore,
+  useConfigStore,
+  useClaudeOptionsStore,
+  usePaneLayoutStore,
+} from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { getBackgroundProcessingEnvironments } from "@/lib/background-pipelines";
 import { cn } from "@/lib/utils";
@@ -58,11 +65,24 @@ function App() {
     ? environments.filter((env) => env.projectId === selectedProjectId)
     : [];
   const setupScriptsRunning = useEnvironmentStore((state) => state.setupScriptsRunning);
+  const pendingNativeLaunches = useClaudeOptionsStore((state) => state.pendingNativeLaunches);
+  const paneLayoutEnvironments = usePaneLayoutStore((state) => state.environments);
+  const pendingInitialPromptEnvironmentIds = useMemo(() => {
+    const environmentIds: string[] = [];
+    for (const [environmentId, paneState] of paneLayoutEnvironments) {
+      const hasPendingInitialPrompt = getAllLeaves(paneState.root)
+        .some((leaf) => leaf.tabs.some((tab) => !!tab.initialPrompt?.trim()));
+      if (hasPendingInitialPrompt) {
+        environmentIds.push(environmentId);
+      }
+    }
+    return environmentIds;
+  }, [paneLayoutEnvironments]);
 
   // Environments with active background processing that aren't currently visible
   // in the main content. These must stay mounted so setup completion detection,
-  // terminal listeners, SSE subscriptions, and pipeline advancement effects
-  // continue running in the background even when the user navigates away.
+  // native initial prompts, terminal listeners, SSE subscriptions, and pipeline
+  // advancement effects continue running even when the user navigates away.
   const pipelines = useBuildPipelineStore((state) => state.pipelines);
   const backgroundProcessingEnvironments = useMemo(
     () => getBackgroundProcessingEnvironments(
@@ -71,8 +91,18 @@ function App() {
       selectedEnvironmentId,
       projectEnvironments,
       setupScriptsRunning,
+      Object.keys(pendingNativeLaunches),
+      pendingInitialPromptEnvironmentIds,
     ),
-    [pipelines, environments, selectedEnvironmentId, projectEnvironments, setupScriptsRunning],
+    [
+      pipelines,
+      environments,
+      selectedEnvironmentId,
+      projectEnvironments,
+      setupScriptsRunning,
+      pendingNativeLaunches,
+      pendingInitialPromptEnvironmentIds,
+    ],
   );
 
   // Debug logging

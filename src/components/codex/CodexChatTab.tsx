@@ -477,7 +477,7 @@ export function CodexChatTab({
   }, [config]);
 
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive && !initialPrompt?.trim()) return;
 
     // Block initialization until setup scripts finish (local environments with orkestrator-ai.json)
     if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
@@ -698,6 +698,7 @@ export function CodexChatTab({
   }, [
     containerId,
     environmentId,
+    initialPrompt,
     isActive,
     isLocal,
     initAttempt,

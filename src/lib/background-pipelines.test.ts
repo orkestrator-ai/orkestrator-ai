@@ -226,6 +226,37 @@ describe("getBackgroundProcessingEnvironments", () => {
     expect(result).toEqual([env]);
   });
 
+  test("returns pending native launch environments even without active pipelines", () => {
+    const env = makeEnv("e1");
+
+    const result = getBackgroundProcessingEnvironments(
+      new Map(),
+      [env],
+      null,
+      [],
+      new Set(),
+      ["e1"],
+    );
+
+    expect(result).toEqual([env]);
+  });
+
+  test("returns environments with tabs that still have an initial prompt", () => {
+    const env = makeEnv("e1");
+
+    const result = getBackgroundProcessingEnvironments(
+      new Map(),
+      [env],
+      null,
+      [],
+      new Set(),
+      [],
+      ["e1"],
+    );
+
+    expect(result).toEqual([env]);
+  });
+
   test("excludes setup-running environments already visible in the main content", () => {
     const env = makeEnv("e1");
 
