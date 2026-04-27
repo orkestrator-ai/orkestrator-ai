@@ -480,6 +480,29 @@ describe("OpenCodeChatTab", () => {
     resolveAbort?.(true);
   });
 
+  test("dispatches the initialPrompt while the OpenCode tab is inactive", async () => {
+    const initialPrompt = "Run the background OpenCode dispatch";
+    composeText = initialPrompt;
+
+    render(
+      <OpenCodeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+        initialPrompt={initialPrompt}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        "session-1",
+        initialPrompt,
+        expect.objectContaining({ model: "openai/gpt-5", mode: "build" }),
+      );
+    });
+  });
+
   test("stop logs a failed abort after clearing local loading state", async () => {
     const originalError = console.error;
     const consoleError = mock(() => {});

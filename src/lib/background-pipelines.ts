@@ -5,10 +5,11 @@ import type { Environment } from "@/types";
  * Computes environments that still need background frontend processing even
  * when they are not currently visible in the main content area.
  *
- * This includes active pipelines and local environments whose setup scripts are
- * still running in a terminal. These must stay mounted so terminal listeners,
- * xterm parser handlers, SSE subscriptions, and pipeline advancement effects
- * continue running.
+ * This includes active pipelines, environments whose setup scripts are still
+ * running, native agent tabs that have not yet dispatched their initial prompt,
+ * and native agent sessions that are still loading. These must stay mounted so
+ * terminal listeners, xterm parser handlers, SSE subscriptions, and pending
+ * native prompt effects continue running.
  */
 export function getBackgroundProcessingEnvironments(
   pipelines: Map<string, BuildPipeline>,
@@ -16,8 +17,26 @@ export function getBackgroundProcessingEnvironments(
   selectedEnvironmentId: string | null,
   projectEnvironments: Environment[],
   setupRunningEnvironmentIds: Set<string> = new Set(),
+  pendingNativeLaunchEnvironmentIds: Iterable<string> = [],
+  pendingInitialPromptEnvironmentIds: Iterable<string> = [],
+  loadingNativeSessionEnvironmentIds: Iterable<string> = [],
 ): Environment[] {
   const backgroundEnvIds = new Set<string>(setupRunningEnvironmentIds);
+  for (const environmentId of pendingNativeLaunchEnvironmentIds) {
+    if (environmentId) {
+      backgroundEnvIds.add(environmentId);
+    }
+  }
+  for (const environmentId of pendingInitialPromptEnvironmentIds) {
+    if (environmentId) {
+      backgroundEnvIds.add(environmentId);
+    }
+  }
+  for (const environmentId of loadingNativeSessionEnvironmentIds) {
+    if (environmentId) {
+      backgroundEnvIds.add(environmentId);
+    }
+  }
 
   for (const pipeline of pipelines.values()) {
     if (pipeline.environmentId && pipeline.phase !== "complete" && pipeline.phase !== "failed") {

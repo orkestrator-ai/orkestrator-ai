@@ -7,10 +7,20 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { TerminalContainer } from "@/components/terminal";
 import { KanbanBoard } from "@/components/kanban";
 import { TerminalProvider } from "@/contexts";
-import { useUIStore, useEnvironmentStore, useConfigStore, useClaudeOptionsStore } from "@/stores";
+import {
+  getAllLeaves,
+  useUIStore,
+  useEnvironmentStore,
+  useConfigStore,
+  useClaudeOptionsStore,
+  usePaneLayoutStore,
+} from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+import { useClaudeStore } from "@/stores/claudeStore";
+import { useCodexStore } from "@/stores/codexStore";
+import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { getBackgroundProcessingEnvironments } from "@/lib/background-pipelines";
-import { cn } from "@/lib/utils";
+import { cn, getEnvironmentIdFromSessionKey } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
 import { checkDocker, checkClaudeCli, checkClaudeConfig, checkCodexCli, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
@@ -58,11 +68,46 @@ function App() {
     ? environments.filter((env) => env.projectId === selectedProjectId)
     : [];
   const setupScriptsRunning = useEnvironmentStore((state) => state.setupScriptsRunning);
+  const pendingNativeLaunches = useClaudeOptionsStore((state) => state.pendingNativeLaunches);
+  const paneLayoutEnvironments = usePaneLayoutStore((state) => state.environments);
+  const pendingInitialPromptEnvironmentIds = useMemo(() => {
+    const environmentIds: string[] = [];
+    for (const [environmentId, paneState] of paneLayoutEnvironments) {
+      const hasPendingInitialPrompt = getAllLeaves(paneState.root)
+        .some((leaf) => leaf.tabs.some((tab) => !!tab.initialPrompt?.trim()));
+      if (hasPendingInitialPrompt) {
+        environmentIds.push(environmentId);
+      }
+    }
+    return environmentIds;
+  }, [paneLayoutEnvironments]);
+
+  // Loading native sessions across Claude/Codex/OpenCode keep their environment
+  // mounted so SSE subscriptions and watchdog polls can advance the turn even
+  // when the user has navigated to a different environment or project.
+  const claudeSessions = useClaudeStore((state) => state.sessions);
+  const codexSessions = useCodexStore((state) => state.sessions);
+  const openCodeSessions = useOpenCodeStore((state) => state.sessions);
+  const loadingNativeSessionEnvironmentIds = useMemo(() => {
+    const environmentIds = new Set<string>();
+    const sessionMaps = [claudeSessions, codexSessions, openCodeSessions];
+    for (const sessionMap of sessionMaps) {
+      for (const [sessionKey, session] of sessionMap) {
+        if (!session.isLoading) continue;
+        const environmentId = getEnvironmentIdFromSessionKey(sessionKey);
+        if (environmentId) {
+          environmentIds.add(environmentId);
+        }
+      }
+    }
+    return Array.from(environmentIds);
+  }, [claudeSessions, codexSessions, openCodeSessions]);
 
   // Environments with active background processing that aren't currently visible
   // in the main content. These must stay mounted so setup completion detection,
-  // terminal listeners, SSE subscriptions, and pipeline advancement effects
-  // continue running in the background even when the user navigates away.
+  // native initial prompts, in-flight native sessions, terminal listeners, SSE
+  // subscriptions, and pipeline advancement effects continue running even when
+  // the user navigates away.
   const pipelines = useBuildPipelineStore((state) => state.pipelines);
   const backgroundProcessingEnvironments = useMemo(
     () => getBackgroundProcessingEnvironments(
@@ -71,8 +116,20 @@ function App() {
       selectedEnvironmentId,
       projectEnvironments,
       setupScriptsRunning,
+      Object.keys(pendingNativeLaunches),
+      pendingInitialPromptEnvironmentIds,
+      loadingNativeSessionEnvironmentIds,
     ),
-    [pipelines, environments, selectedEnvironmentId, projectEnvironments, setupScriptsRunning],
+    [
+      pipelines,
+      environments,
+      selectedEnvironmentId,
+      projectEnvironments,
+      setupScriptsRunning,
+      pendingNativeLaunches,
+      pendingInitialPromptEnvironmentIds,
+      loadingNativeSessionEnvironmentIds,
+    ],
   );
 
   // Debug logging
