@@ -172,6 +172,7 @@ const ORIGINAL_SET_INTERVAL = globalThis.setInterval;
 const ORIGINAL_CLEAR_INTERVAL = globalThis.clearInterval;
 
 let mockedNow = 0;
+let intervalCallbacks: Array<() => void> = [];
 let intervalCallback: (() => void) | null = null;
 let clearIntervalCalls = 0;
 
@@ -547,6 +548,23 @@ describe("CodexChatTab", () => {
         initialPrompt,
         { attachments: undefined },
       );
+    });
+  });
+
+  test("starts the SSE event subscription while the Codex tab is inactive but loading", async () => {
+    seedCodexStore();
+    useCodexStore.getState().setSessionLoading(SESSION_KEY, true);
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockSubscribeToEvents).toHaveBeenCalled();
     });
   });
 
@@ -992,12 +1010,21 @@ describe("CodexChatTab", () => {
 
 function installTimerHarness(startTime: number) {
   mockedNow = startTime;
-  intervalCallback = null;
+  intervalCallbacks = [];
+  // Fires every interval registered with the harness. The component creates
+  // multiple intervals (elapsed timer, watchdog poll); ticking all of them
+  // keeps the elapsed timer test stable as new intervals are added.
+  intervalCallback = () => {
+    for (const callback of [...intervalCallbacks]) {
+      callback();
+    }
+  };
   clearIntervalCalls = 0;
   Date.now = () => mockedNow;
+  let nextHandle = 1;
   globalThis.setInterval = (((callback: TimerHandler) => {
-    intervalCallback = callback as () => void;
-    return 1 as unknown as ReturnType<typeof setInterval>;
+    intervalCallbacks.push(callback as () => void);
+    return nextHandle++ as unknown as ReturnType<typeof setInterval>;
   }) as unknown) as typeof setInterval;
   globalThis.clearInterval = (() => {
     clearIntervalCalls += 1;
@@ -1008,6 +1035,7 @@ function restoreTimerHarness() {
   Date.now = ORIGINAL_DATE_NOW;
   globalThis.setInterval = ORIGINAL_SET_INTERVAL;
   globalThis.clearInterval = ORIGINAL_CLEAR_INTERVAL;
+  intervalCallbacks = [];
   intervalCallback = null;
   clearIntervalCalls = 0;
 }

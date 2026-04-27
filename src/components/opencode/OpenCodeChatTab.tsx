@@ -368,9 +368,12 @@ export function OpenCodeChatTab({
     ],
   );
 
-  // Initialize connection on mount
+  // Initialize connection on mount.
+  // Active tabs always initialize; inactive tabs initialize too when an
+  // initialPrompt is pending so background mounts can dispatch the prompt
+  // before becoming visible.
   useEffect(() => {
-    if (!isActive) {
+    if (!isActive && !initialPrompt?.trim()) {
       return;
     }
 
@@ -708,6 +711,7 @@ export function OpenCodeChatTab({
     environmentId,
     tabId,
     isActive,
+    initialPrompt,
     isLocal,
     syncPendingRequests,
     getSelectedModel,

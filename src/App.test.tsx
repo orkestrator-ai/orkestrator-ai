@@ -1,9 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
+import { useClaudeStore } from "@/stores/claudeStore";
+import { useCodexStore, createCodexSessionKey } from "@/stores/codexStore";
+import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
+import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useUIStore } from "@/stores/uiStore";
 import type { AppConfig, Environment } from "@/types";
 
@@ -241,6 +245,24 @@ function resetStores({
 
   useClaudeOptionsStore.setState({
     options: {},
+    pendingNativeLaunches: {},
+  });
+
+  usePaneLayoutStore.setState({
+    environments: new Map(),
+    activeEnvironmentId: null,
+  });
+
+  useClaudeStore.setState({
+    sessions: new Map(),
+  });
+
+  useCodexStore.setState({
+    sessions: new Map(),
+  });
+
+  useOpenCodeStore.setState({
+    sessions: new Map(),
   });
 }
 
@@ -313,6 +335,132 @@ describe("App background processing mounts", () => {
 
     await waitFor(() => {
       expect(screen.getAllByTestId("terminal-env-visible")).toHaveLength(1);
+    });
+  });
+
+  test("keeps off-screen environments with a pending native launch mounted", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-pending-launch", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    useClaudeOptionsStore.getState().setPendingNativeLaunch("env-pending-launch", {
+      containerId: "container-env-pending-launch",
+      environmentId: "env-pending-launch",
+      initialPrompt: "Stand up the Codex session",
+      targetPaneId: "default",
+      agentType: "codex",
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-pending-launch")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-pending-launch").getAttribute("data-active")).toBe("false");
+  });
+
+  test("keeps off-screen environments with a pending tab initialPrompt mounted", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-pending-prompt", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    usePaneLayoutStore.setState({
+      environments: new Map([
+        [
+          "env-pending-prompt",
+          {
+            root: {
+              kind: "leaf" as const,
+              id: "default",
+              tabs: [
+                {
+                  id: "tab-1",
+                  type: "codex-native" as any,
+                  codexNativeData: {
+                    environmentId: "env-pending-prompt",
+                    containerId: "container-env-pending-prompt",
+                    isLocal: false,
+                  },
+                  initialPrompt: "Run the off-screen audit",
+                } as any,
+              ],
+              activeTabId: "tab-1",
+            },
+            activePaneId: "default",
+            containerId: "container-env-pending-prompt",
+          },
+        ],
+      ]),
+      activeEnvironmentId: null,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-pending-prompt")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-pending-prompt").getAttribute("data-active")).toBe("false");
+  });
+
+  test("keeps off-screen environments with a loading native session mounted until idle", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-loading-codex", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    const sessionKey = createCodexSessionKey("env-loading-codex", "tab-1");
+    useCodexStore.setState({
+      sessions: new Map([
+        [
+          sessionKey,
+          {
+            sessionId: "sess-loading",
+            messages: [],
+            isLoading: true,
+          } as any,
+        ],
+      ]),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-loading-codex")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-loading-codex").getAttribute("data-active")).toBe("false");
+
+    // Once the session reports idle, the env should no longer be mounted as background.
+    act(() => {
+      useCodexStore.setState({
+        sessions: new Map([
+          [
+            sessionKey,
+            {
+              sessionId: "sess-loading",
+              messages: [],
+              isLoading: false,
+            } as any,
+          ],
+        ]),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-env-loading-codex")).toBeNull();
     });
   });
 });

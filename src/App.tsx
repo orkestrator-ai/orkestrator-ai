@@ -16,8 +16,11 @@ import {
   usePaneLayoutStore,
 } from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+import { useClaudeStore } from "@/stores/claudeStore";
+import { useCodexStore } from "@/stores/codexStore";
+import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { getBackgroundProcessingEnvironments } from "@/lib/background-pipelines";
-import { cn } from "@/lib/utils";
+import { cn, getEnvironmentIdFromSessionKey } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorDetailsDialog } from "@/components/errors";
 import { checkDocker, checkClaudeCli, checkClaudeConfig, checkCodexCli, checkOpencodeCli, checkGithubCli, getAvailableAiCli, getConfig, syncAllEnvironmentsWithDocker } from "@/lib/tauri";
@@ -79,10 +82,32 @@ function App() {
     return environmentIds;
   }, [paneLayoutEnvironments]);
 
+  // Loading native sessions across Claude/Codex/OpenCode keep their environment
+  // mounted so SSE subscriptions and watchdog polls can advance the turn even
+  // when the user has navigated to a different environment or project.
+  const claudeSessions = useClaudeStore((state) => state.sessions);
+  const codexSessions = useCodexStore((state) => state.sessions);
+  const openCodeSessions = useOpenCodeStore((state) => state.sessions);
+  const loadingNativeSessionEnvironmentIds = useMemo(() => {
+    const environmentIds = new Set<string>();
+    const sessionMaps = [claudeSessions, codexSessions, openCodeSessions];
+    for (const sessionMap of sessionMaps) {
+      for (const [sessionKey, session] of sessionMap) {
+        if (!session.isLoading) continue;
+        const environmentId = getEnvironmentIdFromSessionKey(sessionKey);
+        if (environmentId) {
+          environmentIds.add(environmentId);
+        }
+      }
+    }
+    return Array.from(environmentIds);
+  }, [claudeSessions, codexSessions, openCodeSessions]);
+
   // Environments with active background processing that aren't currently visible
   // in the main content. These must stay mounted so setup completion detection,
-  // native initial prompts, terminal listeners, SSE subscriptions, and pipeline
-  // advancement effects continue running even when the user navigates away.
+  // native initial prompts, in-flight native sessions, terminal listeners, SSE
+  // subscriptions, and pipeline advancement effects continue running even when
+  // the user navigates away.
   const pipelines = useBuildPipelineStore((state) => state.pipelines);
   const backgroundProcessingEnvironments = useMemo(
     () => getBackgroundProcessingEnvironments(
@@ -93,6 +118,7 @@ function App() {
       setupScriptsRunning,
       Object.keys(pendingNativeLaunches),
       pendingInitialPromptEnvironmentIds,
+      loadingNativeSessionEnvironmentIds,
     ),
     [
       pipelines,
@@ -102,6 +128,7 @@ function App() {
       setupScriptsRunning,
       pendingNativeLaunches,
       pendingInitialPromptEnvironmentIds,
+      loadingNativeSessionEnvironmentIds,
     ],
   );
 

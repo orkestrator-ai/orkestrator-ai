@@ -962,8 +962,7 @@ export function CodexChatTab({
 
   useEffect(() => {
     if (
-      !isActive
-      || connectionState !== "connected"
+      connectionState !== "connected"
       || !client
       || !session?.sessionId
       || hasPendingInitialPrompt(initialPrompt, initialPromptSent)
@@ -977,15 +976,17 @@ export function CodexChatTab({
     connectionState,
     initialPrompt,
     initialPromptSent,
-    isActive,
     reconcileSessionState,
     session?.sessionId,
   ]);
 
+  // SSE event subscription. Runs whenever a turn is in progress, including
+  // when the tab is rendered as a hidden background mount (e.g. an off-screen
+  // initial-prompt dispatch), so the response is processed before the
+  // environment unmounts.
   useEffect(() => {
     if (
-      !isActive
-      || !session?.isLoading
+      !session?.isLoading
       || connectionState !== "connected"
       || !client
       || !session?.sessionId
@@ -1077,7 +1078,6 @@ export function CodexChatTab({
   }, [
     client,
     connectionState,
-    isActive,
     refreshMessages,
     reconcileSessionState,
     session?.isLoading,
@@ -1088,10 +1088,11 @@ export function CodexChatTab({
     setSessionTitle,
   ]);
 
+  // Watchdog poll for stalled turns. Mirrors the SSE gate above so it also
+  // runs for hidden background mounts during a turn.
   useEffect(() => {
     if (
-      !isActive
-      || !session?.isLoading
+      !session?.isLoading
       || connectionState !== "connected"
       || !client
       || !session?.sessionId
@@ -1129,7 +1130,6 @@ export function CodexChatTab({
   }, [
     client,
     connectionState,
-    isActive,
     reconcileSessionState,
     session?.isLoading,
     session?.sessionId,

@@ -257,6 +257,62 @@ describe("getBackgroundProcessingEnvironments", () => {
     expect(result).toEqual([env]);
   });
 
+  test("returns environments with loading native sessions even without other signals", () => {
+    const env = makeEnv("e1");
+
+    const result = getBackgroundProcessingEnvironments(
+      new Map(),
+      [env],
+      null,
+      [],
+      new Set(),
+      [],
+      [],
+      ["e1"],
+    );
+
+    expect(result).toEqual([env]);
+  });
+
+  test("excludes loading native sessions for the currently visible environment", () => {
+    const env = makeEnv("e1");
+
+    const result = getBackgroundProcessingEnvironments(
+      new Map(),
+      [env],
+      "e1",
+      [env],
+      new Set(),
+      [],
+      [],
+      ["e1"],
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  test("merges loading native sessions with other background sources without duplicates", () => {
+    const env1 = makeEnv("e1");
+    const env2 = makeEnv("e2");
+    const pipelines = new Map([
+      ["p1", makePipeline("p1", "e1", "building")],
+    ]);
+
+    const result = getBackgroundProcessingEnvironments(
+      pipelines,
+      [env1, env2],
+      null,
+      [],
+      new Set(),
+      [],
+      [],
+      ["e1", "e2"],
+    );
+
+    const ids = result.map((env) => env.id).sort();
+    expect(ids).toEqual(["e1", "e2"]);
+  });
+
   test("excludes setup-running environments already visible in the main content", () => {
     const env = makeEnv("e1");
 
