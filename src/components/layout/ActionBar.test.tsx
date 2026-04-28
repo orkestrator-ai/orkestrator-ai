@@ -131,7 +131,9 @@ mock.module("@/components/ui/context-menu", () => ({
 
 mock.module("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: () => null,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="tooltip-content">{children}</div>
+  ),
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
@@ -321,7 +323,7 @@ describe("ActionBar copy URL", () => {
     });
   });
 
-  test("copies the selected environment port address with Cmd+Shift+C", () => {
+  test("shows the mapped address and Ctrl+Shift+C shortcut in the tooltip", () => {
     currentEnvironment = {
       ...selectedEnvironment,
       entryPort: 3000,
@@ -330,9 +332,80 @@ describe("ActionBar copy URL", () => {
 
     render(<ActionBar />);
 
-    fireEvent.keyDown(window, { key: "C", code: "KeyC", metaKey: true, shiftKey: true });
+    expect(screen.getByText("localhost:49152")).toBeTruthy();
+    expect(screen.getByText("Ctrl⇧C")).toBeTruthy();
+  });
+
+  test("copies the selected environment port address with Ctrl+Shift+C", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: 49152,
+    };
+
+    render(<ActionBar />);
+
+    fireEvent.keyDown(window, { key: "C", code: "KeyC", ctrlKey: true, shiftKey: true });
 
     expect(writeTextMock).toHaveBeenCalledWith("localhost:49152");
+  });
+
+  test("ignores Ctrl+Shift+C from editable fields and terminal content", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: 49152,
+    };
+
+    const { container } = render(
+      <>
+        <input aria-label="Message" />
+        <div className="xterm" tabIndex={0} />
+        <ActionBar />
+      </>,
+    );
+
+    fireEvent.keyDown(screen.getByLabelText("Message"), {
+      key: "C",
+      code: "KeyC",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    fireEvent.keyDown(container.querySelector(".xterm")!, {
+      key: "C",
+      code: "KeyC",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    expect(writeTextMock).not.toHaveBeenCalled();
+  });
+
+  test("does not copy the port address with extra modifiers", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: 49152,
+    };
+
+    render(<ActionBar />);
+
+    fireEvent.keyDown(window, {
+      key: "C",
+      code: "KeyC",
+      ctrlKey: true,
+      metaKey: true,
+      shiftKey: true,
+    });
+    fireEvent.keyDown(window, {
+      key: "C",
+      code: "KeyC",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+    });
+
+    expect(writeTextMock).not.toHaveBeenCalled();
   });
 
   test("shows an error toast when copying the port address fails", async () => {
@@ -356,7 +429,7 @@ describe("ActionBar copy URL", () => {
     expect(toastSuccessMock).not.toHaveBeenCalled();
   });
 
-  test("disables the toolbar button and ignores Cmd+Shift+C when no port address is visible", () => {
+  test("disables the toolbar button and ignores Ctrl+Shift+C when no port address is visible", () => {
     currentEnvironment = {
       ...selectedEnvironment,
       entryPort: 3000,
@@ -365,9 +438,11 @@ describe("ActionBar copy URL", () => {
 
     render(<ActionBar />);
 
-    expect((screen.getByRole("button", { name: "Copy URL" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "No mapped URL" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("No mapped URL")).toBeTruthy();
+    expect(screen.queryByText("Ctrl⇧C")).toBeNull();
 
-    fireEvent.keyDown(window, { key: "C", code: "KeyC", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "C", code: "KeyC", ctrlKey: true, shiftKey: true });
 
     expect(writeTextMock).not.toHaveBeenCalled();
   });

@@ -42,6 +42,18 @@ import * as tauri from "@/lib/tauri";
 import { useKanbanStore, findTaskForEnvironment } from "@/stores/kanbanStore";
 import { getEnvironmentPortAddress } from "@/lib/environment-address";
 
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  return !!target.closest("input, textarea, select, [contenteditable='true'], .xterm");
+}
+
 export function ActionBar() {
   const { selectedEnvironmentId, selectedProjectId } = useUIStore();
   const { getEnvironmentById, updateEnvironment, isWorkspaceReady, isSetupScriptsRunning, setEnvironmentPR } = useEnvironmentStore(
@@ -332,8 +344,17 @@ export function ActionBar() {
         }
       }
 
-      if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "c") {
+      if (
+        e.ctrlKey &&
+        e.shiftKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "c"
+      ) {
         if (canCopyEnvironmentUrl) {
+          if (isEditableShortcutTarget(e.target)) {
+            return;
+          }
           e.preventDefault();
           handleCopyEnvironmentUrl();
         }
@@ -845,7 +866,7 @@ export function ActionBar() {
                     className="h-8 w-8"
                     onClick={handleCopyEnvironmentUrl}
                     disabled={!canCopyEnvironmentUrl}
-                    aria-label="Copy URL"
+                    aria-label={environmentPortAddress ? "Copy URL" : "No mapped URL"}
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
@@ -855,7 +876,7 @@ export function ActionBar() {
                   {environmentPortAddress && (
                     <p className="text-xs text-muted-foreground">{environmentPortAddress}</p>
                   )}
-                  <p className="text-xs text-muted-foreground">⌘⇧C</p>
+                  {environmentPortAddress && <p className="text-xs text-muted-foreground">Ctrl⇧C</p>}
                 </TooltipContent>
               </Tooltip>
 

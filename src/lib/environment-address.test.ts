@@ -45,6 +45,12 @@ describe("getEnvironmentPortAddress", () => {
     expect(getEnvironmentPortAddress(environment)).toBeNull();
   });
 
+  test("formats host port 0 when it is explicitly mapped", () => {
+    const environment = makeEnvironment({ entryPort: 3000, hostEntryPort: 0 });
+
+    expect(getEnvironmentPortAddress(environment)).toBe("localhost:0");
+  });
+
   test("returns null for local environments", () => {
     const environment = makeEnvironment({
       environmentType: "local",
