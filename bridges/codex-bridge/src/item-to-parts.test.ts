@@ -1,9 +1,31 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { itemToParts, stringifyUnknown } from "./index.js";
-import type { NormalizedPart } from "./index.js";
+import type { FileChangeDiffContext } from "./index.js";
 import type { ThreadItem } from "@openai/codex-sdk";
 
 const DUMMY_CWD = "/tmp/test-workspace";
+
+async function withGitWorkspace<T>(callback: (dir: string) => Promise<T> | T): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "codex-bridge-item-to-parts-"));
+  try {
+    execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["config", "user.name", "Test User"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    return await callback(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe("itemToParts", () => {
   test("converts agent_message to text part", async () => {
@@ -165,6 +187,49 @@ describe("itemToParts", () => {
     expect(parts[0]!.toolArgs).toEqual({ todos: [] });
     expect(parts[0]!.content).toBe("");
     expect(parts[0]!.toolOutput).toBe("");
+  });
+
+  test("keeps apply_patch diffs scoped to each file_change invocation", async () => {
+    await withGitWorkspace(async (dir) => {
+      const filePath = join(dir, "example.txt");
+      writeFileSync(filePath, "one\n", "utf8");
+      execFileSync("git", ["add", "example.txt"], { cwd: dir, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "initial"], {
+        cwd: dir,
+        stdio: "ignore",
+      });
+
+      const context: FileChangeDiffContext = {
+        baselines: new Map(),
+        cache: new Map(),
+      };
+      const firstItem: ThreadItem = {
+        id: "patch-1",
+        type: "file_change",
+        changes: [{ path: "example.txt", kind: "update" }],
+        status: "completed",
+      };
+      const secondItem: ThreadItem = {
+        id: "patch-2",
+        type: "file_change",
+        changes: [{ path: "example.txt", kind: "update" }],
+        status: "completed",
+      };
+
+      writeFileSync(filePath, "one\ntwo\n", "utf8");
+      const firstParts = await itemToParts(firstItem, dir, context);
+      writeFileSync(filePath, "one\ntwo\nthree\n", "utf8");
+      const secondParts = await itemToParts(secondItem, dir, context);
+      const firstPartsAfterSecondPatch = await itemToParts(firstItem, dir, context);
+
+      expect(firstParts[0]?.toolDiff?.additions).toBe(1);
+      expect(firstParts[0]?.toolDiff?.deletions).toBe(0);
+      expect(firstParts[0]?.toolDiff?.diff).toContain("+two");
+      expect(secondParts[0]?.toolDiff?.additions).toBe(1);
+      expect(secondParts[0]?.toolDiff?.deletions).toBe(0);
+      expect(secondParts[0]?.toolDiff?.diff).toContain("+three");
+      expect(firstPartsAfterSecondPatch[0]?.toolDiff).toEqual(firstParts[0]?.toolDiff);
+    });
   });
 
   test("converts error to tool-result with failure state", async () => {
