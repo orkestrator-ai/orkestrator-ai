@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Brain, FileText, ChevronRight, Wrench, AlertCircle, Pencil, ExternalLink as ExternalLinkIcon, Layers, Image as ImageIcon, X, Plug, FileCode } from "lucide-react";
 import { type Components } from "react-markdown";
 import { cn } from "@/lib/utils";
-import { openInBrowser, readFileBase64 } from "@/lib/tauri";
+import { openInBrowser, readContainerFileBase64, readFileBase64 } from "@/lib/tauri";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useOptionalTerminalContext, useTerminalContext } from "@/contexts/TerminalContext";
@@ -187,6 +187,8 @@ interface ClaudeMessageProps {
   previousMessage?: ClaudeMessageType | null;
   /** Whether the session is still actively streaming (turn in progress) */
   isStreaming?: boolean;
+  /** Container ID for Docker-backed sessions, used to preview attachments stored under /workspace. */
+  containerId?: string;
 }
 
 /** Render a thinking/reasoning part - collapsible after response completes */
@@ -1025,18 +1027,46 @@ function getMimeType(path: string): string {
   return mimeTypes[ext || ''] || 'image/png';
 }
 
+function hasUnsafePathSegments(path: string): boolean {
+  return path
+    .split(/[\\/]+/)
+    .some((segment) => segment === "..");
+}
+
+function isPreviewableAttachmentPath(path: string, isContainerPath: boolean): boolean {
+  if (!path || path.includes("\0") || path.includes("\n") || path.includes("\r")) {
+    return false;
+  }
+  if (hasUnsafePathSegments(path)) {
+    return false;
+  }
+
+  if (isContainerPath) {
+    return !path.startsWith("/") || path === "/workspace" || path.startsWith("/workspace/");
+  }
+
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
 /** Clickable attachment thumbnail for user messages */
-function AttachmentPart({ attachment }: { attachment: ParsedAttachment }) {
+function AttachmentPart({
+  attachment,
+  containerId,
+}: {
+  attachment: ParsedAttachment;
+  containerId?: string;
+}) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   const isImage = attachment.type === "image";
+  const canPreview = isImage && isPreviewableAttachmentPath(attachment.path, Boolean(containerId));
   const displayName = attachment.filename || attachment.path.split("/").pop() || "file";
 
   const handleClick = useCallback(async () => {
-    if (!isImage) return;
+    if (!canPreview) return;
 
     // If already loaded, just open preview
     if (imageSrc) {
@@ -1048,8 +1078,9 @@ function AttachmentPart({ attachment }: { attachment: ParsedAttachment }) {
     setLoading(true);
     setLoadError(false);
     try {
-      // Use our custom Tauri command that bypasses fs plugin permission issues
-      const base64 = await readFileBase64(attachment.path);
+      const base64 = containerId
+        ? await readContainerFileBase64(containerId, attachment.path)
+        : await readFileBase64(attachment.path);
       const mimeType = getMimeType(attachment.path);
       const dataUrl = `data:${mimeType};base64,${base64}`;
       setImageSrc(dataUrl);
@@ -1060,16 +1091,16 @@ function AttachmentPart({ attachment }: { attachment: ParsedAttachment }) {
     } finally {
       setLoading(false);
     }
-  }, [isImage, imageSrc, attachment.path]);
+  }, [canPreview, imageSrc, attachment.path, containerId]);
 
   return (
     <>
       <button
         onClick={handleClick}
-        disabled={!isImage || loading}
+        disabled={!canPreview || loading}
         className={cn(
           "inline-flex items-center gap-1.5 text-xs py-1.5 px-2.5 rounded-md border transition-colors",
-          isImage
+          canPreview
             ? "bg-muted/50 border-border hover:bg-muted hover:border-border/80 cursor-pointer"
             : "bg-muted/30 border-border/50 cursor-default",
           loading && "opacity-50"
@@ -1099,13 +1130,19 @@ function AttachmentPart({ attachment }: { attachment: ParsedAttachment }) {
 }
 
 /** Render attachments row for user messages */
-function AttachmentsList({ attachments }: { attachments: ParsedAttachment[] }) {
+function AttachmentsList({
+  attachments,
+  containerId,
+}: {
+  attachments: ParsedAttachment[];
+  containerId?: string;
+}) {
   if (attachments.length === 0) return null;
 
   return (
     <div className="flex flex-wrap gap-2 mt-2">
       {attachments.map((att, i) => (
-        <AttachmentPart key={`attachment-${i}`} attachment={att} />
+        <AttachmentPart key={`attachment-${i}`} attachment={att} containerId={containerId} />
       ))}
     </div>
   );
@@ -1127,6 +1164,7 @@ export const ClaudeMessage = memo(function ClaudeMessage({
   message,
   previousMessage = null,
   isStreaming = false,
+  containerId,
 }: ClaudeMessageProps) {
   const terminalContext = useOptionalTerminalContext();
   const isUser = message.role === "user";
@@ -1289,7 +1327,7 @@ export const ClaudeMessage = memo(function ClaudeMessage({
       )}
 
       {isUser && attachments.length > 0 && (
-        <AttachmentsList attachments={attachments} />
+        <AttachmentsList attachments={attachments} containerId={containerId} />
       )}
     </MessageShell>
   );

@@ -1300,6 +1300,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
             message={message}
             previousMessage={prev}
             isStreaming={session?.isLoading}
+            containerId={containerId}
           />
         )}
         emptyState={

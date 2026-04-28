@@ -899,17 +899,14 @@ pub async fn read_container_file_base64(
         ));
     }
 
-    // Read file and encode as base64 directly in the container
-    // Use sh -c with pipe to tr for portability (works on both GNU coreutils and busybox)
+    // Read file and encode as base64 directly in the container.
+    // Pass the path as an argv entry so filenames cannot affect shell parsing.
     let base64_content = client
-        .exec_command(
-            &container_id,
-            vec!["sh", "-c", &format!("base64 '{}' | tr -d '\\n'", full_path)],
-        )
+        .exec_command(&container_id, vec!["base64", &full_path])
         .await
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    Ok(base64_content.trim().to_string())
+    Ok(base64_content.split_whitespace().collect::<String>())
 }
 
 // ============================================================================
