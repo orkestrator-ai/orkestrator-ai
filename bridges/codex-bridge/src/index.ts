@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import { serve } from "@hono/node-server";
@@ -83,6 +83,8 @@ interface SessionState {
   currentItemOrder: string[];
   currentTurnId?: string;
   currentTurnStartedAt?: string;
+  fileChangeBaselines: Map<string, string | undefined>;
+  fileChangeDiffCache: Map<string, ToolDiffMetadata>;
   pendingAttachments: PromptAttachmentInput[];
   lastAccessed: number;
 }
@@ -150,6 +152,11 @@ export interface ToolDiffMetadata {
   before?: string;
   after?: string;
   diff?: string;
+}
+
+export interface FileChangeDiffContext {
+  baselines: Map<string, string | undefined>;
+  cache: Map<string, ToolDiffMetadata>;
 }
 
 interface PromptAttachmentInput {
@@ -367,6 +374,8 @@ function restoreExpiredSession(sessionId: string): SessionState | undefined {
     currentItems: new Map(),
     currentItemOrder: [],
     currentTurnStartedAt: undefined,
+    fileChangeBaselines: new Map(),
+    fileChangeDiffCache: new Map(),
     pendingAttachments: [],
     lastAccessed: Date.now(),
   };
@@ -378,6 +387,15 @@ function restoreExpiredSession(sessionId: string): SessionState | undefined {
 
 function getSession(sessionId: string): SessionState | undefined {
   return sessions.get(sessionId) ?? restoreExpiredSession(sessionId);
+}
+
+function ensureFileChangeDiffContext(session: SessionState): FileChangeDiffContext {
+  session.fileChangeBaselines ??= new Map();
+  session.fileChangeDiffCache ??= new Map();
+  return {
+    baselines: session.fileChangeBaselines,
+    cache: session.fileChangeDiffCache,
+  };
 }
 
 function cleanupIdleSessions(): void {
@@ -1365,6 +1383,18 @@ async function readTextFileIfPresent(path: string): Promise<string | undefined> 
   }
 }
 
+async function readGitHeadTextFile(cwd: string, relativePath: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFile("git", ["show", `HEAD:${relativePath}`], {
+      cwd,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return undefined;
+  }
+}
+
 async function runGitCommand(cwd: string, args: string[]): Promise<string | undefined> {
   try {
     const { stdout } = await execFile("git", args, {
@@ -1375,6 +1405,58 @@ async function runGitCommand(cwd: string, args: string[]): Promise<string | unde
     return output.length > 0 ? output : undefined;
   } catch {
     return undefined;
+  }
+}
+
+async function runGitDiffNoIndex(
+  cwd: string,
+  relativePath: string,
+  before: string | undefined,
+  after: string | undefined,
+): Promise<string | undefined> {
+  if ((before ?? "") === (after ?? "")) {
+    return undefined;
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), "orkestrator-codex-diff-"));
+  const beforePath = join(tempDir, "before");
+  const afterPath = join(tempDir, "after");
+  const normalizeOutput = (output: string) =>
+    output
+      .split(`a${beforePath}`).join(`a/${relativePath}`)
+      .split(`b${afterPath}`).join(`b/${relativePath}`)
+      .split(beforePath).join(`a/${relativePath}`)
+      .split(afterPath).join(`b/${relativePath}`);
+
+  try {
+    await writeFile(beforePath, before ?? "", "utf8");
+    await writeFile(afterPath, after ?? "", "utf8");
+
+    const args = [
+      "diff",
+      "--no-index",
+      "--no-ext-diff",
+      "--no-color",
+      "--unified=3",
+      beforePath,
+      afterPath,
+    ];
+
+    try {
+      const { stdout } = await execFile("git", args, {
+        cwd,
+        maxBuffer: 2 * 1024 * 1024,
+      });
+      const output = stdout.trimEnd();
+      return output.length > 0 ? normalizeOutput(output) : undefined;
+    } catch (error) {
+      const stdout = typeof (error as { stdout?: unknown }).stdout === "string"
+        ? (error as { stdout: string }).stdout.trimEnd()
+        : "";
+      return stdout.length > 0 ? normalizeOutput(stdout) : undefined;
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -1396,59 +1478,51 @@ function countDiffLines(diff: string): { additions: number; deletions: number } 
 async function getFileChangeDiffMetadata(
   cwd: string,
   change: Extract<ThreadItem, { type: "file_change" }>["changes"][number],
+  context?: FileChangeDiffContext,
+  cacheKey?: string,
 ): Promise<ToolDiffMetadata> {
   const resolvedPath = isAbsolute(change.path) ? change.path : join(cwd, change.path);
   const relativePath = isAbsolute(change.path) ? relative(cwd, change.path) : change.path;
-  const gitDiff = await runGitCommand(cwd, [
-    "diff",
-    "--no-ext-diff",
-    "--no-color",
-    "--unified=3",
-    "--",
-    relativePath,
-  ]);
-
-  if (gitDiff) {
-    const { additions, deletions } = countDiffLines(gitDiff);
-    return {
-      filePath: resolvedPath,
-      diff: gitDiff,
-      additions,
-      deletions,
-    };
+  const cached = cacheKey ? context?.cache.get(cacheKey) : undefined;
+  if (cached) {
+    return cached;
   }
 
-  if (change.kind === "add") {
-    const after = await readTextFileIfPresent(resolvedPath);
-    return {
-      filePath: resolvedPath,
-      after,
-      additions: after ? after.split("\n").length : undefined,
-      deletions: 0,
-    };
-  }
+  const hasBaseline = context?.baselines.has(relativePath) ?? false;
+  const before = hasBaseline
+    ? context?.baselines.get(relativePath)
+    : change.kind === "add"
+      ? undefined
+      : await readGitHeadTextFile(cwd, relativePath);
+  const after = change.kind === "delete"
+    ? undefined
+    : await readTextFileIfPresent(resolvedPath);
+  const diff = await runGitDiffNoIndex(cwd, relativePath, before, after);
+  const { additions, deletions } = diff
+    ? countDiffLines(diff)
+    : { additions: 0, deletions: 0 };
 
-  if (change.kind === "delete") {
-    const before = await runGitCommand(cwd, ["show", `HEAD:${relativePath}`]);
-    return {
-      filePath: resolvedPath,
-      before,
-      additions: 0,
-      deletions: before ? before.split("\n").length : undefined,
-    };
-  }
-
-  const after = await readTextFileIfPresent(resolvedPath);
-  return {
+  const metadata: ToolDiffMetadata = {
     filePath: resolvedPath,
+    before,
     after,
-    additions: after ? after.split("\n").length : undefined,
+    diff,
+    additions,
+    deletions,
   };
+
+  context?.baselines.set(relativePath, after);
+  if (cacheKey) {
+    context?.cache.set(cacheKey, metadata);
+  }
+
+  return metadata;
 }
 
 export async function itemToParts(
   item: ThreadItem,
   cwd: string,
+  fileChangeContext?: FileChangeDiffContext,
 ): Promise<NormalizedPart[]> {
   switch (item.type) {
     case "agent_message":
@@ -1473,14 +1547,19 @@ export async function itemToParts(
       }];
     case "file_change":
       return Promise.all(
-        item.changes.map(async (change) => ({
+        item.changes.map(async (change, index) => ({
           type: "tool-invocation" as const,
           content: change.path,
           toolName: "apply_patch",
           toolState: item.status === "failed" ? "failure" : "success",
           toolTitle: `${change.kind}: ${change.path}`,
           toolOutput: `${change.kind}: ${change.path}`,
-          toolDiff: await getFileChangeDiffMetadata(cwd, change),
+          toolDiff: await getFileChangeDiffMetadata(
+            cwd,
+            change,
+            fileChangeContext,
+            `${item.id}:${index}:${change.kind}:${change.path}`,
+          ),
         })),
       );
     case "mcp_tool_call":
@@ -1565,9 +1644,11 @@ async function rebuildAssistantMessage(session: SessionState): Promise<void> {
     .map((id) => session.currentItems.get(id))
     .filter((item): item is ThreadItem => item !== undefined);
 
-  const parts = (await Promise.all(
-    items.map((item) => itemToParts(item, cwd)),
-  )).flat();
+  const fileChangeContext = ensureFileChangeDiffContext(session);
+  const parts: NormalizedPart[] = [];
+  for (const item of items) {
+    parts.push(...await itemToParts(item, cwd, fileChangeContext));
+  }
   const subagentParts = await buildTranscriptSubagentParts(session);
 
   const finalResponse = items
@@ -1860,6 +1941,7 @@ async function runPrompt(
   session.error = undefined;
   session.currentItems.clear();
   session.currentItemOrder = [];
+  ensureFileChangeDiffContext(session).cache.clear();
   session.currentTurnId = turnId;
   session.currentTurnStartedAt = new Date().toISOString();
   session.abortController = abortController;
@@ -2053,6 +2135,8 @@ app.post("/session/create", async (c) => {
     currentItems: new Map(),
     currentItemOrder: [],
     currentTurnStartedAt: undefined,
+    fileChangeBaselines: new Map(),
+    fileChangeDiffCache: new Map(),
     pendingAttachments: [],
     lastAccessed: Date.now(),
   });
@@ -2091,6 +2175,8 @@ app.post("/session/resume", async (c) => {
     currentItems: new Map(),
     currentItemOrder: [],
     currentTurnStartedAt: undefined,
+    fileChangeBaselines: new Map(),
+    fileChangeDiffCache: new Map(),
     pendingAttachments: [],
     lastAccessed: Date.now(),
   });

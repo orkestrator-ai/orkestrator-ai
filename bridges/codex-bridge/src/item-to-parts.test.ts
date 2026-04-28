@@ -1,9 +1,31 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { itemToParts, stringifyUnknown } from "./index.js";
-import type { NormalizedPart } from "./index.js";
+import type { FileChangeDiffContext } from "./index.js";
 import type { ThreadItem } from "@openai/codex-sdk";
 
 const DUMMY_CWD = "/tmp/test-workspace";
+
+async function withGitWorkspace<T>(callback: (dir: string) => Promise<T> | T): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "codex-bridge-item-to-parts-"));
+  try {
+    execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["config", "user.name", "Test User"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    return await callback(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe("itemToParts", () => {
   test("converts agent_message to text part", async () => {
@@ -165,6 +187,172 @@ describe("itemToParts", () => {
     expect(parts[0]!.toolArgs).toEqual({ todos: [] });
     expect(parts[0]!.content).toBe("");
     expect(parts[0]!.toolOutput).toBe("");
+  });
+
+  test("keeps apply_patch diffs scoped to each file_change invocation", async () => {
+    await withGitWorkspace(async (dir) => {
+      const filePath = join(dir, "example.txt");
+      writeFileSync(filePath, "one\n", "utf8");
+      execFileSync("git", ["add", "example.txt"], { cwd: dir, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "initial"], {
+        cwd: dir,
+        stdio: "ignore",
+      });
+
+      const context: FileChangeDiffContext = {
+        baselines: new Map(),
+        cache: new Map(),
+      };
+      const firstItem: ThreadItem = {
+        id: "patch-1",
+        type: "file_change",
+        changes: [{ path: "example.txt", kind: "update" }],
+        status: "completed",
+      };
+      const secondItem: ThreadItem = {
+        id: "patch-2",
+        type: "file_change",
+        changes: [{ path: "example.txt", kind: "update" }],
+        status: "completed",
+      };
+
+      writeFileSync(filePath, "one\ntwo\n", "utf8");
+      const firstParts = await itemToParts(firstItem, dir, context);
+      writeFileSync(filePath, "one\ntwo\nthree\n", "utf8");
+      const secondParts = await itemToParts(secondItem, dir, context);
+      const firstPartsAfterSecondPatch = await itemToParts(firstItem, dir, context);
+
+      expect(firstParts[0]?.toolDiff?.additions).toBe(1);
+      expect(firstParts[0]?.toolDiff?.deletions).toBe(0);
+      expect(firstParts[0]?.toolDiff?.diff).toContain("+two");
+      expect(secondParts[0]?.toolDiff?.additions).toBe(1);
+      expect(secondParts[0]?.toolDiff?.deletions).toBe(0);
+      expect(secondParts[0]?.toolDiff?.diff).toContain("+three");
+      expect(firstPartsAfterSecondPatch[0]?.toolDiff).toEqual(firstParts[0]?.toolDiff);
+    });
+  });
+
+  test("captures add, update, and delete diffs for the same path over time", async () => {
+    await withGitWorkspace(async (dir) => {
+      const filePath = join(dir, "lifecycle.txt");
+      const context: FileChangeDiffContext = {
+        baselines: new Map(),
+        cache: new Map(),
+      };
+
+      writeFileSync(filePath, "alpha\nbeta\n", "utf8");
+      const addParts = await itemToParts({
+        id: "patch-add",
+        type: "file_change",
+        changes: [{ path: "lifecycle.txt", kind: "add" }],
+        status: "completed",
+      }, dir, context);
+
+      writeFileSync(filePath, "alpha\nbeta\ngamma\n", "utf8");
+      const updateParts = await itemToParts({
+        id: "patch-update",
+        type: "file_change",
+        changes: [{ path: "lifecycle.txt", kind: "update" }],
+        status: "completed",
+      }, dir, context);
+
+      unlinkSync(filePath);
+      const deleteParts = await itemToParts({
+        id: "patch-delete",
+        type: "file_change",
+        changes: [{ path: "lifecycle.txt", kind: "delete" }],
+        status: "completed",
+      }, dir, context);
+
+      expect(addParts[0]?.toolDiff?.additions).toBe(2);
+      expect(addParts[0]?.toolDiff?.deletions).toBe(0);
+      expect(addParts[0]?.toolDiff?.before).toBeUndefined();
+      expect(addParts[0]?.toolDiff?.after).toBe("alpha\nbeta\n");
+      expect(addParts[0]?.toolDiff?.diff).toContain("+alpha");
+      expect(updateParts[0]?.toolDiff?.additions).toBe(1);
+      expect(updateParts[0]?.toolDiff?.deletions).toBe(0);
+      expect(updateParts[0]?.toolDiff?.diff).toContain("+gamma");
+      expect(deleteParts[0]?.toolDiff?.additions).toBe(0);
+      expect(deleteParts[0]?.toolDiff?.deletions).toBe(3);
+      expect(deleteParts[0]?.toolDiff?.after).toBeUndefined();
+      expect(deleteParts[0]?.toolDiff?.diff).toContain("-gamma");
+    });
+  });
+
+  test("captures multi-file patch diffs and marks failed file changes", async () => {
+    await withGitWorkspace(async (dir) => {
+      writeFileSync(join(dir, "first.txt"), "first\n", "utf8");
+      writeFileSync(join(dir, "second.txt"), "second\n", "utf8");
+
+      const parts = await itemToParts({
+        id: "patch-multi",
+        type: "file_change",
+        changes: [
+          { path: "first.txt", kind: "add" },
+          { path: "second.txt", kind: "add" },
+        ],
+        status: "failed",
+      }, dir, {
+        baselines: new Map(),
+        cache: new Map(),
+      });
+
+      expect(parts).toHaveLength(2);
+      expect(parts[0]?.toolState).toBe("failure");
+      expect(parts[0]?.toolDiff?.diff).toContain("+first");
+      expect(parts[1]?.toolState).toBe("failure");
+      expect(parts[1]?.toolDiff?.diff).toContain("+second");
+    });
+  });
+
+  test("handles missing file changes without throwing", async () => {
+    await withGitWorkspace(async (dir) => {
+      const parts = await itemToParts({
+        id: "patch-missing",
+        type: "file_change",
+        changes: [{ path: "missing.txt", kind: "delete" }],
+        status: "completed",
+      }, dir, {
+        baselines: new Map(),
+        cache: new Map(),
+      });
+
+      expect(parts[0]?.toolDiff).toMatchObject({
+        additions: 0,
+        deletions: 0,
+        before: undefined,
+        after: undefined,
+        diff: undefined,
+      });
+    });
+  });
+
+  test("normalizes absolute paths in apply_patch diff headers", async () => {
+    await withGitWorkspace(async (dir) => {
+      const filePath = join(dir, "absolute.txt");
+      writeFileSync(filePath, "before\n", "utf8");
+      execFileSync("git", ["add", "absolute.txt"], { cwd: dir, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "initial"], {
+        cwd: dir,
+        stdio: "ignore",
+      });
+
+      writeFileSync(filePath, "before\nafter\n", "utf8");
+      const parts = await itemToParts({
+        id: "patch-absolute",
+        type: "file_change",
+        changes: [{ path: filePath, kind: "update" }],
+        status: "completed",
+      }, dir, {
+        baselines: new Map(),
+        cache: new Map(),
+      });
+
+      expect(parts[0]?.toolDiff?.filePath).toBe(filePath);
+      expect(parts[0]?.toolDiff?.diff).toContain("--- a/absolute.txt");
+      expect(parts[0]?.toolDiff?.diff).toContain("+++ b/absolute.txt");
+      expect(parts[0]?.toolDiff?.diff).toContain("+after");
+    });
   });
 
   test("converts error to tool-result with failure state", async () => {

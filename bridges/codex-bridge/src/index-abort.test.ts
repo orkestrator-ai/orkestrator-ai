@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -292,6 +293,80 @@ describe("codex bridge abort handling", () => {
     expect(assistantContent).toContain("NEW RESPONSE");
     expect(assistantContent).not.toContain("OLD RESPONSE");
     expect(session.status).toBe("idle");
+  });
+
+  test("runPrompt clears file-change cache between turns while preserving baselines", async () => {
+    await withBridgeEnv(async ({ cwd }) => {
+      execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], {
+        cwd,
+        stdio: "ignore",
+      });
+      const filePath = join(cwd, "example.txt");
+      writeFileSync(filePath, "one\n", "utf8");
+      execFileSync("git", ["add", "example.txt"], { cwd, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "initial"], {
+        cwd,
+        stdio: "ignore",
+      });
+
+      let promptCount = 0;
+      const session = createSession({
+        id: "diff-session",
+        thread: {
+          runStreamed: async () => {
+            promptCount += 1;
+            return {
+              events: (async function* () {
+                if (promptCount === 1) {
+                  writeFileSync(filePath, "one\ntwo\n", "utf8");
+                  yield {
+                    type: "item.completed",
+                    item: {
+                      id: "patch-1",
+                      type: "file_change",
+                      changes: [{ path: "example.txt", kind: "update" }],
+                      status: "completed",
+                    },
+                  };
+                  return;
+                }
+
+                writeFileSync(filePath, "one\ntwo\nthree\n", "utf8");
+                yield {
+                  type: "item.completed",
+                  item: {
+                    id: "patch-2",
+                    type: "file_change",
+                    changes: [{ path: "example.txt", kind: "update" }],
+                    status: "completed",
+                  },
+                };
+              })(),
+            };
+          },
+        },
+      });
+
+      await __testing.runPrompt(session, "first patch");
+      await __testing.runPrompt(session, "second patch");
+
+      const assistantMessages = session.messages.filter(
+        (message: { role: string }) => message.role === "assistant",
+      );
+      const firstDiff = assistantMessages[0]?.parts[0]?.toolDiff?.diff;
+      const secondDiff = assistantMessages[1]?.parts[0]?.toolDiff?.diff;
+
+      expect(firstDiff).toContain("+two");
+      expect(firstDiff).not.toContain("+three");
+      expect(secondDiff).toContain("+three");
+      expect(secondDiff).not.toContain("+two");
+      expect(session.status).toBe("idle");
+    });
   });
 
   test("missing rollout resume errors recover on a fresh thread with transcript context", async () => {
