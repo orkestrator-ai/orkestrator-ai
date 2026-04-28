@@ -10,6 +10,7 @@ import * as realStores from "@/stores";
 import * as realHooks from "@/hooks";
 import * as realContexts from "@/contexts";
 import * as realTauri from "@/lib/tauri";
+import * as realSonner from "sonner";
 import type { Environment, Project } from "@/types";
 
 const realAlertDialogSnapshot = { ...realAlertDialog };
@@ -22,12 +23,16 @@ const realStoresSnapshot = { ...realStores };
 const realHooksSnapshot = { ...realHooks };
 const realContextsSnapshot = { ...realContexts };
 const realTauriSnapshot = { ...realTauri };
+const realSonnerSnapshot = { ...realSonner };
 
 const deleteEnvironmentMock = mock(async (_environmentId: string) => {});
 const mergePrMock = mock(async (_containerId: string, _method: string, _deleteBranch: boolean) => {});
 const mergePrLocalMock = mock(async (_environmentId: string, _method: string, _deleteBranch: boolean) => {});
+const toastSuccessMock = mock(() => {});
+const toastErrorMock = mock(() => {});
 const originalConsoleError = console.error;
 const originalConsoleLog = console.log;
+let writeTextMock: ReturnType<typeof mock>;
 
 const selectedEnvironment: Environment = {
   id: "env-1",
@@ -250,6 +255,13 @@ mock.module("@/lib/tauri", () => ({
   setEnvironmentPr: async () => {},
 }));
 
+mock.module("sonner", () => ({
+  toast: {
+    success: toastSuccessMock,
+    error: toastErrorMock,
+  },
+}));
+
 const { ActionBar } = await import("./ActionBar");
 
 afterAll(() => {
@@ -263,6 +275,7 @@ afterAll(() => {
   mock.module("@/hooks", () => realHooksSnapshot);
   mock.module("@/contexts", () => realContextsSnapshot);
   mock.module("@/lib/tauri", () => realTauriSnapshot);
+  mock.module("sonner", () => realSonnerSnapshot);
 });
 
 beforeEach(() => {
@@ -272,12 +285,92 @@ beforeEach(() => {
   deleteEnvironmentMock.mockReset();
   mergePrMock.mockReset();
   mergePrLocalMock.mockReset();
+  toastSuccessMock.mockReset();
+  toastErrorMock.mockReset();
+  writeTextMock = mock(async () => {});
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText: writeTextMock },
+    writable: true,
+    configurable: true,
+  });
   currentEnvironment = { ...selectedEnvironment };
 });
 
 afterEach(() => {
   console.error = originalConsoleError;
   console.log = originalConsoleLog;
+});
+
+describe("ActionBar copy URL", () => {
+  test("copies the selected environment port address from the toolbar button", async () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: 49152,
+    };
+
+    render(<ActionBar />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy URL" }));
+
+    expect(writeTextMock).toHaveBeenCalledWith("localhost:49152");
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith("Copied URL", {
+        description: "localhost:49152",
+      });
+    });
+  });
+
+  test("copies the selected environment port address with Cmd+Shift+C", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: 49152,
+    };
+
+    render(<ActionBar />);
+
+    fireEvent.keyDown(window, { key: "C", code: "KeyC", metaKey: true, shiftKey: true });
+
+    expect(writeTextMock).toHaveBeenCalledWith("localhost:49152");
+  });
+
+  test("shows an error toast when copying the port address fails", async () => {
+    writeTextMock.mockImplementationOnce(async () => {
+      throw new Error("clipboard denied");
+    });
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: 49152,
+    };
+
+    render(<ActionBar />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy URL" }));
+
+    expect(writeTextMock).toHaveBeenCalledWith("localhost:49152");
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith("Failed to copy URL");
+    });
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
+  test("disables the toolbar button and ignores Cmd+Shift+C when no port address is visible", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      entryPort: 3000,
+      hostEntryPort: undefined,
+    };
+
+    render(<ActionBar />);
+
+    expect((screen.getByRole("button", { name: "Copy URL" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.keyDown(window, { key: "C", code: "KeyC", metaKey: true, shiftKey: true });
+
+    expect(writeTextMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("ActionBar error dialogs", () => {
