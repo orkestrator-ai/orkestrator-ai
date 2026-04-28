@@ -1423,6 +1423,8 @@ async function runGitDiffNoIndex(
   const afterPath = join(tempDir, "after");
   const normalizeOutput = (output: string) =>
     output
+      .split(`a${beforePath}`).join(`a/${relativePath}`)
+      .split(`b${afterPath}`).join(`b/${relativePath}`)
       .split(beforePath).join(`a/${relativePath}`)
       .split(afterPath).join(`b/${relativePath}`);
 
