@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockCheckHealth = mock(async () => true);
 const mockCreateClient = mock(() => ({ baseUrl: "http://127.0.0.1:9999" }));
 const mockCreateSession = mock(async () => ({ sessionId: "review-session", title: "Review Session" }));
 const mockGetSessionMessages = mock(async () => []);
-const mockGetSessionStatus = mock(async () => ({ status: "running" as const }));
+const mockGetSessionStatus = mock(async (): Promise<{ status: "idle" | "running" | "error"; title?: string; error?: string }> => ({ status: "running" }));
 const mockSendPrompt = mock(async () => true);
 const mockAbortSession = mock(async () => true);
 
@@ -198,6 +198,49 @@ function seedStartingPipeline() {
   });
 }
 
+function seedReviewPipeline() {
+  useBuildPipelineStore.setState({
+    pipelines: new Map([
+      [
+        PIPELINE_ID,
+        {
+          id: PIPELINE_ID,
+          taskId: TASK_ID,
+          projectId: "project-1",
+          environmentId: ENV_ID,
+          environmentType: "containerized",
+          agentType: "codex",
+          phase: "reviewing",
+          sessions: [
+            {
+              phase: "review",
+              iteration: 0,
+              sessionKey: SESSION_KEY,
+              sdkSessionId: SESSION_ID,
+              status: "running",
+              startedAt: "2026-04-15T00:00:00.000Z",
+              label: "Review Session",
+            },
+          ],
+          currentSessionIndex: 0,
+          iteration: 0,
+          maxIterations: 3,
+          createdAt: "2026-04-15T00:00:00.000Z",
+          taskTitle: "Test task",
+          taskSnapshot: {
+            title: "Test task",
+            description: "desc",
+            acceptanceCriteria: "ac",
+            comments: [],
+            images: [],
+          },
+        },
+      ],
+    ]),
+    buildEnvironmentIds: new Set([ENV_ID]),
+  });
+}
+
 function seedCodexStore(isLoading: boolean) {
   useCodexStore.setState({
     models: [],
@@ -365,5 +408,70 @@ describe("CodexBuildChatTab", () => {
     render(<CodexBuildChatTab data={createData()} isActive />);
 
     expect(await screen.findByText("Retry")).toBeTruthy();
+  });
+
+  test("does not advance past a new review session before the review prompt is accepted", async () => {
+    seedPipeline("building", "running");
+    seedCodexStore(false);
+    mockGetSessionStatus.mockImplementation(async () => ({ status: "idle" as const }));
+
+    let resolvePrompt: ((value: boolean) => void) | undefined;
+    mockSendPrompt.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => {
+        resolvePrompt = resolve;
+      }),
+    );
+
+    render(<CodexBuildChatTab data={createData()} isActive />);
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const pipeline = useBuildPipelineStore.getState().pipelines.get(PIPELINE_ID);
+    expect(pipeline?.phase).toBe("reviewing");
+    expect(pipeline?.sessions.at(-1)?.phase).toBe("review");
+    expect(mockSendPrompt).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePrompt?.(true);
+    });
+  });
+
+  test("does not start verification while the address-issues prompt is being accepted", async () => {
+    seedReviewPipeline();
+    seedCodexStore(false);
+    mockGetSessionStatus.mockImplementation(async () => ({ status: "idle" as const }));
+
+    let resolvePrompt: ((value: boolean) => void) | undefined;
+    mockSendPrompt.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => {
+        resolvePrompt = resolve;
+      }),
+    );
+
+    render(<CodexBuildChatTab data={createData()} isActive />);
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const pipeline = useBuildPipelineStore.getState().pipelines.get(PIPELINE_ID);
+    expect(pipeline?.phase).toBe("addressing");
+    expect(pipeline?.sessions).toHaveLength(1);
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(mockSendPrompt).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePrompt?.(true);
+    });
   });
 });
