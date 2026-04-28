@@ -3,14 +3,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { createClaudeSessionKey, useClaudeStore } from "@/stores/claudeStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
+import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
 
 import * as realHooks from "@/hooks";
+import * as realVirtualizedMessageList from "@/components/chat/VirtualizedMessageList";
+
 const realHooksSnapshot = { ...realHooks };
+const realVirtualizedMessageListSnapshot = { ...realVirtualizedMessageList };
 const mockScrollToBottom = mock(() => {});
 const mockCreateSession = mock(async () => ({ sessionId: "session-1" }));
+const mockGetSessionMessages = mock(async (): Promise<ClaudeMessageType[]> => []);
 const mockCheckHealth = mock(async () => true);
 const mockSendPrompt = mock(async () => {});
 const mockAbortSession = mock(async () => true);
+const mockReadFileBase64 = mock(async () => "chat-local-base64");
+const mockReadContainerFileBase64 = mock(async () => "chat-container-base64");
 
 mock.module("@/hooks", () => ({
   ...realHooksSnapshot,
@@ -23,12 +30,27 @@ mock.module("@/hooks", () => ({
   })),
 }));
 
+mock.module("@/components/chat/VirtualizedMessageList", () => ({
+  VirtualizedMessageList: ({ messages, renderMessage, emptyState, footer }: any) => (
+    <div>
+      {messages.length > 0
+        ? messages.map((message: any, index: number) => (
+          <div key={message.id}>
+            {renderMessage(index, message, index > 0 ? messages[index - 1] : null)}
+          </div>
+        ))
+        : emptyState}
+      {footer}
+    </div>
+  ),
+}));
+
 mock.module("@/lib/claude-client", () => ({
   createClient: mock(() => ({ baseUrl: "http://127.0.0.1:9999" })),
   getModels: mock(async () => []),
   createSession: mockCreateSession,
   getSession: mock(async () => null),
-  getSessionMessages: mock(async () => []),
+  getSessionMessages: mockGetSessionMessages,
   sendPrompt: mockSendPrompt,
   abortSession: mockAbortSession,
   subscribeToEvents: mock(() => (async function* () {})()),
@@ -46,6 +68,8 @@ mock.module("@/lib/tauri", () => ({
   startLocalClaudeServer: mock(async () => ({ running: true, port: 9999, pid: 1234 })),
   getLocalClaudeServerStatus: mock(async () => ({ running: true, port: 9999, pid: 1234 })),
   renameEnvironmentFromPrompt: mock(async () => {}),
+  readFileBase64: mockReadFileBase64,
+  readContainerFileBase64: mockReadContainerFileBase64,
   // Needed by ClaudeComposeBar/useFileSearch rendered inside ClaudeChatTab
   writeContainerFile: mock(async () => {}),
   writeLocalFile: mock(async () => "/tmp/file.png"),
@@ -155,6 +179,7 @@ function resetStores() {
 describe("ClaudeChatTab", () => {
   afterAll(() => {
     mock.module("@/hooks", () => realHooksSnapshot);
+    mock.module("@/components/chat/VirtualizedMessageList", () => realVirtualizedMessageListSnapshot);
   });
 
   beforeEach(() => {
@@ -162,10 +187,16 @@ describe("ClaudeChatTab", () => {
     resetStores();
     mockScrollToBottom.mockClear();
     mockCreateSession.mockClear();
+    mockGetSessionMessages.mockReset();
+    mockGetSessionMessages.mockImplementation(async () => []);
     mockCheckHealth.mockClear();
     mockSendPrompt.mockClear();
     mockAbortSession.mockClear();
     mockAbortSession.mockImplementation(async () => true);
+    mockReadContainerFileBase64.mockReset();
+    mockReadContainerFileBase64.mockImplementation(async () => "chat-container-base64");
+    mockReadFileBase64.mockReset();
+    mockReadFileBase64.mockImplementation(async () => "chat-local-base64");
   });
 
   afterEach(() => {
@@ -227,6 +258,48 @@ describe("ClaudeChatTab", () => {
       expect(mockCheckHealth).toHaveBeenCalledWith(MOCK_CLIENT);
     });
     expect(mockCreateSession).not.toHaveBeenCalled();
+  });
+
+  test("passes the container id to rendered message attachment previews", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-container-attachment",
+      role: "user" as const,
+      content: 'Preview this\n\n<attached-files>\n<attachment type="image" path="/workspace/.orkestrator/clipboard/clipboard.png" filename="clipboard.png" />\n</attached-files>',
+      parts: [
+        {
+          type: "text" as const,
+          content: 'Preview this\n\n<attached-files>\n<attachment type="image" path="/workspace/.orkestrator/clipboard/clipboard.png" filename="clipboard.png" />\n</attached-files>',
+        },
+      ],
+      timestamp: "2026-03-07T12:00:00.000Z",
+    };
+    mockGetSessionMessages.mockImplementation(async () => [message]);
+
+    act(() => {
+      useClaudeStore.getState().setSession(SESSION_KEY, {
+        sessionId: "session-1",
+        isLoading: false,
+        messages: [message],
+      });
+    });
+
+    render(
+      <ClaudeChatTab
+        tabId={TAB_ID}
+        data={createData({ containerId: "container-preview" })}
+        isActive={false}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /clipboard\.png/i }));
+
+    const preview = await screen.findByAltText("clipboard.png") as HTMLImageElement;
+    expect(preview.src).toBe("data:image/png;base64,chat-container-base64");
+    expect(mockReadContainerFileBase64).toHaveBeenCalledWith(
+      "container-preview",
+      "/workspace/.orkestrator/clipboard/clipboard.png",
+    );
+    expect(mockReadFileBase64).not.toHaveBeenCalled();
   });
 
   test("seeds configured fast mode default when warm path creates a new session", async () => {

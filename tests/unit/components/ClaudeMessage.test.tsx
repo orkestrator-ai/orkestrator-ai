@@ -1,13 +1,17 @@
-import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect } from "react";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType } from "../../../src/lib/claude-client";
 import { TerminalProvider, useTerminalContext } from "../../../src/contexts/TerminalContext";
 import { CLAUDE_AUTH_LOGIN_COMMAND } from "../../../src/lib/claude-auth";
 
+const mockReadFileBase64 = mock(async () => "local-base64");
+const mockReadContainerFileBase64 = mock(async () => "container-base64");
+
 mock.module("@/lib/tauri", () => ({
   openInBrowser: async () => {},
-  readFileBase64: async () => "",
+  readFileBase64: mockReadFileBase64,
+  readContainerFileBase64: mockReadContainerFileBase64,
 }));
 
 mock.module("sonner", () => ({
@@ -50,6 +54,14 @@ function ConfigureTerminalContext({
 }
 
 describe("ClaudeMessage", () => {
+  afterEach(() => {
+    cleanup();
+    mockReadContainerFileBase64.mockReset();
+    mockReadContainerFileBase64.mockImplementation(async () => "container-base64");
+    mockReadFileBase64.mockReset();
+    mockReadFileBase64.mockImplementation(async () => "local-base64");
+  });
+
   test("renders single newlines as visible line breaks in user text", () => {
     const message: ClaudeMessageType = {
       id: "msg-line-breaks",
@@ -147,5 +159,158 @@ describe("ClaudeMessage", () => {
 
     expect(view.getByText("Something went wrong while sending the prompt.")).toBeTruthy();
     expect(view.queryByRole("button", { name: `Run ${CLAUDE_AUTH_LOGIN_COMMAND}` })).toBeNull();
+  });
+
+  test("loads container-backed image attachments through the container file reader", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-container-image",
+      role: "user",
+      content: 'Here is the image\n\n<attached-files>\n<attachment type="image" path="/workspace/.orkestrator/clipboard/clipboard.png" filename="clipboard.png" />\n</attached-files>',
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: 'Here is the image\n\n<attached-files>\n<attachment type="image" path="/workspace/.orkestrator/clipboard/clipboard.png" filename="clipboard.png" />\n</attached-files>',
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} containerId="container-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /clipboard\.png/i }));
+
+    const preview = await screen.findByAltText("clipboard.png") as HTMLImageElement;
+    expect(preview.src).toBe("data:image/png;base64,container-base64");
+    expect(mockReadContainerFileBase64).toHaveBeenCalledWith(
+      "container-1",
+      "/workspace/.orkestrator/clipboard/clipboard.png",
+    );
+    expect(mockReadFileBase64).not.toHaveBeenCalled();
+  });
+
+  test("loads local image attachments through the local file reader", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-local-image",
+      role: "user",
+      content: 'Local image\n\n<attached-files>\n<attachment type="image" path="/tmp/orkestrator/clipboard/local.jpg" filename="local.jpg" />\n</attached-files>',
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: 'Local image\n\n<attached-files>\n<attachment type="image" path="/tmp/orkestrator/clipboard/local.jpg" filename="local.jpg" />\n</attached-files>',
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /local\.jpg/i }));
+
+    const preview = await screen.findByAltText("local.jpg") as HTMLImageElement;
+    expect(preview.src).toBe("data:image/jpeg;base64,local-base64");
+    expect(mockReadFileBase64).toHaveBeenCalledWith("/tmp/orkestrator/clipboard/local.jpg");
+    expect(mockReadContainerFileBase64).not.toHaveBeenCalled();
+  });
+
+  test("does not preview unsafe parsed container attachment paths", () => {
+    const message: ClaudeMessageType = {
+      id: "msg-unsafe-image",
+      role: "user",
+      content: 'Unsafe image\n\n<attached-files>\n<attachment type="image" path="/etc/passwd" filename="passwd.png" />\n</attached-files>',
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: 'Unsafe image\n\n<attached-files>\n<attachment type="image" path="/etc/passwd" filename="passwd.png" />\n</attached-files>',
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} containerId="container-1" />);
+
+    const button = screen.getByRole("button", { name: /passwd\.png/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    fireEvent.click(button);
+    expect(mockReadContainerFileBase64).not.toHaveBeenCalled();
+    expect(mockReadFileBase64).not.toHaveBeenCalled();
+  });
+
+  test("shows an attachment error when image loading fails", async () => {
+    mockReadContainerFileBase64.mockImplementationOnce(async () => {
+      throw new Error("not found");
+    });
+
+    const message: ClaudeMessageType = {
+      id: "msg-image-error",
+      role: "user",
+      content: 'Missing image\n\n<attached-files>\n<attachment type="image" path="/workspace/missing.png" filename="missing.png" />\n</attached-files>',
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: 'Missing image\n\n<attached-files>\n<attachment type="image" path="/workspace/missing.png" filename="missing.png" />\n</attached-files>',
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} containerId="container-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /missing\.png/i }));
+
+    expect(await screen.findByText("(error)")).toBeTruthy();
+    expect(screen.queryByAltText("missing.png")).toBeNull();
+  });
+
+  test("renders non-image attachments as disabled preview buttons", () => {
+    const message: ClaudeMessageType = {
+      id: "msg-file-attachment",
+      role: "user",
+      content: 'File attachment\n\n<attached-files>\n<attachment type="file" path="/workspace/notes.txt" filename="notes.txt" />\n</attached-files>',
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: 'File attachment\n\n<attached-files>\n<attachment type="file" path="/workspace/notes.txt" filename="notes.txt" />\n</attached-files>',
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} containerId="container-1" />);
+
+    const button = screen.getByRole("button", { name: /notes\.txt/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(mockReadContainerFileBase64).not.toHaveBeenCalled();
+    expect(mockReadFileBase64).not.toHaveBeenCalled();
+  });
+
+  test("parses multiple attachments with flexible attribute order and closes previews on escape", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-multiple-images",
+      role: "user",
+      content: 'Images\n\n<attached-files>\n<attachment filename="first.webp" path="/workspace/first.webp" type="image" />\n<attachment type="image" path="/workspace/second.gif" filename="second.gif" />\n</attached-files>',
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: 'Images\n\n<attached-files>\n<attachment filename="first.webp" path="/workspace/first.webp" type="image" />\n<attachment type="image" path="/workspace/second.gif" filename="second.gif" />\n</attached-files>',
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} containerId="container-1" />);
+
+    expect(screen.getByRole("button", { name: /first\.webp/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /second\.gif/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /first\.webp/i }));
+    expect(await screen.findByAltText("first.webp")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByAltText("first.webp")).toBeNull();
+    });
   });
 });
