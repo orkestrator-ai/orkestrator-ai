@@ -1,5 +1,13 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { afterAll, describe, expect, test, mock, beforeEach } from "bun:test";
 import { Hono } from "hono";
+
+// Snapshot the real session-manager BEFORE installing the route's stub mock.
+// Bun's `mock.module(...)` is process-global, so without this restore step the
+// stub below leaks into `services/session-manager.test.ts` (and any other
+// suite that imports the real module). See CLAUDE.md > "Bun `mock.module()`
+// Rules" > "Snapshot-and-restore pattern".
+import * as realSessionManager from "../services/session-manager.js";
+const realSessionManagerSnapshot = { ...realSessionManager };
 
 // --- Mock session-manager before importing the route ---
 
@@ -86,6 +94,12 @@ function jsonRequest(method: string, path: string, body?: unknown) {
   }
   return app.request(path, init);
 }
+
+// Restore the real session-manager when this suite finishes so other test
+// files (e.g. services/session-manager.test.ts) see the real module.
+afterAll(() => {
+  mock.module("../services/session-manager.js", () => realSessionManagerSnapshot);
+});
 
 describe("session routes", () => {
   beforeEach(() => {
