@@ -3,9 +3,12 @@ import { Hono } from "hono";
 import { TransformStream } from "node:stream/web";
 
 // hono's streamSSE relies on the WHATWG TransformStream global, which Bun's
-// test runtime does not always expose. Polyfill from node:stream/web (same
-// approach as codex-bridge index-abort.test.ts).
-globalThis.TransformStream = TransformStream as typeof globalThis.TransformStream;
+// test runtime does not always expose. Polyfill from node:stream/web only
+// when missing so we don't shadow Bun's own implementation when present
+// (same approach as codex-bridge index-abort.test.ts).
+if (!globalThis.TransformStream) {
+  globalThis.TransformStream = TransformStream as typeof globalThis.TransformStream;
+}
 
 import events from "./events.js";
 import { eventEmitter } from "../services/event-emitter.js";

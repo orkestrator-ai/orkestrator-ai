@@ -1,4 +1,14 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
+// Snapshot the real mcp-config / plugin-config modules BEFORE installing the
+// stub mocks below. Bun's `mock.module(...)` is process-global, so without
+// restoring on `afterAll` these stubs would leak into any later test in the
+// same `bun test` run that imports the real modules. See CLAUDE.md > "Bun
+// `mock.module()` Rules" > "Snapshot-and-restore pattern".
+import * as realMcpConfig from "./mcp-config.js";
+import * as realPluginConfig from "./plugin-config.js";
+const mcpConfigSnapshot = { ...realMcpConfig };
+const pluginConfigSnapshot = { ...realPluginConfig };
 
 // ---------------------------------------------------------------------------
 // Controllable mock for @anthropic-ai/claude-agent-sdk.query()
@@ -90,10 +100,11 @@ const mockQuery = mock((args: { prompt: unknown; options: QueryCall["options"] }
     wake();
   });
 
-  pendingCalls.push(call);
   const waiter = queryWaiters.shift();
   if (waiter) {
-    waiter(pendingCalls.shift()!);
+    waiter(call);
+  } else {
+    pendingCalls.push(call);
   }
 
   async function* iter() {
@@ -196,6 +207,13 @@ afterEach(() => {
   pendingCalls.length = 0;
   queryWaiters.length = 0;
   mockQuery.mockClear();
+});
+
+afterAll(() => {
+  // Restore the real mcp-config / plugin-config modules so other test files
+  // in the same `bun test` run get the real implementations.
+  mock.module("./mcp-config.js", () => mcpConfigSnapshot);
+  mock.module("./plugin-config.js", () => pluginConfigSnapshot);
 });
 
 // ---------------------------------------------------------------------------
