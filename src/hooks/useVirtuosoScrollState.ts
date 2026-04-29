@@ -399,8 +399,11 @@ export function useVirtuosoScrollState(
   // can't deadlock subsequent scroll attempts.
   //
   // Skip on the very first activation: Virtuoso handles initial position
-  // via restoreStateFrom (or mounts at the top with followOutput pinning
-  // new content), so no extra jump is needed on first mount.
+  // via restoreStateFrom. If the persisted snapshot is stale (content grew
+  // while the tab was inactive), the user lands at the *old* bottom on
+  // mount; totalListHeightChanged and the ResizeObserver fallback then
+  // catch up to the new bottom as items measure. (followOutput alone is
+  // not enough — it only fires on data-item appends *after* mount.)
   useEffect(() => {
     if (!isActive) return;
     const isFirstActivation = !hasBeenActiveRef.current;
