@@ -174,6 +174,28 @@ add_orkestrator_to_git_exclude() {
     fi
 }
 
+# Initial prompt attachments may be uploaded before this setup script runs.
+# Preserve Orkestrator's private workspace state while clearing /workspace for clone.
+ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+
+preserve_orkestrator_workspace_state() {
+    if [ -d "/workspace/.orkestrator" ]; then
+        ORKESTRATOR_WORKSPACE_STATE_BACKUP="$(mktemp -d /tmp/orkestrator-workspace-state.XXXXXX)"
+        cp -R /workspace/.orkestrator/. "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/
+        echo -e "  ${GREEN}Preserved .orkestrator workspace state${NC}"
+    fi
+}
+
+restore_orkestrator_workspace_state() {
+    if [ -n "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ] && [ -d "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ]; then
+        mkdir -p /workspace/.orkestrator
+        cp -R "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/. /workspace/.orkestrator/
+        rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"
+        ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+        echo -e "  ${GREEN}Restored .orkestrator workspace state${NC}"
+    fi
+}
+
 # Function to convert SSH URLs to HTTPS for token-based authentication
 convert_ssh_to_https() {
     local url="$1"
@@ -276,6 +298,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
 
     # Clean /workspace
     echo "Preparing workspace..."
+    preserve_orkestrator_workspace_state
     rm -rf /workspace/* 2>/dev/null || true
     rm -rf /workspace/.* 2>/dev/null || true
     find /workspace -mindepth 1 -delete 2>/dev/null || true
@@ -374,6 +397,8 @@ else
         echo "  Branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
     fi
 fi
+
+restore_orkestrator_workspace_state
 
 # Copy .env files to workspace
 echo ""
