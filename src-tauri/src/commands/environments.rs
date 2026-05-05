@@ -282,6 +282,21 @@ fn make_unique_name(base_name: &str, existing_environments: &[Environment]) -> S
     })
 }
 
+/// Generate one unique slug that can be used for both the environment name and
+/// git branch. This keeps UI metadata, Docker naming, and PR detection aligned.
+fn make_unique_environment_slug(
+    base_slug: &str,
+    existing_environments: &[Environment],
+    extra_branches: &[String],
+) -> String {
+    make_unique(base_slug, |slug| {
+        existing_environments
+            .iter()
+            .any(|e| e.name == slug || e.branch == slug)
+            || extra_branches.iter().any(|branch| branch == slug)
+    })
+}
+
 /// Build a JSON update payload for renaming an environment.
 /// When the branch has changed compared to `old_branch`, the PR metadata
 /// (prUrl, prState, hasMergeConflicts) is cleared so stale data from the
@@ -321,10 +336,29 @@ fn normalize_initial_prompt(initial_prompt: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+async fn generate_initial_environment_name(prompt: &str) -> Option<String> {
+    let prompt = prompt.to_string();
+    match tokio::task::spawn_blocking(move || {
+        claude_cli::generate_environment_name_with_fallback(&prompt)
+    })
+    .await
+    {
+        Ok(Ok(name)) => Some(sanitize_environment_name(&name)),
+        Ok(Err(e)) => {
+            warn!(error = %e, "Failed to generate initial environment name");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "Initial environment naming task panicked");
+            None
+        }
+    }
+}
+
 /// Create a new environment for a project
 #[tauri::command]
 pub async fn create_environment(
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     project_id: String,
     name: Option<String>,
     network_access_mode: Option<String>,
@@ -366,8 +400,14 @@ pub async fn create_environment(
 
     let trimmed_initial_prompt = normalize_initial_prompt(initial_prompt.as_deref());
 
-    // Determine if we should use background naming
-    let should_background_name = name.is_none() && trimmed_initial_prompt.is_some();
+    let generated_initial_name = if name.is_none() {
+        match trimmed_initial_prompt.as_deref() {
+            Some(prompt) => generate_initial_environment_name(prompt).await,
+            None => None,
+        }
+    } else {
+        None
+    };
 
     // Determine the base name for the environment
     let base_name = match &name {
@@ -375,14 +415,25 @@ pub async fn create_environment(
         Some(custom_name) if !custom_name.trim().is_empty() => {
             Some(sanitize_environment_name(custom_name.trim()))
         }
-        // No explicit name - use timestamp (background naming will update later if prompt provided)
-        _ => None,
+        // No explicit name - use the one generated from the initial prompt, if available.
+        _ => generated_initial_name,
+    };
+
+    let git_branches_for_slug = if base_name.is_some() {
+        if let Some(ref local_path) = project.local_path {
+            list_git_branches_at_path(local_path, true).await
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
     };
 
     // Create the environment with a unique name
     let mut environment = match (&base_name, &env_type) {
         (Some(name), EnvironmentType::Local) => {
-            let unique_name = make_unique_name(name, &existing_environments);
+            let unique_name =
+                make_unique_environment_slug(name, &existing_environments, &git_branches_for_slug);
             if unique_name != *name {
                 debug!(
                     requested_name = %name,
@@ -393,7 +444,8 @@ pub async fn create_environment(
             Environment::new_local(project_id.clone(), unique_name)
         }
         (Some(name), EnvironmentType::Containerized) => {
-            let unique_name = make_unique_name(name, &existing_environments);
+            let unique_name =
+                make_unique_environment_slug(name, &existing_environments, &git_branches_for_slug);
             if unique_name != *name {
                 debug!(
                     requested_name = %name,
@@ -410,24 +462,6 @@ pub async fn create_environment(
         }
         (None, EnvironmentType::Containerized) => Environment::new(project_id.clone()),
     };
-
-    // For user-provided names, also check the branch against actual git branches
-    // to avoid colliding with remote branches that may have associated PRs.
-    if base_name.is_some() {
-        if let Some(ref local_path) = project.local_path {
-            let git_branches = list_git_branches_at_path(local_path, true).await;
-            let unique_branch =
-                make_unique_branch(&environment.branch, &existing_environments, &git_branches);
-            if unique_branch != environment.branch {
-                debug!(
-                    old_branch = %environment.branch,
-                    new_branch = %unique_branch,
-                    "Branch collides with existing git branch, using unique variant"
-                );
-                environment.branch = unique_branch;
-            }
-        }
-    }
 
     // Set the network access mode
     environment.network_access_mode = network_mode;
@@ -462,24 +496,6 @@ pub async fn create_environment(
     let created_environment = storage
         .add_environment(environment)
         .map_err(storage_error_to_string)?;
-
-    // If we have a prompt but no explicit name, spawn background task to generate name
-    // This applies to both containerized and local environments
-    if should_background_name {
-        // SAFETY: unwrap is safe here because should_background_name is only true
-        // when initial_prompt contains non-empty text, which is mirrored by
-        // trimmed_initial_prompt above.
-        let prompt = trimmed_initial_prompt.unwrap();
-        let env_id = created_environment.id.clone();
-        let old_branch = created_environment.branch.clone();
-
-        debug!(environment_id = %env_id, "Spawning background naming task");
-
-        // Spawn async task to generate name in background
-        tauri::async_runtime::spawn(async move {
-            background_rename_environment(app_handle, env_id, old_branch, prompt).await;
-        });
-    }
 
     Ok(created_environment)
 }
@@ -692,17 +708,15 @@ async fn background_rename_environment(
 
     // Sanitize the generated name to kebab-case lowercase (matching branch/container convention)
     let sanitized_name = sanitize_environment_name(&generated_name);
-    let unique_name = make_unique_name(&sanitized_name, &existing_environments);
-    let sanitized_branch = sanitize_branch_name(&unique_name);
 
     // Gather actual git branches from the repo so we don't collide with branches
     // that exist in git but have no corresponding environment in storage.
     let git_branches = list_repo_git_branches(&storage, &environment_id).await;
 
-    // Ensure the sanitized branch is also unique (two different names could sanitize to the
-    // same branch, e.g. "My Feature!" and "My Feature?" both become "my-feature")
-    let unique_branch =
-        make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
+    let unique_slug =
+        make_unique_environment_slug(&sanitized_name, &existing_environments, &git_branches);
+    let unique_name = unique_slug.clone();
+    let unique_branch = unique_slug;
     debug!(environment_id = %environment_id, unique_name = %unique_name, unique_branch = %unique_branch, "Unique name and branch determined");
 
     // Update environment name and branch in storage, clearing stale PR state
@@ -1182,11 +1196,16 @@ pub async fn rename_environment(
         .map_err(storage_error_to_string)?
         .ok_or_else(|| format!("Environment not found: {}", environment_id))?;
 
-    // Make the name unique (consistent with background_rename_environment)
+    // Make the slug unique (consistent with background_rename_environment)
     let existing_environments = storage
         .load_environments()
         .map_err(storage_error_to_string)?;
-    let unique_name = make_unique_name(&name, &existing_environments);
+
+    // Gather actual git branches from the repo so we don't collide with branches
+    // that exist in git but have no corresponding environment in storage.
+    let git_branches = list_repo_git_branches(&storage, &environment_id).await;
+    let unique_slug = make_unique_environment_slug(&name, &existing_environments, &git_branches);
+    let unique_name = unique_slug.clone();
 
     if unique_name != name {
         debug!(
@@ -1198,12 +1217,7 @@ pub async fn rename_environment(
     }
 
     let old_branch = environment.branch.clone();
-    let sanitized_branch = sanitize_branch_name(&unique_name);
-
-    // Gather actual git branches from the repo so we don't collide with branches
-    // that exist in git but have no corresponding environment in storage.
-    let git_branches = list_repo_git_branches(&storage, &environment_id).await;
-    let new_branch = make_unique_branch(&sanitized_branch, &existing_environments, &git_branches);
+    let new_branch = sanitize_branch_name(&unique_slug);
 
     // Update storage with new name and branch, clearing stale PR state
     // if the branch changed.
@@ -2218,7 +2232,7 @@ pub async fn reattach_container(
         .unwrap_or_else(|| format!("reattached-{}", &container_id[..12.min(container_id.len())]));
 
     // Determine environment name: use provided name, or fall back to container name
-    let env_name = name.unwrap_or_else(|| container_name.clone());
+    let env_name = sanitize_environment_name(&name.unwrap_or_else(|| container_name.clone()));
 
     // Load existing environments to check for duplicate names and existing attachments
     let existing_environments = storage
@@ -2237,8 +2251,8 @@ pub async fn reattach_container(
         ));
     }
 
-    // Make the name unique
-    let unique_name = make_unique_name(&env_name, &existing_environments);
+    // Make one slug unique for both name and branch.
+    let unique_name = make_unique_environment_slug(&env_name, &existing_environments, &[]);
     if unique_name != env_name {
         debug!(
             requested_name = %env_name,
@@ -2375,6 +2389,16 @@ mod tests {
         let result = make_unique_name("my-feature", &envs);
         // "my-feature" taken by name, "my-feature-2" taken by branch
         assert_eq!(result, "my-feature-3");
+    }
+
+    #[test]
+    fn test_make_unique_environment_slug_uses_same_value_for_name_and_branch() {
+        let envs = vec![env_with_branch("other", "agent-hangup")];
+        let git_branches = vec!["agent-hangup-2".to_string()];
+
+        let result = make_unique_environment_slug("agent-hangup", &envs, &git_branches);
+
+        assert_eq!(result, "agent-hangup-3");
     }
 
     #[test]
