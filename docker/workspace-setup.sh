@@ -177,20 +177,47 @@ add_orkestrator_to_git_exclude() {
 # Initial prompt attachments may be uploaded before this setup script runs.
 # Preserve Orkestrator's private workspace state while clearing /workspace for clone.
 ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+ORKESTRATOR_WORKSPACE_STATE_WORKSPACE="/workspace"
+
+cleanup_orkestrator_workspace_state_backup() {
+    if [ -n "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ] && [ -d "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ]; then
+        restore_orkestrator_workspace_state "$ORKESTRATOR_WORKSPACE_STATE_WORKSPACE" >/dev/null 2>&1 || rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"
+    fi
+    ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+}
+trap cleanup_orkestrator_workspace_state_backup EXIT
 
 preserve_orkestrator_workspace_state() {
-    if [ -d "/workspace/.orkestrator" ]; then
-        ORKESTRATOR_WORKSPACE_STATE_BACKUP="$(mktemp -d /tmp/orkestrator-workspace-state.XXXXXX)"
-        cp -R /workspace/.orkestrator/. "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/
+    local workspace="${1:-/workspace}"
+    local state_path="$workspace/.orkestrator"
+    ORKESTRATOR_WORKSPACE_STATE_WORKSPACE="$workspace"
+
+    if [ -L "$state_path" ]; then
+        echo -e "  ${YELLOW}Skipping symlinked .orkestrator workspace state${NC}"
+        return 0
+    fi
+
+    if [ -d "$state_path" ]; then
+        ORKESTRATOR_WORKSPACE_STATE_BACKUP="$(mktemp -d /tmp/orkestrator-workspace-state.XXXXXX)" || return 1
+        if ! cp -a "$state_path/." "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/; then
+            rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"
+            ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+            return 1
+        fi
         echo -e "  ${GREEN}Preserved .orkestrator workspace state${NC}"
     fi
 }
 
 restore_orkestrator_workspace_state() {
+    local workspace="${1:-/workspace}"
+    local state_path="$workspace/.orkestrator"
     if [ -n "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ] && [ -d "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ]; then
-        mkdir -p /workspace/.orkestrator
-        cp -R "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/. /workspace/.orkestrator/
-        rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"
+        if [ -e "$state_path" ] || [ -L "$state_path" ]; then
+            rm -rf "$state_path" || return 1
+        fi
+        mkdir -p "$state_path" || return 1
+        cp -a "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/. "$state_path/" || return 1
+        rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" || return 1
         ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
         echo -e "  ${GREEN}Restored .orkestrator workspace state${NC}"
     fi
