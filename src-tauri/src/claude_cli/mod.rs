@@ -804,4 +804,26 @@ mod tests {
         assert_eq!(sanitize_slug("fix-123-bug").unwrap(), "fix-123-bug");
         assert_eq!(sanitize_slug("2024-update").unwrap(), "2024-update");
     }
+
+    #[test]
+    fn test_parse_slug_from_json_response() {
+        let response = r#"Here is the slug: {"slug": "Fix.Auth Bug!"}"#;
+
+        assert_eq!(
+            sanitize_slug(&parse_slug_from_response(response).unwrap()).unwrap(),
+            "fix-auth-bug"
+        );
+    }
+
+    #[test]
+    fn test_parse_slug_from_plain_text_response() {
+        let response = "fix-auth-bug\n";
+
+        assert_eq!(parse_slug_from_response(response).unwrap(), "fix-auth-bug");
+    }
+
+    #[test]
+    fn test_parse_slug_rejects_empty_response() {
+        assert!(parse_slug_from_response("").is_err());
+    }
 }

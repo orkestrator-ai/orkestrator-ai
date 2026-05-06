@@ -2402,6 +2402,31 @@ mod tests {
     }
 
     #[test]
+    fn test_make_unique_environment_slug_avoids_env_name_collisions() {
+        let envs = vec![
+            env_with_branch("agent-hangup", "other-branch"),
+            env_with_branch("agent-hangup-2", "another-branch"),
+        ];
+
+        let result = make_unique_environment_slug("agent-hangup", &envs, &[]);
+
+        assert_eq!(result, "agent-hangup-3");
+    }
+
+    #[test]
+    fn test_make_unique_environment_slug_avoids_git_branch_collisions() {
+        let envs = vec![];
+        let git_branches = vec![
+            "agent-hangup".to_string(),
+            "agent-hangup-2".to_string(),
+        ];
+
+        let result = make_unique_environment_slug("agent-hangup", &envs, &git_branches);
+
+        assert_eq!(result, "agent-hangup-3");
+    }
+
+    #[test]
     fn test_make_unique_branch_avoids_env_branches() {
         let envs = vec![
             env_with_branch("A", "my-feature"),

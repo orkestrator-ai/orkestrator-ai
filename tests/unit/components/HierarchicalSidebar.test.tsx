@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { mockReadImage } from "../../mocks/clipboard";
 import { useClaudeOptionsStore, useConfigStore, useUIStore } from "@/stores";
@@ -146,6 +146,10 @@ describe("HierarchicalSidebar", () => {
       isLoading: false,
       error: null,
     }));
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   afterAll(() => {

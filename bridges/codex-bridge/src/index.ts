@@ -1180,7 +1180,7 @@ async function runInlinePromptCommand(command: string, cwd: string): Promise<str
 
   try {
     await refreshRuntimeEnvironment();
-    const { stdout, stderr } = await execFile(shell, ["-lc", command], {
+    const { stdout, stderr } = await execFile(shell, ["-c", command], {
       cwd,
       env: process.env,
       maxBuffer: 2 * 1024 * 1024,

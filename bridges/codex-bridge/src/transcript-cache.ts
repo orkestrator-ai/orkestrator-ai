@@ -5,8 +5,9 @@ import {
 } from "./subagent-transcript.js";
 
 interface CachedTranscript {
+  fileId: string;
   size: number;
-  modifiedAtMs: number;
+  modifiedAtNs: string;
   remainder: string;
   lines: string[];
   records: TranscriptRecord[];
@@ -72,11 +73,12 @@ async function readTranscriptChunk(
 
 async function loadTranscriptFromScratch(path: string): Promise<CachedTranscript> {
   const raw = await readFile(path, "utf8");
-  const stats = await stat(path);
+  const stats = await stat(path, { bigint: true });
   const { lines, remainder } = splitTranscriptChunk(raw, "");
   return {
+    fileId: `${stats.dev}:${stats.ino}`,
     size: Buffer.byteLength(raw, "utf8"),
-    modifiedAtMs: stats.mtimeMs,
+    modifiedAtNs: stats.mtimeNs.toString(),
     remainder,
     lines,
     records: parseTranscriptRecords(lines),
@@ -85,12 +87,18 @@ async function loadTranscriptFromScratch(path: string): Promise<CachedTranscript
 
 export async function readCachedTranscript(path: string): Promise<CachedTranscript> {
   try {
-    const stats = await stat(path);
-    const size = stats.size;
-    const modifiedAtMs = stats.mtimeMs;
+    const stats = await stat(path, { bigint: true });
+    const fileId = `${stats.dev}:${stats.ino}`;
+    const size = Number(stats.size);
+    const modifiedAtNs = stats.mtimeNs.toString();
     const cached = transcriptCache.get(path);
 
-    if (!cached || size < cached.size || modifiedAtMs !== cached.modifiedAtMs) {
+    if (
+      !cached ||
+      fileId !== cached.fileId ||
+      size < cached.size ||
+      (size === cached.size && modifiedAtNs !== cached.modifiedAtNs)
+    ) {
       const loaded = await loadTranscriptFromScratch(path);
       transcriptCache.set(path, loaded);
       return loaded;
@@ -106,8 +114,9 @@ export async function readCachedTranscript(path: string): Promise<CachedTranscri
       cached.remainder,
     );
     const next: CachedTranscript = {
+      fileId,
       size,
-      modifiedAtMs,
+      modifiedAtNs,
       remainder,
       lines: appendedLines.length > 0 ? [...cached.lines, ...appendedLines] : cached.lines,
       records:
@@ -120,8 +129,9 @@ export async function readCachedTranscript(path: string): Promise<CachedTranscri
   } catch {
     transcriptCache.delete(path);
     return {
+      fileId: "",
       size: 0,
-      modifiedAtMs: 0,
+      modifiedAtNs: "0",
       remainder: "",
       lines: [],
       records: [],
