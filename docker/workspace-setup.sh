@@ -174,6 +174,55 @@ add_orkestrator_to_git_exclude() {
     fi
 }
 
+# Initial prompt attachments may be uploaded before this setup script runs.
+# Preserve Orkestrator's private workspace state while clearing /workspace for clone.
+ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+ORKESTRATOR_WORKSPACE_STATE_WORKSPACE="/workspace"
+
+cleanup_orkestrator_workspace_state_backup() {
+    if [ -n "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ] && [ -d "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ]; then
+        restore_orkestrator_workspace_state "$ORKESTRATOR_WORKSPACE_STATE_WORKSPACE" >/dev/null 2>&1 || rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"
+    fi
+    ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+}
+trap cleanup_orkestrator_workspace_state_backup EXIT
+
+preserve_orkestrator_workspace_state() {
+    local workspace="${1:-/workspace}"
+    local state_path="$workspace/.orkestrator"
+    ORKESTRATOR_WORKSPACE_STATE_WORKSPACE="$workspace"
+
+    if [ -L "$state_path" ]; then
+        echo -e "  ${YELLOW}Skipping symlinked .orkestrator workspace state${NC}"
+        return 0
+    fi
+
+    if [ -d "$state_path" ]; then
+        ORKESTRATOR_WORKSPACE_STATE_BACKUP="$(mktemp -d /tmp/orkestrator-workspace-state.XXXXXX)" || return 1
+        if ! cp -a "$state_path/." "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/; then
+            rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"
+            ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+            return 1
+        fi
+        echo -e "  ${GREEN}Preserved .orkestrator workspace state${NC}"
+    fi
+}
+
+restore_orkestrator_workspace_state() {
+    local workspace="${1:-/workspace}"
+    local state_path="$workspace/.orkestrator"
+    if [ -n "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ] && [ -d "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" ]; then
+        if [ -e "$state_path" ] || [ -L "$state_path" ]; then
+            rm -rf "$state_path" || return 1
+        fi
+        mkdir -p "$state_path" || return 1
+        cp -a "$ORKESTRATOR_WORKSPACE_STATE_BACKUP"/. "$state_path/" || return 1
+        rm -rf "$ORKESTRATOR_WORKSPACE_STATE_BACKUP" || return 1
+        ORKESTRATOR_WORKSPACE_STATE_BACKUP=""
+        echo -e "  ${GREEN}Restored .orkestrator workspace state${NC}"
+    fi
+}
+
 # Function to convert SSH URLs to HTTPS for token-based authentication
 convert_ssh_to_https() {
     local url="$1"
@@ -276,6 +325,7 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
 
     # Clean /workspace
     echo "Preparing workspace..."
+    preserve_orkestrator_workspace_state
     rm -rf /workspace/* 2>/dev/null || true
     rm -rf /workspace/.* 2>/dev/null || true
     find /workspace -mindepth 1 -delete 2>/dev/null || true
@@ -374,6 +424,8 @@ else
         echo "  Branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
     fi
 fi
+
+restore_orkestrator_workspace_state
 
 # Copy .env files to workspace
 echo ""
