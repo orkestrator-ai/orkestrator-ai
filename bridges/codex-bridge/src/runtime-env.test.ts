@@ -74,6 +74,7 @@ describe("runtime environment refresh", () => {
   test("applies whitelisted path variables from shell env output", () => {
     process.env.PATH = "/usr/bin:/bin";
     delete process.env.BUN_INSTALL;
+    delete process.env.BASH_ENV;
 
     const updated = __testing.applyRuntimeEnvironmentOutput([
       "PATH=/home/node/.bun/bin:/usr/bin:/bin",
@@ -180,6 +181,7 @@ describe("runtime environment refresh", () => {
       process.env.ORKESTRATOR_RUNTIME_ENV_SCRIPT = helper;
       process.env.PATH = "/usr/bin:/bin";
       process.env.SHELL = "/bin/bash";
+      delete process.env.BASH_ENV;
 
       const output = await __testing.runInlinePromptCommand("command -v inline-tool", dir);
 

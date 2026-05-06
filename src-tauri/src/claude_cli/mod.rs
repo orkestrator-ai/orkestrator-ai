@@ -13,6 +13,8 @@ use std::process::Command;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use crate::models::sanitize_environment_name;
+
 /// Timeout for AI CLI calls (in seconds)
 /// Used for both Claude CLI and OpenCode CLI
 const AI_CLI_TIMEOUT_SECS: u64 = 30;
@@ -310,28 +312,16 @@ pub fn get_available_ai_cli() -> Option<&'static str> {
 
 /// Sanitizes a raw slug string into a valid kebab-case name.
 ///
-/// - Converts to lowercase
-/// - Replaces spaces with hyphens
-/// - Removes non-alphanumeric characters (except hyphens)
-/// - Collapses multiple hyphens
-/// - Trims leading/trailing hyphens
+/// - Uses the same canonical environment-name sanitizer as stored environments
 /// - Truncates to 3 words maximum
 fn sanitize_slug(raw_name: &str) -> Result<String, String> {
-    let name = raw_name
-        .to_lowercase()
-        .replace(' ', "-")
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-')
-        .collect::<String>();
+    let name = sanitize_environment_name(raw_name);
 
-    let name = name
-        .trim_matches('-')
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
-    if name.is_empty() {
+    if name == "env"
+        && !raw_name
+            .chars()
+            .any(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return Err("Generated name is empty".to_string());
     }
 
@@ -748,8 +738,8 @@ mod tests {
     fn test_sanitize_slug_special_chars() {
         // Test special characters are removed
         assert_eq!(sanitize_slug("fix!@#auth$%^bug").unwrap(), "fixauthbug");
-        assert_eq!(sanitize_slug("test_underscore").unwrap(), "testunderscore");
-        assert_eq!(sanitize_slug("dots.are.removed").unwrap(), "dotsareremoved");
+        assert_eq!(sanitize_slug("test_underscore").unwrap(), "test_underscore");
+        assert_eq!(sanitize_slug("dots.are.removed").unwrap(), "dots-are-removed");
     }
 
     #[test]
@@ -801,11 +791,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_slug_unicode() {
-        // Rust's is_alphanumeric() includes unicode letters, so they are preserved
-        assert_eq!(sanitize_slug("café").unwrap(), "café");
-        assert_eq!(sanitize_slug("naïve").unwrap(), "naïve");
-        // Unicode CJK characters are also alphanumeric and preserved
-        assert_eq!(sanitize_slug("日本語").unwrap(), "日本語");
+        // Environment slugs are ASCII-only so they are safe as branch/container names.
+        assert_eq!(sanitize_slug("café").unwrap(), "caf");
+        assert_eq!(sanitize_slug("naïve").unwrap(), "nave");
+        assert!(sanitize_slug("日本語").is_err());
     }
 
     #[test]
@@ -814,5 +803,27 @@ mod tests {
         assert_eq!(sanitize_slug("v2-api").unwrap(), "v2-api");
         assert_eq!(sanitize_slug("fix-123-bug").unwrap(), "fix-123-bug");
         assert_eq!(sanitize_slug("2024-update").unwrap(), "2024-update");
+    }
+
+    #[test]
+    fn test_parse_slug_from_json_response() {
+        let response = r#"Here is the slug: {"slug": "Fix.Auth Bug!"}"#;
+
+        assert_eq!(
+            sanitize_slug(&parse_slug_from_response(response).unwrap()).unwrap(),
+            "fix-auth-bug"
+        );
+    }
+
+    #[test]
+    fn test_parse_slug_from_plain_text_response() {
+        let response = "fix-auth-bug\n";
+
+        assert_eq!(parse_slug_from_response(response).unwrap(), "fix-auth-bug");
+    }
+
+    #[test]
+    fn test_parse_slug_rejects_empty_response() {
+        assert!(parse_slug_from_response("").is_err());
     }
 }

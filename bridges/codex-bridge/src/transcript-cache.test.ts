@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearTranscriptCache, readCachedTranscript } from "./transcript-cache.js";
@@ -84,6 +84,8 @@ describe("readCachedTranscript", () => {
       })}\n`,
       "utf8",
     );
+    const replacementTime = new Date(Date.now() + 1000);
+    await utimes(transcriptPath, replacementTime, replacementTime);
 
     const replaced = await readCachedTranscript(transcriptPath);
     expect(replaced.lines).toHaveLength(1);
