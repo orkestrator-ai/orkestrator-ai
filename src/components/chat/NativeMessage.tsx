@@ -40,6 +40,7 @@ import { isTodoTool } from "@/lib/todo-tool";
 import { TodoToolPart } from "@/components/todo/TodoToolPart";
 import { MessageErrorAlert, MessageShell } from "@/components/chat/MessageShell";
 import { MessageMarkdown } from "@/components/chat/MessageMarkdown";
+import { MessageCopyButton } from "@/components/chat/MessageCopyButton";
 import {
   type NativeMessage as NativeMessageType,
   type NativeMessagePart,
@@ -821,7 +822,10 @@ function FilePart({ path, fileUrl }: { path: string; fileUrl?: string }) {
 /** Render a text content part with markdown support */
 function TextPart({ content }: { content: string }) {
   return (
-    <MessageMarkdown content={content} components={markdownComponents} />
+    <div>
+      <MessageMarkdown content={content} components={markdownComponents} />
+      <MessageCopyButton content={content} />
+    </div>
   );
 }
 

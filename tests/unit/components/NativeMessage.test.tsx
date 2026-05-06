@@ -1,15 +1,62 @@
-import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import type { NativeMessage as NativeMessageType } from "../../../src/lib/chat/native-message-types";
+import {
+  type CreateFileTabOptions,
+  TerminalProvider,
+  useTerminalContext,
+} from "../../../src/contexts/TerminalContext";
+
+const mockOpenInBrowser = mock(async () => {});
+const mockReadFileBase64 = mock(async () => "image-base64");
 
 mock.module("@/lib/tauri", () => ({
-  openInBrowser: async () => {},
-  readFileBase64: async () => "",
+  openInBrowser: mockOpenInBrowser,
+  readFileBase64: mockReadFileBase64,
 }));
 
 import { NativeMessage } from "../../../src/components/chat/NativeMessage";
 
+function TerminalContextHarness({
+  children,
+  createFileTab,
+}: {
+  children: React.ReactNode;
+  createFileTab?: (path: string, options?: CreateFileTabOptions) => void;
+}) {
+  return (
+    <TerminalProvider>
+      <ConfigureTerminalContext createFileTab={createFileTab} />
+      {children}
+    </TerminalProvider>
+  );
+}
+
+function ConfigureTerminalContext({
+  createFileTab,
+}: {
+  createFileTab?: (path: string, options?: CreateFileTabOptions) => void;
+}) {
+  const { setCreateFileTab } = useTerminalContext();
+
+  useEffect(() => {
+    setCreateFileTab(createFileTab ?? null);
+    return () => setCreateFileTab(null);
+  }, [createFileTab, setCreateFileTab]);
+
+  return null;
+}
+
 describe("NativeMessage", () => {
+  afterEach(() => {
+    cleanup();
+    mockOpenInBrowser.mockReset();
+    mockOpenInBrowser.mockImplementation(async () => {});
+    mockReadFileBase64.mockReset();
+    mockReadFileBase64.mockImplementation(async () => "image-base64");
+  });
+
   test("renders single newlines as visible line breaks in text parts", () => {
     const message: NativeMessageType = {
       id: "msg-line-breaks",
@@ -28,6 +75,24 @@ describe("NativeMessage", () => {
     expect(container.textContent).toContain("Second line");
     expect(container.textContent).toContain("Third line");
     expect(lineBreaks).toHaveLength(2);
+  });
+
+  test("opens markdown links through the system browser", () => {
+    const message: NativeMessageType = {
+      id: "msg-link",
+      role: "assistant",
+      content: "Read [the docs](https://example.com/docs).",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        { type: "text", content: "Read [the docs](https://example.com/docs)." },
+      ],
+    };
+
+    render(<NativeMessage message={message} />);
+
+    fireEvent.click(screen.getByRole("link", { name: "the docs" }));
+
+    expect(mockOpenInBrowser).toHaveBeenCalledWith("https://example.com/docs");
   });
 
   test("preserves chronological order for interleaved text and tool parts", () => {
@@ -61,6 +126,77 @@ describe("NativeMessage", () => {
     expect(toolIndex).toBeGreaterThan(firstTextIndex);
     expect(fileIndex).toBeGreaterThanOrEqual(toolIndex);
     expect(secondTextIndex).toBeGreaterThan(fileIndex);
+  });
+
+  test("shows an error state when local image preview loading fails", async () => {
+    const consoleError = console.error;
+    console.error = mock(() => {}) as typeof console.error;
+    mockReadFileBase64.mockImplementationOnce(async () => {
+      throw new Error("not found");
+    });
+    const message: NativeMessageType = {
+      id: "msg-file-preview-error",
+      role: "assistant",
+      content: "",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "file",
+          content: "/tmp/missing.png",
+        },
+      ],
+    };
+
+    try {
+      render(<NativeMessage message={message} />);
+
+      fireEvent.click(screen.getByRole("button", { name: /missing\.png/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("(error)")).toBeTruthy();
+      });
+      expect(mockReadFileBase64).toHaveBeenCalledWith("/tmp/missing.png");
+      expect(screen.queryByAltText("missing.png")).toBeNull();
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
+  test("opens edit diffs in a file tab from the expanded tool view", () => {
+    const createFileTab = mock(() => {});
+    const message: NativeMessageType = {
+      id: "msg-edit-diff",
+      role: "assistant",
+      content: "",
+      createdAt: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "tool-invocation",
+          content: "",
+          toolName: "Edit",
+          toolState: "success",
+          toolDiff: {
+            filePath: "/workspace/src/example.ts",
+            before: "const value = 1;",
+            after: "const value = 2;",
+          },
+        },
+      ],
+    };
+
+    render(
+      <TerminalContextHarness createFileTab={createFileTab}>
+        <NativeMessage message={message} />
+      </TerminalContextHarness>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /edit/i }));
+    fireEvent.click(screen.getByTitle("Open diff in new tab"));
+
+    expect(createFileTab).toHaveBeenCalledWith("/workspace/src/example.ts", {
+      isDiff: true,
+      gitStatus: "M",
+    });
   });
 
   test("renders transcript-derived subagent groups as collapsible activity stacks", () => {

@@ -1,6 +1,16 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { NativeMessagePart } from "@/lib/chat/native-message-types";
+import { mockWriteText } from "../../../tests/mocks/clipboard";
+
+const toastErrorMock = mock(() => {});
+
+mock.module("sonner", () => ({
+  toast: {
+    error: toastErrorMock,
+  },
+}));
+
 import { NativeMessage } from "./NativeMessage";
 
 function makeMessage(
@@ -23,6 +33,7 @@ function makeMessage(
 describe("NativeMessage task list rendering", () => {
   afterEach(() => {
     cleanup();
+    toastErrorMock.mockClear();
   });
 
   test("renders task list in a collapsible thinking block that expands on click", () => {
@@ -91,6 +102,80 @@ describe("NativeMessage task list rendering", () => {
     expect(checkboxIcons).toHaveLength(2);
     expect(container.textContent).not.toContain("[x]");
     expect(container.textContent).not.toContain("[ ]");
+  });
+
+  test("renders an icon-only copy button under text parts", async () => {
+    mockWriteText.mockClear();
+    mockWriteText.mockImplementation(async () => {});
+    const message = makeMessage([
+      {
+        type: "text",
+        content: "Copy this answer",
+      },
+    ]);
+
+    render(<NativeMessage message={message} />);
+
+    const copyButton = screen.getByRole("button", { name: "Copy text" });
+    expect(copyButton.textContent).toBe("");
+
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(mockWriteText).toHaveBeenCalledWith("Copy this answer");
+    });
+    expect(screen.getByRole("button", { name: "Copied text" })).toBeTruthy();
+  });
+
+  test("shows an error toast when copying text fails", async () => {
+    const consoleError = console.error;
+    console.error = mock(() => {}) as typeof console.error;
+    mockWriteText.mockClear();
+    mockWriteText.mockImplementation(async () => {
+      throw new Error("clipboard denied");
+    });
+    const message = makeMessage([
+      {
+        type: "text",
+        content: "This will not copy",
+      },
+    ]);
+
+    try {
+      render(<NativeMessage message={message} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy text" }));
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalledWith("Failed to copy message text");
+      });
+      expect(screen.queryByRole("button", { name: "Copied text" })).toBeNull();
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
+  test("resets copied state after the confirmation timeout", async () => {
+    mockWriteText.mockClear();
+    mockWriteText.mockImplementation(async () => {});
+    const message = makeMessage([
+      {
+        type: "text",
+        content: "Copy and reset",
+      },
+    ]);
+
+    render(<NativeMessage message={message} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy text" }));
+
+    await screen.findByRole("button", { name: "Copied text" });
+    await waitFor(
+      () => {
+        expect(screen.getByRole("button", { name: "Copy text" })).toBeTruthy();
+      },
+      { timeout: 1600 },
+    );
   });
 
   test("handles mixed content in thinking: task list plus prose", () => {
