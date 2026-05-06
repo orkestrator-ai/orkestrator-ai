@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage as ClaudeMessageType } from "../../../src/lib/claude-client";
 import { TerminalProvider, useTerminalContext } from "../../../src/contexts/TerminalContext";
 import { CLAUDE_AUTH_LOGIN_COMMAND } from "../../../src/lib/claude-auth";
+import { mockWriteText } from "../../mocks/clipboard";
 
 const mockReadFileBase64 = mock(async () => "local-base64");
 const mockReadContainerFileBase64 = mock(async () => "container-base64");
@@ -60,6 +61,8 @@ describe("ClaudeMessage", () => {
     mockReadContainerFileBase64.mockImplementation(async () => "container-base64");
     mockReadFileBase64.mockReset();
     mockReadFileBase64.mockImplementation(async () => "local-base64");
+    mockWriteText.mockReset();
+    mockWriteText.mockImplementation(async () => {});
   });
 
   test("renders single newlines as visible line breaks in user text", () => {
@@ -84,6 +87,30 @@ describe("ClaudeMessage", () => {
     expect(container.textContent).toContain("Second line");
     expect(container.textContent).toContain("Third line");
     expect(lineBreaks).toHaveLength(2);
+  });
+
+  test("renders a copy button for text parts", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-copy",
+      role: "assistant",
+      content: "Copy this Claude response",
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "text",
+          content: "Copy this Claude response",
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy text" }));
+
+    await waitFor(() => {
+      expect(mockWriteText).toHaveBeenCalledWith("Copy this Claude response");
+    });
+    expect(screen.getByRole("button", { name: "Copied text" })).toBeTruthy();
   });
 
   test("shows a Claude auth login action for authentication failures", () => {

@@ -17,6 +17,7 @@ import { TodoToolPart, TOOL_STATE_COLORS } from "@/components/todo/TodoToolPart"
 import { isTodoTool } from "@/lib/todo-tool";
 import { MessageErrorAlert, MessageShell } from "@/components/chat/MessageShell";
 import { MessageMarkdown } from "@/components/chat/MessageMarkdown";
+import { MessageCopyButton } from "@/components/chat/MessageCopyButton";
 
 /** Parsed attachment from XML tags */
 interface ParsedAttachment {
@@ -1151,7 +1152,10 @@ function AttachmentsList({
 /** Render a text content part with markdown support */
 function TextPart({ content }: { content: string }) {
   return (
-    <MessageMarkdown content={content} components={markdownComponents} />
+    <div>
+      <MessageMarkdown content={content} components={markdownComponents} />
+      <MessageCopyButton content={content} />
+    </div>
   );
 }
 
