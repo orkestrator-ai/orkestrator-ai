@@ -176,7 +176,10 @@ export function ActionBar() {
     const targetBranch = repoConfig?.prBaseBranch || "main";
     const reviewPrompt = createReviewPrompt(targetBranch);
 
-    createTab(agentOverride || defaultAgent, { initialPrompt: reviewPrompt });
+    createTab(agentOverride || defaultAgent, {
+      initialPrompt: reviewPrompt,
+      displayTitle: "Review",
+    });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent]);
 
   // Load run commands from orkestrator-ai.json when workspace is ready
@@ -450,7 +453,10 @@ export function ActionBar() {
     // Set monitoring mode to create-pending for faster PR detection (5s intervals)
     setModeCreatePending();
 
-    createTab(agentOverride || defaultAgent, { initialPrompt: prPrompt });
+    createTab(agentOverride || defaultAgent, {
+      initialPrompt: prPrompt,
+      displayTitle: "PR",
+    });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent, setModeCreatePending]);
 
   // Handler for pushing changes to an existing PR - launches agent tab with commit/push prompt
@@ -458,7 +464,10 @@ export function ActionBar() {
     if (!createTab || !canCreateTab) return;
 
     const pushPrompt = createPushChangesPrompt();
-    createTab(agentOverride || defaultAgent, { initialPrompt: pushPrompt });
+    createTab(agentOverride || defaultAgent, {
+      initialPrompt: pushPrompt,
+      displayTitle: "Git Push",
+    });
   }, [createTab, canCreateTab, defaultAgent]);
 
   // Handler for resolving merge conflicts - launches agent tab with conflict resolution prompt
@@ -469,7 +478,10 @@ export function ActionBar() {
     const targetBranch = repoConfig?.prBaseBranch || "main";
     const resolvePrompt = createResolveConflictsPrompt(targetBranch);
 
-    createTab(agentOverride || defaultAgent, { initialPrompt: resolvePrompt });
+    createTab(agentOverride || defaultAgent, {
+      initialPrompt: resolvePrompt,
+      displayTitle: "Conflict",
+    });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent]);
 
   // Handler for cleaning up (deleting) an environment after PR is merged/closed

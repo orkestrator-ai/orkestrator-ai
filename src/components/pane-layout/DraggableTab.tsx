@@ -132,6 +132,10 @@ export function DraggableTab({
       return `${session.name} ${tabNumber}`;
     }
 
+    if (tab.displayTitle) {
+      return `${tab.displayTitle} ${tabNumber}`;
+    }
+
     // Auto-generated title from Claude native session
     if (claudeSessionTitle) {
       return claudeSessionTitle;

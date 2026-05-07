@@ -22,6 +22,8 @@ export interface CreateTabOptions {
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */
   initialCommands?: string[];
+  /** Optional tab chrome title; the tab number is appended by the tab bar. */
+  displayTitle?: string;
 }
 
 // Options for creating a file tab

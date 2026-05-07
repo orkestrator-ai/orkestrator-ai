@@ -28,6 +28,7 @@ const realSonnerSnapshot = { ...realSonner };
 const deleteEnvironmentMock = mock(async (_environmentId: string) => {});
 const mergePrMock = mock(async (_containerId: string, _method: string, _deleteBranch: boolean) => {});
 const mergePrLocalMock = mock(async (_environmentId: string, _method: string, _deleteBranch: boolean) => {});
+const createTabMock = mock((_agent: string, _options?: unknown) => {});
 const toastSuccessMock = mock(() => {});
 const toastErrorMock = mock(() => {});
 const originalConsoleError = console.error;
@@ -60,6 +61,7 @@ const selectedProject: Project = {
 };
 
 let currentEnvironment: Environment = selectedEnvironment;
+let currentChanges: unknown[] = [];
 
 function selectState<TState, TResult>(
   state: TState,
@@ -193,7 +195,7 @@ mock.module("@/stores", () => ({
       {
         isOpen: false,
         togglePanel: () => {},
-        changes: [],
+        changes: currentChanges,
       },
       selector,
     ),
@@ -240,7 +242,7 @@ mock.module("@/contexts", () => ({
   MAX_TABS: 10,
   useTerminalContext: () => ({
     closeActiveTab: () => {},
-    createTab: () => {},
+    createTab: createTabMock,
     selectTab: () => {},
     tabCount: 0,
   }),
@@ -287,6 +289,7 @@ beforeEach(() => {
   deleteEnvironmentMock.mockReset();
   mergePrMock.mockReset();
   mergePrLocalMock.mockReset();
+  createTabMock.mockReset();
   toastSuccessMock.mockReset();
   toastErrorMock.mockReset();
   writeTextMock = mock(async () => {});
@@ -296,6 +299,7 @@ beforeEach(() => {
     configurable: true,
   });
   currentEnvironment = { ...selectedEnvironment };
+  currentChanges = [];
 });
 
 afterEach(() => {
@@ -445,6 +449,72 @@ describe("ActionBar copy URL", () => {
     fireEvent.keyDown(window, { key: "C", code: "KeyC", ctrlKey: true, shiftKey: true });
 
     expect(writeTextMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("ActionBar workflow tabs", () => {
+  test("names review tabs with the workflow title", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      prUrl: null,
+      prState: null,
+      hasMergeConflicts: null,
+    };
+
+    render(<ActionBar />);
+
+    fireEvent.keyDown(window, { key: "r", code: "KeyR", metaKey: true });
+
+    expect(createTabMock).toHaveBeenCalledWith(
+      "codex",
+      expect.objectContaining({ displayTitle: "Review" }),
+    );
+  });
+
+  test("names PR, conflict, and push workflow tabs", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      prUrl: null,
+      prState: null,
+      hasMergeConflicts: null,
+    };
+    const { rerender } = render(<ActionBar />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create PR" }));
+
+    expect(createTabMock).toHaveBeenLastCalledWith(
+      "codex",
+      expect.objectContaining({ displayTitle: "PR" }),
+    );
+
+    currentEnvironment = {
+      ...selectedEnvironment,
+      prState: "open",
+      hasMergeConflicts: true,
+    };
+    rerender(<ActionBar />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+
+    expect(createTabMock).toHaveBeenLastCalledWith(
+      "codex",
+      expect.objectContaining({ displayTitle: "Conflict" }),
+    );
+
+    currentEnvironment = {
+      ...selectedEnvironment,
+      prState: "open",
+      hasMergeConflicts: false,
+    };
+    currentChanges = [{ path: "src/example.ts" }];
+    rerender(<ActionBar />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Push Changes" }));
+
+    expect(createTabMock).toHaveBeenLastCalledWith(
+      "codex",
+      expect.objectContaining({ displayTitle: "Git Push" }),
+    );
   });
 });
 
