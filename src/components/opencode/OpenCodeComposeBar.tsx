@@ -430,7 +430,7 @@ export function OpenCodeComposeBar({
     [models]
   );
 
-  // Filter models by search text
+  // Filter models by search text - keeps provider grouping
   const filteredModelsByProvider = useMemo(() => {
     if (!modelSearch.trim()) return modelsByProvider;
 
@@ -622,10 +622,9 @@ export function OpenCodeComposeBar({
                     placeholder="Search models..."
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
-                    onBlur={() => setModelSearch("")}
-                    className="flex-1 h-7 px-2 text-xs rounded border border-border bg-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
+                    className="flex-1 h-7 px-2 text-xs rounded border border-border bg-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
                   />
                   {onRefreshModels && (
                     <button
@@ -647,7 +646,7 @@ export function OpenCodeComposeBar({
                 <DropdownMenuItem disabled>No models available</DropdownMenuItem>
               ) : (
                 <>
-                  {favoriteModels.length > 0 && (
+                  {favoriteModels.length > 0 && !isModelSearchActive && (
                     <>
                       <DropdownMenuSub>
                         <DropdownMenuSubTrigger className="text-sm">
@@ -703,20 +702,18 @@ export function OpenCodeComposeBar({
                           </DropdownMenuSubTrigger>
                           <DropdownMenuPortal>
                             <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                              {providerModels.map((model) => {
-                                return (
-                                  <DropdownMenuItem
-                                    key={model.id}
-                                    onClick={() => {
-                                      handleModelChange(model.id);
-                                      setModelSearch("");
-                                    }}
-                                    className="text-sm"
-                                  >
-                                    <span className="truncate">{model.name}</span>
-                                  </DropdownMenuItem>
-                                );
-                              })}
+                              {providerModels.map((model) => (
+                                <DropdownMenuItem
+                                  key={model.id}
+                                  onClick={() => {
+                                    handleModelChange(model.id);
+                                    setModelSearch("");
+                                  }}
+                                  className="text-sm"
+                                >
+                                  <span className="truncate">{model.name}</span>
+                                </DropdownMenuItem>
+                              ))}
                             </DropdownMenuSubContent>
                           </DropdownMenuPortal>
                         </DropdownMenuSub>
