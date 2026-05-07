@@ -1353,6 +1353,43 @@ export function OpenCodeChatTab({
     [client, sessionKey, setSession, syncPendingRequests],
   );
 
+  // Refresh models by re-fetching from the SDK client
+  const refreshModels = useCallback(async () => {
+    if (!client) return;
+
+    try {
+      const { models: availableModels } = await getModelsWithDefaults(client);
+      setModels(environmentId, availableModels);
+
+      // Update model preferences as well
+      const preferences = await getOpencodeModelPreferences().catch((error) => {
+        console.warn("[OpenCodeChatTab] Failed to load model preferences:", error);
+        return EMPTY_MODEL_PREFERENCES;
+      });
+      setModelPreferences(preferences);
+
+      // Validate current selected model is still available
+      const availableModelIds = new Set(availableModels.map((m) => m.id));
+      const currentModel = getSelectedModel(environmentId);
+      if (currentModel && !availableModelIds.has(currentModel)) {
+        const resolvedModel = availableModels[0]?.id;
+        if (resolvedModel) {
+          setSelectedModel(environmentId, resolvedModel);
+        }
+      }
+
+      // Validate current selected variant
+      const selectedModelObj = availableModels.find((m) => m.id === getSelectedModel(environmentId));
+      const availableVariants = selectedModelObj?.variants ?? [];
+      const currentVariant = getSelectedVariant(environmentId);
+      if (currentVariant && !availableVariants.includes(currentVariant)) {
+        setSelectedVariant(environmentId, undefined);
+      }
+    } catch (error) {
+      console.error("[OpenCodeChatTab] Failed to refresh models:", error);
+    }
+  }, [client, environmentId, setModels, getSelectedModel, setSelectedModel, setSelectedVariant]);
+
   // Render loading state
   if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
     return (
@@ -1527,6 +1564,7 @@ export function OpenCodeChatTab({
         queueLength={queueLength}
         onStop={handleStop}
         onQueue={handleQueue}
+        onRefreshModels={refreshModels}
       />
 
       {client && (
