@@ -15,6 +15,7 @@ import {
   ChevronUp,
   ArrowUp,
   Square,
+  RefreshCw,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -70,6 +71,8 @@ interface OpenCodeComposeBarProps {
   onStop?: () => void;
   /** Callback when prompt should be queued instead of sent */
   onQueue?: (text: string, attachments: OpenCodeAttachment[]) => void;
+  /** Callback to refresh/reload models */
+  onRefreshModels?: () => void;
 }
 
 const MAX_LINES = 12;
@@ -93,6 +96,7 @@ export function OpenCodeComposeBar({
   queueLength = 0,
   onStop,
   onQueue,
+  onRefreshModels,
 }: OpenCodeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
@@ -145,6 +149,7 @@ export function OpenCodeComposeBar({
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const [slashFilter, setSlashFilter] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
 
   // Get worktree path for local environments
   const worktreePath = useEnvironmentStore(
@@ -402,9 +407,6 @@ export function OpenCodeComposeBar({
     return acc;
   }, {} as Record<string, OpenCodeModel[]>);
 
-  // Sort providers alphabetically
-  const sortedProviders = Object.keys(modelsByProvider).sort();
-
   const favoriteModels = useMemo(() => {
     const byId = new Map(models.map((model) => [model.id, model]));
     const seen = new Set<string>();
@@ -427,6 +429,43 @@ export function OpenCodeComposeBar({
     () => new Map(models.map((model) => [model.id, model.name])),
     [models]
   );
+
+  // Filter models by search text - keeps provider grouping
+  const filteredModelsByProvider = useMemo(() => {
+    if (!modelSearch.trim()) return modelsByProvider;
+
+    const search = modelSearch.toLowerCase();
+    const filtered: Record<string, OpenCodeModel[]> = {};
+
+    for (const [provider, providerModels] of Object.entries(modelsByProvider)) {
+      const matches = providerModels.filter(
+        (m) =>
+          m.name.toLowerCase().includes(search) ||
+          m.provider.toLowerCase().includes(search) ||
+          m.id.toLowerCase().includes(search)
+      );
+      if (matches.length > 0) {
+        filtered[provider] = matches;
+      }
+    }
+
+    return filtered;
+  }, [modelsByProvider, modelSearch]);
+
+  // Sort filtered providers alphabetically
+  const filteredProviders = Object.keys(filteredModelsByProvider).sort();
+
+  // Check if search is active
+  const isModelSearchActive = modelSearch.trim().length > 0;
+
+  // Count total visible models
+  const totalVisibleModels = useMemo(() => {
+    let count = 0;
+    for (const models of Object.values(filteredModelsByProvider)) {
+      count += models.length;
+    }
+    return count;
+  }, [filteredModelsByProvider]);
 
   // Capitalize mode for display
   const modeDisplayName = selectedMode === "plan" ? "Planning" : "Build";
@@ -554,74 +593,115 @@ export function OpenCodeComposeBar({
           </DropdownMenu>
 
           {/* Model dropdown - minimal style, grouped by provider */}
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={(open) => { if (!open) setModelSearch(""); }}>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
                 <ChevronDown className="w-3 h-3" />
                 <span className="max-w-[200px] truncate">{selectedModelName}</span>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto">
+            <DropdownMenuContent align="start" className="w-[320px]">
+              {/* Search input and refresh button */}
+              <div className="p-2 pb-1">
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    placeholder="Search models..."
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Escape") e.stopPropagation();
+                    }}
+                    className="flex-1 h-7 px-2 text-xs rounded border border-border bg-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  {onRefreshModels && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRefreshModels();
+                      }}
+                      className="h-7 w-7 flex items-center justify-center rounded border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      title="Refresh models"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {models.length === 0 ? (
                 <DropdownMenuItem disabled>No models available</DropdownMenuItem>
               ) : (
                 <>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="text-sm">
-                      Favorites
-                      <span className="ml-2 text-muted-foreground text-[10px]">
-                        ({favoriteModels.length})
-                      </span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuPortal>
-                      <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                        {favoriteModels.length === 0 ? (
-                          <DropdownMenuItem disabled>No favorites</DropdownMenuItem>
-                        ) : (
-                          favoriteModels.map((model) => (
-                            <DropdownMenuItem
-                              key={model.id}
-                              onClick={() => handleModelChange(model.id)}
-                              className="text-sm"
-                            >
-                              <span className="truncate">{model.name}</span>
-                            </DropdownMenuItem>
-                          ))
-                        )}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuPortal>
-                  </DropdownMenuSub>
-
-                  <DropdownMenuSeparator />
-
-                  {sortedProviders.map((provider) => {
-                    const providerModels = modelsByProvider[provider] ?? [];
-                    return (
-                      <DropdownMenuSub key={provider}>
+                  {favoriteModels.length > 0 && !isModelSearchActive && (
+                    <>
+                      <DropdownMenuSub>
                         <DropdownMenuSubTrigger className="text-sm">
-                          {provider}
+                          Favorites
                           <span className="ml-2 text-muted-foreground text-[10px]">
-                            ({providerModels.length})
+                            ({favoriteModels.length})
                           </span>
                         </DropdownMenuSubTrigger>
                         <DropdownMenuPortal>
                           <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                            {providerModels.map((model) => {
-                              return (
+                            {favoriteModels.map((model) => (
+                              <DropdownMenuItem
+                                key={model.id}
+                                onClick={() => handleModelChange(model.id)}
+                                className="text-sm"
+                              >
+                                <span className="truncate">{model.name}</span>
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuPortal>
+                      </DropdownMenuSub>
+
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+                  {isModelSearchActive && (
+                    <div className="px-2 py-1 text-[10px] text-muted-foreground">
+                      {totalVisibleModels} model{totalVisibleModels !== 1 ? "s" : ""} found
+                    </div>
+                  )}
+
+                  {filteredProviders.length === 0 ? (
+                    <DropdownMenuItem disabled className="text-muted-foreground">No matches</DropdownMenuItem>
+                  ) : (
+                    filteredProviders.map((provider) => {
+                      const providerModels = filteredModelsByProvider[provider] ?? [];
+                      return (
+                        <DropdownMenuSub key={provider}>
+                          <DropdownMenuSubTrigger className="text-sm">
+                            {provider}
+                            <span className="ml-2 text-muted-foreground text-[10px]">
+                              ({providerModels.length})
+                            </span>
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuPortal>
+                            <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
+                              {providerModels.map((model) => (
                                 <DropdownMenuItem
                                   key={model.id}
-                                  onClick={() => handleModelChange(model.id)}
+                                  onClick={() => {
+                                    handleModelChange(model.id);
+                                    setModelSearch("");
+                                  }}
                                   className="text-sm"
                                 >
                                   <span className="truncate">{model.name}</span>
                                 </DropdownMenuItem>
-                              );
-                            })}
-                          </DropdownMenuSubContent>
-                        </DropdownMenuPortal>
-                      </DropdownMenuSub>
-                    );
-                  })}
+                              ))}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuPortal>
+                        </DropdownMenuSub>
+                      );
+                    })
+                  )}
                 </>
               )}
             </DropdownMenuContent>
