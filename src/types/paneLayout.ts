@@ -101,6 +101,8 @@ export interface TabInfo {
   initialPrompt?: string;
   /** Initial commands to execute (only for plain terminal tabs) */
   initialCommands?: string[];
+  /** Optional tab chrome title; the tab number is appended by the tab bar. */
+  displayTitle?: string;
   /** Whether this tab runs setup scripts (used to track completion) */
   isSetupTab?: boolean;
 }

@@ -689,6 +689,7 @@ export function TerminalContainer({
             isLocal: isLocalEnvironment,
           },
           initialPrompt: options?.initialPrompt,
+          displayTitle: options?.displayTitle,
         };
         console.debug("[TerminalContainer] Creating opencode-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
@@ -706,6 +707,7 @@ export function TerminalContainer({
             isLocal: isLocalEnvironment,
           },
           initialPrompt: options?.initialPrompt,
+          displayTitle: options?.displayTitle,
         };
         console.debug("[TerminalContainer] Creating claude-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
@@ -722,6 +724,7 @@ export function TerminalContainer({
             isLocal: isLocalEnvironment,
           },
           initialPrompt: options?.initialPrompt,
+          displayTitle: options?.displayTitle,
         };
         console.debug("[TerminalContainer] Creating codex-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
@@ -733,6 +736,7 @@ export function TerminalContainer({
         type,
         initialPrompt: options?.initialPrompt,
         initialCommands: options?.initialCommands,
+        displayTitle: options?.displayTitle,
       };
 
       console.debug("[TerminalContainer] Creating new tab:", newTabId, "type:", type, "for environment:", environmentId);

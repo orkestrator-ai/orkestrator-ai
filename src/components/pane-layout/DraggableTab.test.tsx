@@ -1,0 +1,158 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, render, screen } from "@testing-library/react";
+import type { TabInfo } from "@/types/paneLayout";
+import { useSessionStore } from "@/stores/sessionStore";
+import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
+import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
+import { useFileDirtyStore } from "@/stores";
+
+mock.module("@dnd-kit/sortable", () => ({
+  useSortable: () => ({
+    attributes: {},
+    listeners: {},
+    setNodeRef: () => {},
+    transform: null,
+    transition: null,
+    isDragging: false,
+  }),
+}));
+
+mock.module("@dnd-kit/utilities", () => ({
+  CSS: {
+    Transform: { toString: () => "" },
+  },
+}));
+
+const { DraggableTab } = await import("./DraggableTab");
+
+function renderTab(tab: TabInfo, index = 0) {
+  return render(
+    <DraggableTab
+      tab={tab}
+      paneId="pane-1"
+      index={index}
+      isActive={false}
+      canClose
+      onSelect={() => {}}
+    />,
+  );
+}
+
+describe("DraggableTab title precedence", () => {
+  beforeEach(() => {
+    cleanup();
+    useSessionStore.setState({ sessions: new Map() });
+    useClaudeStore.setState({ sessions: new Map() });
+    useBuildPipelineStore.setState({ pipelines: new Map() });
+    useFileDirtyStore.setState({ dirtyFiles: new Map() });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("session.name beats every other source", () => {
+    const tab: TabInfo = {
+      id: "tab-a",
+      type: "claude-native",
+      displayTitle: "Review",
+      claudeNativeData: { environmentId: "env-1" },
+    };
+
+    useSessionStore.setState({
+      sessions: new Map([
+        ["sess-1", {
+          id: "sess-1",
+          environmentId: "env-1",
+          tabId: "tab-a",
+          name: "Custom",
+          status: "connected",
+          sessionType: "claude",
+          containerId: "c-1",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          lastActivityAt: "2024-01-01T00:00:00.000Z",
+          order: 0,
+        }],
+      ]),
+    });
+    useClaudeStore.setState({
+      sessions: new Map([
+        [createClaudeSessionKey("env-1", "tab-a"), { title: "Auto Title" } as never],
+      ]),
+    });
+
+    renderTab(tab, 2);
+
+    expect(screen.getByText("Custom 3")).toBeDefined();
+  });
+
+  test("claudeSessionTitle beats displayTitle once the agent has named the session", () => {
+    const tab: TabInfo = {
+      id: "tab-a",
+      type: "claude-native",
+      displayTitle: "Review",
+      claudeNativeData: { environmentId: "env-1" },
+    };
+
+    useClaudeStore.setState({
+      sessions: new Map([
+        [createClaudeSessionKey("env-1", "tab-a"), { title: "Auto Title" } as never],
+      ]),
+    });
+
+    renderTab(tab, 0);
+
+    expect(screen.getByText("Auto Title")).toBeDefined();
+  });
+
+  test("displayTitle is used when no claude session title exists", () => {
+    const tab: TabInfo = {
+      id: "tab-a",
+      type: "codex-native",
+      displayTitle: "Review",
+      codexNativeData: { environmentId: "env-1" },
+    };
+
+    renderTab(tab, 0);
+
+    expect(screen.getByText("Review 1")).toBeDefined();
+  });
+
+  test("displayTitle includes the tab number from index + 1", () => {
+    const tab: TabInfo = {
+      id: "tab-a",
+      type: "codex-native",
+      displayTitle: "PR",
+      codexNativeData: { environmentId: "env-1" },
+    };
+
+    renderTab(tab, 4);
+
+    expect(screen.getByText("PR 5")).toBeDefined();
+  });
+
+  test("falls back to type-default when no title sources are present", () => {
+    const tab: TabInfo = {
+      id: "tab-a",
+      type: "codex-native",
+      codexNativeData: { environmentId: "env-1" },
+    };
+
+    renderTab(tab, 1);
+
+    expect(screen.getByText("Codex 2")).toBeDefined();
+  });
+
+  test("file tab title uses the basename and ignores displayTitle", () => {
+    const tab: TabInfo = {
+      id: "tab-a",
+      type: "file",
+      displayTitle: "Should not show",
+      fileData: { filePath: "src/components/Foo/Bar.tsx" },
+    };
+
+    renderTab(tab, 0);
+
+    expect(screen.getByText("Bar.tsx")).toBeDefined();
+  });
+});
