@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { useEffect } from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
-import { TerminalProvider } from "@/contexts";
+import { TerminalProvider, useTerminalContext, type TerminalTabType, type CreateTabOptions } from "@/contexts";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
@@ -749,5 +750,132 @@ describe("TerminalContainer", () => {
     });
 
     expect(markSetupScriptsCompleteMock).not.toHaveBeenCalled();
+  });
+
+  describe("createTab forwards displayTitle", () => {
+    function CreateTabHarness({
+      type,
+      options,
+    }: {
+      type: TerminalTabType;
+      options: CreateTabOptions;
+    }) {
+      const { createTab } = useTerminalContext();
+      useEffect(() => {
+        if (createTab) createTab(type, options);
+      }, [createTab, type, options]);
+      return null;
+    }
+
+    test("plain terminal tabs receive displayTitle", async () => {
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness type="plain" options={{ displayTitle: "Custom" }} />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "plain" && t.id !== "visible-tab");
+        expect(created?.displayTitle).toBe("Custom");
+      });
+    });
+
+    test("claude-native tabs receive displayTitle", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, claudeMode: "native" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness type="claude" options={{ displayTitle: "Review" }} />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude-native");
+        expect(created?.displayTitle).toBe("Review");
+      });
+    });
+
+    test("codex-native tabs receive displayTitle", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, codexMode: "native" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness type="codex" options={{ displayTitle: "PR" }} />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "codex-native");
+        expect(created?.displayTitle).toBe("PR");
+      });
+    });
+
+    test("opencode-native tabs receive displayTitle", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, opencodeMode: "native" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness type="opencode" options={{ displayTitle: "Conflict" }} />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "opencode-native");
+        expect(created?.displayTitle).toBe("Conflict");
+      });
+    });
   });
 });

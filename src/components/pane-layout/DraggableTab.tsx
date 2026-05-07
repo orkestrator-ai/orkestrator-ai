@@ -132,13 +132,14 @@ export function DraggableTab({
       return `${session.name} ${tabNumber}`;
     }
 
-    if (tab.displayTitle) {
-      return `${tab.displayTitle} ${tabNumber}`;
-    }
-
-    // Auto-generated title from Claude native session
+    // Auto-generated title from Claude native session takes precedence over
+    // the workflow-supplied displayTitle once the agent has named the session.
     if (claudeSessionTitle) {
       return claudeSessionTitle;
+    }
+
+    if (tab.displayTitle) {
+      return `${tab.displayTitle} ${tabNumber}`;
     }
 
     // Build pipeline tab title
