@@ -41,6 +41,7 @@ import {
   type OpenCodeConversationMode,
   type OpenCodeSlashCommand,
   type OpenCodeModel,
+  type OpenCodeModelDefaults,
 } from "@/lib/opencode-client";
 import { extractContextUsage } from "@/lib/context-usage";
 import {
@@ -93,6 +94,58 @@ function toOpenCodeModelId(modelRef?: OpenCodeModelRef): string | undefined {
 
   return `${modelRef.providerID}/${modelRef.modelID}`;
 }
+
+function resolveModelSelection(input: {
+  availableModels: OpenCodeModel[];
+  defaults: OpenCodeModelDefaults;
+  preferences: OpenCodeModelPreferences;
+  currentModel: string | undefined;
+  currentVariant: string | undefined;
+}): { model: string | undefined; variant: string | undefined } {
+  const { availableModels, defaults, preferences, currentModel, currentVariant } = input;
+  const availableModelIds = new Set(availableModels.map((m) => m.id));
+  const recentModelId = toOpenCodeModelId(preferences.recent[0]);
+
+  let model =
+    currentModel && availableModelIds.has(currentModel) ? currentModel : undefined;
+
+  if (!model) {
+    if (recentModelId && availableModelIds.has(recentModelId)) {
+      model = recentModelId;
+    } else if (defaults.modelId && availableModelIds.has(defaults.modelId)) {
+      model = defaults.modelId;
+    } else {
+      model = availableModels[0]?.id;
+    }
+  }
+
+  const modelObj = availableModels.find((m) => m.id === model);
+  const availableVariants = modelObj?.variants ?? [];
+
+  let variant =
+    currentVariant && availableVariants.includes(currentVariant)
+      ? currentVariant
+      : undefined;
+
+  if (!variant && model) {
+    const preferredVariant = preferences.variant[model];
+    if (preferredVariant && availableVariants.includes(preferredVariant)) {
+      variant = preferredVariant;
+    }
+  }
+
+  if (
+    !variant &&
+    model === defaults.modelId &&
+    defaults.variant &&
+    availableVariants.includes(defaults.variant)
+  ) {
+    variant = defaults.variant;
+  }
+
+  return { model, variant };
+}
+
 
 export function OpenCodeChatTab({
   tabId,
@@ -536,60 +589,19 @@ export function OpenCodeChatTab({
         setModelPreferences(preferences);
 
         // Initialize selected model/variant while preserving valid user-selected values.
-        const availableModelIds = new Set(availableModels.map((m) => m.id));
         const currentModel = getSelectedModel(environmentId);
-        const recentModelId = toOpenCodeModelId(preferences.recent[0]);
-
-        let resolvedModel =
-          currentModel && availableModelIds.has(currentModel)
-            ? currentModel
-            : undefined;
-
-        if (!resolvedModel) {
-          if (recentModelId && availableModelIds.has(recentModelId)) {
-            resolvedModel = recentModelId;
-          } else if (
-            defaults.modelId &&
-            availableModelIds.has(defaults.modelId)
-          ) {
-            resolvedModel = defaults.modelId;
-          } else {
-            resolvedModel = availableModels[0]?.id;
-          }
-        }
+        const currentVariant = getSelectedVariant(environmentId);
+        const { model: resolvedModel, variant: resolvedVariant } =
+          resolveModelSelection({
+            availableModels,
+            defaults,
+            preferences,
+            currentModel,
+            currentVariant,
+          });
 
         if (resolvedModel && resolvedModel !== currentModel) {
           setSelectedModel(environmentId, resolvedModel);
-        }
-
-        const resolvedModelObj = availableModels.find(
-          (m) => m.id === resolvedModel,
-        );
-        const availableVariants = resolvedModelObj?.variants ?? [];
-        const currentVariant = getSelectedVariant(environmentId);
-
-        let resolvedVariant =
-          currentVariant && availableVariants.includes(currentVariant)
-            ? currentVariant
-            : undefined;
-
-        if (!resolvedVariant && resolvedModel) {
-          const preferredVariant = preferences.variant[resolvedModel];
-          if (
-            preferredVariant &&
-            availableVariants.includes(preferredVariant)
-          ) {
-            resolvedVariant = preferredVariant;
-          }
-        }
-
-        if (
-          !resolvedVariant &&
-          resolvedModel === defaults.modelId &&
-          defaults.variant &&
-          availableVariants.includes(defaults.variant)
-        ) {
-          resolvedVariant = defaults.variant;
         }
 
         if (resolvedVariant !== currentVariant) {
@@ -1358,38 +1370,45 @@ export function OpenCodeChatTab({
     if (!client) return;
 
     try {
-      const { models: availableModels } = await getModelsWithDefaults(client);
+      const { models: availableModels, defaults } =
+        await getModelsWithDefaults(client);
       setModels(environmentId, availableModels);
 
-      // Update model preferences as well
       const preferences = await getOpencodeModelPreferences().catch((error) => {
         console.warn("[OpenCodeChatTab] Failed to load model preferences:", error);
         return EMPTY_MODEL_PREFERENCES;
       });
       setModelPreferences(preferences);
 
-      // Validate current selected model is still available
-      const availableModelIds = new Set(availableModels.map((m) => m.id));
-      let currentModel = getSelectedModel(environmentId);
-      if (currentModel && !availableModelIds.has(currentModel)) {
-        const resolvedModel = availableModels[0]?.id;
-        if (resolvedModel) {
-          setSelectedModel(environmentId, resolvedModel);
-          currentModel = resolvedModel;
-        }
-      }
-
-      // Validate current selected variant
-      const selectedModelObj = availableModels.find((m) => m.id === currentModel);
-      const availableVariants = selectedModelObj?.variants ?? [];
+      const currentModel = getSelectedModel(environmentId);
       const currentVariant = getSelectedVariant(environmentId);
-      if (currentVariant && !availableVariants.includes(currentVariant)) {
-        setSelectedVariant(environmentId, undefined);
+      const { model: resolvedModel, variant: resolvedVariant } =
+        resolveModelSelection({
+          availableModels,
+          defaults,
+          preferences,
+          currentModel,
+          currentVariant,
+        });
+
+      if (resolvedModel && resolvedModel !== currentModel) {
+        setSelectedModel(environmentId, resolvedModel);
+      }
+      if (resolvedVariant !== currentVariant) {
+        setSelectedVariant(environmentId, resolvedVariant);
       }
     } catch (error) {
       console.error("[OpenCodeChatTab] Failed to refresh models:", error);
     }
-  }, [client, environmentId, setModels, getSelectedModel, setSelectedModel, setSelectedVariant]);
+  }, [
+    client,
+    environmentId,
+    setModels,
+    getSelectedModel,
+    getSelectedVariant,
+    setSelectedModel,
+    setSelectedVariant,
+  ]);
 
   // Render loading state
   if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {

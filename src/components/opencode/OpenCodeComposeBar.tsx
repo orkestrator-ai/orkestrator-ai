@@ -452,19 +452,6 @@ export function OpenCodeComposeBar({
     return filtered;
   }, [modelsByProvider, modelSearch]);
 
-  // Filter favorite models by search text
-  const filteredFavoriteModels = useMemo(() => {
-    if (!modelSearch.trim()) return favoriteModels;
-
-    const search = modelSearch.toLowerCase();
-    return favoriteModels.filter(
-      (m) =>
-        m.name.toLowerCase().includes(search) ||
-        m.provider.toLowerCase().includes(search) ||
-        m.id.toLowerCase().includes(search)
-    );
-  }, [favoriteModels, modelSearch]);
-
   // Sort filtered providers alphabetically
   const filteredProviders = Object.keys(filteredModelsByProvider).sort();
 
@@ -623,7 +610,9 @@ export function OpenCodeComposeBar({
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Escape") e.stopPropagation();
+                    }}
                     className="flex-1 h-7 px-2 text-xs rounded border border-border bg-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
                   />
                   {onRefreshModels && (
@@ -652,27 +641,20 @@ export function OpenCodeComposeBar({
                         <DropdownMenuSubTrigger className="text-sm">
                           Favorites
                           <span className="ml-2 text-muted-foreground text-[10px]">
-                            ({filteredFavoriteModels.length}/{favoriteModels.length})
+                            ({favoriteModels.length})
                           </span>
                         </DropdownMenuSubTrigger>
                         <DropdownMenuPortal>
                           <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto">
-                            {filteredFavoriteModels.length === 0 ? (
-                              <DropdownMenuItem disabled className="text-muted-foreground">No matches</DropdownMenuItem>
-                            ) : (
-                              filteredFavoriteModels.map((model) => (
-                                <DropdownMenuItem
-                                  key={model.id}
-                                  onClick={() => {
-                                    handleModelChange(model.id);
-                                    setModelSearch("");
-                                  }}
-                                  className="text-sm"
-                                >
-                                  <span className="truncate">{model.name}</span>
-                                </DropdownMenuItem>
-                              ))
-                            )}
+                            {favoriteModels.map((model) => (
+                              <DropdownMenuItem
+                                key={model.id}
+                                onClick={() => handleModelChange(model.id)}
+                                className="text-sm"
+                              >
+                                <span className="truncate">{model.name}</span>
+                              </DropdownMenuItem>
+                            ))}
                           </DropdownMenuSubContent>
                         </DropdownMenuPortal>
                       </DropdownMenuSub>

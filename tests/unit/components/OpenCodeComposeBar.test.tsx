@@ -446,28 +446,21 @@ describe("OpenCodeComposeBar", () => {
     });
   });
 
-  test("filters favorite models by search text", async () => {
+  test("shows Favorites section with count when search is empty", () => {
+    renderComposeBar({ favoriteModelIds: ["claude-sonnet", "gpt-5"] });
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    expect(screen.getByText("Favorites")).toBeTruthy();
+    expect(screen.getByText(/\(2\)/)).toBeTruthy();
+  });
+
+  test("hides Favorites section while a search query is active", async () => {
     renderComposeBar({ favoriteModelIds: ["claude-sonnet", "gpt-5"] });
     fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
     expect(screen.getByText("Favorites")).toBeTruthy();
     const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "GPT" } });
     await waitFor(() => {
-      expect(screen.queryByText("Claude Sonnet")).toBeNull();
-    });
-    fireEvent.click(screen.getByText("Favorites"));
-    await waitFor(() => {
-      expect(screen.getByText("GPT-5")).toBeTruthy();
-    });
-  });
-
-  test("shows match count in favorites when searching", async () => {
-    renderComposeBar({ favoriteModelIds: ["claude-sonnet", "gpt-5"] });
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
-    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "GPT" } });
-    await waitFor(() => {
-      expect(screen.getByText(/1\/2/)).toBeTruthy();
+      expect(screen.queryByText("Favorites")).toBeNull();
     });
   });
 
@@ -521,6 +514,17 @@ describe("OpenCodeComposeBar", () => {
       fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
       const reopensInput = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
       expect(reopensInput.value).toBe("");
+    });
+  });
+
+  test("Escape key in search input closes the dropdown", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText("Search models...")).toBeNull();
     });
   });
 
