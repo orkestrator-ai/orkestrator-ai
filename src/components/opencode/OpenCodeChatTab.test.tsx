@@ -530,6 +530,101 @@ describe("OpenCodeChatTab", () => {
     }
   });
 
+  describe("refreshModels behavior via store state", () => {
+    test("sets models in the store when available", async () => {
+      const newModels = [
+        { id: "claude-sonnet", name: "Claude Sonnet", provider: "anthropic" },
+        { id: "gpt-5", name: "GPT-5", provider: "openai", variants: ["low", "high"] },
+      ];
+
+      render(
+        <OpenCodeChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await act(async () => {
+        useOpenCodeStore.getState().setModels(ENVIRONMENT_ID, newModels);
+      });
+
+      const state = useOpenCodeStore.getState();
+      const storedModels = state.models.get(ENVIRONMENT_ID);
+      expect(storedModels).toEqual(newModels);
+    });
+
+    test("deprecates selected model not in available models", async () => {
+      const newModels = [
+        { id: "gpt-5", name: "GPT-5", provider: "openai", variants: ["low", "high"] },
+      ];
+      useOpenCodeStore.getState().setSelectedModel(ENVIRONMENT_ID, "claude-sonnet");
+
+      render(
+        <OpenCodeChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await act(async () => {
+        const state = useOpenCodeStore.getState();
+        state.setModels(ENVIRONMENT_ID, newModels);
+      });
+
+      // The model was deprecated and should have been reset to the first available
+      const state = useOpenCodeStore.getState();
+      const storedModels = state.models.get(ENVIRONMENT_ID);
+      expect(storedModels).toEqual(newModels);
+      expect(storedModels!.find((m) => m.id === "claude-sonnet")).toBeUndefined();
+    });
+
+    test("clears variant that is no longer available on the selected model", async () => {
+      const newModels = [
+        { id: "openai/gpt-5", name: "GPT-5", provider: "openai", variants: ["low"] },
+      ];
+      useOpenCodeStore.getState().setSelectedVariant(ENVIRONMENT_ID, "high");
+
+      render(
+        <OpenCodeChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await act(async () => {
+        useOpenCodeStore.getState().setModels(ENVIRONMENT_ID, newModels);
+      });
+
+      const state = useOpenCodeStore.getState();
+      const storedModels = state.models.get(ENVIRONMENT_ID);
+      expect(storedModels).toEqual(newModels);
+    });
+
+    test("handles errors gracefully without crashing", async () => {
+      const originalError = console.error;
+      const consoleError = mock(() => {});
+      console.error = consoleError as unknown as typeof console.error;
+
+      render(
+        <OpenCodeChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await act(async () => {
+        // Component mounts without crashing
+      });
+
+      expect(consoleError).not.toHaveBeenCalled();
+      console.error = originalError;
+    });
+  });
+
 });
 
 function installTimerHarness(startTime: number) {

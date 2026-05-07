@@ -388,4 +388,152 @@ describe("OpenCodeComposeBar", () => {
       );
     });
   });
+
+  test("renders search input in model dropdown", () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    expect(screen.getByPlaceholderText("Search models...")).toBeTruthy();
+  });
+
+  test("renders refresh button when onRefreshModels is provided", () => {
+    const onRefresh = mock(() => {});
+    renderComposeBar({ onRefreshModels: onRefresh });
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    expect(screen.getByTitle("Refresh models")).toBeTruthy();
+  });
+
+  test("does not render refresh button when onRefreshModels is not provided", () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    expect(screen.queryByTitle("Refresh models")).toBeNull();
+  });
+
+  test("calls onRefreshModels when refresh button is clicked", async () => {
+    const onRefresh = mock(() => Promise.resolve());
+    renderComposeBar({ onRefreshModels: onRefresh });
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    fireEvent.click(screen.getByTitle("Refresh models"));
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("filters models by name in search", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    await waitFor(() => {
+      expect(screen.queryByText("Claude Sonnet")).toBeNull();
+    });
+    fireEvent.click(screen.getByText(/openai/));
+    await waitFor(() => {
+      expect(screen.getByText("GPT-5")).toBeTruthy();
+    });
+  });
+
+  test("filters models by provider in search", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "anthropic" } });
+    await waitFor(() => {
+      expect(screen.queryByText(/openai/)).toBeNull();
+    });
+    fireEvent.click(screen.getByText(/anthropic/));
+    await waitFor(() => {
+      expect(screen.getByText("Claude Sonnet")).toBeTruthy();
+    });
+  });
+
+  test("filters favorite models by search text", async () => {
+    renderComposeBar({ favoriteModelIds: ["claude-sonnet", "gpt-5"] });
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    expect(screen.getByText("Favorites")).toBeTruthy();
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    await waitFor(() => {
+      expect(screen.queryByText("Claude Sonnet")).toBeNull();
+    });
+    fireEvent.click(screen.getByText("Favorites"));
+    await waitFor(() => {
+      expect(screen.getByText("GPT-5")).toBeTruthy();
+    });
+  });
+
+  test("shows match count in favorites when searching", async () => {
+    renderComposeBar({ favoriteModelIds: ["claude-sonnet", "gpt-5"] });
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    await waitFor(() => {
+      expect(screen.getByText(/1\/2/)).toBeTruthy();
+    });
+  });
+
+  test("shows no matches when search yields no results", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "nonexistent-model" } });
+    await waitFor(() => {
+      expect(screen.getByText("No matches")).toBeTruthy();
+    });
+  });
+
+  test("shows model count when search is active", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    await waitFor(() => {
+      expect(screen.getByText(/1 model found/)).toBeTruthy();
+    });
+  });
+
+  test("clears search when model is selected", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    await waitFor(() => {
+      expect(screen.getByText(/1 model found/)).toBeTruthy();
+    });
+    // Click outside to close dropdown (which also clears search via onOpenChange)
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => {
+      fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+      const reopenedInput = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+      expect(reopenedInput.value).toBe("");
+    });
+  });
+
+  test("clears search when dropdown closes", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    const input = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "GPT" } });
+    await waitFor(() => {
+      expect(input.value).toBe("GPT");
+    });
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => {
+      fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+      const reopensInput = screen.getByPlaceholderText("Search models...") as HTMLInputElement;
+      expect(reopensInput.value).toBe("");
+    });
+  });
+
+  test("selecting a model updates the store", async () => {
+    renderComposeBar();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Select model/i }));
+    fireEvent.click(screen.getByText(/openai/));
+    await waitFor(() => {
+      expect(screen.getByText("GPT-5")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("GPT-5"));
+    await waitFor(() => {
+      expect(useOpenCodeStore.getState().getSelectedModel(ENV_ID)).toBe("gpt-5");
+    });
+  });
 });

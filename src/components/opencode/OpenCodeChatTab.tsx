@@ -1370,16 +1370,17 @@ export function OpenCodeChatTab({
 
       // Validate current selected model is still available
       const availableModelIds = new Set(availableModels.map((m) => m.id));
-      const currentModel = getSelectedModel(environmentId);
+      let currentModel = getSelectedModel(environmentId);
       if (currentModel && !availableModelIds.has(currentModel)) {
         const resolvedModel = availableModels[0]?.id;
         if (resolvedModel) {
           setSelectedModel(environmentId, resolvedModel);
+          currentModel = resolvedModel;
         }
       }
 
       // Validate current selected variant
-      const selectedModelObj = availableModels.find((m) => m.id === getSelectedModel(environmentId));
+      const selectedModelObj = availableModels.find((m) => m.id === currentModel);
       const availableVariants = selectedModelObj?.variants ?? [];
       const currentVariant = getSelectedVariant(environmentId);
       if (currentVariant && !availableVariants.includes(currentVariant)) {

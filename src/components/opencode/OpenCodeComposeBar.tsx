@@ -606,7 +606,7 @@ export function OpenCodeComposeBar({
           </DropdownMenu>
 
           {/* Model dropdown - minimal style, grouped by provider */}
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={(open) => { if (!open) setModelSearch(""); }}>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
                 <ChevronDown className="w-3 h-3" />
@@ -622,6 +622,7 @@ export function OpenCodeComposeBar({
                     placeholder="Search models..."
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
+                    onBlur={() => setModelSearch("")}
                     className="flex-1 h-7 px-2 text-xs rounded border border-border bg-background placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
