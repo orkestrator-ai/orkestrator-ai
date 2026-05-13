@@ -163,8 +163,8 @@ export type DefaultAgent = "claude" | "opencode" | "codex";
 /** OpenCode mode - terminal CLI or native chat interface */
 export type OpenCodeMode = "terminal" | "native";
 
-/** Claude mode - terminal CLI or native chat interface */
-export type ClaudeMode = "terminal" | "native";
+/** Claude mode - terminal CLI, native (Agent SDK) chat, or tmux-controlled chat */
+export type ClaudeMode = "terminal" | "native" | "tmux";
 /** Codex mode - terminal CLI or native chat interface */
 export type CodexMode = "terminal" | "native";
 /** Agent style - terminal CLI or native chat interface (used for project-level override) */

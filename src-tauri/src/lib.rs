@@ -2,6 +2,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 mod claude_cli;
+mod claude_tmux;
 mod commands;
 mod credentials;
 mod docker;
@@ -146,6 +147,10 @@ pub fn run() {
     // Initialize local terminal manager (always available for local environments)
     local::init_local_terminal_manager();
     info!("Local terminal manager initialized");
+
+    // Initialize tmux session manager (local + container Claude tmux mode)
+    claude_tmux::init_manager();
+    info!("Claude tmux session manager initialized");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -413,6 +418,17 @@ pub fn run() {
             local_terminal_write,
             local_terminal_resize,
             close_local_terminal_session,
+            // Claude tmux mode (local + container)
+            claude_tmux_start,
+            claude_tmux_stop,
+            claude_tmux_status,
+            claude_tmux_send_text,
+            claude_tmux_send_keys,
+            claude_tmux_submit,
+            claude_tmux_capture_pane,
+            claude_tmux_resize,
+            claude_tmux_answer_pre_tool_use,
+            claude_tmux_reply_hook,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

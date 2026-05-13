@@ -27,9 +27,9 @@ import type { TabType } from "@/contexts";
 const isOpenCodeTab = (type: TabType): boolean =>
   type === "opencode" || type === "opencode-native";
 
-/** Check if a tab type is a Claude variant (terminal or native mode) */
+/** Check if a tab type is a Claude variant (terminal, native, or tmux mode) */
 const isClaudeTab = (type: TabType): boolean =>
-  type === "claude" || type === "claude-native";
+  type === "claude" || type === "claude-native" || type === "claude-tmux";
 
 /** Check if a tab type is a Codex variant */
 const isCodexTab = (type: TabType): boolean =>

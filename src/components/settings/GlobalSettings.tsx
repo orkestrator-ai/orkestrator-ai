@@ -576,9 +576,45 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     </div>
   );
 
+  const renderClaudeModeToggle = () => (
+    <div className="max-w-2xl space-y-4">
+      <p className="text-sm text-muted-foreground">Choose how Claude runs in environments</p>
+      <div className="grid grid-cols-3 gap-3 max-w-md">
+        {([
+          { value: "terminal", label: "Terminal", icon: <Terminal className="h-4 w-4" />, hint: "Raw CLI in terminal" },
+          { value: "native", label: "Native (SDK)", icon: <Bot className="h-4 w-4" />, hint: "Agent SDK chat" },
+          { value: "tmux", label: "Tmux", icon: <Bot className="h-4 w-4" />, hint: "CLI under tmux, native UI" },
+        ] as const).map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => setClaudeMode(opt.value)}
+            className={cn(
+              "p-3 rounded-lg border-2 text-left transition-colors",
+              claudeMode === opt.value
+                ? "border-primary bg-primary/5"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600"
+            )}
+          >
+            <div className="flex items-center gap-2 text-sm font-medium">
+              {opt.icon}
+              {opt.label}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">{opt.hint}</div>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground/60">
+        Tmux mode drives the Claude CLI under tmux and surfaces a chat UI via
+        the JSONL transcript and Claude Code hooks. Use this when the Agent SDK
+        is unavailable.
+      </p>
+    </div>
+  );
+
   const renderClaude = () => (
     <div className="max-w-2xl space-y-8">
-      {renderModeToggle(claudeMode, setClaudeMode, "Choose how Claude runs in environments")}
+      {renderClaudeModeToggle()}
       {renderFastModeDefault(
         claudeNativeFastModeDefault,
         setClaudeNativeFastModeDefault,

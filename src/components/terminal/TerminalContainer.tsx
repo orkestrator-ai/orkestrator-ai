@@ -714,6 +714,24 @@ export function TerminalContainer({
         return;
       }
 
+      // Check if we should create a claude-tmux tab instead
+      if (type === "claude" && claudeMode === "tmux") {
+        const newTab: TabInfo = {
+          id: newTabId,
+          type: "claude-tmux",
+          claudeTmuxData: {
+            containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
+            environmentId,
+            isLocal: isLocalEnvironment,
+          },
+          initialPrompt: options?.initialPrompt,
+          displayTitle: options?.displayTitle,
+        };
+        console.debug("[TerminalContainer] Creating claude-tmux tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
+        addTab(activePaneId, newTab, environmentId);
+        return;
+      }
+
       if (type === "codex" && codexMode === "native") {
         const newTab: TabInfo = {
           id: newTabId,

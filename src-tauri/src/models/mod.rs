@@ -745,7 +745,7 @@ pub enum OpenCodeMode {
     Native,
 }
 
-/// Claude mode - terminal CLI or native chat interface
+/// Claude mode - terminal CLI, native chat interface (Agent SDK), or tmux-controlled chat
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ClaudeMode {
@@ -754,6 +754,9 @@ pub enum ClaudeMode {
     Terminal,
     /// Native mode - uses Claude Agent SDK with chat interface
     Native,
+    /// Tmux mode - drives the Claude CLI under tmux and surfaces a native-style UI
+    /// via JSONL transcript + Claude Code hooks
+    Tmux,
 }
 
 /// Codex mode - terminal CLI or native chat interface

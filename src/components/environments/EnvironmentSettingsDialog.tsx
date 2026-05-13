@@ -592,11 +592,22 @@ export function EnvironmentSettingsDialog({
             {/* Claude Mode */}
             <div className="space-y-3">
               <Label className="text-sm">Claude Mode</Label>
-              <div className="grid grid-cols-3 gap-2 max-w-md">
+              <div className="grid grid-cols-4 gap-2 max-w-2xl">
                 {([
-                  { value: "global", label: `Global (${config.global.claudeMode === "native" ? "Native" : "Terminal"})`, icon: <Bot className="h-3.5 w-3.5" /> },
+                  {
+                    value: "global",
+                    label: `Global (${
+                      config.global.claudeMode === "native"
+                        ? "Native"
+                        : config.global.claudeMode === "tmux"
+                          ? "Tmux"
+                          : "Terminal"
+                    })`,
+                    icon: <Bot className="h-3.5 w-3.5" />,
+                  },
                   { value: "terminal", label: "Terminal", icon: <Terminal className="h-3.5 w-3.5" /> },
                   { value: "native", label: "Native", icon: <Bot className="h-3.5 w-3.5" /> },
+                  { value: "tmux", label: "Tmux", icon: <Bot className="h-3.5 w-3.5" /> },
                 ] as const).map((opt) => (
                   <button
                     key={opt.value}

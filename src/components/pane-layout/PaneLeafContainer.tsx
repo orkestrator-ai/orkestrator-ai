@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { FileViewerTab } from "@/components/terminal/FileViewerTab";
 import { OpenCodeChatTab } from "@/components/opencode";
 import { ClaudeChatTab } from "@/components/claude/ClaudeChatTab";
+import { ClaudeTmuxChatTab } from "@/components/claude/ClaudeTmuxChatTab";
 import { CodexChatTab } from "@/components/codex";
 import { BuildChatTab } from "@/components/build-pipeline";
 import { DraggableTabBar } from "./DraggableTabBar";
@@ -94,6 +95,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
         tab.type === "file"
         || tab.type === "opencode-native"
         || tab.type === "claude-native"
+        || tab.type === "claude-tmux"
         || tab.type === "codex-native"
         || tab.type === "claude-build"
       ) {
@@ -225,6 +227,26 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                 <ClaudeChatTab
                   tabId={tab.id}
                   data={tab.claudeNativeData}
+                  isActive={isTabActive && isActive}
+                  initialPrompt={tab.initialPrompt}
+                />
+              </div>
+            );
+          }
+
+          // Claude tmux chat tabs
+          if (tab.type === "claude-tmux" && tab.claudeTmuxData) {
+            return (
+              <div
+                key={tab.id}
+                className={cn(
+                  "absolute inset-0",
+                  isTabActive && isActive ? "z-10 pointer-events-auto" : "hidden"
+                )}
+              >
+                <ClaudeTmuxChatTab
+                  tabId={tab.id}
+                  data={tab.claudeTmuxData}
                   isActive={isTabActive && isActive}
                   initialPrompt={tab.initialPrompt}
                 />
