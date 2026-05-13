@@ -107,3 +107,134 @@ impl TranscriptTail {
 }
 
 pub const POLL_INTERVAL_MS: u64 = POLL_MS;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::claude_tmux::backend::Backend;
+    use serde_json::json;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+    use tokio::fs;
+
+    fn local_backend(dir: &TempDir) -> Backend {
+        Backend::Local {
+            cwd: dir.path().to_string_lossy().into_owned(),
+        }
+    }
+
+    fn path_in(dir: &TempDir, rel: &str) -> PathBuf {
+        dir.path().join(rel)
+    }
+
+    #[tokio::test]
+    async fn find_transcript_path_returns_none_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let claude_home = dir.path().join(".claude");
+        let out = find_transcript_path(
+            &backend,
+            claude_home.to_str().unwrap(),
+            "session-xyz",
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, None);
+    }
+
+    #[tokio::test]
+    async fn find_transcript_path_locates_file_in_any_project_dir() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let proj_dir = path_in(&dir, ".claude/projects/-some-cwd");
+        fs::create_dir_all(&proj_dir).await.unwrap();
+        let jsonl = proj_dir.join("session-xyz.jsonl");
+        fs::write(&jsonl, b"{\"type\":\"system\"}\n").await.unwrap();
+
+        let claude_home = dir.path().join(".claude");
+        let out = find_transcript_path(
+            &backend,
+            claude_home.to_str().unwrap(),
+            "session-xyz",
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, Some(jsonl.to_string_lossy().into_owned()));
+    }
+
+    #[tokio::test]
+    async fn transcript_tail_returns_empty_for_unchanged_file() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let path = path_in(&dir, "t.jsonl");
+        fs::write(&path, b"{\"type\":\"user\"}\n").await.unwrap();
+
+        let mut tail = TranscriptTail::new(path.to_string_lossy().into_owned());
+        let first = tail.read_new(&backend).await.unwrap();
+        assert_eq!(first.len(), 1);
+
+        let second = tail.read_new(&backend).await.unwrap();
+        assert!(second.is_empty());
+    }
+
+    #[tokio::test]
+    async fn transcript_tail_reads_appended_lines() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let path = path_in(&dir, "t.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        fs::write(&path, b"").await.unwrap();
+        let mut tail = TranscriptTail::new(path_str.clone());
+
+        fs::write(&path, b"{\"type\":\"user\",\"i\":1}\n{\"type\":\"assistant\",\"i\":2}\n")
+            .await
+            .unwrap();
+        let first = tail.read_new(&backend).await.unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0]["i"], 1);
+        assert_eq!(first[1]["i"], 2);
+
+        // Append a third line.
+        let cur = fs::read_to_string(&path).await.unwrap();
+        fs::write(&path, format!("{cur}{{\"type\":\"user\",\"i\":3}}\n"))
+            .await
+            .unwrap();
+        let second = tail.read_new(&backend).await.unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0]["i"], 3);
+    }
+
+    #[tokio::test]
+    async fn transcript_tail_buffers_partial_lines_until_newline() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let path = path_in(&dir, "t.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        let mut tail = TranscriptTail::new(path_str.clone());
+
+        // Write a partial line (no newline).
+        fs::write(&path, b"{\"type\":\"user\"").await.unwrap();
+        let first = tail.read_new(&backend).await.unwrap();
+        assert!(first.is_empty(), "partial line should not emit");
+
+        // Complete the line.
+        fs::write(&path, b"{\"type\":\"user\",\"i\":1}\n").await.unwrap();
+        let second = tail.read_new(&backend).await.unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0]["i"], 1);
+    }
+
+    #[tokio::test]
+    async fn transcript_tail_drops_unparseable_lines_but_keeps_going() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let path = path_in(&dir, "t.jsonl");
+        let path_str = path.to_string_lossy().into_owned();
+        fs::write(&path, b"not json\n{\"type\":\"user\"}\n").await.unwrap();
+
+        let mut tail = TranscriptTail::new(path_str);
+        let lines = tail.read_new(&backend).await.unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["type"], json!("user"));
+    }
+}

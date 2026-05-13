@@ -13,11 +13,11 @@ use super::backend::Backend;
 use super::hooks::{self, HookPaths, PendingHookEvent};
 use super::transcript::{self, TranscriptTail, POLL_INTERVAL_MS};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Notify};
-use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -50,6 +50,14 @@ pub enum TmuxEvent {
     },
     /// The tmux session was killed or claude exited.
     Stopped { environment_id: String },
+    /// A previously emitted blocking hook timed out before the user
+    /// responded. The frontend should dismiss the pending approval.
+    HookTimedOut {
+        environment_id: String,
+        session_id: String,
+        event_kind: String,
+        event_id: String,
+    },
     /// Recoverable error during polling — surfaced for diagnostics but the
     /// loop keeps running.
     Warning {
@@ -75,7 +83,6 @@ pub struct TmuxSession {
     pub hook_paths: HookPaths,
     pub claude_home: String,
     pub transcript_path: Arc<Mutex<Option<String>>>,
-    pub poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     pub stop_notify: Arc<Notify>,
 }
 
@@ -94,6 +101,11 @@ impl TmuxSession {
             Backend::Local { cwd } => cwd.clone(),
             Backend::Container { .. } => "/workspace".to_string(),
         };
+        // NOTE: Container paths assume Orkestrator's base image, which runs
+        // tools as the `node` user with workspace at `/workspace` and Claude
+        // state under `/home/node/.claude`. Custom images that diverge from
+        // this layout will not work with tmux mode without changes to
+        // `Backend::Container::exec` and the constants below.
         let claude_home = match &backend {
             Backend::Local { .. } => {
                 // Host user's claude home.
@@ -113,7 +125,6 @@ impl TmuxSession {
             hook_paths,
             claude_home,
             transcript_path: Arc::new(Mutex::new(None)),
-            poll_handle: Arc::new(Mutex::new(None)),
             stop_notify: Arc::new(Notify::new()),
         }
     }
@@ -148,16 +159,30 @@ impl TmuxSession {
             );
         }
 
+        // 2b. Ensure claude CLI is available *and* supports --session-id —
+        // we rely on that flag to discover the transcript filename.
+        let claude_probe = self.backend.exec(&["which", "claude"]).await?;
+        if !claude_probe.success() || claude_probe.stdout.trim().is_empty() {
+            return Err("claude CLI not found in this environment.".to_string());
+        }
+        let help = self.backend.exec(&["claude", "--help"]).await?;
+        let help_text = format!("{}\n{}", help.stdout, help.stderr);
+        if !help_text.contains("--session-id") {
+            return Err(
+                "Installed claude CLI does not support --session-id. Upgrade to a newer Claude Code version, or switch to terminal/native mode."
+                    .to_string(),
+            );
+        }
+
         // 3. Start tmux session (if not already alive) and launch claude.
         let alive = self.tmux_alive().await?;
         if !alive {
-            // Build the claude command. We let claude pick its own session ID
-            // and we discover it from the JSONL filename.
+            // Build the claude command. We force a known session id so we
+            // can deterministically discover the transcript JSONL file.
             let mut claude_cmd = String::from("claude");
             if let Some(m) = model {
                 claude_cmd.push_str(&format!(" --model {}", shell_arg(&m)));
             }
-            // Force a known session id for deterministic transcript discovery.
             claude_cmd.push_str(&format!(" --session-id {}", self.session_id));
 
             // We start tmux in detached mode and launch claude as the first command.
@@ -215,8 +240,9 @@ impl TmuxSession {
 
     fn spawn_poll_loop(self: Arc<Self>, app: AppHandle) {
         let session = self.clone();
-        let handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut tail: Option<TranscriptTail> = None;
+            let mut emitted_blocking_ids: HashSet<String> = HashSet::new();
             loop {
                 tokio::select! {
                     _ = session.stop_notify.notified() => {
@@ -226,8 +252,14 @@ impl TmuxSession {
                     _ = tokio::time::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS)) => {}
                 }
 
-                // a) drain pending hook events
-                match hooks::drain_pending(&session.backend, &session.hook_paths).await {
+                // a) drain pending hook events (dedup blocking by id)
+                match hooks::drain_pending(
+                    &session.backend,
+                    &session.hook_paths,
+                    &mut emitted_blocking_ids,
+                )
+                .await
+                {
                     Ok(events) => {
                         for evt in events {
                             session.emit_hook(&app, evt);
@@ -235,6 +267,28 @@ impl TmuxSession {
                     }
                     Err(e) => {
                         warn!(env = %session.environment_id, error = %e, "drain_pending failed");
+                    }
+                }
+
+                // a2) drain blocking-hook timeouts so the UI can dismiss
+                //     stale approval cards.
+                match hooks::drain_timeouts(&session.backend, &session.hook_paths).await {
+                    Ok(timeouts) => {
+                        for (kind, id) in timeouts {
+                            emitted_blocking_ids.remove(&id);
+                            let _ = app.emit(
+                                TAURI_EVENT,
+                                TmuxEvent::HookTimedOut {
+                                    environment_id: session.environment_id.clone(),
+                                    session_id: session.session_id.clone(),
+                                    event_kind: kind,
+                                    event_id: id,
+                                },
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(env = %session.environment_id, error = %e, "drain_timeouts failed");
                     }
                 }
 
@@ -291,11 +345,6 @@ impl TmuxSession {
                 }
             }
         });
-        let h = self.poll_handle.clone();
-        tokio::spawn(async move {
-            let mut slot = h.lock().await;
-            *slot = Some(handle);
-        });
     }
 
     fn emit_hook(&self, app: &AppHandle, evt: PendingHookEvent) {
@@ -320,14 +369,31 @@ impl TmuxSession {
     }
 
     /// Send literal text into the tmux pane (no trailing Enter).
+    ///
+    /// Newlines are sent as Alt-Enter, not as raw LF, because the Claude TUI
+    /// interprets a bare Enter as "submit". Most modern TUIs (including
+    /// Claude Code) accept Alt-Enter as "insert a newline without submitting"
+    /// so a multi-line message lands as one prompt rather than being
+    /// submitted line-by-line.
     pub async fn send_text(&self, text: &str) -> Result<(), String> {
-        // `tmux send-keys -l` sends literal text (no key-name interpretation).
-        let out = self
-            .backend
-            .exec(&["tmux", "send-keys", "-t", &self.tmux_session, "-l", text])
-            .await?;
-        if !out.success() {
-            return Err(out.stderr);
+        if text.is_empty() {
+            return Ok(());
+        }
+        let parts: Vec<&str> = text.split('\n').collect();
+        for (idx, part) in parts.iter().enumerate() {
+            if !part.is_empty() {
+                let out = self
+                    .backend
+                    .exec(&["tmux", "send-keys", "-t", &self.tmux_session, "-l", part])
+                    .await?;
+                if !out.success() {
+                    return Err(out.stderr);
+                }
+            }
+            // Insert a newline between segments — but not after the final one.
+            if idx + 1 < parts.len() {
+                self.send_keys(&["M-Enter"]).await?;
+            }
         }
         Ok(())
     }
@@ -411,6 +477,12 @@ impl TmuxSession {
             .exec(&["tmux", "kill-session", "-t", &self.tmux_session])
             .await;
 
+        // Restore the user's .claude/settings.local.json and remove the
+        // per-session runtime directory.
+        if let Err(e) = hooks::uninstall_hooks(&self.backend, &self.hook_paths).await {
+            warn!(env = %self.environment_id, error = %e, "uninstall_hooks failed");
+        }
+
         Ok(())
     }
 }
@@ -434,15 +506,188 @@ fn shell_arg(s: &str) -> String {
     out
 }
 
-/// A trivial reference type so we can satisfy `Value::String` constructions
-/// without pulling in `Cow`. (No-op helper retained for future use.)
-#[allow(dead_code)]
-fn _v(v: Value) -> Value {
-    v
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::claude_tmux::hooks::{self, HOOK_TIMEOUT_SECS};
+    use std::collections::HashSet;
+    use tempfile::TempDir;
+    use tokio::fs;
+
+    #[test]
+    fn short_id_truncates_and_strips_dashes() {
+        // 36-char UUID → 12 chars taken then dashes removed.
+        let id = short_id("a33f9026-8cfe-4077-aefd-4db2c2637dcc");
+        assert_eq!(id.len(), 11); // "a33f90268cfe" minus the embedded dash = 11
+        assert!(!id.contains('-'));
+        assert!("a33f9026-8cfe".starts_with(&id[..4]));
+    }
+
+    #[test]
+    fn shell_arg_quotes_simple_value() {
+        assert_eq!(shell_arg("sonnet"), "'sonnet'");
+    }
+
+    #[test]
+    fn shell_arg_escapes_single_quotes() {
+        assert_eq!(shell_arg("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn tmux_session_status_returns_running_flag() {
+        let tmp = TempDir::new().unwrap();
+        let session = TmuxSession::build(
+            "env-1".to_string(),
+            Backend::Local {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            },
+        );
+        let alive = session.status(true);
+        assert_eq!(alive.environment_id, "env-1");
+        assert!(alive.running);
+        assert!(alive.session_id.is_some());
+        assert!(alive.tmux_session.starts_with("orkestrator-"));
+
+        let dead = session.status(false);
+        assert!(!dead.running);
+    }
+
+    #[tokio::test]
+    async fn install_then_uninstall_restores_original_settings() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = TmuxSession::build("env-restore".to_string(), backend.clone());
+
+        // Pre-existing user settings.
+        let original = "{\"theme\":\"dark\"}";
+        let settings_path = session.hook_paths.claude_settings.clone();
+        let parent = std::path::Path::new(&settings_path).parent().unwrap();
+        fs::create_dir_all(parent).await.unwrap();
+        fs::write(&settings_path, original).await.unwrap();
+
+        hooks::install_hooks(&backend, &session.hook_paths).await.unwrap();
+
+        let after_install = fs::read_to_string(&settings_path).await.unwrap();
+        assert!(after_install.contains("\"hooks\""));
+        assert!(after_install.contains("\"theme\""));
+
+        hooks::uninstall_hooks(&backend, &session.hook_paths).await.unwrap();
+        let restored = fs::read_to_string(&settings_path).await.unwrap();
+        assert_eq!(restored, original);
+        // Runtime dir is gone.
+        assert!(!std::path::Path::new(&session.hook_paths.root).exists());
+    }
+
+    #[tokio::test]
+    async fn uninstall_removes_settings_when_none_existed() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = TmuxSession::build("env-fresh".to_string(), backend.clone());
+
+        hooks::install_hooks(&backend, &session.hook_paths).await.unwrap();
+        assert!(std::path::Path::new(&session.hook_paths.claude_settings).exists());
+
+        hooks::uninstall_hooks(&backend, &session.hook_paths).await.unwrap();
+        assert!(!std::path::Path::new(&session.hook_paths.claude_settings).exists());
+    }
+
+    #[tokio::test]
+    async fn drain_pending_dedupes_blocking_events_across_calls() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = TmuxSession::build("env-dedup".to_string(), backend.clone());
+        hooks::install_hooks(&backend, &session.hook_paths).await.unwrap();
+
+        // Simulate hook.sh writing a PreToolUse pending file.
+        let pending = format!(
+            "{}/PreToolUse-1234-5678.json",
+            session.hook_paths.pending_dir
+        );
+        fs::write(&pending, "{\"tool_name\":\"Bash\"}").await.unwrap();
+
+        let mut emitted: HashSet<String> = HashSet::new();
+        let first = hooks::drain_pending(&backend, &session.hook_paths, &mut emitted)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].kind, "PreToolUse");
+        assert_eq!(emitted.len(), 1);
+
+        // Second poll without the user answering should NOT re-emit.
+        let second = hooks::drain_pending(&backend, &session.hook_paths, &mut emitted)
+            .await
+            .unwrap();
+        assert!(second.is_empty(), "blocking event re-emitted");
+
+        // Pending file disappears (e.g. hook.sh consumed a response or timed
+        // out): the id should be pruned from `emitted`.
+        fs::remove_file(&pending).await.unwrap();
+        let third = hooks::drain_pending(&backend, &session.hook_paths, &mut emitted)
+            .await
+            .unwrap();
+        assert!(third.is_empty());
+        assert!(emitted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn drain_pending_consumes_informational_events_each_time() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = TmuxSession::build("env-info".to_string(), backend.clone());
+        hooks::install_hooks(&backend, &session.hook_paths).await.unwrap();
+
+        let pending = format!(
+            "{}/Notification-aa-bb.json",
+            session.hook_paths.pending_dir
+        );
+        fs::write(&pending, "{\"message\":\"hi\"}").await.unwrap();
+
+        let mut emitted: HashSet<String> = HashSet::new();
+        let first = hooks::drain_pending(&backend, &session.hook_paths, &mut emitted)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 1);
+        // Informational pending file should be deleted by drain_pending itself.
+        assert!(!std::path::Path::new(&pending).exists());
+    }
+
+    #[tokio::test]
+    async fn drain_timeouts_returns_and_removes_timeout_sentinels() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = TmuxSession::build("env-timeout".to_string(), backend.clone());
+        hooks::install_hooks(&backend, &session.hook_paths).await.unwrap();
+
+        let timeout_file = format!(
+            "{}/PreToolUse-id-1.json",
+            session.hook_paths.timeout_dir
+        );
+        fs::write(&timeout_file, "{\"timed_out\":true}").await.unwrap();
+
+        let outs = hooks::drain_timeouts(&backend, &session.hook_paths)
+            .await
+            .unwrap();
+        assert_eq!(outs.len(), 1);
+        assert_eq!(outs[0].0, "PreToolUse");
+        assert_eq!(outs[0].1, "id-1");
+        assert!(!std::path::Path::new(&timeout_file).exists());
+    }
+
+    #[test]
+    fn hook_timeout_constant_is_reasonable() {
+        // Anything 1-60 minutes is fine; just guard against zero or absurd.
+        assert!(HOOK_TIMEOUT_SECS >= 60);
+        assert!(HOOK_TIMEOUT_SECS <= 3600);
+    }
 }
 
-// Avoid unused warning when this module is built without the json macro path.
-#[allow(dead_code)]
-fn _json_keepalive() -> Value {
-    json!(null)
-}

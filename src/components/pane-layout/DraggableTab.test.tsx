@@ -143,6 +143,27 @@ describe("DraggableTab title precedence", () => {
     expect(screen.getByText("Codex 2")).toBeDefined();
   });
 
+  test("claude-tmux tab falls back to the Claude default label", () => {
+    const tab: TabInfo = {
+      id: "tab-tmux",
+      type: "claude-tmux",
+      claudeTmuxData: { environmentId: "env-1" },
+    };
+    renderTab(tab, 0);
+    expect(screen.getByText("Claude 1")).toBeDefined();
+  });
+
+  test("claude-tmux tab uses displayTitle when provided", () => {
+    const tab: TabInfo = {
+      id: "tab-tmux",
+      type: "claude-tmux",
+      displayTitle: "Custom Tmux",
+      claudeTmuxData: { environmentId: "env-1" },
+    };
+    renderTab(tab, 2);
+    expect(screen.getByText("Custom Tmux 3")).toBeDefined();
+  });
+
   test("file tab title uses the basename and ignores displayTitle", () => {
     const tab: TabInfo = {
       id: "tab-a",

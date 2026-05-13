@@ -20,6 +20,7 @@
 use super::backend::Backend;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 /// Default for how long the PreToolUse hook will wait for the UI to respond
 /// before falling back to Claude Code's normal permission prompt.
@@ -36,17 +37,6 @@ pub enum HookEventKind {
 }
 
 impl HookEventKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            HookEventKind::PreToolUse => "PreToolUse",
-            HookEventKind::PostToolUse => "PostToolUse",
-            HookEventKind::UserPromptSubmit => "UserPromptSubmit",
-            HookEventKind::Stop => "Stop",
-            HookEventKind::Notification => "Notification",
-            HookEventKind::SessionStart => "SessionStart",
-        }
-    }
-
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "PreToolUse" => HookEventKind::PreToolUse,
@@ -80,8 +70,14 @@ pub struct HookPaths {
     pub root: String,
     pub pending_dir: String,
     pub response_dir: String,
+    /// Sentinel files dropped by hook.sh when a blocking hook times out.
+    /// Rust uses them to dismiss the corresponding pending approval in the UI.
+    pub timeout_dir: String,
     pub script: String,
     pub claude_settings: String,
+    /// Backup of any pre-existing `.claude/settings.local.json`. Restored on
+    /// session stop so we don't permanently mutate user state.
+    pub claude_settings_backup: String,
 }
 
 impl HookPaths {
@@ -93,9 +89,11 @@ impl HookPaths {
         HookPaths {
             pending_dir: format!("{}/pending", root),
             response_dir: format!("{}/response", root),
+            timeout_dir: format!("{}/timeout", root),
             script: format!("{}/hook.sh", root),
             // Drop hooks into the worktree/workspace so Claude Code picks them up.
             claude_settings: format!("{}/.claude/settings.local.json", worktree_or_workspace),
+            claude_settings_backup: format!("{}/settings.local.json.orkestrator-backup", root),
             root,
         }
     }
@@ -119,14 +117,16 @@ set -u
 EVENT_KIND="${{1:-Unknown}}"
 PENDING_DIR={pending_dir_q}
 RESPONSE_DIR={response_dir_q}
+TIMEOUT_DIR={timeout_dir_q}
 TIMEOUT_SECS={timeout}
 
-mkdir -p "$PENDING_DIR" "$RESPONSE_DIR" 2>/dev/null || true
+mkdir -p "$PENDING_DIR" "$RESPONSE_DIR" "$TIMEOUT_DIR" 2>/dev/null || true
 
 # Generate a unique ID (no nanoseconds on BSD/macOS; combine date+pid+RANDOM).
 ID="$(date +%s)-$$-${{RANDOM}}-${{RANDOM}}"
 PENDING_FILE="$PENDING_DIR/${{EVENT_KIND}}-${{ID}}.json"
 RESPONSE_FILE="$RESPONSE_DIR/${{EVENT_KIND}}-${{ID}}.json"
+TIMEOUT_FILE="$TIMEOUT_DIR/${{EVENT_KIND}}-${{ID}}.json"
 
 PAYLOAD="$(cat)"
 printf '%s' "$PAYLOAD" > "$PENDING_FILE"
@@ -144,7 +144,9 @@ case "$EVENT_KIND" in
       sleep 0.25
       i=$((i + 1))
     done
-    # Timeout: defer to Claude Code's own permission flow.
+    # Timeout: drop a sentinel so Rust can dismiss the UI prompt, then
+    # defer to Claude Code's own permission flow with an empty response.
+    printf '{{"timed_out":true}}' > "$TIMEOUT_FILE"
     rm -f "$PENDING_FILE"
     echo '{{}}'
     ;;
@@ -157,14 +159,14 @@ esac
 "#,
         pending_dir_q = shell_dq(&paths.pending_dir),
         response_dir_q = shell_dq(&paths.response_dir),
+        timeout_dir_q = shell_dq(&paths.timeout_dir),
         timeout = timeout_secs,
     )
 }
 
-/// `.claude/settings.local.json` content that wires every supported event to
-/// our hook script. The matcher `"*"` matches every tool (so PreToolUse
-/// intercepts every approval). See Claude Code docs for the schema.
-pub fn claude_settings_json(hook_script_path: &str) -> String {
+/// Build the hooks object that our settings.local.json contributes. Returned
+/// as a JSON Value so the caller can merge it into any pre-existing settings.
+pub fn hooks_block(hook_script_path: &str) -> Value {
     let cmd = format!("bash {} ", shell_dq(hook_script_path)); // event kind appended below
 
     let mk = |kind: &str| {
@@ -179,45 +181,132 @@ pub fn claude_settings_json(hook_script_path: &str) -> String {
         })
     };
 
-    let value = json!({
-        "hooks": {
-            "PreToolUse":       [mk("PreToolUse")],
-            "PostToolUse":      [mk("PostToolUse")],
-            "UserPromptSubmit": [mk_no_matcher("UserPromptSubmit")],
-            "Stop":             [mk_no_matcher("Stop")],
-            "Notification":     [mk_no_matcher("Notification")],
-            "SessionStart":     [mk_no_matcher("SessionStart")]
-        }
-    });
-
-    serde_json::to_string_pretty(&value).expect("static JSON serializes")
+    json!({
+        "PreToolUse":       [mk("PreToolUse")],
+        "PostToolUse":      [mk("PostToolUse")],
+        "UserPromptSubmit": [mk_no_matcher("UserPromptSubmit")],
+        "Stop":             [mk_no_matcher("Stop")],
+        "Notification":     [mk_no_matcher("Notification")],
+        "SessionStart":     [mk_no_matcher("SessionStart")]
+    })
 }
 
-/// Write hook.sh and .claude/settings.local.json into the backend.
+/// Merge our hooks block into `existing` (parsed `.claude/settings.local.json`
+/// content, or `null` if absent). Preserves any unrelated keys. Returns the
+/// pretty-printed JSON text to write.
+pub fn merge_settings_json(existing: Option<&str>, hook_script_path: &str) -> String {
+    let mut root: Value = existing
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| json!({}));
+
+    if !root.is_object() {
+        root = json!({});
+    }
+    let obj = root.as_object_mut().expect("root is object");
+    obj.insert("hooks".to_string(), hooks_block(hook_script_path));
+
+    serde_json::to_string_pretty(&root).expect("settings JSON serializes")
+}
+
+/// Write hook.sh and merge our hooks block into `.claude/settings.local.json`,
+/// backing up any pre-existing user settings so they can be restored on stop.
 pub async fn install_hooks(backend: &Backend, paths: &HookPaths) -> Result<(), String> {
     backend.ensure_dir(&paths.root).await?;
     backend.ensure_dir(&paths.pending_dir).await?;
     backend.ensure_dir(&paths.response_dir).await?;
+    backend.ensure_dir(&paths.timeout_dir).await?;
 
     let script = hook_script(paths, HOOK_TIMEOUT_SECS);
     backend.write_file(&paths.script, &script).await?;
     backend.exec(&["chmod", "+x", &paths.script]).await?;
 
-    let settings = claude_settings_json(&paths.script);
-    backend.write_file(&paths.claude_settings, &settings).await?;
+    // Snapshot whatever's there now (if anything) so `uninstall_hooks` can
+    // put it back. We always overwrite the backup at install time — restart
+    // mid-session would otherwise lose the original.
+    let existing = backend.read_file(&paths.claude_settings).await?;
+    if let Some(prev) = existing.as_deref() {
+        backend.write_file(&paths.claude_settings_backup, prev).await?;
+    } else {
+        // Mark "no original" with an idempotent sentinel.
+        backend
+            .write_file(&paths.claude_settings_backup, "__orkestrator_no_original__")
+            .await?;
+    }
+
+    let merged = merge_settings_json(existing.as_deref(), &paths.script);
+    backend.write_file(&paths.claude_settings, &merged).await?;
 
     Ok(())
+}
+
+/// Restore the user's original `.claude/settings.local.json` and remove the
+/// runtime directory. Best-effort: errors are returned but the caller can
+/// safely ignore them (cleanup is not critical to correctness).
+pub async fn uninstall_hooks(backend: &Backend, paths: &HookPaths) -> Result<(), String> {
+    let backup = backend.read_file(&paths.claude_settings_backup).await?;
+    match backup.as_deref() {
+        Some("__orkestrator_no_original__") => {
+            backend.remove_file(&paths.claude_settings).await?;
+        }
+        Some(content) => {
+            backend.write_file(&paths.claude_settings, content).await?;
+        }
+        None => {
+            // No backup recorded — leave settings as-is.
+        }
+    }
+    backend.remove_file(&paths.claude_settings_backup).await.ok();
+    // Drop the per-session runtime dir entirely.
+    backend.exec(&["rm", "-rf", &paths.root]).await.ok();
+    Ok(())
+}
+
+/// Scan the timeout dir and return the IDs of blocking hooks that gave up
+/// waiting for a response. Files are consumed on read.
+pub async fn drain_timeouts(
+    backend: &Backend,
+    paths: &HookPaths,
+) -> Result<Vec<(String, String)>, String> {
+    let names = backend.list_dir(&paths.timeout_dir).await?;
+    let mut out = Vec::new();
+    for name in names {
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let (kind, id) = parse_event_filename(&name);
+        let full = format!("{}/{}", paths.timeout_dir, name);
+        backend.remove_file(&full).await.ok();
+        out.push((kind, id));
+    }
+    Ok(out)
 }
 
 /// Scan the pending dir and return all unread events, deleting them after
 /// reading. Returns events sorted by filename so the order matches when
 /// they were written.
+///
+/// `already_emitted` is a set of blocking-event IDs that have previously been
+/// surfaced to the UI. Blocking pending files stay on disk until `hook.sh`
+/// consumes the response, so without this set we would re-emit them on every
+/// poll. The set is also pruned of IDs whose pending files have disappeared
+/// (timed out or answered).
 pub async fn drain_pending(
     backend: &Backend,
     paths: &HookPaths,
+    already_emitted: &mut HashSet<String>,
 ) -> Result<Vec<PendingHookEvent>, String> {
     let mut names = backend.list_dir(&paths.pending_dir).await?;
     names.sort();
+
+    // Prune entries from `already_emitted` whose pending files are gone so
+    // that if Claude later re-uses an ID (unlikely but possible) we don't
+    // miss it.
+    let still_present: HashSet<String> = names
+        .iter()
+        .filter(|n| n.ends_with(".json"))
+        .map(|n| parse_event_filename(n).1)
+        .collect();
+    already_emitted.retain(|id| still_present.contains(id));
 
     let mut events = Vec::new();
     for name in names {
@@ -225,6 +314,19 @@ pub async fn drain_pending(
             continue;
         }
         let full = format!("{}/{}", paths.pending_dir, name);
+        let (kind, id) = parse_event_filename(&name);
+
+        let is_blocking = HookEventKind::from_str(&kind)
+            .map(|k| k.is_blocking())
+            .unwrap_or(false);
+
+        // For blocking hooks, skip if we've already told the UI about this
+        // event — the pending file lingers until hook.sh consumes the
+        // response.
+        if is_blocking && already_emitted.contains(&id) {
+            continue;
+        }
+
         let Some(content) = backend.read_file(&full).await? else {
             continue;
         };
@@ -232,15 +334,10 @@ pub async fn drain_pending(
             Ok(v) => v,
             Err(_) => Value::String(content.clone()),
         };
-        let (kind, id) = parse_event_filename(&name);
 
-        // For blocking hooks (PreToolUse), leave the pending file in place —
-        // it stays until the user decides and we write a response file.
-        // For informational hooks, consume now.
-        let is_blocking = HookEventKind::from_str(&kind)
-            .map(|k| k.is_blocking())
-            .unwrap_or(false);
-        if !is_blocking {
+        if is_blocking {
+            already_emitted.insert(id.clone());
+        } else {
             backend.remove_file(&full).await.ok();
         }
 
@@ -265,13 +362,9 @@ pub async fn reply_to_hook(
 ) -> Result<(), String> {
     let filename = format!("{}-{}.json", kind, id);
     let response_path = format!("{}/{}", paths.response_dir, filename);
-    let pending_path = format!("{}/{}", paths.pending_dir, filename);
     backend
         .write_file(&response_path, &serde_json::to_string(response).unwrap_or_else(|_| "{}".into()))
         .await?;
-    // Best-effort: hook.sh removes both on its own when it consumes the
-    // response, but if it timed out we should clean the pending file too.
-    let _ = pending_path; // intentionally not removed here
     Ok(())
 }
 
@@ -311,4 +404,139 @@ fn shell_dq(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_event_filename_splits_kind_and_id() {
+        let (kind, id) = parse_event_filename("PreToolUse-1731519430-1234-9876-5432.json");
+        assert_eq!(kind, "PreToolUse");
+        assert_eq!(id, "1731519430-1234-9876-5432");
+    }
+
+    #[test]
+    fn parse_event_filename_tolerates_missing_extension() {
+        let (kind, id) = parse_event_filename("Notification-abc-123");
+        assert_eq!(kind, "Notification");
+        assert_eq!(id, "abc-123");
+    }
+
+    #[test]
+    fn parse_event_filename_returns_empty_id_when_no_dash() {
+        let (kind, id) = parse_event_filename("PreToolUse.json");
+        assert_eq!(kind, "PreToolUse");
+        assert_eq!(id, "");
+    }
+
+    #[test]
+    fn pre_tool_use_response_approve_has_no_reason() {
+        let v = pre_tool_use_response("approve", None);
+        assert_eq!(v["decision"], "approve");
+        assert!(v.get("reason").is_none());
+    }
+
+    #[test]
+    fn pre_tool_use_response_block_includes_reason() {
+        let v = pre_tool_use_response("block", Some("nope"));
+        assert_eq!(v["decision"], "block");
+        assert_eq!(v["reason"], "nope");
+    }
+
+    #[test]
+    fn hooks_block_has_all_supported_event_kinds() {
+        let v = hooks_block("/tmp/x/hook.sh");
+        let obj = v.as_object().unwrap();
+        for kind in [
+            "PreToolUse",
+            "PostToolUse",
+            "UserPromptSubmit",
+            "Stop",
+            "Notification",
+            "SessionStart",
+        ] {
+            assert!(obj.contains_key(kind), "missing kind: {kind}");
+        }
+        let pre = &v["PreToolUse"][0];
+        assert_eq!(pre["matcher"], "*");
+        assert!(pre["hooks"][0]["command"].as_str().unwrap().contains("PreToolUse"));
+    }
+
+    #[test]
+    fn merge_settings_json_preserves_unrelated_keys() {
+        let prev = r#"{"theme":"dark","permissions":{"x":1}}"#;
+        let merged = merge_settings_json(Some(prev), "/tmp/hook.sh");
+        let v: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["permissions"]["x"], 1);
+        assert!(v["hooks"]["PreToolUse"].is_array());
+    }
+
+    #[test]
+    fn merge_settings_json_creates_object_from_nothing() {
+        let merged = merge_settings_json(None, "/tmp/hook.sh");
+        let v: Value = serde_json::from_str(&merged).unwrap();
+        assert!(v["hooks"]["PreToolUse"].is_array());
+    }
+
+    #[test]
+    fn merge_settings_json_overwrites_existing_hooks() {
+        let prev = r#"{"hooks":{"PreToolUse":[{"matcher":"foo","hooks":[]}]}}"#;
+        let merged = merge_settings_json(Some(prev), "/tmp/hook.sh");
+        let v: Value = serde_json::from_str(&merged).unwrap();
+        // Our matcher is "*", not "foo".
+        assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "*");
+    }
+
+    #[test]
+    fn merge_settings_json_replaces_non_object_root() {
+        let merged = merge_settings_json(Some("[\"oops\"]"), "/tmp/hook.sh");
+        let v: Value = serde_json::from_str(&merged).unwrap();
+        assert!(v.is_object());
+        assert!(v["hooks"].is_object());
+    }
+
+    #[test]
+    fn hook_event_kind_blocking_only_pre_tool_use() {
+        assert!(HookEventKind::PreToolUse.is_blocking());
+        for k in [
+            HookEventKind::PostToolUse,
+            HookEventKind::UserPromptSubmit,
+            HookEventKind::Stop,
+            HookEventKind::Notification,
+            HookEventKind::SessionStart,
+        ] {
+            assert!(!k.is_blocking());
+        }
+    }
+
+    #[test]
+    fn shell_dq_escapes_dangerous_chars() {
+        let escaped = shell_dq("/tmp/$x \"y\" `z` \\w");
+        assert_eq!(escaped, "\"/tmp/\\$x \\\"y\\\" \\`z\\` \\\\w\"");
+    }
+
+    #[test]
+    fn hook_paths_layout_under_runtime_root() {
+        let p = HookPaths::new("/tmp/run", "/work");
+        assert_eq!(p.root, "/tmp/run");
+        assert_eq!(p.pending_dir, "/tmp/run/pending");
+        assert_eq!(p.response_dir, "/tmp/run/response");
+        assert_eq!(p.timeout_dir, "/tmp/run/timeout");
+        assert_eq!(p.script, "/tmp/run/hook.sh");
+        assert_eq!(p.claude_settings, "/work/.claude/settings.local.json");
+        assert!(p.claude_settings_backup.starts_with("/tmp/run/"));
+    }
+
+    #[test]
+    fn hook_script_contains_timeout_dir_and_event_kind_branch() {
+        let paths = HookPaths::new("/tmp/run", "/work");
+        let script = hook_script(&paths, 60);
+        assert!(script.contains("TIMEOUT_DIR=\"/tmp/run/timeout\""));
+        assert!(script.contains("TIMEOUT_SECS=60"));
+        assert!(script.contains("PreToolUse)"));
+        assert!(script.contains("timed_out"));
+    }
 }

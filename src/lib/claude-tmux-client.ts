@@ -29,6 +29,13 @@ export type TmuxEvent =
       payload: unknown;
     }
   | {
+      kind: "hook-timed-out";
+      environment_id: string;
+      session_id: string;
+      event_kind: HookEventKind;
+      event_id: string;
+    }
+  | {
       kind: "stopped";
       environment_id: string;
     }

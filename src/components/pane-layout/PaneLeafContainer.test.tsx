@@ -37,6 +37,15 @@ mock.module("./DropZoneOverlay", () => ({
   DropZoneOverlay: () => null,
 }));
 
+// Stub the chat tabs so PaneLeafContainer rendering doesn't pull in real
+// stores or Tauri invoke. These are *for this file only* — see CLAUDE.md
+// guidance on local mock.module usage.
+mock.module("@/components/claude/ClaudeTmuxChatTab", () => ({
+  ClaudeTmuxChatTab: ({ tabId }: { tabId: string }) => (
+    <div data-testid="claude-tmux-tab">tmux:{tabId}</div>
+  ),
+}));
+
 mock.module("@/stores/terminalPortalStore", () => ({
   createTerminalKey: (environmentId: string, tabId: string) => `${environmentId}::${tabId}`,
   useTerminalPortalStore: <T,>(selector: (state: {
@@ -158,5 +167,42 @@ describe("PaneLeafContainer", () => {
 
     expect(envHidden.root.activeTabId).toBe("tab-2");
     expect(usePaneLayoutStore.getState().activeEnvironmentId).toBe("env-visible");
+  });
+
+  test("renders ClaudeTmuxChatTab for claude-tmux tabs", () => {
+    const tmuxPane = {
+      kind: "leaf" as const,
+      id: "pane-tmux",
+      tabs: [
+        {
+          id: "tab-tmux",
+          type: "claude-tmux" as const,
+          claudeTmuxData: { environmentId: "env-visible" },
+        },
+      ],
+      activeTabId: "tab-tmux",
+    };
+
+    usePaneLayoutStore.setState((s) => {
+      const envs = new Map(s.environments);
+      envs.set("env-visible", {
+        root: tmuxPane,
+        activePaneId: "pane-tmux",
+        containerId: "container-visible",
+      });
+      return { environments: envs };
+    });
+
+    render(
+      <PaneLeafContainer
+        pane={tmuxPane}
+        containerId="container-visible"
+        environmentId="env-visible"
+        isActive
+      />,
+    );
+
+    expect(screen.getByTestId("claude-tmux-tab")).toBeDefined();
+    expect(screen.getByText("tmux:tab-tmux")).toBeDefined();
   });
 });

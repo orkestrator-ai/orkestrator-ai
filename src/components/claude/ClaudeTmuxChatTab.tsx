@@ -81,6 +81,11 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
           }
           break;
         }
+        case "hook-timed-out":
+          if (ev.event_kind === "PreToolUse") {
+            removePendingApproval(environmentId, ev.event_id);
+          }
+          break;
         case "warning":
           setError(ev.message);
           break;
@@ -103,6 +108,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
     setRunning,
     applyTranscriptLine,
     addPendingApproval,
+    removePendingApproval,
     pushInfoEvent,
   ]);
 

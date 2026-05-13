@@ -38,11 +38,6 @@ impl Backend {
         self.exec_with_stdin(args, None).await
     }
 
-    /// Run `sh -c <script>` — convenient for pipes, redirects, and quoting.
-    pub async fn exec_sh(&self, script: &str) -> Result<ExecOutput, String> {
-        self.exec(&["sh", "-c", script]).await
-    }
-
     /// Run a command, optionally piping `stdin` to it.
     pub async fn exec_with_stdin(
         &self,

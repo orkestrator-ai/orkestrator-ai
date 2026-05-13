@@ -607,7 +607,11 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       <p className="text-xs text-muted-foreground/60">
         Tmux mode drives the Claude CLI under tmux and surfaces a chat UI via
         the JSONL transcript and Claude Code hooks. Use this when the Agent SDK
-        is unavailable.
+        is unavailable. While a tmux session is running, Orkestrator merges a
+        {" "}<code className="font-mono px-1">hooks</code> block into the
+        environment&apos;s{" "}
+        <code className="font-mono px-1">.claude/settings.local.json</code>;
+        the original file is restored when the session stops.
       </p>
     </div>
   );

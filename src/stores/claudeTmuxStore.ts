@@ -126,10 +126,15 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
 
   addPendingApproval: (envId, approval) =>
     set((state) =>
-      patchEnv(state, envId, (s) => ({
-        ...s,
-        pendingApprovals: [...s.pendingApprovals, approval],
-      })),
+      patchEnv(state, envId, (s) => {
+        // Dedup by eventId — the Rust poll loop already deduplicates blocking
+        // hooks, but a defensive check here keeps the UI safe if the contract
+        // ever drifts.
+        if (s.pendingApprovals.some((a) => a.eventId === approval.eventId)) {
+          return s;
+        }
+        return { ...s, pendingApprovals: [...s.pendingApprovals, approval] };
+      }),
     ),
 
   removePendingApproval: (envId, eventId) =>
@@ -170,9 +175,9 @@ function transcriptLineToMessage(line: TranscriptLine): TmuxMessage | null {
   const id =
     typeof line.uuid === "string" && line.uuid
       ? line.uuid
-      : typeof line.timestamp === "string"
+      : typeof line.timestamp === "string" && line.timestamp
         ? line.timestamp
-        : `${Date.now()}-${Math.random()}`;
+        : stableHash(line);
 
   const role = (line.message?.role ?? type) as TmuxMessage["role"];
   const content =
@@ -234,6 +239,21 @@ function transcriptLineToMessage(line: TranscriptLine): TmuxMessage | null {
     timestamp:
       typeof line.timestamp === "string" ? line.timestamp : new Date().toISOString(),
   };
+}
+
+/**
+ * Deterministic hash so that a transcript line missing both `uuid` and
+ * `timestamp` still gets a stable id — the poll loop re-reads the whole
+ * transcript every tick, so without stable ids the same line would be added
+ * over and over.
+ */
+function stableHash(line: TranscriptLine): string {
+  const json = JSON.stringify(line);
+  let h = 5381;
+  for (let i = 0; i < json.length; i++) {
+    h = ((h << 5) + h + json.charCodeAt(i)) | 0;
+  }
+  return `h${(h >>> 0).toString(36)}`;
 }
 
 function mergeMessages(prev: TmuxMessage, next: TmuxMessage): TmuxMessage {

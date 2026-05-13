@@ -14,5 +14,4 @@ pub mod manager;
 pub mod session;
 pub mod transcript;
 
-pub use backend::Backend;
 pub use manager::{get_manager, init_manager};
