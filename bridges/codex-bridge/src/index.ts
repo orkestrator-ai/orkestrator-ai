@@ -181,13 +181,17 @@ type ConversationMode = "build" | "plan";
 
 export const app = new Hono();
 const codexPathOverride = process.env.CODEX_PATH || "codex";
-const codex = new Codex({ codexPathOverride });
+const CODEX_GOALS_CONFIG = { features: { goals: true } };
+const codex = new Codex({
+  codexPathOverride,
+  config: CODEX_GOALS_CONFIG,
+});
 // Fast-mode variant: passes `--config service_tier=fast` to the Codex CLI,
 // which enables the ~1.5x-faster service tier (higher credit rate).
 // See https://developers.openai.com/codex/speed
 const codexFast = new Codex({
   codexPathOverride,
-  config: { service_tier: "fast" },
+  config: { ...CODEX_GOALS_CONFIG, service_tier: "fast" },
 });
 function getCodex(fastMode: boolean): Codex {
   return fastMode ? codexFast : codex;
@@ -430,6 +434,12 @@ const BUILTIN_SLASH_COMMANDS: BuiltinSlashCommand[] = [
   {
     name: "/help",
     description: "Show available Codex slash commands in native mode.",
+    source: "builtin",
+  },
+  {
+    name: "/goal",
+    description: "Set or view an experimental goal for a long-running task.",
+    argumentHint: "<objective|pause|resume|clear>",
     source: "builtin",
   },
   {
@@ -1043,6 +1053,10 @@ function parseSlashCommandPrompt(prompt: string): { name: string; args: string }
   const name = normalizeSlashCommandName(rawName);
 
   return name ? { name, args } : null;
+}
+
+function isCodexCliNativeSlashCommand(name: string): boolean {
+  return name.toLowerCase() === "/goal";
 }
 
 function extractFrontmatter(content: string): { body: string; fields: Record<string, string> } {
@@ -1737,6 +1751,10 @@ async function resolvePromptExecution(
     };
   }
 
+  if (isCodexCliNativeSlashCommand(parsed.name)) {
+    return null;
+  }
+
   const commands = await getAvailableSlashCommandDefinitions(cwd);
   const promptCommand = commands.find(
     (command): command is PromptSlashCommand =>
@@ -1927,10 +1945,16 @@ async function runPrompt(
     resolvedSlashCommand?.kind === "prompt"
       ? resolvedSlashCommand.expandedPrompt
       : prompt;
+  const parsedExecutionSlashCommand = parseSlashCommandPrompt(executionPrompt);
+  const shouldBypassModeWrapper =
+    !!parsedExecutionSlashCommand
+    && isCodexCliNativeSlashCommand(parsedExecutionSlashCommand.name);
   const attachments = session.pendingAttachments ?? [];
   session.pendingAttachments = [];
   const executionInput = buildPromptInput(
-    wrapPromptForConversationMode(executionPrompt, session.conversationMode),
+    shouldBypassModeWrapper
+      ? executionPrompt
+      : wrapPromptForConversationMode(executionPrompt, session.conversationMode),
     attachments,
   );
   const turnId = acceptedTurnId ?? crypto.randomUUID();

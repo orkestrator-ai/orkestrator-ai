@@ -183,6 +183,7 @@ export function ClaudeComposeBar({
     "/context - Show current context",
     "/cost - Show token usage and cost",
     "/doctor - Check system health",
+    "/goal - Set, view, or clear a completion goal",
     "/help - Show available commands",
     "/init - Re-initialize the session",
     "/logout - Log out of Claude",
