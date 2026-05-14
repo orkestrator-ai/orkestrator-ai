@@ -166,6 +166,12 @@ esac
 
 /// Build the hooks object that our settings.local.json contributes. Returned
 /// as a JSON Value so the caller can merge it into any pre-existing settings.
+///
+/// NOTE: We deliberately do *not* register a `PreToolUse` hook. The session
+/// is launched with `--dangerously-skip-permissions`, so the UI should not
+/// gate tool calls. A blocking `PreToolUse` hook would defeat that flag by
+/// surfacing an approval card for every tool. If a future "approval policy"
+/// feature wants to re-enable gating, add `PreToolUse` back here.
 pub fn hooks_block(hook_script_path: &str) -> Value {
     let cmd = format!("bash {} ", shell_dq(hook_script_path)); // event kind appended below
 
@@ -182,7 +188,6 @@ pub fn hooks_block(hook_script_path: &str) -> Value {
     };
 
     json!({
-        "PreToolUse":       [mk("PreToolUse")],
         "PostToolUse":      [mk("PostToolUse")],
         "UserPromptSubmit": [mk_no_matcher("UserPromptSubmit")],
         "Stop":             [mk_no_matcher("Stop")],
@@ -446,11 +451,10 @@ mod tests {
     }
 
     #[test]
-    fn hooks_block_has_all_supported_event_kinds() {
+    fn hooks_block_has_supported_informational_event_kinds() {
         let v = hooks_block("/tmp/x/hook.sh");
         let obj = v.as_object().unwrap();
         for kind in [
-            "PreToolUse",
             "PostToolUse",
             "UserPromptSubmit",
             "Stop",
@@ -459,9 +463,12 @@ mod tests {
         ] {
             assert!(obj.contains_key(kind), "missing kind: {kind}");
         }
-        let pre = &v["PreToolUse"][0];
-        assert_eq!(pre["matcher"], "*");
-        assert!(pre["hooks"][0]["command"].as_str().unwrap().contains("PreToolUse"));
+        // PreToolUse is intentionally omitted so --dangerously-skip-permissions
+        // is honored end-to-end.
+        assert!(!obj.contains_key("PreToolUse"));
+        let post = &v["PostToolUse"][0];
+        assert_eq!(post["matcher"], "*");
+        assert!(post["hooks"][0]["command"].as_str().unwrap().contains("PostToolUse"));
     }
 
     #[test]
@@ -471,23 +478,23 @@ mod tests {
         let v: Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(v["theme"], "dark");
         assert_eq!(v["permissions"]["x"], 1);
-        assert!(v["hooks"]["PreToolUse"].is_array());
+        assert!(v["hooks"]["PostToolUse"].is_array());
     }
 
     #[test]
     fn merge_settings_json_creates_object_from_nothing() {
         let merged = merge_settings_json(None, "/tmp/hook.sh");
         let v: Value = serde_json::from_str(&merged).unwrap();
-        assert!(v["hooks"]["PreToolUse"].is_array());
+        assert!(v["hooks"]["PostToolUse"].is_array());
     }
 
     #[test]
     fn merge_settings_json_overwrites_existing_hooks() {
-        let prev = r#"{"hooks":{"PreToolUse":[{"matcher":"foo","hooks":[]}]}}"#;
+        let prev = r#"{"hooks":{"PostToolUse":[{"matcher":"foo","hooks":[]}]}}"#;
         let merged = merge_settings_json(Some(prev), "/tmp/hook.sh");
         let v: Value = serde_json::from_str(&merged).unwrap();
         // Our matcher is "*", not "foo".
-        assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "*");
+        assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "*");
     }
 
     #[test]

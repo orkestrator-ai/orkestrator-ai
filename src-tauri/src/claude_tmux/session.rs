@@ -84,6 +84,9 @@ pub struct TmuxSession {
     pub claude_home: String,
     pub transcript_path: Arc<Mutex<Option<String>>>,
     pub stop_notify: Arc<Notify>,
+    /// Unix-seconds when this `TmuxSession` was built. Used as a lower bound
+    /// when discovering the transcript JSONL by mtime fallback.
+    pub started_at_unix: u64,
 }
 
 impl TmuxSession {
@@ -117,6 +120,12 @@ impl TmuxSession {
 
         let hook_paths = HookPaths::new(&runtime_root, &workspace);
 
+        let started_at_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            .saturating_sub(5); // small tolerance for clock skew / file mtime rounding
+
         TmuxSession {
             environment_id,
             backend,
@@ -126,6 +135,7 @@ impl TmuxSession {
             claude_home,
             transcript_path: Arc::new(Mutex::new(None)),
             stop_notify: Arc::new(Notify::new()),
+            started_at_unix,
         }
     }
 
@@ -141,11 +151,15 @@ impl TmuxSession {
 
     /// Start tmux + claude and spawn the poll loop. Idempotent: returns Ok
     /// without restarting if tmux already has a session by this name.
+    ///
+    /// `plan_mode` launches claude in plan-only mode (claude won't write to the
+    /// filesystem until the user approves the plan).
     pub async fn start(
         self: Arc<Self>,
         app: AppHandle,
         initial_prompt: Option<String>,
         model: Option<String>,
+        plan_mode: bool,
     ) -> Result<(), String> {
         // 1. Install hooks (script + .claude/settings.local.json)
         hooks::install_hooks(&self.backend, &self.hook_paths).await?;
@@ -178,11 +192,21 @@ impl TmuxSession {
         let alive = self.tmux_alive().await?;
         if !alive {
             // Build the claude command. We force a known session id so we
-            // can deterministically discover the transcript JSONL file.
+            // can deterministically discover the transcript JSONL file, and
+            // we always launch with `--dangerously-skip-permissions` so the
+            // CLI doesn't show its own TUI permission prompts. Our hooks
+            // still fire (informationally) and the UI is responsible for
+            // any approval gating.
             let mut claude_cmd = String::from("claude");
             if let Some(m) = model {
-                claude_cmd.push_str(&format!(" --model {}", shell_arg(&m)));
+                if !m.is_empty() {
+                    claude_cmd.push_str(&format!(" --model {}", shell_arg(&m)));
+                }
             }
+            if plan_mode {
+                claude_cmd.push_str(" --permission-mode plan");
+            }
+            claude_cmd.push_str(" --dangerously-skip-permissions");
             claude_cmd.push_str(&format!(" --session-id {}", self.session_id));
 
             // We start tmux in detached mode and launch claude as the first command.
@@ -294,15 +318,29 @@ impl TmuxSession {
 
                 // b) discover transcript file if we don't know it yet
                 if tail.is_none() {
+                    let cwd = match &session.backend {
+                        Backend::Local { cwd } => cwd.clone(),
+                        Backend::Container { .. } => "/workspace".to_string(),
+                    };
                     match transcript::find_transcript_path(
                         &session.backend,
                         &session.claude_home,
+                        &cwd,
                         &session.session_id,
+                        Some(session.started_at_unix),
                     )
                     .await
                     {
                         Ok(Some(p)) => {
+                            info!(env = %session.environment_id, path = %p, "Found transcript JSONL");
                             let _ = session.transcript_path.lock().await.replace(p.clone());
+                            let _ = app.emit(
+                                TAURI_EVENT,
+                                TmuxEvent::Warning {
+                                    environment_id: session.environment_id.clone(),
+                                    message: format!("transcript: {}", p),
+                                },
+                            );
                             tail = Some(TranscriptTail::new(p));
                         }
                         Ok(None) => {}
@@ -415,10 +453,15 @@ impl TmuxSession {
 
     /// Capture the visible pane (the TUI) as text. Useful as a fallback view
     /// when our JSONL parsing can't represent something.
+    ///
+    /// We deliberately omit `-e` (which preserves ANSI escape sequences)
+    /// because the frontend renders the result in a plain `<pre>` — the raw
+    /// escape bytes appear as garbage. `-J` joins lines wrapped by tmux so
+    /// long output reads naturally.
     pub async fn capture_pane(&self) -> Result<String, String> {
         let out = self
             .backend
-            .exec(&["tmux", "capture-pane", "-t", &self.tmux_session, "-p", "-e"])
+            .exec(&["tmux", "capture-pane", "-t", &self.tmux_session, "-p", "-J"])
             .await?;
         if !out.success() {
             return Err(out.stderr);

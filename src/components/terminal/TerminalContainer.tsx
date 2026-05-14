@@ -133,19 +133,36 @@ export function TerminalContainer({
 
   // Get config for agent modes - per-environment overrides take precedence over global
   const { config } = useConfigStore();
-  const { envOpencodeMode, envClaudeMode, envCodexMode } = useEnvironmentStore(
+  const {
+    envOpencodeMode,
+    envClaudeMode,
+    envClaudeNativeBackend,
+    envCodexMode,
+    envProjectId,
+  } = useEnvironmentStore(
     useShallow((state) => {
       const env = state.environments.find(e => e.id === environmentId);
       return {
         envOpencodeMode: env?.opencodeMode,
         envClaudeMode: env?.claudeMode,
+        envClaudeNativeBackend: env?.claudeNativeBackend,
         envCodexMode: env?.codexMode,
+        envProjectId: env?.projectId,
       };
     })
   );
   const opencodeMode = envOpencodeMode || config.global.opencodeMode || "terminal";
   const claudeMode = envClaudeMode || config.global.claudeMode || "terminal";
   const codexMode = envCodexMode || config.global.codexMode || "native";
+  // Three-tier resolution for the native-mode backend (env → repo → global).
+  const repoClaudeNativeBackend = envProjectId
+    ? config.repositories[envProjectId]?.claudeNativeBackend
+    : undefined;
+  const claudeNativeBackend =
+    envClaudeNativeBackend ??
+    repoClaudeNativeBackend ??
+    config.global.claudeNativeBackend ??
+    "sdk";
 
   // Get workspace ready state - needed early for native OpenCode launch
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
@@ -696,8 +713,24 @@ export function TerminalContainer({
         return;
       }
 
-      // Check if we should create a claude-native tab instead
+      // Native Claude mode → pick the backend (SDK or tmux) by 3-tier resolution.
       if (type === "claude" && claudeMode === "native") {
+        if (claudeNativeBackend === "tmux") {
+          const newTab: TabInfo = {
+            id: newTabId,
+            type: "claude-tmux",
+            claudeTmuxData: {
+              containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
+              environmentId,
+              isLocal: isLocalEnvironment,
+            },
+            initialPrompt: options?.initialPrompt,
+            displayTitle: options?.displayTitle,
+          };
+          console.debug("[TerminalContainer] Creating claude-tmux tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
+          addTab(activePaneId, newTab, environmentId);
+          return;
+        }
         const newTab: TabInfo = {
           id: newTabId,
           type: "claude-native",
@@ -710,24 +743,6 @@ export function TerminalContainer({
           displayTitle: options?.displayTitle,
         };
         console.debug("[TerminalContainer] Creating claude-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
-        addTab(activePaneId, newTab, environmentId);
-        return;
-      }
-
-      // Check if we should create a claude-tmux tab instead
-      if (type === "claude" && claudeMode === "tmux") {
-        const newTab: TabInfo = {
-          id: newTabId,
-          type: "claude-tmux",
-          claudeTmuxData: {
-            containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
-            environmentId,
-            isLocal: isLocalEnvironment,
-          },
-          initialPrompt: options?.initialPrompt,
-          displayTitle: options?.displayTitle,
-        };
-        console.debug("[TerminalContainer] Creating claude-tmux tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
         return;
       }

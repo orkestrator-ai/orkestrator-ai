@@ -20,26 +20,115 @@ use serde_json::Value;
 
 const POLL_MS: u64 = 250;
 
-/// Resolve the absolute JSONL path for the given session ID by globbing
-/// `<claude_home>/projects/*/<session_id>.jsonl`. Returns `Ok(None)` if not
-/// yet present.
+/// Encode an absolute cwd path the way Claude Code names its project
+/// directory under `~/.claude/projects/`. The scheme observed in practice:
+/// drop the trailing slash, then replace every `/` with `-`. An absolute
+/// path like `/Users/foo/proj` therefore becomes `-Users-foo-proj`.
+pub fn encode_cwd(cwd: &str) -> String {
+    let trimmed = cwd.trim_end_matches('/');
+    trimmed.replace('/', "-")
+}
+
+/// Resolve the absolute JSONL path for the given session ID for a *specific*
+/// worktree/workspace. The search is intentionally scoped to the encoded-cwd
+/// directory so concurrent Claude sessions in unrelated projects on the same
+/// machine cannot bleed into our chat.
+///
+/// `min_mtime_unix` constrains the mtime fallback (only files modified at or
+/// after this time are considered). This is the safety net for installed
+/// `claude` builds that ignore `--session-id` and assign their own UUID.
 pub async fn find_transcript_path(
     backend: &Backend,
     claude_home: &str,
+    cwd: &str,
     session_id: &str,
+    min_mtime_unix: Option<u64>,
 ) -> Result<Option<String>, String> {
-    let needle = format!("{}.jsonl", session_id);
-    let projects_dir = format!("{}/projects", claude_home);
-    let dirs = backend.list_dir(&projects_dir).await?;
-    for d in dirs {
-        let candidate = format!("{}/{}/{}", projects_dir, d, needle);
-        if backend.file_size(&candidate).await.unwrap_or(0) > 0
-            || backend.read_file(&candidate).await.ok().flatten().is_some()
-        {
-            return Ok(Some(candidate));
+    let encoded = encode_cwd(cwd);
+    let project_dir = format!("{}/projects/{}", claude_home, encoded);
+
+    // Pass 1: exact session-id match in our project directory.
+    let exact = format!("{}/{}.jsonl", project_dir, session_id);
+    if backend.file_size(&exact).await.unwrap_or(0) > 0
+        || backend.read_file(&exact).await.ok().flatten().is_some()
+    {
+        return Ok(Some(exact));
+    }
+
+    // Pass 2: newest JSONL inside *only* our project's encoded dir, gated by
+    // mtime so we don't pick up an older session from a previous run.
+    if let Some(t) = min_mtime_unix {
+        if let Some(p) = newest_jsonl_in_dir(backend, &project_dir, t).await? {
+            return Ok(Some(p));
         }
     }
+
     Ok(None)
+}
+
+/// Return the absolute path of the most recently modified `*.jsonl` file
+/// inside `dir` whose mtime ≥ `min_mtime_unix` seconds.
+async fn newest_jsonl_in_dir(
+    backend: &Backend,
+    dir: &str,
+    min_mtime_unix: u64,
+) -> Result<Option<String>, String> {
+    match backend {
+        Backend::Container { .. } => {
+            // GNU `find` is reliable on our Debian container image.
+            let script = format!(
+                "find {}/ -mindepth 1 -maxdepth 1 -type f -name '*.jsonl' -newermt @{} -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-",
+                shell_q(dir),
+                min_mtime_unix,
+            );
+            let out = backend.exec(&["sh", "-c", &script]).await?;
+            let path = out.stdout.trim().to_string();
+            if path.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(path))
+            }
+        }
+        Backend::Local { .. } => {
+            // BSD `find` on macOS does not support `-newermt @<epoch>`; scan
+            // via Rust fs APIs instead.
+            let mut newest: Option<(u64, String)> = None;
+            let names = backend.list_dir(dir).await.unwrap_or_default();
+            for name in names {
+                if !name.ends_with(".jsonl") {
+                    continue;
+                }
+                let full = format!("{}/{}", dir, name);
+                if let Ok(meta) = tokio::fs::metadata(&full).await {
+                    if let Ok(mtime) = meta.modified() {
+                        if let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                            let secs = dur.as_secs();
+                            if secs >= min_mtime_unix
+                                && newest.as_ref().is_none_or(|(t, _)| secs > *t)
+                            {
+                                newest = Some((secs, full));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(newest.map(|(_, p)| p))
+        }
+    }
+}
+
+fn shell_q(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// State for incrementally reading a JSONL file as it grows.
@@ -127,6 +216,13 @@ mod tests {
         dir.path().join(rel)
     }
 
+    #[test]
+    fn encode_cwd_matches_claude_codes_scheme() {
+        assert_eq!(encode_cwd("/Users/foo/proj"), "-Users-foo-proj");
+        assert_eq!(encode_cwd("/Users/foo/proj/"), "-Users-foo-proj");
+        assert_eq!(encode_cwd("/workspace"), "-workspace");
+    }
+
     #[tokio::test]
     async fn find_transcript_path_returns_none_when_missing() {
         let dir = TempDir::new().unwrap();
@@ -135,7 +231,9 @@ mod tests {
         let out = find_transcript_path(
             &backend,
             claude_home.to_str().unwrap(),
+            "/Users/me/proj",
             "session-xyz",
+            None,
         )
         .await
         .unwrap();
@@ -143,10 +241,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_transcript_path_locates_file_in_any_project_dir() {
+    async fn find_transcript_path_locates_file_in_encoded_cwd() {
         let dir = TempDir::new().unwrap();
         let backend = local_backend(&dir);
-        let proj_dir = path_in(&dir, ".claude/projects/-some-cwd");
+        let cwd = "/Users/me/proj";
+        let proj_dir = path_in(&dir, &format!(".claude/projects/{}", encode_cwd(cwd)));
         fs::create_dir_all(&proj_dir).await.unwrap();
         let jsonl = proj_dir.join("session-xyz.jsonl");
         fs::write(&jsonl, b"{\"type\":\"system\"}\n").await.unwrap();
@@ -155,11 +254,84 @@ mod tests {
         let out = find_transcript_path(
             &backend,
             claude_home.to_str().unwrap(),
+            cwd,
             "session-xyz",
+            None,
         )
         .await
         .unwrap();
         assert_eq!(out, Some(jsonl.to_string_lossy().into_owned()));
+    }
+
+    #[tokio::test]
+    async fn find_transcript_path_falls_back_to_newest_jsonl_when_id_misses() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let cwd = "/Users/me/proj";
+        let proj_dir = path_in(&dir, &format!(".claude/projects/{}", encode_cwd(cwd)));
+        fs::create_dir_all(&proj_dir).await.unwrap();
+        // Wrong session id but freshly written → fallback should pick it.
+        let jsonl = proj_dir.join("other-session.jsonl");
+        fs::write(&jsonl, b"{\"type\":\"system\"}\n").await.unwrap();
+
+        let claude_home = dir.path().join(".claude");
+        let start = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(60);
+
+        let out = find_transcript_path(
+            &backend,
+            claude_home.to_str().unwrap(),
+            cwd,
+            "session-xyz",
+            Some(start),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, Some(jsonl.to_string_lossy().into_owned()));
+    }
+
+    #[tokio::test]
+    async fn find_transcript_path_ignores_concurrent_sessions_in_other_projects() {
+        // Regression: when another Claude session is actively writing under a
+        // *different* project dir, our cwd-scoped search must NOT pick it up.
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let our_cwd = "/Users/me/proj-a";
+        let our_dir = path_in(&dir, &format!(".claude/projects/{}", encode_cwd(our_cwd)));
+        let other_dir = path_in(&dir, ".claude/projects/-Users-me-proj-b");
+        fs::create_dir_all(&our_dir).await.unwrap();
+        fs::create_dir_all(&other_dir).await.unwrap();
+        // Only the OTHER project has any JSONL file, and it's fresh.
+        fs::write(
+            other_dir.join("other-session.jsonl"),
+            b"{\"type\":\"user\"}\n",
+        )
+        .await
+        .unwrap();
+
+        let claude_home = dir.path().join(".claude");
+        let start = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(60);
+
+        let out = find_transcript_path(
+            &backend,
+            claude_home.to_str().unwrap(),
+            our_cwd,
+            "session-xyz",
+            Some(start),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out, None,
+            "must NOT bleed across project directories — got {out:?}"
+        );
     }
 
     #[tokio::test]

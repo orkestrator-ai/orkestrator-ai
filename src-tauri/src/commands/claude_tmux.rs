@@ -54,10 +54,14 @@ pub async fn claude_tmux_start(
     environment_id: String,
     initial_prompt: Option<String>,
     model: Option<String>,
+    plan_mode: Option<bool>,
 ) -> Result<TmuxSessionStatus, String> {
     info!(env = %environment_id, "claude_tmux_start");
     let session = get_or_create(&environment_id).await?;
-    session.clone().start(app, initial_prompt, model).await?;
+    session
+        .clone()
+        .start(app, initial_prompt, model, plan_mode.unwrap_or(false))
+        .await?;
     let alive = session.tmux_alive().await.unwrap_or(false);
     Ok(session.status(alive))
 }

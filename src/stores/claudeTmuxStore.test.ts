@@ -25,12 +25,15 @@ describe("applyTranscriptLine", () => {
     useClaudeTmuxStore.getState().applyTranscriptLine("env-1", line);
     const env = useClaudeTmuxStore.getState().getEnv("env-1");
     expect(env.messages).toHaveLength(1);
-    expect(env.messages[0]!.text).toBe("hello");
+    expect(env.messages[0]!.content).toBe("hello");
     expect(env.messages[0]!.role).toBe("user");
     expect(env.messages[0]!.id).toBe("u1");
+    expect(env.messages[0]!.parts.find((p) => p.type === "text")?.content).toBe(
+      "hello",
+    );
   });
 
-  test("assistant tool_use + later tool_result merge into the same message id", () => {
+  test("assistant tool_use + later tool_result merge into prior assistant message", () => {
     const useLine: TranscriptLine = {
       type: "assistant",
       uuid: "a1",
@@ -44,7 +47,7 @@ describe("applyTranscriptLine", () => {
     };
     const resultLine: TranscriptLine = {
       type: "user",
-      uuid: "a1",
+      uuid: "result-line-uuid",
       message: {
         role: "user",
         content: [
@@ -60,10 +63,20 @@ describe("applyTranscriptLine", () => {
     useClaudeTmuxStore.getState().applyTranscriptLine("e", useLine);
     useClaudeTmuxStore.getState().applyTranscriptLine("e", resultLine);
     const env = useClaudeTmuxStore.getState().getEnv("e");
+    // Crucial: the tool_result-only "user" line should NOT create a second
+    // message; it merges into the prior assistant message's parts.
     expect(env.messages).toHaveLength(1);
-    expect(env.messages[0]!.toolUses).toHaveLength(1);
-    expect(env.messages[0]!.toolResults).toHaveLength(1);
-    expect(env.messages[0]!.toolResults[0]!.content).toBe("ok\n");
+    const parts = env.messages[0]!.parts;
+    const invocation = parts.find(
+      (p) => p.type === "tool-invocation" && p.toolUseId === "tu1",
+    );
+    const result = parts.find(
+      (p) => p.type === "tool-result" && p.toolUseId === "tu1",
+    );
+    expect(invocation).toBeTruthy();
+    expect(invocation!.toolState).toBe("success");
+    expect(result).toBeTruthy();
+    expect(result!.toolOutput).toBe("ok\n");
   });
 
   test("ignores non-message line types", () => {
@@ -96,6 +109,58 @@ describe("applyTranscriptLine", () => {
     expect(useClaudeTmuxStore.getState().getEnv("e").messages).toHaveLength(1);
   });
 
+  test("Edit tool_use populates toolDiff with file_path and before/after", () => {
+    const line: TranscriptLine = {
+      type: "assistant",
+      uuid: "edit-1",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu-edit",
+            name: "Edit",
+            input: {
+              file_path: "/work/apps/web/package.json",
+              old_string: "\"react\": \"18.0.0\"",
+              new_string: "\"react\": \"19.0.0\"",
+            },
+          },
+        ],
+      },
+    };
+    useClaudeTmuxStore.getState().applyTranscriptLine("e", line);
+    const msg = useClaudeTmuxStore.getState().getEnv("e").messages[0]!;
+    const tool = msg.parts.find((p) => p.type === "tool-invocation");
+    expect(tool?.toolDiff?.filePath).toBe("/work/apps/web/package.json");
+    expect(tool?.toolDiff?.before).toBe("\"react\": \"18.0.0\"");
+    expect(tool?.toolDiff?.after).toBe("\"react\": \"19.0.0\"");
+  });
+
+  test("Write tool_use populates toolDiff with after = content", () => {
+    const line: TranscriptLine = {
+      type: "assistant",
+      uuid: "write-1",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu-write",
+            name: "Write",
+            input: { file_path: "/work/foo.txt", content: "line1\nline2" },
+          },
+        ],
+      },
+    };
+    useClaudeTmuxStore.getState().applyTranscriptLine("e", line);
+    const msg = useClaudeTmuxStore.getState().getEnv("e").messages[0]!;
+    const tool = msg.parts.find((p) => p.type === "tool-invocation");
+    expect(tool?.toolDiff?.filePath).toBe("/work/foo.txt");
+    expect(tool?.toolDiff?.before).toBe("");
+    expect(tool?.toolDiff?.after).toBe("line1\nline2");
+  });
+
   test("array content collects text, thinking, and tool_use", () => {
     const line: TranscriptLine = {
       type: "assistant",
@@ -111,10 +176,12 @@ describe("applyTranscriptLine", () => {
     };
     useClaudeTmuxStore.getState().applyTranscriptLine("e", line);
     const msg = useClaudeTmuxStore.getState().getEnv("e").messages[0]!;
-    expect(msg.thinking).toContain("let me see");
-    expect(msg.text).toContain("result");
-    expect(msg.toolUses).toHaveLength(1);
-    expect(msg.toolUses[0]!.name).toBe("Read");
+    const thinking = msg.parts.find((p) => p.type === "thinking");
+    const text = msg.parts.find((p) => p.type === "text");
+    const tool = msg.parts.find((p) => p.type === "tool-invocation");
+    expect(thinking?.content).toContain("let me see");
+    expect(text?.content).toContain("result");
+    expect(tool?.toolName).toBe("Read");
   });
 });
 

@@ -15,8 +15,9 @@ use crate::local::{
     stop_all_local_servers,
 };
 use crate::models::{
-    sanitize_branch_name, sanitize_environment_name, ClaudeMode, CodexMode, DefaultAgent,
-    Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, OpenCodeMode, PortMapping,
+    sanitize_branch_name, sanitize_environment_name, ClaudeMode, ClaudeNativeBackend, CodexMode,
+    DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, OpenCodeMode,
+    PortMapping,
     PrState,
 };
 use crate::storage::{get_config, get_storage, Storage, StorageError};
@@ -274,6 +275,11 @@ fn make_unique(base: &str, is_taken: impl Fn(&str) -> bool) -> String {
 
 /// Generate a unique environment name by appending an integer suffix if needed.
 /// Checks both environment names and branch names to ensure uniqueness.
+///
+/// Superseded in production by `make_unique_environment_slug` (which unifies
+/// the env name and branch slug). Retained for tests that exercise the
+/// name-only collision rules.
+#[cfg(test)]
 fn make_unique_name(base_name: &str, existing_environments: &[Environment]) -> String {
     make_unique(base_name, |name| {
         existing_environments
@@ -318,6 +324,10 @@ fn build_rename_update(new_name: &str, new_branch: &str, old_branch: &str) -> se
 /// Generate a unique branch name by appending an integer suffix if needed.
 /// Checks against existing environment branch names and an optional set of
 /// extra branch names (e.g. actual git branches in the repository).
+///
+/// Superseded in production by `make_unique_environment_slug`. Retained for
+/// tests that exercise the branch-only collision rules.
+#[cfg(test)]
 fn make_unique_branch(
     base_branch: &str,
     existing_environments: &[Environment],
@@ -1150,6 +1160,7 @@ pub async fn update_environment_agent_settings(
     environment_id: String,
     default_agent: Option<DefaultAgent>,
     claude_mode: Option<ClaudeMode>,
+    claude_native_backend: Option<ClaudeNativeBackend>,
     opencode_mode: Option<OpenCodeMode>,
     codex_mode: Option<CodexMode>,
 ) -> Result<Environment, String> {
@@ -1160,6 +1171,7 @@ pub async fn update_environment_agent_settings(
             json!({
                 "defaultAgent": default_agent,
                 "claudeMode": claude_mode,
+                "claudeNativeBackend": claude_native_backend,
                 "opencodeMode": opencode_mode,
                 "codexMode": codex_mode,
             }),

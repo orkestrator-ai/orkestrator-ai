@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
   ClaudeMode,
+  ClaudeNativeBackend,
   CodexMode,
   DefaultAgent,
   DomainTestResult,
@@ -69,6 +70,9 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
   );
   const [claudeMode, setClaudeMode] = useState<ClaudeMode>(
     global.claudeMode || "terminal"
+  );
+  const [claudeNativeBackend, setClaudeNativeBackend] = useState<ClaudeNativeBackend>(
+    global.claudeNativeBackend || "sdk"
   );
   const [claudeNativeFastModeDefault, setClaudeNativeFastModeDefault] = useState(
     global.claudeNativeFastModeDefault ?? false
@@ -121,6 +125,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     setOpencodeModel(global.opencodeModel || "opencode/grok-code");
     setOpencodeMode(global.opencodeMode || "terminal");
     setClaudeMode(global.claudeMode || "terminal");
+    setClaudeNativeBackend(global.claudeNativeBackend || "sdk");
     setClaudeNativeFastModeDefault(global.claudeNativeFastModeDefault ?? false);
     setCodexMode(global.codexMode || "native");
     setCodexNativeFastModeDefault(global.codexNativeFastModeDefault ?? false);
@@ -156,6 +161,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
       opencodeModel !== (global.opencodeModel || "opencode/grok-code") ||
       opencodeMode !== (global.opencodeMode || "terminal") ||
       claudeMode !== (global.claudeMode || "terminal") ||
+      claudeNativeBackend !== (global.claudeNativeBackend || "sdk") ||
       claudeNativeFastModeDefault !== (global.claudeNativeFastModeDefault ?? false) ||
       codexMode !== (global.codexMode || "native") ||
       codexNativeFastModeDefault !== (global.codexNativeFastModeDefault ?? false) ||
@@ -169,7 +175,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     if (changed) {
       setSaveSuccess(false);
     }
-  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, claudeNativeFastModeDefault, codexMode, codexNativeFastModeDefault, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, experimentalCodexRawEventLogging, debugLogging, global]);
+  }, [cpuCores, memoryGb, envPatterns, anthropicApiKey, githubToken, allowedDomains, preferredEditor, defaultAgent, opencodeModel, opencodeMode, claudeMode, claudeNativeBackend, claudeNativeFastModeDefault, codexMode, codexNativeFastModeDefault, terminalFontFamily, terminalFontSize, terminalBackgroundColor, terminalScrollback, experimentalCodexRawEventLogging, debugLogging, global]);
 
   // Validate domains on change
   const validateDomainsLocally = useCallback((domainsText: string) => {
@@ -250,6 +256,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         codexReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
         opencodeMode: OpenCodeMode;
         claudeMode: ClaudeMode;
+        claudeNativeBackend: ClaudeNativeBackend;
         claudeNativeFastModeDefault: boolean;
         codexMode: CodexMode;
         codexNativeFastModeDefault: boolean;
@@ -268,6 +275,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
         codexReasoningEffort: global.codexReasoningEffort || "medium",
         opencodeMode,
         claudeMode,
+        claudeNativeBackend,
         claudeNativeFastModeDefault,
         codexMode,
         codexNativeFastModeDefault,
@@ -328,6 +336,7 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     setOpencodeModel(global.opencodeModel || "opencode/grok-code");
     setOpencodeMode(global.opencodeMode || "terminal");
     setClaudeMode(global.claudeMode || "terminal");
+    setClaudeNativeBackend(global.claudeNativeBackend || "sdk");
     setClaudeNativeFastModeDefault(global.claudeNativeFastModeDefault ?? false);
     setCodexMode(global.codexMode || "native");
     setCodexNativeFastModeDefault(global.codexNativeFastModeDefault ?? false);
@@ -576,49 +585,58 @@ export function GlobalSettings({ activeSection, onSaveSuccess }: GlobalSettingsP
     </div>
   );
 
-  const renderClaudeModeToggle = () => (
-    <div className="max-w-2xl space-y-4">
-      <p className="text-sm text-muted-foreground">Choose how Claude runs in environments</p>
-      <div className="grid grid-cols-3 gap-3 max-w-md">
+  const renderClaudeNativeBackendPicker = () => (
+    <div className="max-w-2xl space-y-3">
+      <div>
+        <h3 className="text-sm font-medium text-foreground">Native backend</h3>
+        <p className="text-xs text-muted-foreground mt-1">
+          Implementation behind &ldquo;Native&rdquo; mode. Repo and environment
+          settings can override this; the most specific override wins.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 max-w-md">
         {([
-          { value: "terminal", label: "Terminal", icon: <Terminal className="h-4 w-4" />, hint: "Raw CLI in terminal" },
-          { value: "native", label: "Native (SDK)", icon: <Bot className="h-4 w-4" />, hint: "Agent SDK chat" },
-          { value: "tmux", label: "Tmux", icon: <Bot className="h-4 w-4" />, hint: "CLI under tmux, native UI" },
+          {
+            value: "sdk",
+            label: "Agent SDK",
+            hint: "Uses the Claude Agent SDK via bridge server",
+          },
+          {
+            value: "tmux",
+            label: "Tmux",
+            hint: "Drives the Claude CLI under tmux (Max plan friendly)",
+          },
         ] as const).map((opt) => (
           <button
             key={opt.value}
             type="button"
-            onClick={() => setClaudeMode(opt.value)}
+            onClick={() => setClaudeNativeBackend(opt.value)}
             className={cn(
               "p-3 rounded-lg border-2 text-left transition-colors",
-              claudeMode === opt.value
+              claudeNativeBackend === opt.value
                 ? "border-primary bg-primary/5"
-                : "border-transparent bg-zinc-900 hover:border-zinc-600"
+                : "border-transparent bg-zinc-900 hover:border-zinc-600",
             )}
           >
-            <div className="flex items-center gap-2 text-sm font-medium">
-              {opt.icon}
-              {opt.label}
-            </div>
+            <div className="text-sm font-medium">{opt.label}</div>
             <div className="text-xs text-muted-foreground mt-1">{opt.hint}</div>
           </button>
         ))}
       </div>
       <p className="text-xs text-muted-foreground/60">
-        Tmux mode drives the Claude CLI under tmux and surfaces a chat UI via
-        the JSONL transcript and Claude Code hooks. Use this when the Agent SDK
-        is unavailable. While a tmux session is running, Orkestrator merges a
-        {" "}<code className="font-mono px-1">hooks</code> block into the
+        With Tmux: while a session is running, Orkestrator merges a{" "}
+        <code className="font-mono px-1">hooks</code> block into the
         environment&apos;s{" "}
-        <code className="font-mono px-1">.claude/settings.local.json</code>;
-        the original file is restored when the session stops.
+        <code className="font-mono px-1">.claude/settings.local.json</code>; the
+        original file is restored when the session stops.
       </p>
     </div>
   );
 
   const renderClaude = () => (
     <div className="max-w-2xl space-y-8">
-      {renderClaudeModeToggle()}
+      {renderModeToggle(claudeMode, setClaudeMode, "Choose how Claude runs in environments")}
+      {renderClaudeNativeBackendPicker()}
       {renderFastModeDefault(
         claudeNativeFastModeDefault,
         setClaudeNativeFastModeDefault,

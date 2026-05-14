@@ -56,6 +56,7 @@ import {
 } from "@/lib/claude-client";
 import type {
   ClaudeMode,
+  ClaudeNativeBackend,
   CodexMode,
   DefaultAgent,
   DomainTestResult,
@@ -153,6 +154,10 @@ export function EnvironmentSettingsDialog({
   const [envClaudeMode, setEnvClaudeMode] = useState<string>(
     environment.claudeMode ?? "global"
   );
+  // "default" = inherit from repo, then global. "sdk" / "tmux" = override.
+  const [envClaudeNativeBackend, setEnvClaudeNativeBackend] = useState<string>(
+    environment.claudeNativeBackend ?? "default"
+  );
   const [envOpencodeMode, setEnvOpencodeMode] = useState<string>(
     environment.opencodeMode ?? "global"
   );
@@ -174,6 +179,7 @@ export function EnvironmentSettingsDialog({
   const agentSettingsChanged =
     (envDefaultAgent === "global" ? undefined : envDefaultAgent) !== (environment.defaultAgent ?? undefined) ||
     (envClaudeMode === "global" ? undefined : envClaudeMode) !== (environment.claudeMode ?? undefined) ||
+    (envClaudeNativeBackend === "default" ? undefined : envClaudeNativeBackend) !== (environment.claudeNativeBackend ?? undefined) ||
     (envOpencodeMode === "global" ? undefined : envOpencodeMode) !== (environment.opencodeMode ?? undefined) ||
     (envCodexMode === "global" ? undefined : envCodexMode) !== (environment.codexMode ?? undefined);
 
@@ -205,6 +211,7 @@ export function EnvironmentSettingsDialog({
       // Reset agent settings
       setEnvDefaultAgent(environment.defaultAgent ?? "global");
       setEnvClaudeMode(environment.claudeMode ?? "global");
+      setEnvClaudeNativeBackend(environment.claudeNativeBackend ?? "default");
       setEnvOpencodeMode(environment.opencodeMode ?? "global");
       setEnvCodexMode(environment.codexMode ?? "global");
     }
@@ -477,6 +484,7 @@ export function EnvironmentSettingsDialog({
           environment.id,
           envDefaultAgent === "global" ? null : envDefaultAgent as DefaultAgent,
           envClaudeMode === "global" ? null : envClaudeMode as ClaudeMode,
+          envClaudeNativeBackend === "default" ? null : envClaudeNativeBackend as ClaudeNativeBackend,
           envOpencodeMode === "global" ? null : envOpencodeMode as OpenCodeMode,
           envCodexMode === "global" ? null : envCodexMode as CodexMode,
         );
@@ -592,22 +600,11 @@ export function EnvironmentSettingsDialog({
             {/* Claude Mode */}
             <div className="space-y-3">
               <Label className="text-sm">Claude Mode</Label>
-              <div className="grid grid-cols-4 gap-2 max-w-2xl">
+              <div className="grid grid-cols-3 gap-2 max-w-md">
                 {([
-                  {
-                    value: "global",
-                    label: `Global (${
-                      config.global.claudeMode === "native"
-                        ? "Native"
-                        : config.global.claudeMode === "tmux"
-                          ? "Tmux"
-                          : "Terminal"
-                    })`,
-                    icon: <Bot className="h-3.5 w-3.5" />,
-                  },
+                  { value: "global", label: `Global (${config.global.claudeMode === "native" ? "Native" : "Terminal"})`, icon: <Bot className="h-3.5 w-3.5" /> },
                   { value: "terminal", label: "Terminal", icon: <Terminal className="h-3.5 w-3.5" /> },
                   { value: "native", label: "Native", icon: <Bot className="h-3.5 w-3.5" /> },
-                  { value: "tmux", label: "Tmux", icon: <Bot className="h-3.5 w-3.5" /> },
                 ] as const).map((opt) => (
                   <button
                     key={opt.value}
@@ -627,6 +624,47 @@ export function EnvironmentSettingsDialog({
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Claude Native backend (only meaningful when resolved mode is Native) */}
+            <div className="space-y-3">
+              <Label className="text-sm">Claude Native backend</Label>
+              <div className="grid grid-cols-3 gap-2 max-w-md">
+                {([
+                  {
+                    value: "default",
+                    label: `Default (${
+                      (
+                        config.repositories[environment.projectId]?.claudeNativeBackend ??
+                        config.global.claudeNativeBackend ??
+                        "sdk"
+                      ) === "tmux"
+                        ? "Tmux"
+                        : "Agent SDK"
+                    })`,
+                  },
+                  { value: "sdk", label: "Agent SDK" },
+                  { value: "tmux", label: "Tmux" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEnvClaudeNativeBackend(opt.value)}
+                    className={cn(
+                      "p-2 rounded-lg border-2 text-left text-sm font-medium transition-colors",
+                      envClaudeNativeBackend === opt.value
+                        ? "border-primary bg-primary/5"
+                        : "border-transparent bg-zinc-900 hover:border-zinc-600",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Only applies when Claude Mode is Native. Default inherits from
+                the repository setting, then the app default.
+              </p>
             </div>
 
             {/* OpenCode Mode */}

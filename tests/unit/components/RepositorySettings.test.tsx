@@ -433,7 +433,8 @@ describe("RepositorySettings", () => {
       });
 
       const selects = getMockSelects();
-      const effortSelect = selects[2]!;
+      // Order: [agentStyle, claudeNativeBackend, defaultModel, defaultEffort]
+      const effortSelect = selects[3]!;
       const values = Array.from(effortSelect.querySelectorAll("option")).map((option) => option.value);
 
       expect(values).toContain("low");

@@ -9,6 +9,7 @@ const mockUpdateEnvironmentAgentSettings = mock(async (
   environmentId: string,
   defaultAgent: string | null,
   claudeMode: string | null,
+  claudeNativeBackend: string | null,
   opencodeMode: string | null,
   codexMode: string | null,
 ) => ({
@@ -16,6 +17,7 @@ const mockUpdateEnvironmentAgentSettings = mock(async (
   id: environmentId,
   defaultAgent: defaultAgent ?? undefined,
   claudeMode: claudeMode ?? undefined,
+  claudeNativeBackend: claudeNativeBackend ?? undefined,
   opencodeMode: opencodeMode ?? undefined,
   codexMode: codexMode ?? undefined,
 }));
@@ -105,6 +107,7 @@ describe("EnvironmentSettingsDialog", () => {
           codexReasoningEffort: "medium",
           opencodeMode: "terminal",
           claudeMode: "terminal",
+          claudeNativeBackend: "sdk",
           codexMode: "native",
           terminalAppearance: {
             fontFamily: "Fira Code",
@@ -153,6 +156,7 @@ describe("EnvironmentSettingsDialog", () => {
     await waitFor(() => {
       expect(mockUpdateEnvironmentAgentSettings).toHaveBeenCalledWith(
         "env-1",
+        null,
         null,
         null,
         null,

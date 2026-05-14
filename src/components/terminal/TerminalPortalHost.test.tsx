@@ -109,6 +109,7 @@ describe("TerminalPortalHost", () => {
           codexReasoningEffort: "medium",
           opencodeMode: "terminal",
           claudeMode: "terminal",
+          claudeNativeBackend: "sdk",
           codexMode: "terminal",
           terminalAppearance: {
             fontFamily: "Fira Code",

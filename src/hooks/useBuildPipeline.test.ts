@@ -28,6 +28,7 @@ const mockUpdateEnvironmentAgentSettings = mock(async (
   environmentId: string,
   defaultAgent: string | null,
   claudeMode: string | null,
+  _claudeNativeBackend: string | null,
   opencodeMode: string | null,
   codexMode: string | null,
 ) => ({
@@ -283,6 +284,7 @@ describe("useBuildPipeline", () => {
       expect(mockUpdateEnvironmentAgentSettings).toHaveBeenCalledWith(
         "env-build",
         "codex",
+        null,
         null,
         null,
         "native",

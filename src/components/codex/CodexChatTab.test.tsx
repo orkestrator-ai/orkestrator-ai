@@ -209,6 +209,7 @@ function seedConfigStore() {
         codexReasoningEffort: "medium",
         opencodeMode: "terminal",
         claudeMode: "terminal",
+        claudeNativeBackend: "sdk",
         claudeNativeFastModeDefault: false,
         codexMode: "native",
         codexNativeFastModeDefault: false,

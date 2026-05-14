@@ -818,12 +818,16 @@ describe("TerminalContainer", () => {
       });
     });
 
-    test("claude-tmux tabs are created when claudeMode is tmux", async () => {
+    test("claude-tmux tabs are created when claudeMode is native and the native backend resolves to tmux", async () => {
       useConfigStore.setState((state) => ({
         ...state,
         config: {
           ...state.config,
-          global: { ...state.config.global, claudeMode: "tmux" },
+          global: {
+            ...state.config.global,
+            claudeMode: "native",
+            claudeNativeBackend: "tmux",
+          },
           repositories: {},
         },
       }));

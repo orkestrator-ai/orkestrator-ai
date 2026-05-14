@@ -101,12 +101,13 @@ export interface TmuxStatus {
 
 export async function startSession(
   environmentId: string,
-  options?: { initialPrompt?: string; model?: string },
+  options?: { initialPrompt?: string; model?: string; planMode?: boolean },
 ): Promise<TmuxStatus> {
   return invoke<TmuxStatus>("claude_tmux_start", {
     environmentId,
     initialPrompt: options?.initialPrompt,
     model: options?.model,
+    planMode: options?.planMode,
   });
 }
 

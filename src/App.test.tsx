@@ -63,6 +63,7 @@ const mockConfig: AppConfig = {
     codexReasoningEffort: "medium",
     opencodeMode: "terminal",
     claudeMode: "terminal",
+    claudeNativeBackend: "sdk",
     codexMode: "native",
     terminalAppearance: {
       fontFamily: "FiraCode Nerd Font",
