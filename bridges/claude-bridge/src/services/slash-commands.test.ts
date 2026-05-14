@@ -48,6 +48,7 @@ const BUILTIN_NAMES = [
   "/context",
   "/cost",
   "/doctor",
+  "/goal",
   "/help",
   "/init",
   "/logout",

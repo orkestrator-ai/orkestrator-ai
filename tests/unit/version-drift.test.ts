@@ -57,6 +57,15 @@ describe("version drift between SDK pins and bundled/container CLIs", () => {
     expect(dockerfilePin).toBe(sdkPin);
   });
 
+  test("Codex: bundled binary download uses the Rust release artifact URL", () => {
+    const script = read("scripts/download-codex.sh");
+
+    expect(script).toContain(
+      'CODEX_URL="https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/${CODEX_FILENAME}.tar.gz"',
+    );
+    expect(script).toContain('CODEX_FILENAME="codex-${CODEX_TARGET}"');
+  });
+
   test("OpenCode: SDK pin, bundled binary, and Docker CLI all match", () => {
     const sdkPin = getPkgDep("package.json", "@opencode-ai/sdk");
     const downloadScriptPin = getShellVar(

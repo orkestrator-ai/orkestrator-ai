@@ -329,6 +329,23 @@ describe("ClaudeComposeBar", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  test("includes /goal in fallback slash commands", async () => {
+    const { onSend } = renderComposeBar();
+    const input = screen.getByTestId("mentionable-input") as HTMLTextAreaElement;
+
+    fireEvent.change(input, { target: { value: "/go" } });
+    await waitFor(() => {
+      expect(useClaudeStore.getState().getDraftText(SESSION_KEY)).toBe("/go");
+    });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(useClaudeStore.getState().getDraftText(SESSION_KEY)).toBe("/goal ");
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   test("adds a pasted image attachment through the shared paste hook", async () => {
     const { getByTestId } = renderComposeBar({ containerId: "container-1" });
     const input = getByTestId("mentionable-input") as HTMLTextAreaElement;

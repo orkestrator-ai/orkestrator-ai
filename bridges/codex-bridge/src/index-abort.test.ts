@@ -369,6 +369,25 @@ describe("codex bridge abort handling", () => {
     });
   });
 
+  test("Codex-native /goal slash commands bypass plan-mode prompt wrapping", async () => {
+    let observedInput = "";
+    const session = createSession({
+      conversationMode: "plan",
+      thread: {
+        runStreamed: async (input: string) => {
+          observedInput = input;
+          return { events: (async function* () {})() };
+        },
+      },
+    });
+
+    await __testing.runPrompt(session, "/goal finish the release notes");
+
+    expect(observedInput).toBe("/goal finish the release notes");
+    expect(observedInput).not.toContain("Orkestrator plan mode");
+    expect(session.status).toBe("idle");
+  });
+
   test("missing rollout resume errors recover on a fresh thread with transcript context", async () => {
     let recoveryInput = "";
     const session = createSession({
@@ -736,6 +755,7 @@ describe("codex bridge abort handling", () => {
       expect(await commandsResponse.json()).toMatchObject({
         cwd,
         commands: expect.arrayContaining([
+          expect.objectContaining({ name: "/goal", source: "builtin" }),
           expect.objectContaining({ name: "/help", source: "builtin" }),
           expect.objectContaining({ name: "/models", source: "builtin" }),
           expect.objectContaining({

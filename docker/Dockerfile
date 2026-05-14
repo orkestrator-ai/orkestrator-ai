@@ -84,7 +84,7 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 #   OPENCODE_CLI_VERSION  ↔ @opencode-ai/sdk in package.json (and scripts/download-opencode.sh)
 # Claude CLI has its own release train distinct from @anthropic-ai/claude-agent-sdk, so it tracks a tag.
 ARG CLAUDE_CLI_VERSION=latest
-ARG CODEX_CLI_VERSION=0.124.0
+ARG CODEX_CLI_VERSION=0.130.0
 ARG OPENCODE_CLI_VERSION=1.14.22
 
 # Install Claude using native installer
