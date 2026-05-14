@@ -818,6 +818,89 @@ describe("TerminalContainer", () => {
       });
     });
 
+    test("claude-tmux tabs are created when claudeMode is native and the native backend resolves to tmux", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: {
+            ...state.config.global,
+            claudeMode: "native",
+            claudeNativeBackend: "tmux",
+          },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="claude"
+            options={{ displayTitle: "Tmux", initialPrompt: "hi" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude-tmux");
+        expect(created).toBeDefined();
+        expect(created?.displayTitle).toBe("Tmux");
+        expect(created?.initialPrompt).toBe("hi");
+        expect(created?.claudeTmuxData?.environmentId).toBe("env-visible");
+        expect(created?.claudeTmuxData?.containerId).toBe("container-visible");
+        expect(created?.claudeTmuxData?.isLocal).toBe(false);
+      });
+    });
+
+    test("repository Claude agent style and backend override global terminal defaults", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: {
+            ...state.config.global,
+            claudeMode: "terminal",
+            claudeNativeBackend: "sdk",
+          },
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              agentStyle: "native",
+              claudeNativeBackend: "tmux",
+            },
+          },
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness type="claude" options={{ displayTitle: "Repo tmux" }} />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude-tmux");
+        expect(created?.displayTitle).toBe("Repo tmux");
+      });
+    });
+
     test("codex-native tabs receive displayTitle", async () => {
       useConfigStore.setState((state) => ({
         ...state,

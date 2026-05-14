@@ -249,6 +249,7 @@ describe("PersistentTerminal", () => {
           codexReasoningEffort: "medium",
           opencodeMode: "terminal",
           claudeMode: "terminal",
+          claudeNativeBackend: "sdk",
           codexMode: "native",
           terminalAppearance: {
             fontFamily: "Fira Code",

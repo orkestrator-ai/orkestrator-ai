@@ -58,6 +58,16 @@ export interface ClaudeNativeData {
   isLocal?: boolean;
 }
 
+// Data for Claude tmux chat tabs (CLI driven under tmux, native-style UI)
+export interface ClaudeTmuxData {
+  /** Container ID for the environment (undefined for local environments) */
+  containerId?: string;
+  /** Environment ID */
+  environmentId: string;
+  /** Whether this is a local environment (no container) */
+  isLocal?: boolean;
+}
+
 // Data for Codex native chat tabs
 export interface CodexNativeData {
   /** Container ID for the environment (undefined for local environments) */
@@ -93,6 +103,8 @@ export interface TabInfo {
   openCodeNativeData?: OpenCodeNativeData;
   /** Data for claude-native tabs */
   claudeNativeData?: ClaudeNativeData;
+  /** Data for claude-tmux tabs */
+  claudeTmuxData?: ClaudeTmuxData;
   /** Data for codex-native tabs */
   codexNativeData?: CodexNativeData;
   /** Data for claude-build tabs */

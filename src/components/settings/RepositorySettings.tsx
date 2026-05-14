@@ -24,7 +24,7 @@ import { CODEX_MODELS } from "@/lib/codex-client";
 import { Loader2, Network, Plus, Trash2, FolderOpen, ExternalLink, FileText, Bot, Settings2, GitBranch } from "lucide-react";
 import { FullscreenSettingsLayout, type SettingsMenuItem } from "./FullscreenSettingsLayout";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { Project, RepositoryConfig, PortMapping, PortProtocol, DefaultAgent, AgentStyle } from "@/types";
+import type { Project, RepositoryConfig, PortMapping, PortProtocol, DefaultAgent, AgentStyle, ClaudeNativeBackend } from "@/types";
 
 interface RepositorySettingsProps {
   project: Project;
@@ -104,6 +104,10 @@ export function RepositorySettings({
   );
   const [projectDefaultAgent, setProjectDefaultAgent] = useState<string>(initialConfig.defaultAgent ?? APP_DEFAULT);
   const [projectAgentStyle, setProjectAgentStyle] = useState<string>(initialConfig.agentStyle ?? APP_DEFAULT);
+  // "__app_default__" = inherit from global. "sdk"/"tmux" = override.
+  const [projectClaudeNativeBackend, setProjectClaudeNativeBackend] = useState<string>(
+    initialConfig.claudeNativeBackend ?? APP_DEFAULT,
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   // Reset form when project changes or dialog opens
@@ -125,6 +129,7 @@ export function RepositorySettings({
       setEntryPort(config.entryPort != null ? String(config.entryPort) : "");
       setProjectDefaultAgent(config.defaultAgent ?? APP_DEFAULT);
       setProjectAgentStyle(config.agentStyle ?? APP_DEFAULT);
+      setProjectClaudeNativeBackend(config.claudeNativeBackend ?? APP_DEFAULT);
     }
   }, [open, project.id, project.name, project.localPath, getRepositoryConfig]);
 
@@ -332,6 +337,10 @@ export function RepositorySettings({
         entryPort: parsedEntryPort && parsedEntryPort >= 1 && parsedEntryPort <= 65535 ? parsedEntryPort : undefined,
         defaultAgent: projectDefaultAgent !== APP_DEFAULT ? projectDefaultAgent as DefaultAgent : undefined,
         agentStyle: projectAgentStyle !== APP_DEFAULT ? projectAgentStyle as AgentStyle : undefined,
+        claudeNativeBackend:
+          projectClaudeNativeBackend !== APP_DEFAULT
+            ? (projectClaudeNativeBackend as ClaudeNativeBackend)
+            : undefined,
       };
 
       // Update backend
@@ -369,6 +378,7 @@ export function RepositorySettings({
     setEntryPort(config.entryPort != null ? String(config.entryPort) : "");
     setProjectDefaultAgent(config.defaultAgent ?? APP_DEFAULT);
     setProjectAgentStyle(config.agentStyle ?? APP_DEFAULT);
+    setProjectClaudeNativeBackend(config.claudeNativeBackend ?? APP_DEFAULT);
     onOpenChange(false);
   };
 
@@ -569,6 +579,29 @@ export function RepositorySettings({
                     <SelectItem value="native">Native</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid gap-2 max-w-sm">
+                <Label htmlFor="projectClaudeNativeBackend">Claude Native backend</Label>
+                <Select
+                  value={projectClaudeNativeBackend}
+                  onValueChange={setProjectClaudeNativeBackend}
+                  disabled={isSaving}
+                >
+                  <SelectTrigger id="projectClaudeNativeBackend"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={APP_DEFAULT}>
+                      Use App Default (
+                      {config.global.claudeNativeBackend === "tmux" ? "Tmux" : "Agent SDK"}
+                      )
+                    </SelectItem>
+                    <SelectItem value="sdk">Agent SDK</SelectItem>
+                    <SelectItem value="tmux">Tmux</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Only applies when Claude Mode is Native. Environment settings
+                  can override this.
+                </p>
               </div>
             </div>
             <div className="border-t border-border pt-4 space-y-6">

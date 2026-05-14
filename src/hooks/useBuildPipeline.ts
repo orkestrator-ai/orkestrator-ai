@@ -116,6 +116,7 @@ export function useBuildPipeline() {
           environment.id,
           agentSettings.defaultAgent,
           agentSettings.claudeMode,
+          null,
           agentSettings.opencodeMode,
           agentSettings.codexMode,
         );

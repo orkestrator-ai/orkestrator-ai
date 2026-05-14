@@ -10,6 +10,7 @@ export type TabType =
   | "file"
   | "opencode-native"
   | "claude-native"
+  | "claude-tmux"
   | "codex-native"
   | "claude-build";
 

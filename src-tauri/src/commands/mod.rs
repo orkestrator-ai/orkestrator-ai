@@ -4,6 +4,7 @@
 mod claude;
 mod claude_cli;
 mod claude_state;
+mod claude_tmux;
 mod codex;
 mod config;
 pub mod credentials;
@@ -24,6 +25,7 @@ mod terminal;
 pub use claude::*;
 pub use claude_cli::*;
 pub use claude_state::*;
+pub use claude_tmux::*;
 pub use codex::*;
 pub use config::*;
 pub use credentials::{get_credential_status, has_claude_credentials};

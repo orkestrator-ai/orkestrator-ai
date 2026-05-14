@@ -1,10 +1,24 @@
-import { describe, expect, mock, test, beforeEach, afterEach } from "bun:test";
+import { afterAll, describe, expect, mock, test, beforeEach, afterEach } from "bun:test";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { mockReadImage } from "../../mocks/clipboard";
 
 const mockWriteContainerFile = mock(async () => {});
 const mockWriteLocalFile = mock(async () => "/tmp/file.png");
 const mockSerializeForLLM = mock((text: string, _mentions?: unknown[]) => text);
+
+// Snapshot the real SlashCommandMenu module BEFORE we stub it below, so we
+// can restore it for other test files (e.g. ClaudeTmuxChatTab.test.tsx
+// renders the real SlashCommandMenu and would otherwise see this file's
+// null-component stub via Bun's module cache).
+import * as realSlashCommandMenu from "@/components/claude/SlashCommandMenu";
+const realSlashCommandMenuSnapshot = { ...realSlashCommandMenu };
+
+afterAll(() => {
+  mock.module(
+    "@/components/claude/SlashCommandMenu",
+    () => realSlashCommandMenuSnapshot,
+  );
+});
 
 // --- Module mocks (must be before component import) ---
 

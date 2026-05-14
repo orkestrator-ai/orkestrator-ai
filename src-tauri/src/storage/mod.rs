@@ -794,6 +794,12 @@ impl Storage {
                 environment.claude_mode =
                     serde_json::from_value(claude_mode.clone()).ok().flatten();
             }
+            if let Some(claude_native_backend) = updates.get("claudeNativeBackend") {
+                environment.claude_native_backend =
+                    serde_json::from_value(claude_native_backend.clone())
+                        .ok()
+                        .flatten();
+            }
             if let Some(opencode_mode) = updates.get("opencodeMode") {
                 environment.opencode_mode =
                     serde_json::from_value(opencode_mode.clone()).ok().flatten();
@@ -1605,11 +1611,6 @@ impl Storage {
         self.with_json_lock(|| self.load_project_notes_unlocked())
     }
 
-    #[cfg(test)]
-    fn save_project_notes(&self, notes: &[ProjectNotes]) -> Result<(), StorageError> {
-        self.with_json_lock(|| self.save_project_notes_unlocked(notes))
-    }
-
     /// Get notes for a specific project
     pub fn get_project_notes(&self, project_id: &str) -> Result<ProjectNotes, StorageError> {
         self.with_json_lock(|| {
@@ -2295,6 +2296,7 @@ mod tests {
                 entry_port: None,
                 default_agent: None,
                 agent_style: None,
+                claude_native_backend: None,
             },
         );
 

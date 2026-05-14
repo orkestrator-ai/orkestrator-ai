@@ -85,6 +85,12 @@ export interface Environment {
   defaultAgent?: DefaultAgent;
   /** Per-environment Claude mode override (undefined = use global config) */
   claudeMode?: ClaudeMode;
+  /**
+   * Per-environment Claude native backend override (undefined = inherit from
+   * repository, then global). Only meaningful when the resolved Claude mode
+   * is "native".
+   */
+  claudeNativeBackend?: ClaudeNativeBackend;
   /** Per-environment OpenCode mode override (undefined = use global config) */
   opencodeMode?: OpenCodeMode;
   /** Per-environment Codex mode override (undefined = use global config) */
@@ -165,6 +171,14 @@ export type OpenCodeMode = "terminal" | "native";
 
 /** Claude mode - terminal CLI or native chat interface */
 export type ClaudeMode = "terminal" | "native";
+
+/**
+ * Implementation behind "native" Claude mode. The Agent SDK was the original
+ * backend; `tmux` drives the `claude` CLI under tmux and surfaces a native-
+ * style UI via the JSONL transcript + Claude Code hooks. This is resolved
+ * three-tier: environment override → repo override → global default.
+ */
+export type ClaudeNativeBackend = "sdk" | "tmux";
 /** Codex mode - terminal CLI or native chat interface */
 export type CodexMode = "terminal" | "native";
 /** Agent style - terminal CLI or native chat interface (used for project-level override) */
@@ -208,6 +222,8 @@ export interface GlobalConfig {
   opencodeMode: OpenCodeMode;
   /** Claude mode - terminal CLI or native chat interface */
   claudeMode: ClaudeMode;
+  /** Default backend used when Claude mode is "native" (sdk or tmux) */
+  claudeNativeBackend: ClaudeNativeBackend;
   /** Enable fast mode by default for new Claude Native tabs */
   claudeNativeFastModeDefault?: boolean;
   /** Codex mode - terminal CLI or native chat interface */
@@ -242,6 +258,11 @@ export interface RepositoryConfig {
   defaultAgent?: DefaultAgent;
   /** Project-level agent style override (undefined = use app default) */
   agentStyle?: AgentStyle;
+  /**
+   * Project-level Claude native backend override (undefined = inherit from
+   * global). Only meaningful when the resolved Claude mode is "native".
+   */
+  claudeNativeBackend?: ClaudeNativeBackend;
 }
 
 export interface AppConfig {

@@ -230,6 +230,10 @@ pub struct Environment {
     /// Per-environment Claude mode override (None = use global config)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_mode: Option<ClaudeMode>,
+    /// Per-environment Claude native backend override (None = inherit from
+    /// repo, then global). Meaningful only when resolved mode is `Native`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_native_backend: Option<ClaudeNativeBackend>,
     /// Per-environment OpenCode mode override (None = use global config)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_mode: Option<OpenCodeMode>,
@@ -350,6 +354,7 @@ impl Environment {
             local_codex_port: None,
             default_agent: None,
             claude_mode: None,
+            claude_native_backend: None,
             opencode_mode: None,
             codex_mode: None,
             setup_scripts_complete: false,
@@ -391,6 +396,7 @@ impl Environment {
             local_codex_port: None,
             default_agent: None,
             claude_mode: None,
+            claude_native_backend: None,
             opencode_mode: None,
             codex_mode: None,
             setup_scripts_complete: false,
@@ -432,6 +438,7 @@ impl Environment {
             local_codex_port: None,
             default_agent: None,
             claude_mode: None,
+            claude_native_backend: None,
             opencode_mode: None,
             codex_mode: None,
             setup_scripts_complete: false,
@@ -752,8 +759,21 @@ pub enum ClaudeMode {
     /// Terminal mode - launches Claude CLI in terminal
     #[default]
     Terminal,
-    /// Native mode - uses Claude Agent SDK with chat interface
+    /// Native mode - chat interface (backend chosen by `ClaudeNativeBackend`)
     Native,
+}
+
+/// Implementation behind the "native" Claude experience. Resolved three-tier:
+/// environment override → repository override → global default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeNativeBackend {
+    /// Use the Claude Agent SDK via the local/container bridge server.
+    #[default]
+    Sdk,
+    /// Drive the `claude` CLI under tmux and surface a chat UI populated by
+    /// the JSONL transcript and Claude Code hooks.
+    Tmux,
 }
 
 /// Codex mode - terminal CLI or native chat interface
@@ -888,6 +908,10 @@ pub struct GlobalConfig {
     /// Claude mode - terminal CLI or native chat interface
     #[serde(default)]
     pub claude_mode: ClaudeMode,
+    /// Default backend used when Claude mode is "native" (sdk or tmux).
+    /// Missing in older config files → defaults to `Sdk`.
+    #[serde(default)]
+    pub claude_native_backend: ClaudeNativeBackend,
     /// Enable fast mode by default for new Claude Native tabs
     #[serde(default)]
     pub claude_native_fast_mode_default: bool,
@@ -926,6 +950,7 @@ impl Default for GlobalConfig {
             codex_reasoning_effort: default_codex_reasoning_effort(),
             opencode_mode: OpenCodeMode::default(),
             claude_mode: ClaudeMode::default(),
+            claude_native_backend: ClaudeNativeBackend::default(),
             claude_native_fast_mode_default: false,
             codex_mode: CodexMode::default(),
             codex_native_fast_mode_default: false,
@@ -965,6 +990,10 @@ pub struct RepositoryConfig {
     /// Project-level agent style override (None = use app default)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_style: Option<AgentStyle>,
+    /// Project-level Claude native backend override (None = inherit from
+    /// global). Meaningful only when resolved Claude mode is `Native`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_native_backend: Option<ClaudeNativeBackend>,
 }
 
 impl Default for RepositoryConfig {
@@ -979,6 +1008,7 @@ impl Default for RepositoryConfig {
             entry_port: None,
             default_agent: None,
             agent_style: None,
+            claude_native_backend: None,
         }
     }
 }
@@ -1232,6 +1262,7 @@ mod tests {
                 entry_port: None,
                 default_agent: None,
                 agent_style: None,
+                claude_native_backend: None,
             },
         );
 
@@ -1438,6 +1469,7 @@ mod tests {
             entry_port: None,
             default_agent: Some(DefaultAgent::Opencode),
             agent_style: Some(AgentStyle::Native),
+            claude_native_backend: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();
