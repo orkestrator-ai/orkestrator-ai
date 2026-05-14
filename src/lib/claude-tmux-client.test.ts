@@ -21,8 +21,6 @@ mock.module("@tauri-apps/api/core", () => ({
 }));
 
 afterAll(() => {
-  // Restore the global no-op mock from tests/setup.ts so subsequent files
-  // see the original behavior.
   mock.module("@tauri-apps/api/core", () => ({
     invoke: mock(() => Promise.resolve()),
     Resource: class Resource {
@@ -37,11 +35,11 @@ beforeEach(() => {
   calls.length = 0;
 });
 
-// Import after the mock is installed so the module captures our stub.
 import {
   answerPreToolUse,
   capturePane,
   getStatus,
+  listPreviousSessions,
   replyHook,
   resize,
   sendKeys,
@@ -52,84 +50,97 @@ import {
 } from "./claude-tmux-client";
 
 describe("claude-tmux-client invoke wrappers", () => {
-  test("startSession forwards environmentId, initialPrompt, model", async () => {
-    await startSession("env-1", { initialPrompt: "hi", model: "sonnet" });
+  test("startSession forwards tabId, environmentId, prompt/model/plan, and resume", async () => {
+    await startSession("tab-1", "env-1", {
+      initialPrompt: "hi",
+      model: "sonnet",
+      planMode: true,
+      resumeSessionId: "sess-resume",
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.cmd).toBe("claude_tmux_start");
     expect(calls[0]!.args).toEqual({
+      tabId: "tab-1",
       environmentId: "env-1",
       initialPrompt: "hi",
       model: "sonnet",
+      planMode: true,
+      resumeSessionId: "sess-resume",
     });
   });
 
   test("startSession passes undefined when options are omitted", async () => {
-    await startSession("env-1");
+    await startSession("tab-1", "env-1");
     expect(calls[0]!.args).toEqual({
+      tabId: "tab-1",
       environmentId: "env-1",
       initialPrompt: undefined,
       model: undefined,
+      planMode: undefined,
+      resumeSessionId: undefined,
     });
   });
 
-  test("stopSession invokes the stop command", async () => {
-    await stopSession("env-1");
+  test("stopSession invokes the stop command with tabId", async () => {
+    await stopSession("tab-1");
     expect(calls[0]!.cmd).toBe("claude_tmux_stop");
-    expect(calls[0]!.args).toEqual({ environmentId: "env-1" });
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
   });
 
-  test("getStatus invokes the status command", async () => {
-    await getStatus("env-1");
+  test("getStatus invokes the status command with tabId", async () => {
+    await getStatus("tab-1");
     expect(calls[0]!.cmd).toBe("claude_tmux_status");
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
   });
 
   test("submit forwards text", async () => {
-    await submit("env-1", "go");
+    await submit("tab-1", "go");
     expect(calls[0]!.cmd).toBe("claude_tmux_submit");
-    expect(calls[0]!.args).toEqual({ environmentId: "env-1", text: "go" });
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1", text: "go" });
   });
 
   test("sendText forwards text without auto-Enter", async () => {
-    await sendText("env-1", "raw");
+    await sendText("tab-1", "raw");
     expect(calls[0]!.cmd).toBe("claude_tmux_send_text");
-    expect(calls[0]!.args).toEqual({ environmentId: "env-1", text: "raw" });
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1", text: "raw" });
   });
 
   test("sendKeys forwards the key list", async () => {
-    await sendKeys("env-1", ["C-c", "Enter"]);
+    await sendKeys("tab-1", ["C-c", "Enter"]);
     expect(calls[0]!.cmd).toBe("claude_tmux_send_keys");
     expect(calls[0]!.args).toEqual({
-      environmentId: "env-1",
+      tabId: "tab-1",
       keys: ["C-c", "Enter"],
     });
   });
 
-  test("capturePane invokes the capture command", async () => {
-    await capturePane("env-1");
+  test("capturePane invokes the capture command with tabId", async () => {
+    await capturePane("tab-1");
     expect(calls[0]!.cmd).toBe("claude_tmux_capture_pane");
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
   });
 
   test("resize forwards cols/rows as numbers", async () => {
-    await resize("env-1", 200, 50);
+    await resize("tab-1", 200, 50);
     expect(calls[0]!.cmd).toBe("claude_tmux_resize");
     expect(calls[0]!.args).toEqual({
-      environmentId: "env-1",
+      tabId: "tab-1",
       cols: 200,
       rows: 50,
     });
   });
 
   test("answerPreToolUse forwards decision and optional reason", async () => {
-    await answerPreToolUse("env-1", "evt", "approve");
+    await answerPreToolUse("tab-1", "evt", "approve");
     expect(calls[0]!.args).toEqual({
-      environmentId: "env-1",
+      tabId: "tab-1",
       eventId: "evt",
       decision: "approve",
       reason: undefined,
     });
-    await answerPreToolUse("env-1", "evt", "block", "no");
+    await answerPreToolUse("tab-1", "evt", "block", "no");
     expect(calls[1]!.args).toEqual({
-      environmentId: "env-1",
+      tabId: "tab-1",
       eventId: "evt",
       decision: "block",
       reason: "no",
@@ -137,13 +148,19 @@ describe("claude-tmux-client invoke wrappers", () => {
   });
 
   test("replyHook forwards arbitrary JSON response", async () => {
-    await replyHook("env-1", "PostToolUse", "evt", { ok: true });
+    await replyHook("tab-1", "PostToolUse", "evt", { ok: true });
     expect(calls[0]!.cmd).toBe("claude_tmux_reply_hook");
     expect(calls[0]!.args).toEqual({
-      environmentId: "env-1",
+      tabId: "tab-1",
       eventKind: "PostToolUse",
       eventId: "evt",
       response: { ok: true },
     });
+  });
+
+  test("listPreviousSessions invokes the list command with environmentId", async () => {
+    await listPreviousSessions("env-1");
+    expect(calls[0]!.cmd).toBe("claude_tmux_list_previous_sessions");
+    expect(calls[0]!.args).toEqual({ environmentId: "env-1" });
   });
 });

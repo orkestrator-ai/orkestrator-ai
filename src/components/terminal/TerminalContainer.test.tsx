@@ -860,6 +860,47 @@ describe("TerminalContainer", () => {
       });
     });
 
+    test("repository Claude agent style and backend override global terminal defaults", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: {
+            ...state.config.global,
+            claudeMode: "terminal",
+            claudeNativeBackend: "sdk",
+          },
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              agentStyle: "native",
+              claudeNativeBackend: "tmux",
+            },
+          },
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness type="claude" options={{ displayTitle: "Repo tmux" }} />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude-tmux");
+        expect(created?.displayTitle).toBe("Repo tmux");
+      });
+    });
+
     test("codex-native tabs receive displayTitle", async () => {
       useConfigStore.setState((state) => ({
         ...state,

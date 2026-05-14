@@ -33,6 +33,7 @@ import {
   buildInitialPromptWithAttachmentReferences,
   saveInitialPromptAttachments,
 } from "@/lib/initial-prompt-attachments";
+import { resolveClaudeConfig } from "@/lib/claude-mode-resolver";
 import { createOrkestratorScriptPrompt } from "@/prompts";
 import { PaneTree } from "@/components/pane-layout";
 import { TerminalPortalHost } from "./TerminalPortalHost";
@@ -152,17 +153,17 @@ export function TerminalContainer({
     })
   );
   const opencodeMode = envOpencodeMode || config.global.opencodeMode || "terminal";
-  const claudeMode = envClaudeMode || config.global.claudeMode || "terminal";
   const codexMode = envCodexMode || config.global.codexMode || "native";
-  // Three-tier resolution for the native-mode backend (env → repo → global).
-  const repoClaudeNativeBackend = envProjectId
-    ? config.repositories[envProjectId]?.claudeNativeBackend
-    : undefined;
-  const claudeNativeBackend =
-    envClaudeNativeBackend ??
-    repoClaudeNativeBackend ??
-    config.global.claudeNativeBackend ??
-    "sdk";
+  const resolvedClaudeConfig = resolveClaudeConfig(
+    config.global,
+    envProjectId ? config.repositories[envProjectId] : undefined,
+    {
+      claudeMode: envClaudeMode,
+      claudeNativeBackend: envClaudeNativeBackend,
+    },
+  );
+  const claudeMode = resolvedClaudeConfig.mode;
+  const claudeNativeBackend = resolvedClaudeConfig.nativeBackend;
 
   // Get workspace ready state - needed early for native OpenCode launch
   const setWorkspaceReady = useEnvironmentStore((state) => state.setWorkspaceReady);
@@ -775,7 +776,7 @@ export function TerminalContainer({
       console.debug("[TerminalContainer] Creating new tab:", newTabId, "type:", type, "for environment:", environmentId);
       addTab(activePaneId, newTab, environmentId);
     },
-    [containerId, isEnvironmentRunning, activePaneId, addTab, getAllTabs, environmentId, opencodeMode, claudeMode, codexMode, isLocalEnvironmentReady]
+    [containerId, isEnvironmentRunning, activePaneId, addTab, getAllTabs, environmentId, opencodeMode, claudeMode, claudeNativeBackend, codexMode, isLocalEnvironmentReady]
   );
 
   // Handler for creating file viewer tabs

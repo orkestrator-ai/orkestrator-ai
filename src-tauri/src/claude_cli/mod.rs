@@ -739,7 +739,10 @@ mod tests {
         // Test special characters are removed
         assert_eq!(sanitize_slug("fix!@#auth$%^bug").unwrap(), "fixauthbug");
         assert_eq!(sanitize_slug("test_underscore").unwrap(), "test_underscore");
-        assert_eq!(sanitize_slug("dots.are.removed").unwrap(), "dots-are-removed");
+        assert_eq!(
+            sanitize_slug("dots.are.removed").unwrap(),
+            "dots-are-removed"
+        );
     }
 
     #[test]

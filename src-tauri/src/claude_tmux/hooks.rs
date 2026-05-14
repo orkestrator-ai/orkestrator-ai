@@ -2,20 +2,19 @@
 //!
 //! Claude Code calls user-defined "hook" shell commands at well-known points
 //! (PreToolUse, PostToolUse, UserPromptSubmit, Stop, Notification). We use
-//! these hooks to surface tool decisions to our native UI:
+//! these hooks to surface tool decisions to our native UI.
 //!
-//!  1. The hook is a tiny shell script that writes the incoming payload to a
-//!     "pending" file in the session's runtime directory.
-//!  2. For *blocking* hooks (currently PreToolUse), the script then polls for
-//!     a "response" file written by Rust when the user decides, and prints
-//!     that response back to Claude Code.
-//!  3. For *informational* hooks (PostToolUse, Stop, Notification,
-//!     UserPromptSubmit), the script writes the pending file and exits
-//!     immediately with `{}` — Rust picks the event up from the pending
-//!     directory on its next poll.
-//!
-//! The same hook script and `settings.local.json` are valid for both local
-//! worktrees and containers; only the embedded directory paths differ.
+//! Layout:
+//!   - One `hook.sh` is installed per *workspace* (env). It extracts
+//!     `session_id` from the payload Claude Code feeds on stdin and writes
+//!     the event to a *per-session* pending dir at
+//!     `<workspace_root>/sessions/<session_id>/pending/<EventKind>-<id>.json`.
+//!   - Each `TmuxSession`'s poll loop reads from its own session's pending
+//!     dir, so concurrent tabs in the same workspace get their own events
+//!     without bleed.
+//!   - `.claude/settings.local.json` (workspace-level) is installed once and
+//!     uninstalled when the last session in the workspace stops; an
+//!     idempotent backup of the user's original is preserved.
 
 use super::backend::Backend;
 use serde::{Deserialize, Serialize};
@@ -25,6 +24,10 @@ use std::collections::HashSet;
 /// Default for how long the PreToolUse hook will wait for the UI to respond
 /// before falling back to Claude Code's normal permission prompt.
 pub const HOOK_TIMEOUT_SECS: u32 = 600; // 10 min
+
+/// Sentinel value stored in the settings-backup file when there was no
+/// original `.claude/settings.local.json` at install time.
+const BACKUP_SENTINEL_NO_ORIGINAL: &str = "__orkestrator_no_original__";
 
 #[derive(Debug, Clone, Copy)]
 pub enum HookEventKind {
@@ -65,48 +68,69 @@ pub struct PendingHookEvent {
     pub payload: Value,
 }
 
-/// Layout of files inside the per-session hook runtime directory.
-pub struct HookPaths {
+/// Workspace-level (per-env) hook layout. One `hook.sh` and one settings
+/// install per workspace, regardless of how many tabs are open.
+#[derive(Debug, Clone)]
+pub struct WorkspaceHookPaths {
     pub root: String,
-    pub pending_dir: String,
-    pub response_dir: String,
-    /// Sentinel files dropped by hook.sh when a blocking hook times out.
-    /// Rust uses them to dismiss the corresponding pending approval in the UI.
-    pub timeout_dir: String,
+    pub sessions_dir: String,
     pub script: String,
     pub claude_settings: String,
-    /// Backup of any pre-existing `.claude/settings.local.json`. Restored on
-    /// session stop so we don't permanently mutate user state.
     pub claude_settings_backup: String,
 }
 
-impl HookPaths {
-    /// Build a layout under `<runtime_root>` (which differs between local and
-    /// container — e.g. `/tmp/orkestrator-claude-tmux/<env-id>` for both, but
-    /// the *meaning* of `/tmp` is different).
-    pub fn new(runtime_root: &str, worktree_or_workspace: &str) -> Self {
+impl WorkspaceHookPaths {
+    /// `runtime_root` is per-workspace (e.g. `/tmp/orkestrator-claude-tmux/<env-id>`).
+    /// `workspace` is the cwd whose `.claude/settings.local.json` we'll touch.
+    pub fn new(runtime_root: &str, workspace: &str) -> Self {
         let root = runtime_root.to_string();
-        HookPaths {
-            pending_dir: format!("{}/pending", root),
-            response_dir: format!("{}/response", root),
-            timeout_dir: format!("{}/timeout", root),
+        WorkspaceHookPaths {
+            sessions_dir: format!("{}/sessions", root),
             script: format!("{}/hook.sh", root),
-            // Drop hooks into the worktree/workspace so Claude Code picks them up.
-            claude_settings: format!("{}/.claude/settings.local.json", worktree_or_workspace),
+            claude_settings: format!("{}/.claude/settings.local.json", workspace),
             claude_settings_backup: format!("{}/settings.local.json.orkestrator-backup", root),
             root,
         }
     }
 }
 
+/// Per-session subdirectories under the workspace's `sessions_dir`. Each
+/// `TmuxSession` owns its own set; hook.sh routes events here by parsing the
+/// `session_id` field from the payload.
+#[derive(Debug, Clone)]
+pub struct SessionHookPaths {
+    pub session_dir: String,
+    pub pending_dir: String,
+    pub response_dir: String,
+    /// Sentinel files dropped by hook.sh when a blocking hook times out.
+    pub timeout_dir: String,
+}
+
+impl SessionHookPaths {
+    pub fn new(workspace: &WorkspaceHookPaths, session_id: &str) -> Self {
+        let session_dir = format!("{}/{}", workspace.sessions_dir, session_id);
+        SessionHookPaths {
+            pending_dir: format!("{}/pending", session_dir),
+            response_dir: format!("{}/response", session_dir),
+            timeout_dir: format!("{}/timeout", session_dir),
+            session_dir,
+        }
+    }
+}
+
 /// Shell script Claude Code will invoke for every configured hook event.
 ///
-/// We pass the event kind as the first argument and let the script branch
-/// on whether it should block waiting for the user. The runtime dir is
-/// templated in at script-generation time so the script itself is fully
-/// self-contained and doesn't need extra env vars at hook-invocation time
-/// (which is convenient because hook environments are minimal).
-pub fn hook_script(paths: &HookPaths, timeout_secs: u32) -> String {
+/// The script:
+///   1. reads the JSON payload from stdin
+///   2. extracts `session_id` with sed (no jq dependency)
+///   3. writes the payload to `<sessions_dir>/<session_id>/pending/<EventKind>-<id>.json`
+///   4. for blocking hooks (PreToolUse), polls the corresponding response file
+///      and emits its contents back to Claude on stdout
+///   5. for informational hooks, prints `{}` and exits
+///
+/// If `session_id` cannot be parsed (unexpected payload shape), events are
+/// routed to a fallback `unknown/` subdir so they don't disappear silently.
+pub fn hook_script(workspace: &WorkspaceHookPaths, timeout_secs: u32) -> String {
     format!(
         r#"#!/usr/bin/env bash
 # orkestrator-ai claude-tmux hook
@@ -115,11 +139,23 @@ pub fn hook_script(paths: &HookPaths, timeout_secs: u32) -> String {
 # Stdout: JSON response (for blocking hooks)
 set -u
 EVENT_KIND="${{1:-Unknown}}"
-PENDING_DIR={pending_dir_q}
-RESPONSE_DIR={response_dir_q}
-TIMEOUT_DIR={timeout_dir_q}
+SESSIONS_DIR={sessions_dir_q}
 TIMEOUT_SECS={timeout}
 
+PAYLOAD="$(cat)"
+
+# Extract session_id from the JSON payload. We accept any UUID-shaped string
+# at the "session_id" key. Falls back to "unknown" if the payload is shaped
+# differently.
+SESSION_ID="$(printf '%s' "$PAYLOAD" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F-]\{{8,\}}\)".*/\1/p' | head -1)"
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID="unknown"
+fi
+
+SESSION_DIR="$SESSIONS_DIR/$SESSION_ID"
+PENDING_DIR="$SESSION_DIR/pending"
+RESPONSE_DIR="$SESSION_DIR/response"
+TIMEOUT_DIR="$SESSION_DIR/timeout"
 mkdir -p "$PENDING_DIR" "$RESPONSE_DIR" "$TIMEOUT_DIR" 2>/dev/null || true
 
 # Generate a unique ID (no nanoseconds on BSD/macOS; combine date+pid+RANDOM).
@@ -128,7 +164,6 @@ PENDING_FILE="$PENDING_DIR/${{EVENT_KIND}}-${{ID}}.json"
 RESPONSE_FILE="$RESPONSE_DIR/${{EVENT_KIND}}-${{ID}}.json"
 TIMEOUT_FILE="$TIMEOUT_DIR/${{EVENT_KIND}}-${{ID}}.json"
 
-PAYLOAD="$(cat)"
 printf '%s' "$PAYLOAD" > "$PENDING_FILE"
 
 case "$EVENT_KIND" in
@@ -157,9 +192,7 @@ case "$EVENT_KIND" in
     ;;
 esac
 "#,
-        pending_dir_q = shell_dq(&paths.pending_dir),
-        response_dir_q = shell_dq(&paths.response_dir),
-        timeout_dir_q = shell_dq(&paths.timeout_dir),
+        sessions_dir_q = shell_dq(&workspace.sessions_dir),
         timeout = timeout_secs,
     )
 }
@@ -169,9 +202,7 @@ esac
 ///
 /// NOTE: We deliberately do *not* register a `PreToolUse` hook. The session
 /// is launched with `--dangerously-skip-permissions`, so the UI should not
-/// gate tool calls. A blocking `PreToolUse` hook would defeat that flag by
-/// surfacing an approval card for every tool. If a future "approval policy"
-/// feature wants to re-enable gating, add `PreToolUse` back here.
+/// gate tool calls.
 pub fn hooks_block(hook_script_path: &str) -> Value {
     let cmd = format!("bash {} ", shell_dq(hook_script_path)); // event kind appended below
 
@@ -213,44 +244,58 @@ pub fn merge_settings_json(existing: Option<&str>, hook_script_path: &str) -> St
     serde_json::to_string_pretty(&root).expect("settings JSON serializes")
 }
 
-/// Write hook.sh and merge our hooks block into `.claude/settings.local.json`,
-/// backing up any pre-existing user settings so they can be restored on stop.
-pub async fn install_hooks(backend: &Backend, paths: &HookPaths) -> Result<(), String> {
+/// Install workspace-level hooks. Idempotent: a subsequent call when the
+/// hooks are already installed does NOT clobber the original-settings backup
+/// — only the first install captures the user's true original.
+pub async fn install_workspace_hooks(
+    backend: &Backend,
+    paths: &WorkspaceHookPaths,
+) -> Result<(), String> {
     backend.ensure_dir(&paths.root).await?;
-    backend.ensure_dir(&paths.pending_dir).await?;
-    backend.ensure_dir(&paths.response_dir).await?;
-    backend.ensure_dir(&paths.timeout_dir).await?;
+    backend.ensure_dir(&paths.sessions_dir).await?;
 
     let script = hook_script(paths, HOOK_TIMEOUT_SECS);
     backend.write_file(&paths.script, &script).await?;
     backend.exec(&["chmod", "+x", &paths.script]).await?;
 
-    // Snapshot whatever's there now (if anything) so `uninstall_hooks` can
-    // put it back. We always overwrite the backup at install time — restart
-    // mid-session would otherwise lose the original.
-    let existing = backend.read_file(&paths.claude_settings).await?;
-    if let Some(prev) = existing.as_deref() {
-        backend.write_file(&paths.claude_settings_backup, prev).await?;
-    } else {
-        // Mark "no original" with an idempotent sentinel.
-        backend
-            .write_file(&paths.claude_settings_backup, "__orkestrator_no_original__")
-            .await?;
+    // Backup: write the original settings ONLY if we haven't already on a
+    // previous install. This keeps the user's true original safe even when
+    // the second tab in the same workspace calls install_workspace_hooks.
+    let existing_backup = backend.read_file(&paths.claude_settings_backup).await?;
+    let existing_settings = backend.read_file(&paths.claude_settings).await?;
+    if existing_backup.is_none() {
+        match existing_settings.as_deref() {
+            Some(prev) => {
+                backend
+                    .write_file(&paths.claude_settings_backup, prev)
+                    .await?;
+            }
+            None => {
+                backend
+                    .write_file(&paths.claude_settings_backup, BACKUP_SENTINEL_NO_ORIGINAL)
+                    .await?;
+            }
+        }
     }
 
-    let merged = merge_settings_json(existing.as_deref(), &paths.script);
+    // Always overwrite settings.local.json with our hooks block; subsequent
+    // installs are no-ops because the merged content is the same.
+    let merged = merge_settings_json(existing_settings.as_deref(), &paths.script);
     backend.write_file(&paths.claude_settings, &merged).await?;
 
     Ok(())
 }
 
 /// Restore the user's original `.claude/settings.local.json` and remove the
-/// runtime directory. Best-effort: errors are returned but the caller can
-/// safely ignore them (cleanup is not critical to correctness).
-pub async fn uninstall_hooks(backend: &Backend, paths: &HookPaths) -> Result<(), String> {
+/// workspace runtime directory. Should only be called when the last session
+/// in the workspace stops — the caller is responsible for this gating.
+pub async fn uninstall_workspace_hooks(
+    backend: &Backend,
+    paths: &WorkspaceHookPaths,
+) -> Result<(), String> {
     let backup = backend.read_file(&paths.claude_settings_backup).await?;
     match backup.as_deref() {
-        Some("__orkestrator_no_original__") => {
+        Some(s) if s == BACKUP_SENTINEL_NO_ORIGINAL => {
             backend.remove_file(&paths.claude_settings).await?;
         }
         Some(content) => {
@@ -261,8 +306,28 @@ pub async fn uninstall_hooks(backend: &Backend, paths: &HookPaths) -> Result<(),
         }
     }
     backend.remove_file(&paths.claude_settings_backup).await.ok();
-    // Drop the per-session runtime dir entirely.
     backend.exec(&["rm", "-rf", &paths.root]).await.ok();
+    Ok(())
+}
+
+/// Create the per-session pending/response/timeout dirs.
+pub async fn ensure_session_dirs(
+    backend: &Backend,
+    paths: &SessionHookPaths,
+) -> Result<(), String> {
+    backend.ensure_dir(&paths.session_dir).await?;
+    backend.ensure_dir(&paths.pending_dir).await?;
+    backend.ensure_dir(&paths.response_dir).await?;
+    backend.ensure_dir(&paths.timeout_dir).await?;
+    Ok(())
+}
+
+/// Remove a session's runtime subdirs. Best-effort.
+pub async fn remove_session_dirs(
+    backend: &Backend,
+    paths: &SessionHookPaths,
+) -> Result<(), String> {
+    backend.exec(&["rm", "-rf", &paths.session_dir]).await.ok();
     Ok(())
 }
 
@@ -270,7 +335,7 @@ pub async fn uninstall_hooks(backend: &Backend, paths: &HookPaths) -> Result<(),
 /// waiting for a response. Files are consumed on read.
 pub async fn drain_timeouts(
     backend: &Backend,
-    paths: &HookPaths,
+    paths: &SessionHookPaths,
 ) -> Result<Vec<(String, String)>, String> {
     let names = backend.list_dir(&paths.timeout_dir).await?;
     let mut out = Vec::new();
@@ -293,19 +358,15 @@ pub async fn drain_timeouts(
 /// `already_emitted` is a set of blocking-event IDs that have previously been
 /// surfaced to the UI. Blocking pending files stay on disk until `hook.sh`
 /// consumes the response, so without this set we would re-emit them on every
-/// poll. The set is also pruned of IDs whose pending files have disappeared
-/// (timed out or answered).
+/// poll. The set is also pruned of IDs whose pending files have disappeared.
 pub async fn drain_pending(
     backend: &Backend,
-    paths: &HookPaths,
+    paths: &SessionHookPaths,
     already_emitted: &mut HashSet<String>,
 ) -> Result<Vec<PendingHookEvent>, String> {
     let mut names = backend.list_dir(&paths.pending_dir).await?;
     names.sort();
 
-    // Prune entries from `already_emitted` whose pending files are gone so
-    // that if Claude later re-uses an ID (unlikely but possible) we don't
-    // miss it.
     let still_present: HashSet<String> = names
         .iter()
         .filter(|n| n.ends_with(".json"))
@@ -325,9 +386,6 @@ pub async fn drain_pending(
             .map(|k| k.is_blocking())
             .unwrap_or(false);
 
-        // For blocking hooks, skip if we've already told the UI about this
-        // event — the pending file lingers until hook.sh consumes the
-        // response.
         if is_blocking && already_emitted.contains(&id) {
             continue;
         }
@@ -357,10 +415,9 @@ pub async fn drain_pending(
 }
 
 /// Write a response file for a previously emitted blocking hook event.
-/// `response` is the JSON Claude Code will receive on stdout from the hook.
 pub async fn reply_to_hook(
     backend: &Backend,
-    paths: &HookPaths,
+    paths: &SessionHookPaths,
     kind: &str,
     id: &str,
     response: &Value,
@@ -368,7 +425,10 @@ pub async fn reply_to_hook(
     let filename = format!("{}-{}.json", kind, id);
     let response_path = format!("{}/{}", paths.response_dir, filename);
     backend
-        .write_file(&response_path, &serde_json::to_string(response).unwrap_or_else(|_| "{}".into()))
+        .write_file(
+            &response_path,
+            &serde_json::to_string(response).unwrap_or_else(|_| "{}".into()),
+        )
         .await?;
     Ok(())
 }
@@ -384,7 +444,6 @@ pub fn pre_tool_use_response(decision: &str, reason: Option<&str>) -> Value {
 }
 
 fn parse_event_filename(name: &str) -> (String, String) {
-    // "PreToolUse-1731519430-1234-9876-5432.json" → ("PreToolUse", "1731519430-1234-9876-5432")
     let stem = name.strip_suffix(".json").unwrap_or(name);
     if let Some(dash) = stem.find('-') {
         let (kind, rest) = stem.split_at(dash);
@@ -463,12 +522,13 @@ mod tests {
         ] {
             assert!(obj.contains_key(kind), "missing kind: {kind}");
         }
-        // PreToolUse is intentionally omitted so --dangerously-skip-permissions
-        // is honored end-to-end.
         assert!(!obj.contains_key("PreToolUse"));
         let post = &v["PostToolUse"][0];
         assert_eq!(post["matcher"], "*");
-        assert!(post["hooks"][0]["command"].as_str().unwrap().contains("PostToolUse"));
+        assert!(post["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("PostToolUse"));
     }
 
     #[test]
@@ -493,7 +553,6 @@ mod tests {
         let prev = r#"{"hooks":{"PostToolUse":[{"matcher":"foo","hooks":[]}]}}"#;
         let merged = merge_settings_json(Some(prev), "/tmp/hook.sh");
         let v: Value = serde_json::from_str(&merged).unwrap();
-        // Our matcher is "*", not "foo".
         assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "*");
     }
 
@@ -526,24 +585,36 @@ mod tests {
     }
 
     #[test]
-    fn hook_paths_layout_under_runtime_root() {
-        let p = HookPaths::new("/tmp/run", "/work");
+    fn workspace_hook_paths_layout() {
+        let p = WorkspaceHookPaths::new("/tmp/run", "/work");
         assert_eq!(p.root, "/tmp/run");
-        assert_eq!(p.pending_dir, "/tmp/run/pending");
-        assert_eq!(p.response_dir, "/tmp/run/response");
-        assert_eq!(p.timeout_dir, "/tmp/run/timeout");
+        assert_eq!(p.sessions_dir, "/tmp/run/sessions");
         assert_eq!(p.script, "/tmp/run/hook.sh");
         assert_eq!(p.claude_settings, "/work/.claude/settings.local.json");
         assert!(p.claude_settings_backup.starts_with("/tmp/run/"));
     }
 
     #[test]
-    fn hook_script_contains_timeout_dir_and_event_kind_branch() {
-        let paths = HookPaths::new("/tmp/run", "/work");
-        let script = hook_script(&paths, 60);
-        assert!(script.contains("TIMEOUT_DIR=\"/tmp/run/timeout\""));
-        assert!(script.contains("TIMEOUT_SECS=60"));
+    fn session_hook_paths_are_nested_under_sessions_dir() {
+        let ws = WorkspaceHookPaths::new("/tmp/run", "/work");
+        let s = SessionHookPaths::new(&ws, "abc-123");
+        assert_eq!(s.session_dir, "/tmp/run/sessions/abc-123");
+        assert_eq!(s.pending_dir, "/tmp/run/sessions/abc-123/pending");
+        assert_eq!(s.response_dir, "/tmp/run/sessions/abc-123/response");
+        assert_eq!(s.timeout_dir, "/tmp/run/sessions/abc-123/timeout");
+    }
+
+    #[test]
+    fn hook_script_routes_by_session_id_and_contains_event_branch() {
+        let ws = WorkspaceHookPaths::new("/tmp/run", "/work");
+        let script = hook_script(&ws, 60);
+        assert!(script.contains("SESSIONS_DIR=\"/tmp/run/sessions\""));
+        assert!(script.contains("session_id"));
         assert!(script.contains("PreToolUse)"));
         assert!(script.contains("timed_out"));
+        // Each event is dispatched into a per-session subdir.
+        assert!(script.contains("$SESSION_DIR/pending"));
+        assert!(script.contains("$SESSION_DIR/response"));
+        assert!(script.contains("$SESSION_DIR/timeout"));
     }
 }

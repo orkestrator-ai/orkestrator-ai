@@ -429,6 +429,7 @@ pub fn run() {
             claude_tmux_resize,
             claude_tmux_answer_pre_tool_use,
             claude_tmux_reply_hook,
+            claude_tmux_list_previous_sessions,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

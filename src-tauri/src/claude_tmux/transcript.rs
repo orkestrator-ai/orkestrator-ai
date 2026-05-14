@@ -161,10 +161,7 @@ impl TranscriptTail {
         // transcripts (≤ a few MB) this is fine and avoids range-read complexity
         // across both local and container backends.
         let full = backend.read_file(&self.path).await?.unwrap_or_default();
-        let new_chunk = full
-            .get(self.offset as usize..)
-            .unwrap_or("")
-            .to_string();
+        let new_chunk = full.get(self.offset as usize..).unwrap_or("").to_string();
         self.offset = full.len() as u64;
 
         let combined = std::mem::take(&mut self.partial) + &new_chunk;
@@ -196,6 +193,148 @@ impl TranscriptTail {
 }
 
 pub const POLL_INTERVAL_MS: u64 = POLL_MS;
+
+/// Metadata about one previously-recorded Claude session that the user could
+/// resume in a new tab. Returned from [`list_previous_sessions`].
+#[derive(Debug, Clone)]
+pub struct PreviousSessionInfo {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub last_activity_unix: u64,
+    pub message_count: u32,
+    pub transcript_path: String,
+}
+
+/// List recorded Claude Code sessions for `cwd`, newest first.
+///
+/// Reads `<claude_home>/projects/<encoded-cwd>/*.jsonl`, parses each file's
+/// first user prompt (for the title) and counts lines to estimate message
+/// volume. Lightweight enough to call on resume-dialog open.
+pub async fn list_previous_sessions(
+    backend: &Backend,
+    claude_home: &str,
+    cwd: &str,
+) -> Result<Vec<PreviousSessionInfo>, String> {
+    let project_dir = format!("{}/projects/{}", claude_home, encode_cwd(cwd));
+    let names = backend.list_dir(&project_dir).await.unwrap_or_default();
+    let mut out: Vec<PreviousSessionInfo> = Vec::new();
+    for name in names {
+        let Some(session_id) = name.strip_suffix(".jsonl") else {
+            continue;
+        };
+        let full = format!("{}/{}", project_dir, name);
+
+        // mtime via backend-appropriate path (local: fs::metadata; container: stat).
+        let last_activity_unix = file_mtime_unix(backend, &full).await.unwrap_or(0);
+
+        // Read the file to count lines and find the first user prompt.
+        let content = backend.read_file(&full).await?.unwrap_or_default();
+        let (title, message_count) = summarize_transcript(&content);
+
+        out.push(PreviousSessionInfo {
+            session_id: session_id.to_string(),
+            title,
+            last_activity_unix,
+            message_count,
+            transcript_path: full,
+        });
+    }
+    // Newest first.
+    out.sort_by(|a, b| b.last_activity_unix.cmp(&a.last_activity_unix));
+    Ok(out)
+}
+
+/// Read the first user-text content from the JSONL and the total line count.
+fn summarize_transcript(content: &str) -> (Option<String>, u32) {
+    let mut count: u32 = 0;
+    let mut title: Option<String> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        count = count.saturating_add(1);
+        if title.is_some() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        // Look for a user-role message whose first text-content part starts
+        // the conversation. Claude Code records text either inline or as an
+        // array of content blocks.
+        let role = v
+            .get("message")
+            .and_then(|m| m.get("role"))
+            .and_then(|r| r.as_str())
+            .or_else(|| v.get("type").and_then(|t| t.as_str()));
+        if role != Some("user") {
+            continue;
+        }
+        let content_field = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .or_else(|| v.get("content"));
+        let Some(content_field) = content_field else {
+            continue;
+        };
+        let extracted = match content_field {
+            Value::String(s) => Some(s.clone()),
+            Value::Array(arr) => arr.iter().find_map(|item| {
+                if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    item.get("text").and_then(|t| t.as_str()).map(str::to_string)
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        };
+        if let Some(text) = extracted {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                title = Some(truncate_title(trimmed, 80));
+            }
+        }
+    }
+    (title, count)
+}
+
+fn truncate_title(s: &str, max_chars: usize) -> String {
+    let single_line = s.replace('\n', " ");
+    if single_line.chars().count() <= max_chars {
+        return single_line;
+    }
+    let mut out: String = single_line.chars().take(max_chars).collect();
+    out.push('…');
+    out
+}
+
+async fn file_mtime_unix(backend: &Backend, path: &str) -> Result<u64, String> {
+    match backend {
+        Backend::Local { .. } => match tokio::fs::metadata(path).await {
+            Ok(m) => Ok(m
+                .modified()
+                .ok()
+                .and_then(|mt| mt.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)),
+            Err(_) => Ok(0),
+        },
+        Backend::Container { .. } => {
+            let out = backend
+                .exec(&[
+                    "sh",
+                    "-c",
+                    &format!(
+                        "stat -c %Y {} 2>/dev/null || echo 0",
+                        shell_q(path)
+                    ),
+                ])
+                .await?;
+            Ok(out.stdout.trim().parse().unwrap_or(0))
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -358,9 +497,12 @@ mod tests {
         fs::write(&path, b"").await.unwrap();
         let mut tail = TranscriptTail::new(path_str.clone());
 
-        fs::write(&path, b"{\"type\":\"user\",\"i\":1}\n{\"type\":\"assistant\",\"i\":2}\n")
-            .await
-            .unwrap();
+        fs::write(
+            &path,
+            b"{\"type\":\"user\",\"i\":1}\n{\"type\":\"assistant\",\"i\":2}\n",
+        )
+        .await
+        .unwrap();
         let first = tail.read_new(&backend).await.unwrap();
         assert_eq!(first.len(), 2);
         assert_eq!(first[0]["i"], 1);
@@ -390,10 +532,107 @@ mod tests {
         assert!(first.is_empty(), "partial line should not emit");
 
         // Complete the line.
-        fs::write(&path, b"{\"type\":\"user\",\"i\":1}\n").await.unwrap();
+        fs::write(&path, b"{\"type\":\"user\",\"i\":1}\n")
+            .await
+            .unwrap();
         let second = tail.read_new(&backend).await.unwrap();
         assert_eq!(second.len(), 1);
         assert_eq!(second[0]["i"], 1);
+    }
+
+    #[test]
+    fn summarize_transcript_extracts_first_user_text_and_message_count() {
+        let jsonl = r#"
+{"type":"system","message":{"role":"system","content":"boot"}}
+{"type":"user","message":{"role":"user","content":"Hello there"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Second prompt — ignored for title"}]}}
+"#;
+        let (title, count) = summarize_transcript(jsonl);
+        assert_eq!(title.as_deref(), Some("Hello there"));
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn summarize_transcript_truncates_long_titles_and_collapses_newlines() {
+        // Embed escaped \n inside the JSON content string. summarize_transcript
+        // collapses those newlines to spaces and ellipsizes past 80 chars.
+        let content_value = json!(format!("line1\nline2 {}", "x".repeat(200)));
+        let line = json!({
+            "type": "user",
+            "message": { "role": "user", "content": content_value },
+        });
+        let (title, _) = summarize_transcript(&line.to_string());
+        let t = title.unwrap();
+        assert!(t.starts_with("line1 line2"), "title was: {t}");
+        assert!(t.ends_with('…'));
+        assert!(t.chars().count() <= 81); // 80 + ellipsis
+    }
+
+    #[tokio::test]
+    async fn list_previous_sessions_returns_newest_first_with_titles() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let cwd = "/Users/me/proj";
+        let proj_dir = path_in(
+            &dir,
+            &format!(".claude/projects/{}", encode_cwd(cwd)),
+        );
+        fs::create_dir_all(&proj_dir).await.unwrap();
+
+        // Older session.
+        let old = proj_dir.join("sess-old.jsonl");
+        fs::write(
+            &old,
+            r#"{"type":"user","message":{"role":"user","content":"older"}}
+"#,
+        )
+        .await
+        .unwrap();
+
+        // Newer session — write a few seconds later by sleeping.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let new = proj_dir.join("sess-new.jsonl");
+        fs::write(
+            &new,
+            r#"{"type":"user","message":{"role":"user","content":"newer"}}
+{"type":"assistant","message":{"role":"assistant","content":"reply"}}
+"#,
+        )
+        .await
+        .unwrap();
+
+        let claude_home = path_in(&dir, ".claude");
+        let sessions = list_previous_sessions(
+            &backend,
+            claude_home.to_str().unwrap(),
+            cwd,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(sessions.len(), 2);
+        // Newest first.
+        assert_eq!(sessions[0].session_id, "sess-new");
+        assert_eq!(sessions[1].session_id, "sess-old");
+        assert_eq!(sessions[0].title.as_deref(), Some("newer"));
+        assert_eq!(sessions[0].message_count, 2);
+        assert!(sessions[0].last_activity_unix >= sessions[1].last_activity_unix);
+    }
+
+    #[tokio::test]
+    async fn list_previous_sessions_returns_empty_for_unknown_project() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let claude_home = path_in(&dir, ".claude");
+        let sessions = list_previous_sessions(
+            &backend,
+            claude_home.to_str().unwrap(),
+            "/path/nobody/uses",
+        )
+        .await
+        .unwrap();
+        assert!(sessions.is_empty());
     }
 
     #[tokio::test]
@@ -402,7 +641,9 @@ mod tests {
         let backend = local_backend(&dir);
         let path = path_in(&dir, "t.jsonl");
         let path_str = path.to_string_lossy().into_owned();
-        fs::write(&path, b"not json\n{\"type\":\"user\"}\n").await.unwrap();
+        fs::write(&path, b"not json\n{\"type\":\"user\"}\n")
+            .await
+            .unwrap();
 
         let mut tail = TranscriptTail::new(path_str);
         let lines = tail.read_new(&backend).await.unwrap();

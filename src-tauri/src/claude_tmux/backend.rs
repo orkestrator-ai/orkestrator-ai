@@ -74,7 +74,8 @@ impl Backend {
             cmd.stdin(Stdio::piped());
         }
 
-        debug!(backend = ?self, args = ?args, "claude_tmux exec");
+        let (program, arg_count) = exec_log_summary(args);
+        debug!(backend = ?self, program = %program, arg_count, "claude_tmux exec");
 
         let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
 
@@ -142,7 +143,10 @@ impl Backend {
                     .unwrap_or("/");
                 self.exec(&["mkdir", "-p", parent]).await?;
                 let out = self
-                    .exec_with_stdin(&["sh", "-c", &format!("cat > {}", shell_quote(path))], Some(content))
+                    .exec_with_stdin(
+                        &["sh", "-c", &format!("cat > {}", shell_quote(path))],
+                        Some(content),
+                    )
                     .await?;
                 if !out.success() {
                     return Err(out.stderr);
@@ -200,7 +204,11 @@ impl Backend {
             },
             Backend::Container { .. } => {
                 let out = self
-                    .exec(&["sh", "-c", &format!("ls -1 {} 2>/dev/null || true", shell_quote(path))])
+                    .exec(&[
+                        "sh",
+                        "-c",
+                        &format!("ls -1 {} 2>/dev/null || true", shell_quote(path)),
+                    ])
                     .await?;
                 Ok(out
                     .stdout
@@ -234,6 +242,13 @@ impl Backend {
     }
 }
 
+fn exec_log_summary(args: &[&str]) -> (String, usize) {
+    (
+        args.first().copied().unwrap_or("<empty>").to_string(),
+        args.len().saturating_sub(1),
+    )
+}
+
 /// Minimal shell single-quote escape for embedding paths into `sh -c`.
 fn shell_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -247,4 +262,20 @@ fn shell_quote(s: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exec_log_summary_omits_sensitive_arguments() {
+        let prompt = "fix prod using SECRET_TOKEN=abc123";
+        let (program, arg_count) =
+            exec_log_summary(&["tmux", "send-keys", "-t", "session", "-l", prompt]);
+
+        assert_eq!(program, "tmux");
+        assert_eq!(arg_count, 5);
+        assert!(!program.contains("SECRET_TOKEN"));
+    }
 }

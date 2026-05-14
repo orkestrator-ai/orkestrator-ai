@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
+import * as realClaudeTmuxChatTab from "@/components/claude/ClaudeTmuxChatTab";
+
+const realClaudeTmuxChatTabSnapshot = { ...realClaudeTmuxChatTab };
 
 mock.module("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => children,
@@ -63,6 +66,13 @@ mock.module("@/stores/terminalPortalStore", () => ({
 const { PaneLeafContainer } = await import("./PaneLeafContainer");
 
 describe("PaneLeafContainer", () => {
+  afterAll(() => {
+    mock.module(
+      "@/components/claude/ClaudeTmuxChatTab",
+      () => realClaudeTmuxChatTabSnapshot,
+    );
+  });
+
   const hiddenPane = {
     kind: "leaf" as const,
     id: "pane-hidden",

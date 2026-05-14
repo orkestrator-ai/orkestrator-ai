@@ -17,8 +17,7 @@ use crate::local::{
 use crate::models::{
     sanitize_branch_name, sanitize_environment_name, ClaudeMode, ClaudeNativeBackend, CodexMode,
     DefaultAgent, Environment, EnvironmentStatus, EnvironmentType, NetworkAccessMode, OpenCodeMode,
-    PortMapping,
-    PrState,
+    PortMapping, PrState,
 };
 use crate::storage::{get_config, get_storage, Storage, StorageError};
 use serde::{Deserialize, Serialize};
@@ -2428,10 +2427,7 @@ mod tests {
     #[test]
     fn test_make_unique_environment_slug_avoids_git_branch_collisions() {
         let envs = vec![];
-        let git_branches = vec![
-            "agent-hangup".to_string(),
-            "agent-hangup-2".to_string(),
-        ];
+        let git_branches = vec!["agent-hangup".to_string(), "agent-hangup-2".to_string()];
 
         let result = make_unique_environment_slug("agent-hangup", &envs, &git_branches);
 

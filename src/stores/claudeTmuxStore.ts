@@ -1,10 +1,12 @@
-// State for the Claude tmux mode tab.
+// State for the Claude tmux mode tabs.
 //
 // We deliberately emit `ClaudeMessage` (the same shape used by Claude native
 // mode) so the same `<ClaudeMessage>` renderer can be reused — that's what
 // gives tmux mode visual parity with the native Agent SDK tab.
 //
-// Keyed by environmentId because each environment has at most one tmux session.
+// Keyed by tabId (each tab owns its own claude session); the underlying
+// environmentId is recorded on each tab's state so consumers don't need to
+// thread it through separately.
 
 import { create } from "zustand";
 import type {
@@ -35,71 +37,90 @@ export interface TmuxInfoEvent {
   receivedAt: string;
 }
 
-interface TmuxEnvState {
+interface TmuxTabState {
+  /** Workspace this tab belongs to. */
+  environmentId: string | null;
+  /** Claude Code session ID assigned (or resumed) by the backend. */
   sessionId: string | null;
+  /** True once the tmux session is up. */
   running: boolean;
   /** Native-shaped messages, ready for `<ClaudeMessage>`. */
   messages: ClaudeMessage[];
   pendingApprovals: TmuxPendingApproval[];
   infoEvents: TmuxInfoEvent[];
+  /** True if this tab is replaying a previously-recorded session. */
+  resumed: boolean;
 }
 
-const emptyEnvState = (): TmuxEnvState => ({
+const emptyTabState = (): TmuxTabState => ({
+  environmentId: null,
   sessionId: null,
   running: false,
   messages: [],
   pendingApprovals: [],
   infoEvents: [],
+  resumed: false,
 });
 
 interface ClaudeTmuxState {
-  envs: Map<string, TmuxEnvState>;
+  tabs: Map<string, TmuxTabState>;
 
-  setRunning: (envId: string, running: boolean, sessionId: string | null) => void;
-  resetEnvironment: (envId: string) => void;
-  applyTranscriptLine: (envId: string, line: TranscriptLine) => void;
-  addPendingApproval: (envId: string, approval: TmuxPendingApproval) => void;
-  removePendingApproval: (envId: string, eventId: string) => void;
-  pushInfoEvent: (envId: string, event: TmuxInfoEvent) => void;
-  dismissInfoEvent: (envId: string, id: string) => void;
+  setRunning: (
+    tabId: string,
+    running: boolean,
+    info?: {
+      environmentId?: string | null;
+      sessionId?: string | null;
+      resumed?: boolean;
+    },
+  ) => void;
+  resetTab: (tabId: string) => void;
+  applyTranscriptLine: (tabId: string, line: TranscriptLine) => void;
+  addPendingApproval: (tabId: string, approval: TmuxPendingApproval) => void;
+  removePendingApproval: (tabId: string, eventId: string) => void;
+  pushInfoEvent: (tabId: string, event: TmuxInfoEvent) => void;
+  dismissInfoEvent: (tabId: string, id: string) => void;
 
-  getEnv: (envId: string) => TmuxEnvState;
+  getTab: (tabId: string) => TmuxTabState;
 }
 
-function patchEnv(
+function patchTab(
   state: ClaudeTmuxState,
-  envId: string,
-  patch: (s: TmuxEnvState) => TmuxEnvState,
-): { envs: Map<string, TmuxEnvState> } {
-  const next = new Map(state.envs);
-  const current = next.get(envId) ?? emptyEnvState();
-  next.set(envId, patch(current));
-  return { envs: next };
+  tabId: string,
+  patch: (s: TmuxTabState) => TmuxTabState,
+): { tabs: Map<string, TmuxTabState> } {
+  const next = new Map(state.tabs);
+  const current = next.get(tabId) ?? emptyTabState();
+  next.set(tabId, patch(current));
+  return { tabs: next };
 }
 
 export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
-  envs: new Map(),
+  tabs: new Map(),
 
-  setRunning: (envId, running, sessionId) =>
+  setRunning: (tabId, running, info) =>
     set((state) =>
-      patchEnv(state, envId, (s) => ({
+      patchTab(state, tabId, (s) => ({
         ...s,
         running,
-        sessionId: sessionId ?? s.sessionId,
+        environmentId: info?.environmentId ?? s.environmentId,
+        sessionId:
+          info?.sessionId === undefined ? s.sessionId : info.sessionId,
+        resumed: info?.resumed ?? s.resumed,
       })),
     ),
 
-  resetEnvironment: (envId) =>
-    set((state) => patchEnv(state, envId, () => emptyEnvState())),
+  resetTab: (tabId) =>
+    set((state) => patchTab(state, tabId, () => emptyTabState())),
 
-  applyTranscriptLine: (envId, line) =>
+  applyTranscriptLine: (tabId, line) =>
     set((state) =>
-      patchEnv(state, envId, (s) => applyLine(s, line)),
+      patchTab(state, tabId, (s) => applyLine(s, line)),
     ),
 
-  addPendingApproval: (envId, approval) =>
+  addPendingApproval: (tabId, approval) =>
     set((state) =>
-      patchEnv(state, envId, (s) => {
+      patchTab(state, tabId, (s) => {
         if (s.pendingApprovals.some((a) => a.eventId === approval.eventId)) {
           return s;
         }
@@ -107,9 +128,9 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
       }),
     ),
 
-  removePendingApproval: (envId, eventId) =>
+  removePendingApproval: (tabId, eventId) =>
     set((state) =>
-      patchEnv(state, envId, (s) => ({
+      patchTab(state, tabId, (s) => ({
         ...s,
         pendingApprovals: s.pendingApprovals.filter(
           (a) => a.eventId !== eventId,
@@ -117,29 +138,29 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
       })),
     ),
 
-  pushInfoEvent: (envId, event) =>
+  pushInfoEvent: (tabId, event) =>
     set((state) =>
-      patchEnv(state, envId, (s) => ({
+      patchTab(state, tabId, (s) => ({
         ...s,
         infoEvents: [...s.infoEvents.slice(-19), event],
       })),
     ),
 
-  dismissInfoEvent: (envId, id) =>
+  dismissInfoEvent: (tabId, id) =>
     set((state) =>
-      patchEnv(state, envId, (s) => ({
+      patchTab(state, tabId, (s) => ({
         ...s,
         infoEvents: s.infoEvents.filter((e) => e.id !== id),
       })),
     ),
 
-  getEnv: (envId) => get().envs.get(envId) ?? emptyEnvState(),
+  getTab: (tabId) => get().tabs.get(tabId) ?? emptyTabState(),
 }));
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Apply a JSONL transcript line to the env state. Two distinct flows:
+ * Apply a JSONL transcript line to the tab state. Two distinct flows:
  *
  *  - `user` lines that carry *only* `tool_result` parts are merged into the
  *    parts array of the previous assistant message (so the result is shown
@@ -147,7 +168,7 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
  *    "USER" bubble.
  *  - Everything else replaces or appends a message keyed by `uuid`.
  */
-function applyLine(state: TmuxEnvState, line: TranscriptLine): TmuxEnvState {
+function applyLine(state: TmuxTabState, line: TranscriptLine): TmuxTabState {
   if (line.type !== "user" && line.type !== "assistant" && line.type !== "system") {
     return state;
   }
@@ -161,10 +182,6 @@ function applyLine(state: TmuxEnvState, line: TranscriptLine): TmuxEnvState {
 
   const parts = contentToParts(content);
 
-  // Special case: a "user" message that only contains tool_result parts is
-  // really Claude relaying the results of the previous assistant turn. Merge
-  // the results into the prior assistant message so the renderer can show
-  // result-under-tool-use instead of a separate USER bubble.
   const allToolResults =
     role === "user" &&
     parts.length > 0 &&
@@ -174,9 +191,6 @@ function applyLine(state: TmuxEnvState, line: TranscriptLine): TmuxEnvState {
     if (merged) return { ...state, messages: merged };
   }
 
-  // Drop content-empty user messages produced by hook-injection that have
-  // nothing to render (these show up when Claude Code logs system events
-  // through the user channel).
   if (role === "user" && parts.length === 0) {
     return state;
   }
@@ -208,7 +222,8 @@ function contentToParts(
   content: TranscriptLine["content"],
 ): ClaudeMessagePart[] {
   if (typeof content === "string") {
-    return content.length > 0 ? [{ type: "text", content }] : [];
+    const cleaned = cleanUserText(content);
+    return cleaned.length > 0 ? [{ type: "text", content: cleaned }] : [];
   }
   if (!Array.isArray(content)) return [];
 
@@ -217,9 +232,14 @@ function contentToParts(
     if (!raw || typeof raw !== "object") continue;
     const c = raw as TranscriptContent;
     switch (c.type) {
-      case "text":
-        if (c.text) parts.push({ type: "text", content: c.text });
+      case "text": {
+        if (!c.text) break;
+        const cleaned = cleanUserText(c.text);
+        if (cleaned.length > 0) {
+          parts.push({ type: "text", content: cleaned });
+        }
         break;
+      }
       case "thinking":
         if (c.thinking) parts.push({ type: "thinking", content: c.thinking });
         break;
@@ -253,12 +273,39 @@ function contentToParts(
 }
 
 /**
+ * Strip Claude Code's slash-command meta wrappers and any embedded ANSI
+ * escape sequences from a user-channel text payload, returning the trimmed
+ * remainder. When a user runs a CLI slash command (e.g. `/model`), Claude
+ * Code injects synthetic user-role JSONL lines containing tags like
+ * `<command-name>`, `<command-message>`, `<command-args>`,
+ * `<local-command-caveat>`, and `<local-command-stdout>` (often with raw
+ * terminal escape bytes inside). Those tags are noise from the chat
+ * renderer's point of view — if a "user" message contains nothing but
+ * those, we drop it; otherwise we surface only the cleaned remainder.
+ */
+function cleanUserText(text: string): string {
+  // Remove the known wrapper tag pairs (and any nested content).
+  const stripped = text
+    .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "")
+    .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, "")
+    .replace(/<local-command-stderr>[\s\S]*?<\/local-command-stderr>/g, "")
+    .replace(/<command-stdout>[\s\S]*?<\/command-stdout>/g, "")
+    .replace(/<command-stderr>[\s\S]*?<\/command-stderr>/g, "")
+    .replace(/<command-name>[\s\S]*?<\/command-name>/g, "")
+    .replace(/<command-message>[\s\S]*?<\/command-message>/g, "")
+    .replace(/<command-args>[\s\S]*?<\/command-args>/g, "")
+    // Strip ANSI/CSI escape sequences (e.g. "\x1b[1m") in case any leaked
+    // through — these otherwise render as Unicode replacement glyphs.
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+    // Defensive fallback for stripped-ESC byte that arrived as plain text.
+    .replace(/�\[[0-9;?]*[A-Za-z]/g, "");
+  return stripped.trim();
+}
+
+/**
  * Derive `toolDiff` metadata from a raw `tool_use.input` payload so the
  * `EditToolPart` renderer can show the file path and diff/line-count.
- *
- * The Claude native bridge attaches this metadata server-side. In tmux mode
- * there is no bridge, so we recreate it from the same input shapes the
- * Claude Code CLI uses (Edit/Write/MultiEdit/NotebookEdit).
  */
 function buildToolDiff(
   toolName: string | undefined,
@@ -290,10 +337,6 @@ function buildToolDiff(
       return { filePath, before: "", after };
     }
     case "multiedit": {
-      // MultiEdit applies a sequence of (old → new) replacements. We can't
-      // reconstruct an accurate before/after without the original file, so
-      // we surface the file path plus a synthetic running diff built from
-      // each edit's strings — enough for line counts to make sense.
       const edits = Array.isArray(input.edits) ? input.edits : [];
       const beforeChunks: string[] = [];
       const afterChunks: string[] = [];
@@ -337,22 +380,10 @@ function textOfParts(parts: ClaudeMessagePart[]): string {
     .join("\n");
 }
 
-/**
- * Given a series of tool_result parts (typically from a single user line),
- * find each matching tool_use in the most-recent assistant message and:
- *   - flip its toolState from "pending" → "success" / "failure"
- *   - attach the tool output/error
- *   - append a sibling tool-result part right after the tool-invocation
- *
- * Returns `null` if no matching prior assistant message exists, so the caller
- * can fall back to creating a standalone message instead.
- */
 function mergeToolResultsIntoPrior(
   messages: ClaudeMessage[],
   resultParts: ClaudeMessagePart[],
 ): ClaudeMessage[] | null {
-  // Walk backwards from the end looking for the assistant message whose
-  // tool_use ids match.
   const resultIds = new Set(
     resultParts
       .map((p) => p.toolUseId)
@@ -374,21 +405,17 @@ function mergeToolResultsIntoPrior(
       if (p.type === "tool-invocation" && p.toolUseId && resultIds.has(p.toolUseId)) {
         const match = resultParts.find((r) => r.toolUseId === p.toolUseId);
         if (match) {
-          // Flip the invocation's state to mirror the result.
           updatedParts[updatedParts.length - 1] = {
             ...p,
             toolState: match.toolState,
             toolOutput: match.toolOutput ?? p.toolOutput,
             toolError: match.toolError ?? p.toolError,
           };
-          // Drop already-existing duplicate result for this tool, then add the new one.
-          // Done below by filtering during dedup.
           updatedParts.push(match);
         }
       }
     }
 
-    // Dedup any tool-result parts that share toolUseId (keep the newest).
     const seen = new Set<string>();
     const deduped: ClaudeMessagePart[] = [];
     for (let j = updatedParts.length - 1; j >= 0; j--) {
@@ -408,7 +435,6 @@ function mergeToolResultsIntoPrior(
 }
 
 function mergeMessage(prev: ClaudeMessage, next: ClaudeMessage): ClaudeMessage {
-  // Prefer next.parts when non-empty; preserve prev timestamp if next lacks one.
   const parts = next.parts.length > 0 ? next.parts : prev.parts;
   return {
     ...prev,
@@ -419,12 +445,6 @@ function mergeMessage(prev: ClaudeMessage, next: ClaudeMessage): ClaudeMessage {
   };
 }
 
-/**
- * Deterministic hash so that a transcript line missing both `uuid` and
- * `timestamp` still gets a stable id — the poll loop re-reads the whole
- * transcript every tick, so without stable ids the same line would be added
- * over and over.
- */
 function stableHash(line: TranscriptLine): string {
   const json = JSON.stringify(line);
   let h = 5381;

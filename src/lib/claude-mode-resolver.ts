@@ -1,5 +1,5 @@
 // Three-tier resolution for Claude mode + native backend.
-// Priority order, lowest first (= most specific wins):
+// Priority order, highest first:
 //   environment override → repository override → global default
 //
 // Used by tab creation, settings displays, and any code that needs the
@@ -36,7 +36,10 @@ export function resolveClaudeConfig(
   environment: Pick<Environment, "claudeMode" | "claudeNativeBackend"> | undefined,
 ): ResolvedClaudeConfig {
   const mode: ClaudeMode =
-    environment?.claudeMode ?? global.claudeMode ?? "terminal";
+    environment?.claudeMode ??
+    repositoryConfig?.agentStyle ??
+    global.claudeMode ??
+    "terminal";
   const nativeBackend: ClaudeNativeBackend =
     environment?.claudeNativeBackend ??
     repositoryConfig?.claudeNativeBackend ??

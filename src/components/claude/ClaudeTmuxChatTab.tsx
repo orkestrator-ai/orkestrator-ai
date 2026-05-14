@@ -8,12 +8,14 @@
 // `<ClaudeMessage>` renderer; we only build a slim compose bar of our own
 // that matches the native styling and adds model / plan-mode controls.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Check,
   ChevronDown,
+  History,
   Plus,
+  Sparkles,
   Square,
   Terminal as TerminalIcon,
 } from "lucide-react";
@@ -26,6 +28,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
+import { ResumeTmuxSessionDialog } from "@/components/claude/ResumeTmuxSessionDialog";
+import {
+  parseSlashCommands,
+  SlashCommandMenu,
+  type SlashCommand,
+} from "@/components/claude/SlashCommandMenu";
 import {
   answerPreToolUse,
   capturePane,
@@ -40,6 +48,7 @@ import {
   payloadToInfoEvent,
   useClaudeTmuxStore,
 } from "@/stores/claudeTmuxStore";
+import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
 
 interface Props {
@@ -73,16 +82,47 @@ const TMUX_MODELS: Array<{ id: string; name: string; description?: string }> = [
 ];
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
-export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
+/**
+ * Claude Code's built-in slash commands. In tmux mode we ship a fixed list
+ * (no SDK to enumerate) and forward the literal command text to the TUI on
+ * submit, where Claude Code dispatches it just like a user typed it.
+ *
+ * Custom user / project commands aren't included here — they're still
+ * usable by typing them manually.
+ */
+const TMUX_BUILTIN_SLASH_COMMANDS: SlashCommand[] = parseSlashCommands([
+  "/help - Get help with using Claude Code",
+  "/config - Open settings (theme, model, etc.)",
+  "/clear - Clear conversation context",
+  "/compact - Manually compact the conversation",
+  "/usage - View usage and quota information",
+  "/cost - Show token usage and cost for the session",
+  "/model - Switch the active model",
+  "/login - Log in to Claude",
+  "/logout - Log out of Claude",
+  "/status - Show current session status",
+  "/memory - Edit memory / CLAUDE.md files",
+  "/permissions - Manage tool permissions",
+  "/mcp - Manage MCP servers",
+  "/agents - Manage subagents",
+  "/hooks - Manage hooks",
+  "/doctor - Diagnose installation issues",
+  "/bug - Report a bug",
+  "/release-notes - View release notes",
+  "/fast - Toggle fast mode (Opus with faster output)",
+]);
+
+export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Props) {
   const { environmentId, containerId } = data;
 
-  const envState = useClaudeTmuxStore((s) => s.envs.get(environmentId));
+  const tabState = useClaudeTmuxStore((s) => s.tabs.get(tabId));
   const setRunning = useClaudeTmuxStore((s) => s.setRunning);
   const applyTranscriptLine = useClaudeTmuxStore((s) => s.applyTranscriptLine);
   const addPendingApproval = useClaudeTmuxStore((s) => s.addPendingApproval);
   const removePendingApproval = useClaudeTmuxStore((s) => s.removePendingApproval);
   const pushInfoEvent = useClaudeTmuxStore((s) => s.pushInfoEvent);
   const dismissInfoEvent = useClaudeTmuxStore((s) => s.dismissInfoEvent);
+  const clearTabInitialPrompt = usePaneLayoutStore((s) => s.clearTabInitialPrompt);
 
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,48 +131,54 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
   const [tuiSnapshot, setTuiSnapshot] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
   const [planMode, setPlanMode] = useState(false);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
+
+  // Auto-start unless the user is presented with a choice (no initial prompt
+  // and there are prior sessions to resume — they should pick first).
+  const hasInitialPrompt = Boolean(initialPrompt?.trim());
 
   // 1. Subscribe to backend events (one listener for the whole tab).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     subscribe((ev: TmuxEvent) => {
-      if (ev.kind === "started") {
-        if (ev.environment_id === environmentId) {
-          setRunning(ev.environment_id, true, ev.session_id);
-        }
-        return;
-      }
-      if (ev.kind === "stopped") {
-        if (ev.environment_id === environmentId) {
-          setRunning(ev.environment_id, false, null);
-        }
-        return;
-      }
-      if (ev.environment_id !== environmentId) return;
+      // Every event the tmux backend emits is tab-scoped — ignore events for
+      // other tabs even when they happen to live in the same workspace.
+      if (ev.kind !== "warning" && ev.tab_id !== tabId) return;
+      if (ev.kind === "warning" && ev.tab_id !== tabId) return;
 
       switch (ev.kind) {
+        case "started":
+          setRunning(tabId, true, {
+            environmentId: ev.environment_id,
+            sessionId: ev.session_id,
+            resumed: ev.resumed,
+          });
+          return;
+        case "stopped":
+          setRunning(tabId, false, { sessionId: null });
+          return;
         case "transcript-line":
-          applyTranscriptLine(environmentId, ev.line);
+          applyTranscriptLine(tabId, ev.line);
           break;
         case "hook":
           if (ev.event_kind === "PreToolUse") {
             addPendingApproval(
-              environmentId,
+              tabId,
               payloadToApproval(ev.event_id, ev.payload),
             );
           } else {
             pushInfoEvent(
-              environmentId,
+              tabId,
               payloadToInfoEvent(ev.event_id, ev.event_kind, ev.payload),
             );
           }
           break;
         case "hook-timed-out":
           if (ev.event_kind === "PreToolUse") {
-            removePendingApproval(environmentId, ev.event_id);
+            removePendingApproval(tabId, ev.event_id);
           }
           break;
         case "warning":
@@ -153,7 +199,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
       unlisten?.();
     };
   }, [
-    environmentId,
+    tabId,
     setRunning,
     applyTranscriptLine,
     addPendingApproval,
@@ -161,33 +207,57 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
     pushInfoEvent,
   ]);
 
-  // 2. Start the tmux session once per tab mount.
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    let cancelled = false;
-    startSession(environmentId, {
+  // Common "start the tmux session" path used by both auto-start (initial
+  // prompt present) and the explicit "Start fresh" / "Resume" buttons.
+  const launchSession = useCallback(
+    (resumeSessionId?: string) => {
+      if (startedRef.current) return;
+      startedRef.current = true;
+      startSession(tabId, environmentId, {
+        initialPrompt,
+        model: selectedModel,
+        planMode,
+        resumeSessionId,
+      })
+        .then(() => {
+          if (initialPrompt?.trim()) {
+            clearTabInitialPrompt(tabId, environmentId);
+          }
+        })
+        .catch((e) => {
+          // Re-arm so the user can retry from the start screen.
+          startedRef.current = false;
+          setError(String(e));
+        });
+    },
+    [
+      tabId,
+      environmentId,
       initialPrompt,
-      model: selectedModel,
+      selectedModel,
       planMode,
-    }).catch((e) => {
-      if (!cancelled) setError(String(e));
-    });
-    return () => {
-      cancelled = true;
-    };
-    // We intentionally only start once per tab mount; re-runs would loop.
+      clearTabInitialPrompt,
+    ],
+  );
+
+  // 2. Auto-start when the tab was created with an initial prompt. Otherwise
+  //    we wait for the user to click Start or Resume so they get a chance to
+  //    pick a previous session before any new claude process is spawned.
+  useEffect(() => {
+    if (!hasInitialPrompt) return;
+    if (startedRef.current) return;
+    launchSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [environmentId]);
+  }, [hasInitialPrompt, tabId]);
 
   // 3. Auto-scroll to bottom on new content.
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [
-    envState?.messages.length,
-    envState?.pendingApprovals.length,
-    envState?.infoEvents.length,
+    tabState?.messages.length,
+    tabState?.pendingApprovals.length,
+    tabState?.infoEvents.length,
   ]);
 
   // 4. Raw TUI snapshot polling (debug view).
@@ -196,7 +266,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
     let cancelled = false;
     const tick = async () => {
       try {
-        const snap = await capturePane(environmentId);
+        const snap = await capturePane(tabId);
         if (!cancelled) setTuiSnapshot(snap);
       } catch (e) {
         if (!cancelled) setTuiSnapshot(`(capture failed: ${String(e)})`);
@@ -208,7 +278,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [showTui, environmentId]);
+  }, [showTui, tabId]);
 
   const handleSubmit = async () => {
     const text = draft.trim();
@@ -216,7 +286,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
     setBusy(true);
     setError(null);
     try {
-      await submitToTmux(environmentId, text);
+      await submitToTmux(tabId, text);
       setDraft("");
     } catch (e) {
       setError(String(e));
@@ -230,18 +300,26 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
     decision: "approve" | "block",
   ) => {
     try {
-      await answerPreToolUse(environmentId, eventId, decision);
+      await answerPreToolUse(tabId, eventId, decision);
     } catch (e) {
       setError(String(e));
     } finally {
-      removePendingApproval(environmentId, eventId);
+      removePendingApproval(tabId, eventId);
     }
   };
 
-  const messages = envState?.messages ?? [];
-  const pendingApprovals = envState?.pendingApprovals ?? [];
-  const infoEvents = envState?.infoEvents ?? [];
-  const running = envState?.running ?? false;
+  const handleResume = (sessionId: string) => {
+    setResumeDialogOpen(false);
+    launchSession(sessionId);
+  };
+
+  const messages = tabState?.messages ?? [];
+  const pendingApprovals = tabState?.pendingApprovals ?? [];
+  const infoEvents = tabState?.infoEvents ?? [];
+  const running = tabState?.running ?? false;
+  const resumedSession = tabState?.resumed ?? false;
+  const hasStarted = startedRef.current || running;
+  const showStartScreen = !hasStarted && !hasInitialPrompt;
 
   return (
     <div className="@container flex flex-col h-full bg-background overflow-hidden">
@@ -255,9 +333,17 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
             )}
           />
           <span>Claude (tmux)</span>
-          {envState?.sessionId && (
+          {tabState?.sessionId && (
             <span className="font-mono opacity-60">
-              {envState.sessionId.slice(0, 8)}
+              {tabState.sessionId.slice(0, 8)}
+            </span>
+          )}
+          {resumedSession && (
+            <span
+              className="text-[10px] uppercase tracking-wide text-amber-400/80"
+              title="This tab resumed a previously-recorded Claude session"
+            >
+              resumed
             </span>
           )}
         </div>
@@ -279,7 +365,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
           <button
             type="button"
             className="text-muted-foreground hover:text-foreground"
-            onClick={() => stopSession(environmentId)}
+            onClick={() => stopSession(tabId)}
             disabled={!running}
           >
             Stop
@@ -305,7 +391,7 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
               </span>
               <button
                 type="button"
-                onClick={() => dismissInfoEvent(environmentId, ev.id)}
+                onClick={() => dismissInfoEvent(tabId, ev.id)}
                 className="ml-2 opacity-50 hover:opacity-100"
               >
                 ×
@@ -331,11 +417,20 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
           {messages.length === 0 && pendingApprovals.length === 0 && (
-            <div className="text-xs text-muted-foreground italic py-8 text-center">
-              {running
-                ? "Waiting for Claude…"
-                : "Starting Claude under tmux…"}
-            </div>
+            showStartScreen ? (
+              <StartScreen
+                onStartFresh={() => launchSession()}
+                onPickResume={() => setResumeDialogOpen(true)}
+                selectedModel={modelObj(selectedModel).name}
+                planMode={planMode}
+              />
+            ) : (
+              <div className="text-xs text-muted-foreground italic py-8 text-center">
+                {running
+                  ? "Waiting for Claude…"
+                  : "Starting Claude under tmux…"}
+              </div>
+            )
           )}
 
           {messages.map((m, idx) => (
@@ -371,9 +466,78 @@ export function ClaudeTmuxChatTab({ data, isActive, initialPrompt }: Props) {
         onSelectModel={setSelectedModel}
         planMode={planMode}
         onTogglePlanMode={setPlanMode}
+        settingsLocked={hasStarted}
+      />
+
+      <ResumeTmuxSessionDialog
+        open={resumeDialogOpen}
+        onOpenChange={setResumeDialogOpen}
+        environmentId={environmentId}
+        onResume={handleResume}
       />
     </div>
   );
+}
+
+// ─── Start screen ────────────────────────────────────────────────────────────
+
+interface StartScreenProps {
+  onStartFresh: () => void;
+  onPickResume: () => void;
+  selectedModel: string;
+  planMode: boolean;
+}
+
+/**
+ * Shown when a fresh tab opens without an `initialPrompt`. Gives the user the
+ * choice to start a new claude session or to resume a previously-recorded
+ * one — mirrors the Claude Native tab's behavior.
+ */
+function StartScreen({
+  onStartFresh,
+  onPickResume,
+  selectedModel,
+  planMode,
+}: StartScreenProps) {
+  return (
+    <div className="flex flex-col items-center text-center py-10 px-4 gap-4">
+      <div className="space-y-1">
+        <h2 className="text-base font-medium">Start a Claude session</h2>
+        <p className="text-xs text-muted-foreground">
+          Each tab runs its own claude under tmux. Pick a previous session to
+          continue where you left off, or start a fresh conversation.
+        </p>
+        <p className="text-[11px] text-muted-foreground/70">
+          Will launch with <span className="font-mono">{selectedModel}</span>
+          {planMode ? " in plan mode" : ""}.
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <Button
+          variant="default"
+          size="sm"
+          onClick={onStartFresh}
+          className="gap-1.5"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Start fresh
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onPickResume}
+          className="gap-1.5"
+        >
+          <History className="w-3.5 h-3.5" />
+          Resume previous session…
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function modelObj(id: string) {
+  return TMUX_MODELS.find((m) => m.id === id) ?? TMUX_MODELS[1]!;
 }
 
 // ─── Compose bar ─────────────────────────────────────────────────────────────
@@ -389,6 +553,7 @@ interface TmuxComposeBarProps {
   onSelectModel: (id: string) => void;
   planMode: boolean;
   onTogglePlanMode: (v: boolean) => void;
+  settingsLocked: boolean;
 }
 
 function TmuxComposeBar({
@@ -402,12 +567,48 @@ function TmuxComposeBar({
   onSelectModel,
   planMode,
   onTogglePlanMode,
+  settingsLocked,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelObj = useMemo(
     () => TMUX_MODELS.find((m) => m.id === selectedModel) ?? TMUX_MODELS[1]!,
     [selectedModel],
   );
+
+  // Slash command menu state. The list is static (claude builtins) — see
+  // TMUX_BUILTIN_SLASH_COMMANDS at the top of the file.
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!value.startsWith("/")) return [];
+    // Filter on everything between "/" and the first space (or end).
+    const spaceIdx = value.indexOf(" ");
+    const filter = (spaceIdx === -1 ? value.slice(1) : value.slice(1, spaceIdx))
+      .toLowerCase();
+    return TMUX_BUILTIN_SLASH_COMMANDS.filter((cmd) =>
+      cmd.name.slice(1).toLowerCase().includes(filter),
+    );
+  }, [value]);
+
+  // Open/close the menu based on whether the input *currently* looks like
+  // the start of a slash command (no space yet → still typing the command
+  // name; space typed → user has moved on to arguments, hide the menu).
+  useEffect(() => {
+    if (!value.startsWith("/")) {
+      setSlashMenuOpen(false);
+      return;
+    }
+    const hasSpace = value.indexOf(" ") !== -1;
+    if (hasSpace) {
+      setSlashMenuOpen(false);
+      return;
+    }
+    setSlashMenuOpen(true);
+    setSlashSelectedIndex((prev) =>
+      prev < filteredSlashCommands.length ? prev : 0,
+    );
+  }, [value, filteredSlashCommands.length]);
 
   // Auto-grow textarea, bounded.
   useEffect(() => {
@@ -417,14 +618,70 @@ function TmuxComposeBar({
     el.style.height = `${Math.min(el.scrollHeight, 12 * 20 + 16)}px`;
   }, [value]);
 
+  const selectSlashCommand = (command: SlashCommand) => {
+    // Drop the user back in the input after the command + a space so they
+    // can type any arguments (e.g. `/model opus`) before pressing Enter.
+    setValue(command.name + " ");
+    setSlashMenuOpen(false);
+    textareaRef.current?.focus();
+  };
+
   return (
     <div className="shrink-0 border-t border-border bg-background p-3">
       <div className="relative">
+        {slashMenuOpen && filteredSlashCommands.length > 0 && (
+          <SlashCommandMenu
+            commands={filteredSlashCommands}
+            selectedIndex={slashSelectedIndex}
+            onSelect={selectSlashCommand}
+            onClose={() => setSlashMenuOpen(false)}
+          />
+        )}
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
+            // Slash-command menu takes keyboard priority while open.
+            if (slashMenuOpen && filteredSlashCommands.length > 0) {
+              switch (e.key) {
+                case "ArrowDown":
+                  e.preventDefault();
+                  setSlashSelectedIndex((prev) =>
+                    prev < filteredSlashCommands.length - 1 ? prev + 1 : prev,
+                  );
+                  return;
+                case "ArrowUp":
+                  e.preventDefault();
+                  setSlashSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+                  return;
+                case "Tab": {
+                  const cmd = filteredSlashCommands[slashSelectedIndex];
+                  if (cmd) {
+                    e.preventDefault();
+                    selectSlashCommand(cmd);
+                  }
+                  return;
+                }
+                case "Enter": {
+                  // Enter selects the highlighted command (no submit yet —
+                  // user may want to add arguments before sending).
+                  if (e.shiftKey || e.metaKey || e.ctrlKey) break;
+                  const cmd = filteredSlashCommands[slashSelectedIndex];
+                  if (cmd) {
+                    e.preventDefault();
+                    selectSlashCommand(cmd);
+                    return;
+                  }
+                  break;
+                }
+                case "Escape":
+                  e.preventDefault();
+                  setSlashMenuOpen(false);
+                  return;
+              }
+            }
+
             // Enter submits; Shift+Enter (and Cmd/Ctrl+Enter, for muscle
             // memory) inserts a newline.
             if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
@@ -435,7 +692,7 @@ function TmuxComposeBar({
           placeholder={
             disabled
               ? "Session not running"
-              : "Ask Claude anything… (Shift+Enter for newline)"
+              : "Ask Claude anything… (Shift+Enter for newline; / for commands)"
           }
           disabled={disabled || busy}
           rows={2}
@@ -464,8 +721,13 @@ function TmuxComposeBar({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              disabled={disabled}
+              disabled={disabled || settingsLocked}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title={
+                settingsLocked
+                  ? "Model is fixed for this tmux session"
+                  : "Select the model for the next tmux launch"
+              }
             >
               <ChevronDown className="w-3 h-3" />
               <span className="max-w-[200px] truncate">{modelObj.name}</span>
@@ -503,9 +765,13 @@ function TmuxComposeBar({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              disabled={disabled}
+              disabled={disabled || settingsLocked}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              title="Plan mode requires session restart to take effect"
+              title={
+                settingsLocked
+                  ? "Plan mode is fixed for this tmux session"
+                  : "Select the launch mode for the next tmux session"
+              }
             >
               <ChevronDown className="w-3 h-3" />
               <span>{planMode ? "Plan" : "Build"}</span>
