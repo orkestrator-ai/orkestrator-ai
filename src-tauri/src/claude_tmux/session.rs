@@ -12,6 +12,7 @@
 //! payload Claude Code provides. See [`crate::claude_tmux::hooks`].
 
 use super::backend::Backend;
+use super::get_manager;
 use super::hooks::{self, PendingHookEvent, SessionHookPaths, WorkspaceHookPaths};
 use super::transcript::{self, TranscriptTail, POLL_INTERVAL_MS};
 use serde::{Deserialize, Serialize};
@@ -200,7 +201,13 @@ impl TmuxSession {
         plan_mode: bool,
     ) -> Result<(), String> {
         // 1. Install workspace-level hook artifacts (idempotent across tabs).
-        hooks::install_workspace_hooks(&self.backend, &self.workspace_hook_paths).await?;
+        //    Serialized per-env so two concurrent starts in the same
+        //    workspace can't race on the settings backup.
+        {
+            let install_lock = get_manager().install_lock(&self.environment_id).await;
+            let _guard = install_lock.lock().await;
+            hooks::install_workspace_hooks(&self.backend, &self.workspace_hook_paths).await?;
+        }
         // Ensure this session's pending/response/timeout subdirs exist BEFORE
         // claude launches and starts firing hooks.
         hooks::ensure_session_dirs(&self.backend, &self.session_hook_paths).await?;
@@ -254,6 +261,13 @@ impl TmuxSession {
             if self.is_resume {
                 // `--resume <id>` replays the prior conversation; the
                 // transcript path is still the same `<id>.jsonl` file.
+                //
+                // If `initial_prompt` is also supplied, it gets sent below
+                // *after* claude reattaches — i.e. it is appended to the
+                // resumed conversation. This is intentional (it's how the
+                // resume-then-continue flow works in the UI), not an
+                // accident. Don't introduce a branch that drops the prompt
+                // on resume without confirming the UI flow first.
                 claude_cmd.push_str(&format!(" --resume {}", self.session_id));
             } else {
                 claude_cmd.push_str(&format!(" --session-id {}", self.session_id));
@@ -294,6 +308,15 @@ impl TmuxSession {
         //    wait briefly so claude's TUI is ready to receive keystrokes; for
         //    a reused (warm) session the TUI is already up and we send
         //    immediately.
+        //
+        //    Edge case worth being aware of: "warm tmux" here only means
+        //    `tmux has-session -t <name>` succeeded. If a prior `start` died
+        //    after tmux launched but before claude's TUI finished booting,
+        //    the prompt could land in a half-up shell. We accept that risk
+        //    for the common case (rapid re-mount of the same tab) because
+        //    the alternative (capture-and-probe) doubles startup latency
+        //    for every well-behaved start. Don't optimize this without a
+        //    confirmed reproducer.
         if should_send_initial_prompt(initial_prompt.as_deref()) {
             let prompt = initial_prompt.unwrap_or_default();
             if launched_new {
@@ -829,6 +852,77 @@ mod tests {
             .await
             .unwrap();
         assert!(!std::path::Path::new(&a.workspace_hook_paths.claude_settings).exists());
+    }
+
+    /// Two `install_workspace_hooks` calls run concurrently while sharing
+    /// the per-env install lock (the same protocol `TmuxSession::start`
+    /// uses). The pre-existing user settings must round-trip on uninstall.
+    ///
+    /// Without the lock, the second install could (in worst-case
+    /// interleaving) read the *merged* settings as if they were the user's
+    /// original and overwrite the backup, making uninstall restore the
+    /// hook-laced file as if it were untouched.
+    #[tokio::test]
+    async fn concurrent_install_under_lock_preserves_original_backup() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let a = TmuxSession::build(
+            "env-conc".to_string(),
+            "tab-1".to_string(),
+            backend.clone(),
+            None,
+        );
+        let b = TmuxSession::build(
+            "env-conc".to_string(),
+            "tab-2".to_string(),
+            backend.clone(),
+            None,
+        );
+
+        // Plant a pre-existing user settings file we expect to recover.
+        let original = "{\"theme\":\"original-theme\"}";
+        let settings_path = a.workspace_hook_paths.claude_settings.clone();
+        let parent = std::path::Path::new(&settings_path).parent().unwrap();
+        fs::create_dir_all(parent).await.unwrap();
+        fs::write(&settings_path, original).await.unwrap();
+
+        // Shared per-env lock, exactly as the manager hands out in production.
+        let lock: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+
+        let lock_a = lock.clone();
+        let backend_a = backend.clone();
+        let paths_a = a.workspace_hook_paths.clone();
+        let task_a = tokio::spawn(async move {
+            let _guard = lock_a.lock().await;
+            hooks::install_workspace_hooks(&backend_a, &paths_a)
+                .await
+                .unwrap();
+        });
+        let lock_b = lock.clone();
+        let backend_b = backend.clone();
+        let paths_b = b.workspace_hook_paths.clone();
+        let task_b = tokio::spawn(async move {
+            let _guard = lock_b.lock().await;
+            hooks::install_workspace_hooks(&backend_b, &paths_b)
+                .await
+                .unwrap();
+        });
+
+        let _ = tokio::join!(task_a, task_b);
+
+        // After both installs, uninstall must restore the original user
+        // settings byte-for-byte (the test would fail if either install
+        // had cached the hook-merged file as "original").
+        hooks::uninstall_workspace_hooks(&backend, &a.workspace_hook_paths)
+            .await
+            .unwrap();
+        let restored = fs::read_to_string(&settings_path).await.unwrap();
+        assert_eq!(restored, original);
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@
 use crate::claude_tmux::{
     backend::Backend,
     get_manager,
-    hooks::{self, WorkspaceHookPaths},
+    hooks,
     session::{TmuxSession, TmuxSessionStatus},
     transcript::{self, PreviousSessionInfo},
 };
@@ -120,7 +120,11 @@ pub async fn claude_tmux_stop(tab_id: String) -> Result<(), String> {
 
     // If this was the last tab in the workspace, also tear down the
     // workspace-level hook artifacts so we restore the user's original
-    // `.claude/settings.local.json`.
+    // `.claude/settings.local.json`. Hold the per-env install lock so a
+    // concurrent `start` in the same workspace can't race against
+    // uninstall (would otherwise observe a half-removed state).
+    let install_lock = mgr.install_lock(&env_id).await;
+    let _guard = install_lock.lock().await;
     if mgr.sessions_in_env(&env_id).await == 0 {
         if let Err(e) = hooks::uninstall_workspace_hooks(&backend, &workspace_hook_paths).await {
             tracing::warn!(env = %env_id, error = %e, "uninstall_workspace_hooks failed");
@@ -260,9 +264,3 @@ pub async fn claude_tmux_list_previous_sessions(
     let list = transcript::list_previous_sessions(&backend, &claude_home, &workspace).await?;
     Ok(list.into_iter().map(Into::into).collect())
 }
-
-/// Suppress an unused-import warning if [`WorkspaceHookPaths`] is later
-/// removed from the public re-exports. Keeping it referenced here keeps the
-/// type in the crate graph for editor-jump-to-definition.
-#[allow(dead_code)]
-fn _ref_workspace_hook_paths(_: &WorkspaceHookPaths) {}

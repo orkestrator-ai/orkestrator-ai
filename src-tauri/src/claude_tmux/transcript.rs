@@ -205,11 +205,19 @@ pub struct PreviousSessionInfo {
     pub transcript_path: String,
 }
 
+/// Maximum number of previous sessions returned by [`list_previous_sessions`].
+/// Resume dialogs only need the most recent handful; capping bounds the
+/// memory cost of reading transcript bodies for users with hundreds of old
+/// sessions in `~/.claude/projects/<encoded-cwd>`.
+pub const PREVIOUS_SESSIONS_LIMIT: usize = 50;
+
 /// List recorded Claude Code sessions for `cwd`, newest first.
 ///
 /// Reads `<claude_home>/projects/<encoded-cwd>/*.jsonl`, parses each file's
 /// first user prompt (for the title) and counts lines to estimate message
-/// volume. Lightweight enough to call on resume-dialog open.
+/// volume. Capped at [`PREVIOUS_SESSIONS_LIMIT`] entries by mtime so a
+/// workspace with hundreds of old sessions doesn't materialize all of them
+/// when the resume dialog opens.
 pub async fn list_previous_sessions(
     backend: &Backend,
     claude_home: &str,
@@ -217,30 +225,36 @@ pub async fn list_previous_sessions(
 ) -> Result<Vec<PreviousSessionInfo>, String> {
     let project_dir = format!("{}/projects/{}", claude_home, encode_cwd(cwd));
     let names = backend.list_dir(&project_dir).await.unwrap_or_default();
-    let mut out: Vec<PreviousSessionInfo> = Vec::new();
+
+    // Phase 1: collect (mtime, full_path, session_id) without reading any
+    // transcript bodies. mtime probes are O(stat) per file, much cheaper
+    // than reading the contents.
+    let mut candidates: Vec<(u64, String, String)> = Vec::new();
     for name in names {
         let Some(session_id) = name.strip_suffix(".jsonl") else {
             continue;
         };
         let full = format!("{}/{}", project_dir, name);
+        let mtime = file_mtime_unix(backend, &full).await.unwrap_or(0);
+        candidates.push((mtime, full, session_id.to_string()));
+    }
+    // Newest first.
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.truncate(PREVIOUS_SESSIONS_LIMIT);
 
-        // mtime via backend-appropriate path (local: fs::metadata; container: stat).
-        let last_activity_unix = file_mtime_unix(backend, &full).await.unwrap_or(0);
-
-        // Read the file to count lines and find the first user prompt.
+    // Phase 2: read bodies only for the surviving (capped) candidates.
+    let mut out: Vec<PreviousSessionInfo> = Vec::with_capacity(candidates.len());
+    for (mtime, full, session_id) in candidates {
         let content = backend.read_file(&full).await?.unwrap_or_default();
         let (title, message_count) = summarize_transcript(&content);
-
         out.push(PreviousSessionInfo {
-            session_id: session_id.to_string(),
+            session_id,
             title,
-            last_activity_unix,
+            last_activity_unix: mtime,
             message_count,
             transcript_path: full,
         });
     }
-    // Newest first.
-    out.sort_by(|a, b| b.last_activity_unix.cmp(&a.last_activity_unix));
     Ok(out)
 }
 
@@ -618,6 +632,51 @@ mod tests {
         assert_eq!(sessions[0].title.as_deref(), Some("newer"));
         assert_eq!(sessions[0].message_count, 2);
         assert!(sessions[0].last_activity_unix >= sessions[1].last_activity_unix);
+    }
+
+    #[tokio::test]
+    async fn list_previous_sessions_caps_results_to_limit() {
+        let dir = TempDir::new().unwrap();
+        let backend = local_backend(&dir);
+        let cwd = "/Users/me/lots-of-sessions";
+        let proj_dir = path_in(&dir, &format!(".claude/projects/{}", encode_cwd(cwd)));
+        fs::create_dir_all(&proj_dir).await.unwrap();
+
+        // Create slightly more files than the cap. We pin each file's mtime
+        // via `filetime` because `tokio::fs::write` resolution is per-second
+        // on most filesystems — short sleeps between writes wouldn't give us
+        // monotonically distinct mtimes.
+        let total = PREVIOUS_SESSIONS_LIMIT + 5;
+        let base = 1_700_000_000_i64; // arbitrary fixed epoch seconds
+        for i in 0..total {
+            let path = proj_dir.join(format!("sess-{:03}.jsonl", i));
+            fs::write(
+                &path,
+                format!(
+                    r#"{{"type":"user","message":{{"role":"user","content":"prompt {}"}}}}
+"#,
+                    i
+                ),
+            )
+            .await
+            .unwrap();
+            // sess-000 → oldest, sess-{total-1} → newest.
+            let t = filetime::FileTime::from_unix_time(base + i as i64, 0);
+            filetime::set_file_mtime(&path, t).unwrap();
+        }
+
+        let claude_home = path_in(&dir, ".claude");
+        let sessions = list_previous_sessions(&backend, claude_home.to_str().unwrap(), cwd)
+            .await
+            .unwrap();
+
+        assert_eq!(sessions.len(), PREVIOUS_SESSIONS_LIMIT);
+        // The cap drops the OLDEST entries. The very newest (sess-{total-1})
+        // must be present; the very oldest (sess-000) must not.
+        assert!(sessions
+            .iter()
+            .any(|s| s.session_id == format!("sess-{:03}", total - 1)));
+        assert!(!sessions.iter().any(|s| s.session_id == "sess-000"));
     }
 
     #[tokio::test]

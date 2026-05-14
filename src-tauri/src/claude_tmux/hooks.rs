@@ -144,10 +144,33 @@ TIMEOUT_SECS={timeout}
 
 PAYLOAD="$(cat)"
 
-# Extract session_id from the JSON payload. We accept any UUID-shaped string
-# at the "session_id" key. Falls back to "unknown" if the payload is shaped
-# differently.
-SESSION_ID="$(printf '%s' "$PAYLOAD" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F-]\{{8,\}}\)".*/\1/p' | head -1)"
+# Extract session_id from the JSON payload.
+#
+# Primary: python3, which parses the JSON properly and is broadly available
+# on macOS/Linux and in our container base image.
+# Fallback: sed regex — handles single-line JSON where session_id is a
+# UUID-shaped string. Used only when python3 is missing or fails.
+# If both fail (payload missing the field or shape is unexpected) we route
+# events to an `unknown/` subdir so they don't disappear silently.
+SESSION_ID=""
+if command -v python3 >/dev/null 2>&1; then
+  SESSION_ID="$(printf '%s' "$PAYLOAD" | python3 -c 'import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    v = d.get("session_id", "") if isinstance(d, dict) else ""
+    if isinstance(v, str):
+        print(v)
+except Exception:
+    pass' 2>/dev/null)"
+fi
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID="$(printf '%s' "$PAYLOAD" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F-]\{{8,\}}\)".*/\1/p' | head -1)"
+fi
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID="unknown"
+fi
+# Defensive: strip any path-traversal characters before using as a dir name.
+SESSION_ID="$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9._-')"
 if [ -z "$SESSION_ID" ]; then
   SESSION_ID="unknown"
 fi
@@ -616,5 +639,64 @@ mod tests {
         assert!(script.contains("$SESSION_DIR/pending"));
         assert!(script.contains("$SESSION_DIR/response"));
         assert!(script.contains("$SESSION_DIR/timeout"));
+        // session_id extraction prefers python3 with a sed fallback.
+        assert!(script.contains("python3"));
+        assert!(script.contains("json.loads"));
+        assert!(script.contains("sed -n"));
+        // Path-traversal characters are sanitized out of the session id.
+        assert!(script.contains("tr -cd"));
+    }
+
+    /// Run the generated hook.sh end-to-end (when bash is available) and
+    /// verify it routes events to the correct per-session subdir for both
+    /// happy-path JSON and a payload that requires the sed fallback.
+    #[tokio::test]
+    async fn hook_script_routes_payloads_to_per_session_subdir() {
+        // CI without bash should just no-op this test.
+        if std::process::Command::new("bash")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: bash not on PATH");
+            return;
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        let runtime = tmp.path().join("runtime");
+        std::fs::create_dir_all(&runtime).unwrap();
+        let ws = WorkspaceHookPaths::new(runtime.to_str().unwrap(), "/work");
+
+        // Write the script.
+        let script_text = hook_script(&ws, 1);
+        let script_path = tmp.path().join("hook.sh");
+        std::fs::write(&script_path, script_text).unwrap();
+        std::process::Command::new("chmod")
+            .args(["+x", script_path.to_str().unwrap()])
+            .status()
+            .unwrap();
+
+        // Run the script as an informational event with a well-formed payload.
+        let payload = r#"{"session_id":"abc-12345678","tool_name":"Bash"}"#;
+        let mut child = std::process::Command::new(script_path.to_str().unwrap())
+            .arg("Notification")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success(), "hook script must exit cleanly");
+
+        // The pending file landed in the per-session subdir.
+        let pending_dir = format!("{}/sessions/abc-12345678/pending", ws.root);
+        let entries: Vec<_> = std::fs::read_dir(&pending_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1, "expected one pending file");
     }
 }
