@@ -98,6 +98,7 @@ const TMUX_MODELS: Array<{ id: string; name: string; description?: string }> = [
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 interface TmuxSelectionPrompt {
+  question: string | null;
   options: TmuxSelectionOption[];
   selectedOptionIndex: number;
 }
@@ -1129,18 +1130,48 @@ export function parseTmuxSelectionPrompt(
 ): TmuxSelectionPrompt | null {
   if (!SELECTION_PROMPT_HINT.test(snapshot)) return null;
 
+  const lines = snapshot.split(/\r?\n/).map((line) => stripAnsi(line).trimEnd());
+  const hintIndex = findLastIndex(lines, (line) =>
+    SELECTION_PROMPT_HINT.test(line),
+  );
+  if (hintIndex < 0) return null;
+
+  let blockEnd = hintIndex;
+  while (blockEnd > 0 && lines[blockEnd - 1]?.trim() === "") {
+    blockEnd -= 1;
+  }
+
+  let blockStart = blockEnd;
+  let sawOption = false;
+  while (blockStart > 0) {
+    const line = lines[blockStart - 1] ?? "";
+    if (parseTmuxSelectionOptionLine(line)) {
+      sawOption = true;
+      blockStart -= 1;
+      continue;
+    }
+    if (sawOption && /^\s+\S/.test(line)) {
+      blockStart -= 1;
+      continue;
+    }
+    break;
+  }
+
   const options: TmuxSelectionOption[] = [];
   let selectedOptionIndex = -1;
 
-  for (const line of snapshot.split(/\r?\n/)) {
-    const clean = stripAnsi(line).trimEnd();
-    const match = clean.match(/^(\s*[>›❯▸➜→]?\s*)(\d+)\.\s+(.+?)\s*$/);
-    if (!match) continue;
+  for (const line of lines.slice(blockStart, blockEnd)) {
+    const parsed = parseTmuxSelectionOptionLine(line);
+    if (!parsed) {
+      const continuation = line.trim();
+      const previous = options[options.length - 1];
+      if (continuation && previous) {
+        previous.label = `${previous.label} ${continuation}`;
+      }
+      continue;
+    }
 
-    const prefix = match[1] ?? "";
-    const number = Number.parseInt(match[2] ?? "", 10);
-    const label = (match[3] ?? "").trim();
-    if (!Number.isFinite(number) || !label) continue;
+    const { prefix, number, label } = parsed;
 
     const selected = /[>›❯▸➜→]/.test(prefix);
     const optionIndex = options.length;
@@ -1150,9 +1181,55 @@ export function parseTmuxSelectionPrompt(
 
   if (options.length === 0) return null;
   return {
+    question: parseTmuxSelectionQuestion(lines, blockStart),
     options,
     selectedOptionIndex: selectedOptionIndex >= 0 ? selectedOptionIndex : 0,
   };
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (predicate(items[i]!)) return i;
+  }
+  return -1;
+}
+
+function parseTmuxSelectionOptionLine(
+  line: string,
+): { prefix: string; number: number; label: string } | null {
+  const match = line.match(/^(\s*(?:[>›❯▸➜→]\s*)?)(\d+)\.\s+(.+?)\s*$/);
+  if (!match) return null;
+
+  const prefix = match[1] ?? "";
+  const number = Number.parseInt(match[2] ?? "", 10);
+  const label = (match[3] ?? "").trim();
+  if (!Number.isFinite(number) || !label) return null;
+
+  return { prefix, number, label };
+}
+
+function parseTmuxSelectionQuestion(
+  lines: string[],
+  optionBlockStart: number,
+): string | null {
+  let questionEnd = optionBlockStart;
+  while (questionEnd > 0 && lines[questionEnd - 1]?.trim() === "") {
+    questionEnd -= 1;
+  }
+
+  let questionStart = questionEnd;
+  while (questionStart > 0 && lines[questionStart - 1]?.trim() !== "") {
+    questionStart -= 1;
+  }
+
+  const question = lines
+    .slice(questionStart, questionEnd)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  return question.length > 0 ? question : null;
 }
 
 function stripAnsi(text: string): string {
@@ -1224,6 +1301,11 @@ function TmuxSelectionPromptCard({
           </Button>
         </div>
       </div>
+      {prompt.question && (
+        <div className="mb-3 whitespace-pre-wrap text-sm text-foreground">
+          {prompt.question}
+        </div>
+      )}
 
       <div className="space-y-1">
         {prompt.options.map((option) => {
