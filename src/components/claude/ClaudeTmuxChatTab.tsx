@@ -57,6 +57,7 @@ import {
   payloadToPermission,
   payloadToPlan,
   payloadToQuestion,
+  compactConsecutiveAssistantMessages,
   useClaudeTmuxStore,
   type TmuxPendingElicitation,
   type TmuxPendingPermission,
@@ -199,6 +200,10 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       pendingPermissions.length +
       pendingElicitations.length >
     0;
+  const displayMessages = useMemo(
+    () => compactConsecutiveAssistantMessages(messages),
+    [messages],
+  );
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
 
   // 1. Subscribe to backend events (one listener for the whole tab).
@@ -680,11 +685,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             )
           )}
 
-          {messages.map((m, idx) => (
+          {displayMessages.map((m, idx) => (
             <ClaudeMessage
               key={m.id}
               message={m}
-              previousMessage={messages[idx - 1] ?? null}
+              previousMessage={displayMessages[idx - 1] ?? null}
               isStreaming={running}
               containerId={containerId}
             />

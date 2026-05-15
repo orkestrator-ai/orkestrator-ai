@@ -14,11 +14,12 @@ import type {
   TranscriptLine,
   TranscriptContent,
 } from "@/lib/claude-tmux-client";
-import type {
-  ClaudeMessage,
-  ClaudeMessagePart,
-  QuestionInfo,
-  ToolDiffMetadata,
+import {
+  ERROR_MESSAGE_PREFIX,
+  type ClaudeMessage,
+  type ClaudeMessagePart,
+  type QuestionInfo,
+  type ToolDiffMetadata,
 } from "@/lib/claude-client";
 
 /** A blocking PreToolUse hook event awaiting the user's decision. */
@@ -533,6 +534,40 @@ function textOfParts(parts: ClaudeMessagePart[]): string {
     .filter((p) => p.type === "text")
     .map((p) => p.content ?? "")
     .join("\n");
+}
+
+export function compactConsecutiveAssistantMessages(
+  messages: ClaudeMessage[],
+): ClaudeMessage[] {
+  const compacted: ClaudeMessage[] = [];
+
+  for (const message of messages) {
+    const previous = compacted[compacted.length - 1];
+    if (previous && canCompactAssistantMessages(previous, message)) {
+      const parts = [...previous.parts, ...message.parts];
+      compacted[compacted.length - 1] = {
+        ...previous,
+        content: textOfParts(parts),
+        parts,
+      };
+    } else {
+      compacted.push(message);
+    }
+  }
+
+  return compacted;
+}
+
+function canCompactAssistantMessages(
+  previous: ClaudeMessage,
+  next: ClaudeMessage,
+): boolean {
+  return (
+    previous.role === "assistant" &&
+    next.role === "assistant" &&
+    !previous.id.startsWith(ERROR_MESSAGE_PREFIX) &&
+    !next.id.startsWith(ERROR_MESSAGE_PREFIX)
+  );
 }
 
 function mergeToolResultsIntoPrior(
