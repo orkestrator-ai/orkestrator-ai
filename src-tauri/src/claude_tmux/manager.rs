@@ -144,6 +144,9 @@ mod tests {
         let a2 = mgr.install_lock("env-1").await;
         let b = mgr.install_lock("env-2").await;
         assert!(Arc::ptr_eq(&a1, &a2), "same env must share one mutex");
-        assert!(!Arc::ptr_eq(&a1, &b), "different envs must NOT share a mutex");
+        assert!(
+            !Arc::ptr_eq(&a1, &b),
+            "different envs must NOT share a mutex"
+        );
     }
 }

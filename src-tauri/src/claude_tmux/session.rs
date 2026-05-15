@@ -128,11 +128,7 @@ impl TmuxSession {
         let is_resume = resume_session_id.is_some();
         let session_id = resume_session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
-        let tmux_session = format!(
-            "orkestrator-{}-{}",
-            short_id(&environment_id),
-            short_id(&tab_id),
-        );
+        let tmux_session = tmux_session_name(&environment_id, &tab_id);
 
         // Workspace runtime dir is per-env; multiple tabs share it. The
         // hook script (one per workspace) routes events into the right
@@ -619,9 +615,7 @@ impl TmuxSession {
             .exec(&["tmux", "kill-session", "-t", &self.tmux_session])
             .await;
 
-        if let Err(e) =
-            hooks::remove_session_dirs(&self.backend, &self.session_hook_paths).await
-        {
+        if let Err(e) = hooks::remove_session_dirs(&self.backend, &self.session_hook_paths).await {
             warn!(tab = %self.tab_id, error = %e, "remove_session_dirs failed");
         }
 
@@ -629,8 +623,19 @@ impl TmuxSession {
     }
 }
 
-fn short_id(id: &str) -> String {
+pub fn short_id(id: &str) -> String {
     id.chars().take(12).collect::<String>().replace('-', "")
+}
+
+/// Compute the deterministic tmux session name for a given (env, tab) pair.
+/// Exposed so callers that need to act on the session (e.g. force-kill on
+/// "Start fresh") can do so without first instantiating a `TmuxSession`.
+pub fn tmux_session_name(environment_id: &str, tab_id: &str) -> String {
+    format!(
+        "orkestrator-{}-{}",
+        short_id(environment_id),
+        short_id(tab_id),
+    )
 }
 
 fn shell_arg(s: &str) -> String {
@@ -679,6 +684,22 @@ mod tests {
     }
 
     #[test]
+    fn tmux_session_name_matches_build_output() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-xyz", "tab-abc", None);
+        assert_eq!(s.tmux_session, tmux_session_name("env-xyz", "tab-abc"));
+        // Distinct (env, tab) pairs yield distinct names.
+        assert_ne!(
+            tmux_session_name("env-xyz", "tab-abc"),
+            tmux_session_name("env-xyz", "tab-other"),
+        );
+        assert_ne!(
+            tmux_session_name("env-xyz", "tab-abc"),
+            tmux_session_name("env-other", "tab-abc"),
+        );
+    }
+
+    #[test]
     fn shell_arg_quotes_simple_value() {
         assert_eq!(shell_arg("sonnet"), "'sonnet'");
     }
@@ -704,12 +725,14 @@ mod tests {
         let dead = s.status(false);
         assert!(!dead.running);
 
-        let resumed = build(&tmp, "env-1", "tab-2", Some("00000000-0000-0000-0000-000000000000"));
-        assert!(resumed.is_resume);
-        assert_eq!(
-            resumed.session_id,
-            "00000000-0000-0000-0000-000000000000"
+        let resumed = build(
+            &tmp,
+            "env-1",
+            "tab-2",
+            Some("00000000-0000-0000-0000-000000000000"),
         );
+        assert!(resumed.is_resume);
+        assert_eq!(resumed.session_id, "00000000-0000-0000-0000-000000000000");
         assert!(resumed.status(true).resumed);
     }
 
@@ -721,16 +744,16 @@ mod tests {
         assert_ne!(a.tmux_session, b.tmux_session);
         assert_ne!(a.session_id, b.session_id);
         // …but they share the workspace hook artifacts.
-        assert_eq!(
-            a.workspace_hook_paths.script,
-            b.workspace_hook_paths.script
-        );
+        assert_eq!(a.workspace_hook_paths.script, b.workspace_hook_paths.script);
         assert_eq!(
             a.workspace_hook_paths.claude_settings,
             b.workspace_hook_paths.claude_settings
         );
         // …and have distinct per-session pending dirs.
-        assert_ne!(a.session_hook_paths.session_dir, b.session_hook_paths.session_dir);
+        assert_ne!(
+            a.session_hook_paths.session_dir,
+            b.session_hook_paths.session_dir
+        );
     }
 
     #[test]
@@ -949,7 +972,9 @@ mod tests {
             "{}/PreToolUse-1234-5678.json",
             s.session_hook_paths.pending_dir
         );
-        fs::write(&pending, "{\"tool_name\":\"Bash\"}").await.unwrap();
+        fs::write(&pending, "{\"tool_name\":\"Bash\"}")
+            .await
+            .unwrap();
 
         let mut emitted: HashSet<String> = HashSet::new();
         let first = hooks::drain_pending(&backend, &s.session_hook_paths, &mut emitted)
@@ -1024,11 +1049,10 @@ mod tests {
             .await
             .unwrap();
 
-        let timeout_file = format!(
-            "{}/PreToolUse-id-1.json",
-            s.session_hook_paths.timeout_dir
-        );
-        fs::write(&timeout_file, "{\"timed_out\":true}").await.unwrap();
+        let timeout_file = format!("{}/PreToolUse-id-1.json", s.session_hook_paths.timeout_dir);
+        fs::write(&timeout_file, "{\"timed_out\":true}")
+            .await
+            .unwrap();
 
         let outs = hooks::drain_timeouts(&backend, &s.session_hook_paths)
             .await

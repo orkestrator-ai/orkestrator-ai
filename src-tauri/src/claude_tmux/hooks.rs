@@ -40,6 +40,7 @@ pub enum HookEventKind {
     PostToolUse,
     UserPromptSubmit,
     Stop,
+    SubagentStop,
     Notification,
     SessionStart,
 }
@@ -55,6 +56,7 @@ impl HookEventKind {
             "PostToolUse" => HookEventKind::PostToolUse,
             "UserPromptSubmit" => HookEventKind::UserPromptSubmit,
             "Stop" => HookEventKind::Stop,
+            "SubagentStop" => HookEventKind::SubagentStop,
             "Notification" => HookEventKind::Notification,
             "SessionStart" => HookEventKind::SessionStart,
             _ => return None,
@@ -273,6 +275,7 @@ pub fn hooks_block(hook_script_path: &str) -> Value {
         "PostToolUse":       [mk("PostToolUse")],
         "UserPromptSubmit":  [mk_no_matcher("UserPromptSubmit")],
         "Stop":              [mk_no_matcher("Stop")],
+        "SubagentStop":      [mk_no_matcher("SubagentStop")],
         "Notification":      [mk_no_matcher("Notification")],
         "SessionStart":      [mk_no_matcher("SessionStart")]
     })
@@ -356,7 +359,10 @@ pub async fn uninstall_workspace_hooks(
             // No backup recorded — leave settings as-is.
         }
     }
-    backend.remove_file(&paths.claude_settings_backup).await.ok();
+    backend
+        .remove_file(&paths.claude_settings_backup)
+        .await
+        .ok();
     backend.exec(&["rm", "-rf", &paths.root]).await.ok();
     Ok(())
 }
@@ -455,11 +461,7 @@ pub async fn drain_pending(
             backend.remove_file(&full).await.ok();
         }
 
-        events.push(PendingHookEvent {
-            id,
-            kind,
-            payload,
-        });
+        events.push(PendingHookEvent { id, kind, payload });
     }
 
     Ok(events)
@@ -499,8 +501,7 @@ pub fn pre_tool_use_response(decision: &str, reason: Option<&str>) -> Value {
         }
     });
     if let Some(r) = reason {
-        output["hookSpecificOutput"]["permissionDecisionReason"] =
-            Value::String(r.to_string());
+        output["hookSpecificOutput"]["permissionDecisionReason"] = Value::String(r.to_string());
     }
     output
 }
@@ -560,10 +561,7 @@ mod tests {
     #[test]
     fn pre_tool_use_response_approve_has_no_reason() {
         let v = pre_tool_use_response("approve", None);
-        assert_eq!(
-            v["hookSpecificOutput"]["permissionDecision"],
-            "allow"
-        );
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "allow");
         assert!(v["hookSpecificOutput"]
             .get("permissionDecisionReason")
             .is_none());
@@ -572,10 +570,7 @@ mod tests {
     #[test]
     fn pre_tool_use_response_block_includes_reason() {
         let v = pre_tool_use_response("block", Some("nope"));
-        assert_eq!(
-            v["hookSpecificOutput"]["permissionDecision"],
-            "deny"
-        );
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
         assert_eq!(v["hookSpecificOutput"]["permissionDecisionReason"], "nope");
     }
 
@@ -592,6 +587,7 @@ mod tests {
             "PostToolUse",
             "UserPromptSubmit",
             "Stop",
+            "SubagentStop",
             "Notification",
             "SessionStart",
         ] {
@@ -651,6 +647,7 @@ mod tests {
             HookEventKind::PostToolUse,
             HookEventKind::UserPromptSubmit,
             HookEventKind::Stop,
+            HookEventKind::SubagentStop,
             HookEventKind::Notification,
             HookEventKind::SessionStart,
         ] {
