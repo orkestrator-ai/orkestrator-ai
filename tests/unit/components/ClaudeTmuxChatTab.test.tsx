@@ -618,6 +618,37 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     ]);
   });
 
+  test("parses only the active TUI option block and shows its question", () => {
+    const prompt = parseTmuxSelectionPrompt(`
+1. Run \`git diff origin/main...HEAD\` to see all changes that will be in the PR
+2. Run \`git log main..HEAD --oneline\` to see all commits
+3. Create the PR using: \`gh pr create --base main --fill\`
+
+Two staged files look like they shouldn't be in the PR. How should I handle them?
+
+› 1. Unstage & add to .gitignore (Recommended)
+     .codex/hooks.json has session-specific /tmp paths and tsconfig.tsbuildinfo is generated.
+  2. Commit them as-is
+  3. Unstage only (no .gitignore change)
+  4. Type something.
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+`);
+
+    expect(prompt?.question).toBe(
+      "Two staged files look like they shouldn't be in the PR. How should I handle them?",
+    );
+    expect(prompt?.selectedOptionIndex).toBe(0);
+    expect(prompt?.options.map((o) => o.label)).toEqual([
+      "Unstage & add to .gitignore (Recommended) .codex/hooks.json has session-specific /tmp paths and tsconfig.tsbuildinfo is generated.",
+      "Commit them as-is",
+      "Unstage only (no .gitignore change)",
+      "Type something.",
+      "Chat about this",
+    ]);
+  });
+
   test("shows controls for Claude Code selection prompts and answers through tmux keys", async () => {
     capturePaneMock.mockImplementation(async () => `
   1. Kill stale tmux before launch (Recommended)
@@ -650,6 +681,49 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     await waitFor(() => {
       expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"]);
     });
+  });
+
+  test("renders the active TUI question without stale numbered transcript lines", async () => {
+    capturePaneMock.mockImplementation(async () => `
+1. Run \`git diff origin/main...HEAD\` to see all changes that will be in the PR
+2. Run \`git log main..HEAD --oneline\` to see all commits
+
+Two staged files look like they shouldn't be in the PR. How should I handle them?
+
+› 1. Unstage & add to .gitignore (Recommended)
+  2. Commit them as-is
+  3. Unstage only (no .gitignore change)
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Two staged files look like they shouldn't be in the PR. How should I handle them?",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /git diff origin\/main/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: /Unstage & add to \.gitignore \(Recommended\)/,
+      }),
+    ).toBeTruthy();
   });
 
   test("answers AskUserQuestion hooks with PreToolUse updatedInput", async () => {
