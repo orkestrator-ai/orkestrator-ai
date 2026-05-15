@@ -173,9 +173,15 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           // events Claude Code emits for the agent lifecycle. We rely on
           // UserPromptSubmit/Stop here rather than transcript content so
           // tool-call turns (no final text) still clear the spinner.
+          // SubagentStop fires when a Task-tool subagent finishes; we treat
+          // it as the same end-of-turn signal so subagent-only turns still
+          // clear the spinner.
           if (ev.event_kind === "UserPromptSubmit") {
             setTabBusy(tabId, true);
-          } else if (ev.event_kind === "Stop") {
+          } else if (
+            ev.event_kind === "Stop" ||
+            ev.event_kind === "SubagentStop"
+          ) {
             setTabBusy(tabId, false);
           }
           if (ev.event_kind === "PreToolUse") {
@@ -187,7 +193,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             // Lifecycle hooks are consumed for busy-state only; surfacing
             // them as visible "info" rows is noise.
             ev.event_kind !== "UserPromptSubmit" &&
-            ev.event_kind !== "Stop"
+            ev.event_kind !== "Stop" &&
+            ev.event_kind !== "SubagentStop"
           ) {
             pushInfoEvent(
               tabId,
@@ -302,7 +309,10 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
 
   const handleSubmit = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    // `isThinking` covers the post-HTTP window where Claude is still
+    // processing but `sending` has already reset; without it a user could
+    // submit a second message before the first turn finishes.
+    if (!text || sending || isThinking) return;
     setSending(true);
     setError(null);
     // Optimistically flip the "Claude is thinking…" indicator on submit so
@@ -517,12 +527,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         </div>
       )}
 
-      {/* Compose bar */}
+      {/* Compose bar — stays "busy" for the full turn (HTTP submit + Claude
+          processing) so a user can't queue a second message before the
+          previous one finishes. Mirrors the spinner condition above. */}
       <TmuxComposeBar
         value={draft}
         setValue={setDraft}
         disabled={!running}
-        busy={sending}
+        busy={sending || isThinking}
         autoFocus={isActive}
         onSubmit={handleSubmit}
         selectedModel={selectedModel}

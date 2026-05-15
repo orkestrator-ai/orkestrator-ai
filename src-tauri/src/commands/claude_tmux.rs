@@ -108,9 +108,21 @@ pub async fn claude_tmux_start(
             if let Err(e) = existing.stop().await {
                 tracing::warn!(tab = %tab_id, error = %e, "stop of prior tmux session failed");
             }
-        } else if let Ok(backend) = resolve_backend(&environment_id) {
-            let name = tmux_session_name(&environment_id, &tab_id);
-            let _ = backend.exec(&["tmux", "kill-session", "-t", &name]).await;
+        } else {
+            match resolve_backend(&environment_id) {
+                Ok(backend) => {
+                    let name = tmux_session_name(&environment_id, &tab_id);
+                    let _ = backend.exec(&["tmux", "kill-session", "-t", &name]).await;
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        environment_id = %environment_id,
+                        tab = %tab_id,
+                        error = %e,
+                        "skipping orphan tmux kill: backend unresolved"
+                    );
+                }
+            }
         }
     }
 
