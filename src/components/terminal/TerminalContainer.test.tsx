@@ -960,5 +960,249 @@ describe("TerminalContainer", () => {
         expect(created?.displayTitle).toBe("Conflict");
       });
     });
+
+    test("agentLaunchMode tmux opens a Claude tmux tab even when Claude defaults to terminal", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: {
+            ...state.config.global,
+            claudeMode: "terminal",
+            claudeNativeBackend: "sdk",
+          },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="claude"
+            options={{ agentLaunchMode: "tmux", displayTitle: "Forced tmux" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude-tmux");
+        expect(created?.displayTitle).toBe("Forced tmux");
+      });
+    });
+
+    test("agentLaunchMode native opens a Codex native tab even when Codex defaults to terminal", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, codexMode: "terminal" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="codex"
+            options={{ agentLaunchMode: "native", displayTitle: "Forced native" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "codex-native");
+        expect(created?.displayTitle).toBe("Forced native");
+      });
+    });
+
+    test("agentLaunchMode cli opens an OpenCode CLI tab even when OpenCode defaults to native", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, opencodeMode: "native" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="opencode"
+            options={{ agentLaunchMode: "cli", displayTitle: "Forced CLI" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "opencode");
+        expect(created?.displayTitle).toBe("Forced CLI");
+      });
+    });
+
+    test("agentLaunchMode cli opens a Claude CLI tab even when Claude defaults to tmux", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: {
+            ...state.config.global,
+            claudeMode: "native",
+            claudeNativeBackend: "tmux",
+          },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="claude"
+            options={{ agentLaunchMode: "cli", displayTitle: "Forced Claude CLI" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude");
+        expect(created?.displayTitle).toBe("Forced Claude CLI");
+      });
+    });
+
+    test("agentLaunchMode native opens Claude SDK native even when the native backend defaults to tmux", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: {
+            ...state.config.global,
+            claudeMode: "native",
+            claudeNativeBackend: "tmux",
+          },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="claude"
+            options={{ agentLaunchMode: "native", displayTitle: "Forced Claude Native" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "claude-native");
+        expect(created?.displayTitle).toBe("Forced Claude Native");
+        expect(env.root.tabs.some((t) => t.type === "claude-tmux")).toBe(false);
+      });
+    });
+
+    test("agentLaunchMode cli opens a Codex CLI tab even when Codex defaults to native", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, codexMode: "native" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="codex"
+            options={{ agentLaunchMode: "cli", displayTitle: "Forced Codex CLI" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "codex");
+        expect(created?.displayTitle).toBe("Forced Codex CLI");
+      });
+    });
+
+    test("agentLaunchMode native opens an OpenCode native tab even when OpenCode defaults to terminal", async () => {
+      useConfigStore.setState((state) => ({
+        ...state,
+        config: {
+          ...state.config,
+          global: { ...state.config.global, opencodeMode: "terminal" },
+          repositories: {},
+        },
+      }));
+
+      render(
+        <TerminalProvider>
+          <TerminalContainer
+            environmentId="env-visible"
+            containerId="container-visible"
+            isContainerRunning
+            isActive
+          />
+          <CreateTabHarness
+            type="opencode"
+            options={{ agentLaunchMode: "native", displayTitle: "Forced OpenCode Native" }}
+          />
+        </TerminalProvider>
+      );
+
+      await waitFor(() => {
+        const env = usePaneLayoutStore.getState().environments.get("env-visible");
+        if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
+        const created = env.root.tabs.find((t) => t.type === "opencode-native");
+        expect(created?.displayTitle).toBe("Forced OpenCode Native");
+      });
+    });
   });
 });

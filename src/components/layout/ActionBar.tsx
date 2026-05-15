@@ -26,7 +26,7 @@ import { toast } from "sonner";
 import { ClaudeIcon, CodexIcon, OpenCodeIcon, DockerIcon } from "@/components/icons/AgentIcons";
 import { useUIStore, useEnvironmentStore, useProjectStore, useConfigStore, useFilesPanelStore } from "@/stores";
 import { useShallow } from "zustand/react/shallow";
-import { useTerminalContext, MAX_TABS } from "@/contexts";
+import { useTerminalContext, MAX_TABS, type AgentLaunchModeOverride } from "@/contexts";
 import { usePullRequest, useProjects, useEnvironments } from "@/hooks";
 import {
   createPRPrompt,
@@ -256,6 +256,15 @@ export function ActionBar() {
     const initialPrompt = createOrkestratorScriptPrompt(isLocalEnvironment);
     createTab(agentOverride || defaultAgent, { initialPrompt });
   }, [createTab, canCreateTab, isRunning, isLocalEnvironment, defaultAgent]);
+
+  const handleCreateAgentTab = useCallback((
+    agent: "claude" | "opencode" | "codex",
+    agentLaunchMode?: AgentLaunchModeOverride,
+  ) => {
+    if (!createTab || !canCreateTab) return;
+
+    createTab(agent, agentLaunchMode ? { agentLaunchMode } : undefined);
+  }, [createTab, canCreateTab]);
 
   const hasRunCommands = runCommands && runCommands.length > 0;
   const canRunCommands = canCreateTab && !isLoadingRunCommands && !!hasRunCommands && !setupRunning;
@@ -688,58 +697,111 @@ export function ActionBar() {
                 </TooltipContent>
               </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => createTab?.("claude")}
-                    disabled={!canCreateTab}
-                  >
-                    <ClaudeIcon className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>New Tab with Claude</p>
-                  <p className="text-xs text-muted-foreground">⌘N</p>
-                </TooltipContent>
-              </Tooltip>
+              <ContextMenu>
+                <Tooltip>
+                  <ContextMenuTrigger asChild>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleCreateAgentTab("claude")}
+                          disabled={!canCreateTab}
+                        >
+                          <ClaudeIcon className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                  </ContextMenuTrigger>
+                  <TooltipContent>
+                    <p>New Tab with Claude</p>
+                    <p className="text-xs text-muted-foreground">⌘N · Right-click for mode</p>
+                  </TooltipContent>
+                </Tooltip>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("claude", "cli")} disabled={!canCreateTab}>
+                    <ClaudeIcon className="mr-2 h-4 w-4" />
+                    Claude CLI
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("claude", "native")} disabled={!canCreateTab}>
+                    <ClaudeIcon className="mr-2 h-4 w-4" />
+                    Claude Native
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("claude", "tmux")} disabled={!canCreateTab}>
+                    <ClaudeIcon className="mr-2 h-4 w-4" />
+                    Claude Tmux
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => createTab?.("opencode")}
-                    disabled={!canCreateTab}
-                  >
-                    <OpenCodeIcon className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>New Tab with OpenCode</p>
-                  <p className="text-xs text-muted-foreground">⌘M</p>
-                </TooltipContent>
-              </Tooltip>
+              <ContextMenu>
+                <Tooltip>
+                  <ContextMenuTrigger asChild>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleCreateAgentTab("opencode")}
+                          disabled={!canCreateTab}
+                        >
+                          <OpenCodeIcon className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                  </ContextMenuTrigger>
+                  <TooltipContent>
+                    <p>New Tab with OpenCode</p>
+                    <p className="text-xs text-muted-foreground">⌘M · Right-click for mode</p>
+                  </TooltipContent>
+                </Tooltip>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("opencode", "cli")} disabled={!canCreateTab}>
+                    <OpenCodeIcon className="mr-2 h-4 w-4" />
+                    OpenCode CLI
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("opencode", "native")} disabled={!canCreateTab}>
+                    <OpenCodeIcon className="mr-2 h-4 w-4" />
+                    OpenCode Native
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => createTab?.("codex")}
-                    disabled={!canCreateTab}
-                  >
-                    <CodexIcon className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>New Tab with Codex</p>
-                </TooltipContent>
-              </Tooltip>
+              <ContextMenu>
+                <Tooltip>
+                  <ContextMenuTrigger asChild>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex" data-toolbar-custom-context-menu="true">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleCreateAgentTab("codex")}
+                          disabled={!canCreateTab}
+                        >
+                          <CodexIcon className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                  </ContextMenuTrigger>
+                  <TooltipContent>
+                    <p>New Tab with Codex</p>
+                    <p className="text-xs text-muted-foreground">Right-click for mode</p>
+                  </TooltipContent>
+                </Tooltip>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("codex", "cli")} disabled={!canCreateTab}>
+                    <CodexIcon className="mr-2 h-4 w-4" />
+                    Codex CLI
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => handleCreateAgentTab("codex", "native")} disabled={!canCreateTab}>
+                    <CodexIcon className="mr-2 h-4 w-4" />
+                    Codex Native
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
 
               <ContextMenu>
                 <Tooltip>

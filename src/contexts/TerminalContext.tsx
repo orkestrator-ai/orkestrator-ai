@@ -3,6 +3,7 @@ import { createContext, useContext, useCallback, useState, ReactNode } from "rea
 
 // Terminal-specific tab types
 export type TerminalTabType = "plain" | "claude" | "opencode" | "codex" | "root";
+export type AgentLaunchModeOverride = "cli" | "native" | "tmux";
 
 // All tab types including file viewer and native agent tabs
 export type TabType =
@@ -25,6 +26,8 @@ export interface CreateTabOptions {
   initialCommands?: string[];
   /** Optional tab chrome title; the tab number is appended by the tab bar. */
   displayTitle?: string;
+  /** Optional one-shot agent launch mode that overrides repository/global defaults. */
+  agentLaunchMode?: AgentLaunchModeOverride;
 }
 
 // Options for creating a file tab

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createContext, useContext, useState } from "react";
 import * as realAlertDialog from "@/components/ui/alert-dialog";
 import * as realContextMenu from "@/components/ui/context-menu";
 import * as realTooltip from "@/components/ui/tooltip";
@@ -78,6 +79,11 @@ function findErrorAlert(label: string) {
   return screen.getByText((_content, element) => element?.textContent?.startsWith(label) ?? false);
 }
 
+const MockContextMenuState = createContext<{
+  open: boolean;
+  setOpen: (open: boolean) => void;
+} | null>(null);
+
 mock.module("@/components/ui/alert-dialog", () => ({
   AlertDialog: ({ children, open }: { children: React.ReactNode; open?: boolean }) =>
     open ? <div data-testid="alert-dialog-root">{children}</div> : null,
@@ -123,12 +129,54 @@ mock.module("@/components/ui/alert-dialog", () => ({
 }));
 
 mock.module("@/components/ui/context-menu", () => ({
-  ContextMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  ContextMenuContent: () => null,
-  ContextMenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
-    <button onClick={onClick} type="button">{children}</button>
-  ),
-  ContextMenuTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  ContextMenu: ({ children }: { children: React.ReactNode }) => {
+    const [open, setOpen] = useState(false);
+    return (
+      <MockContextMenuState.Provider value={{ open, setOpen }}>
+        {children}
+      </MockContextMenuState.Provider>
+    );
+  },
+  ContextMenuContent: ({ children }: { children: React.ReactNode }) => {
+    const state = useContext(MockContextMenuState);
+    return state?.open ? <>{children}</> : null;
+  },
+  ContextMenuItem: ({
+    children,
+    disabled,
+    onClick,
+  }: {
+    children: React.ReactNode;
+    disabled?: boolean;
+    onClick?: () => void;
+  }) => {
+    const state = useContext(MockContextMenuState);
+    return (
+      <button
+        disabled={disabled}
+        onClick={() => {
+          onClick?.();
+          state?.setOpen(false);
+        }}
+        type="button"
+      >
+        {children}
+      </button>
+    );
+  },
+  ContextMenuTrigger: ({ children }: { children: React.ReactNode }) => {
+    const state = useContext(MockContextMenuState);
+    return (
+      <span
+        onContextMenu={(event) => {
+          event.preventDefault();
+          state?.setOpen(true);
+        }}
+      >
+        {children}
+      </span>
+    );
+  },
 }));
 
 mock.module("@/components/ui/tooltip", () => ({
@@ -453,6 +501,32 @@ describe("ActionBar copy URL", () => {
 });
 
 describe("ActionBar workflow tabs", () => {
+  test("agent context menu items pass one-shot launch mode overrides", () => {
+    currentEnvironment = {
+      ...selectedEnvironment,
+      prUrl: null,
+      prState: null,
+      hasMergeConflicts: null,
+    };
+
+    const { container } = render(<ActionBar />);
+    const customMenuTriggers = container.querySelectorAll("[data-toolbar-custom-context-menu='true']");
+
+    expect(screen.queryByRole("button", { name: "Claude Tmux" })).toBeNull();
+
+    fireEvent.contextMenu(customMenuTriggers[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Claude Tmux" }));
+    expect(createTabMock).toHaveBeenLastCalledWith("claude", { agentLaunchMode: "tmux" });
+
+    fireEvent.contextMenu(customMenuTriggers[2]!);
+    fireEvent.click(screen.getByRole("button", { name: "Codex Native" }));
+    expect(createTabMock).toHaveBeenLastCalledWith("codex", { agentLaunchMode: "native" });
+
+    fireEvent.contextMenu(customMenuTriggers[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "OpenCode CLI" }));
+    expect(createTabMock).toHaveBeenLastCalledWith("opencode", { agentLaunchMode: "cli" });
+  });
+
   test("names review tabs with the workflow title", () => {
     currentEnvironment = {
       ...selectedEnvironment,
