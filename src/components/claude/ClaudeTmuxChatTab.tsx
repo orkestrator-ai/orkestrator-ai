@@ -13,12 +13,15 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronUp,
+  CornerDownLeft,
   History,
   Loader2,
   Plus,
   Sparkles,
   Square,
   Terminal as TerminalIcon,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -39,6 +42,8 @@ import {
 import {
   answerPreToolUse,
   capturePane,
+  replyHook,
+  sendKeys,
   startSession,
   stopSession,
   submit as submitToTmux,
@@ -47,8 +52,16 @@ import {
 } from "@/lib/claude-tmux-client";
 import {
   payloadToApproval,
+  payloadToElicitation,
   payloadToInfoEvent,
+  payloadToPermission,
+  payloadToPlan,
+  payloadToQuestion,
   useClaudeTmuxStore,
+  type TmuxPendingElicitation,
+  type TmuxPendingPermission,
+  type TmuxPendingPlan,
+  type TmuxPendingQuestion,
 } from "@/stores/claudeTmuxStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
@@ -83,6 +96,18 @@ const TMUX_MODELS: Array<{ id: string; name: string; description?: string }> = [
   },
 ];
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+interface TmuxSelectionPrompt {
+  options: TmuxSelectionOption[];
+  selectedOptionIndex: number;
+}
+
+interface TmuxSelectionOption {
+  number: number;
+  label: string;
+  optionIndex: number;
+  selected: boolean;
+}
 
 /**
  * Claude Code's built-in slash commands. In tmux mode we ship a fixed list
@@ -122,6 +147,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const applyTranscriptLine = useClaudeTmuxStore((s) => s.applyTranscriptLine);
   const addPendingApproval = useClaudeTmuxStore((s) => s.addPendingApproval);
   const removePendingApproval = useClaudeTmuxStore((s) => s.removePendingApproval);
+  const addPendingQuestion = useClaudeTmuxStore((s) => s.addPendingQuestion);
+  const removePendingQuestion = useClaudeTmuxStore((s) => s.removePendingQuestion);
+  const addPendingPlan = useClaudeTmuxStore((s) => s.addPendingPlan);
+  const removePendingPlan = useClaudeTmuxStore((s) => s.removePendingPlan);
+  const addPendingPermission = useClaudeTmuxStore((s) => s.addPendingPermission);
+  const removePendingPermission = useClaudeTmuxStore((s) => s.removePendingPermission);
+  const addPendingElicitation = useClaudeTmuxStore((s) => s.addPendingElicitation);
+  const removePendingElicitation = useClaudeTmuxStore((s) => s.removePendingElicitation);
   const pushInfoEvent = useClaudeTmuxStore((s) => s.pushInfoEvent);
   const dismissInfoEvent = useClaudeTmuxStore((s) => s.dismissInfoEvent);
   const setTabBusy = useClaudeTmuxStore((s) => s.setBusy);
@@ -135,12 +168,38 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
   const [planMode, setPlanMode] = useState(false);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
+  const [promptControlBusy, setPromptControlBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
 
   // Auto-start unless the user is presented with a choice (no initial prompt
   // and there are prior sessions to resume — they should pick first).
   const hasInitialPrompt = Boolean(initialPrompt?.trim());
+  const messages = tabState?.messages ?? [];
+  const pendingApprovals = tabState?.pendingApprovals ?? [];
+  const pendingQuestions = tabState?.pendingQuestions ?? [];
+  const pendingPlans = tabState?.pendingPlans ?? [];
+  const pendingPermissions = tabState?.pendingPermissions ?? [];
+  const pendingElicitations = tabState?.pendingElicitations ?? [];
+  const infoEvents = tabState?.infoEvents ?? [];
+  const running = tabState?.running ?? false;
+  const isThinking = tabState?.busy ?? false;
+  const busyStartedAt = tabState?.busyStartedAt ?? null;
+  const selectionPrompt = useMemo(
+    () => parseTmuxSelectionPrompt(tuiSnapshot),
+    [tuiSnapshot],
+  );
+  const resumedSession = tabState?.resumed ?? false;
+  const hasStarted = startedRef.current || running;
+  const showStartScreen = !hasStarted && !hasInitialPrompt;
+  const hasPendingHookCards =
+    pendingApprovals.length +
+      pendingQuestions.length +
+      pendingPlans.length +
+      pendingPermissions.length +
+      pendingElicitations.length >
+    0;
+  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
 
   // 1. Subscribe to backend events (one listener for the whole tab).
   useEffect(() => {
@@ -185,13 +244,23 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             setTabBusy(tabId, false);
           }
           if (ev.event_kind === "PreToolUse") {
-            addPendingApproval(
-              tabId,
-              payloadToApproval(ev.event_id, ev.payload),
-            );
+            const toolName = hookToolName(ev.payload);
+            if (toolName === "AskUserQuestion") {
+              addPendingQuestion(tabId, payloadToQuestion(ev.event_id, ev.payload));
+            } else if (toolName === "ExitPlanMode") {
+              addPendingPlan(tabId, payloadToPlan(ev.event_id, ev.payload));
+            } else {
+              addPendingApproval(tabId, payloadToApproval(ev.event_id, ev.payload));
+            }
+          } else if (ev.event_kind === "PermissionRequest") {
+            addPendingPermission(tabId, payloadToPermission(ev.event_id, ev.payload));
+          } else if (ev.event_kind === "Elicitation") {
+            addPendingElicitation(tabId, payloadToElicitation(ev.event_id, ev.payload));
           } else if (
-            // Lifecycle hooks are consumed for busy-state only; surfacing
-            // them as visible "info" rows is noise.
+            // PostToolUse fires after every tool call, and lifecycle hooks are
+            // consumed for busy-state only; surfacing them as visible info rows
+            // is noise.
+            ev.event_kind !== "PostToolUse" &&
             ev.event_kind !== "UserPromptSubmit" &&
             ev.event_kind !== "Stop" &&
             ev.event_kind !== "SubagentStop"
@@ -205,6 +274,12 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         case "hook-timed-out":
           if (ev.event_kind === "PreToolUse") {
             removePendingApproval(tabId, ev.event_id);
+            removePendingQuestion(tabId, ev.event_id);
+            removePendingPlan(tabId, ev.event_id);
+          } else if (ev.event_kind === "PermissionRequest") {
+            removePendingPermission(tabId, ev.event_id);
+          } else if (ev.event_kind === "Elicitation") {
+            removePendingElicitation(tabId, ev.event_id);
           }
           break;
         case "warning":
@@ -230,6 +305,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     applyTranscriptLine,
     addPendingApproval,
     removePendingApproval,
+    addPendingQuestion,
+    removePendingQuestion,
+    addPendingPlan,
+    removePendingPlan,
+    addPendingPermission,
+    removePendingPermission,
+    addPendingElicitation,
+    removePendingElicitation,
     pushInfoEvent,
     setTabBusy,
   ]);
@@ -287,9 +370,13 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     tabState?.infoEvents.length,
   ]);
 
-  // 4. Raw TUI snapshot polling (debug view).
+  // 4. Raw TUI snapshot polling. The snapshot powers both the optional debug
+  //    pane and the interactive controls for Claude Code's in-TUI prompts.
   useEffect(() => {
-    if (!showTui) return;
+    if (!showTui && !running) {
+      setTuiSnapshot("");
+      return;
+    }
     let cancelled = false;
     const tick = async () => {
       try {
@@ -300,12 +387,12 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       }
     };
     void tick();
-    const id = setInterval(tick, 500);
+    const id = setInterval(tick, showTui ? 500 : 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [showTui, tabId]);
+  }, [showTui, running, tabId]);
 
   const handleSubmit = async () => {
     const text = draft.trim();
@@ -345,24 +432,130 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     }
   };
 
+  const handleQuestionAnswer = async (
+    question: TmuxPendingQuestion,
+    answers: Record<string, string>,
+  ) => {
+    try {
+      await replyHook(
+        tabId,
+        "PreToolUse",
+        question.eventId,
+        preToolAllow({
+          ...question.toolInput,
+          questions: question.questions,
+          answers,
+        }),
+      );
+      removePendingQuestion(tabId, question.eventId);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleQuestionReject = async (question: TmuxPendingQuestion) => {
+    try {
+      await replyHook(
+        tabId,
+        "PreToolUse",
+        question.eventId,
+        preToolDeny("User declined to answer the question."),
+      );
+      removePendingQuestion(tabId, question.eventId);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handlePlanResponse = async (
+    plan: TmuxPendingPlan,
+    approved: boolean,
+    feedback?: string,
+  ) => {
+    try {
+      await replyHook(
+        tabId,
+        "PreToolUse",
+        plan.eventId,
+        approved
+          ? preToolAllow({ ...plan.toolInput })
+          : preToolDeny(feedback?.trim() || "User requested changes to the plan."),
+      );
+      removePendingPlan(tabId, plan.eventId);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handlePermissionResponse = async (
+    permission: TmuxPendingPermission,
+    allow: boolean,
+    updatedPermissions?: unknown[],
+  ) => {
+    try {
+      await replyHook(
+        tabId,
+        "PermissionRequest",
+        permission.eventId,
+        permissionRequestResponse(permission, allow, updatedPermissions),
+      );
+      removePendingPermission(tabId, permission.eventId);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleElicitationResponse = async (
+    elicitation: TmuxPendingElicitation,
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, string>,
+  ) => {
+    try {
+      await replyHook(
+        tabId,
+        "Elicitation",
+        elicitation.eventId,
+        elicitationResponse(action, content),
+      );
+      removePendingElicitation(tabId, elicitation.eventId);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handlePromptKeys = async (keys: string[]) => {
+    if (keys.length === 0 || promptControlBusy) return;
+    setPromptControlBusy(true);
+    setError(null);
+    try {
+      await sendKeys(tabId, keys);
+      const snap = await capturePane(tabId);
+      setTuiSnapshot(snap);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPromptControlBusy(false);
+    }
+  };
+
+  const handleSelectPromptOption = async (
+    prompt: TmuxSelectionPrompt,
+    optionIndex: number,
+  ) => {
+    const delta = optionIndex - prompt.selectedOptionIndex;
+    const navKey = delta > 0 ? "Down" : "Up";
+    const keys: string[] = Array.from({ length: Math.abs(delta) }, () => navKey);
+    keys.push("Enter");
+    await handlePromptKeys(keys);
+  };
+
   const handleResume = (sessionId: string) => {
     setResumeDialogOpen(false);
     launchSession(sessionId);
   };
 
-  const messages = tabState?.messages ?? [];
-  const pendingApprovals = tabState?.pendingApprovals ?? [];
-  const infoEvents = tabState?.infoEvents ?? [];
-  const running = tabState?.running ?? false;
-  const resumedSession = tabState?.resumed ?? false;
-  const isThinking = tabState?.busy ?? false;
-  const busyStartedAt = tabState?.busyStartedAt ?? null;
-  const hasStarted = startedRef.current || running;
-  const showStartScreen = !hasStarted && !hasInitialPrompt;
-
   // Tick once a second while the spinner is visible so the elapsed counter
   // updates. Mirrors the native tab's behavior.
-  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
   useEffect(() => {
     if (!isThinking || busyStartedAt === null) {
       setElapsedSeconds(null);
@@ -470,7 +663,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
-          {messages.length === 0 && pendingApprovals.length === 0 && (
+          {messages.length === 0 && !hasPendingHookCards && (
             showStartScreen ? (
               <StartScreen
                 onStartFresh={() => launchSession()}
@@ -505,6 +698,56 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
               onDeny={() => handleApproval(a.eventId, "block")}
             />
           ))}
+
+          {pendingQuestions.map((q) => (
+            <TmuxQuestionCard
+              key={q.eventId}
+              question={q}
+              onSubmit={(answers) => handleQuestionAnswer(q, answers)}
+              onDismiss={() => handleQuestionReject(q)}
+            />
+          ))}
+
+          {pendingPlans.map((p) => (
+            <TmuxPlanCard
+              key={p.eventId}
+              plan={p}
+              onRespond={(approved, feedback) =>
+                handlePlanResponse(p, approved, feedback)
+              }
+            />
+          ))}
+
+          {pendingPermissions.map((p) => (
+            <TmuxPermissionCard
+              key={p.eventId}
+              permission={p}
+              onRespond={(allow, updatedPermissions) =>
+                handlePermissionResponse(p, allow, updatedPermissions)
+              }
+            />
+          ))}
+
+          {pendingElicitations.map((e) => (
+            <TmuxElicitationCard
+              key={e.eventId}
+              elicitation={e}
+              onRespond={(action, content) =>
+                handleElicitationResponse(e, action, content)
+              }
+            />
+          ))}
+
+          {selectionPrompt && (
+            <TmuxSelectionPromptCard
+              prompt={selectionPrompt}
+              busy={promptControlBusy}
+              onSelectOption={(optionIndex) =>
+                handleSelectPromptOption(selectionPrompt, optionIndex)
+              }
+              onSendKeys={handlePromptKeys}
+            />
+          )}
         </div>
       </div>
 
@@ -609,6 +852,491 @@ function StartScreen({
       </div>
     </div>
   );
+}
+
+// ─── Structured hook cards ──────────────────────────────────────────────────
+
+function TmuxQuestionCard({
+  question,
+  onSubmit,
+  onDismiss,
+}: {
+  question: TmuxPendingQuestion;
+  onSubmit: (answers: Record<string, string>) => void;
+  onDismiss: () => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+
+  const setAnswer = (questionText: string, label: string, multi: boolean) => {
+    setAnswers((prev) => {
+      const current = prev[questionText] ?? [];
+      if (!multi) return { ...prev, [questionText]: [label] };
+      return current.includes(label)
+        ? { ...prev, [questionText]: current.filter((x) => x !== label) }
+        : { ...prev, [questionText]: [...current, label] };
+    });
+  };
+
+  const ready = question.questions.every((q) => (answers[q.question] ?? []).length > 0);
+  const submit = () => {
+    const mapped: Record<string, string> = {};
+    for (const q of question.questions) {
+      mapped[q.question] = (answers[q.question] ?? []).join(", ");
+    }
+    onSubmit(mapped);
+  };
+
+  return (
+    <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 px-3 py-3 mb-3">
+      <div className="text-xs uppercase tracking-wide text-blue-300 mb-2">
+        Claude has a question
+      </div>
+      <div className="space-y-4">
+        {question.questions.map((q) => {
+          const selected = answers[q.question] ?? [];
+          const options = q.options ?? [];
+          return (
+            <div key={q.question} className="space-y-2">
+              <div className="text-sm font-medium text-foreground">
+                {q.header || q.question}
+              </div>
+              {q.header && (
+                <div className="text-sm text-muted-foreground">{q.question}</div>
+              )}
+              <div className="space-y-1">
+                {options.length === 0 && (
+                  <input
+                    value={selected[0] ?? ""}
+                    onChange={(e) =>
+                      setAnswers((prev) => ({
+                        ...prev,
+                        [q.question]: e.target.value.trim()
+                          ? [e.target.value]
+                          : [],
+                      }))
+                    }
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none"
+                  />
+                )}
+                {options.map((option) => {
+                  const isSelected = selected.includes(option.label);
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      onClick={() =>
+                        setAnswer(q.question, option.label, q.multiSelect ?? false)
+                      }
+                      className={cn(
+                        "w-full min-w-0 rounded border px-2.5 py-2 text-left text-sm transition-colors",
+                        "flex items-start gap-2",
+                        isSelected
+                          ? "border-blue-500/70 bg-blue-500/15 text-blue-50"
+                          : "border-border/70 bg-background/50 hover:bg-muted/60",
+                      )}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block break-words">{option.label}</span>
+                        {option.description && (
+                          <span className="block text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
+                        )}
+                      </span>
+                      {isSelected && <Check className="h-4 w-4 shrink-0 text-blue-300" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-end gap-2 mt-3">
+        <Button variant="ghost" size="sm" onClick={onDismiss}>
+          Dismiss
+        </Button>
+        <Button size="sm" onClick={submit} disabled={!ready}>
+          Submit
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TmuxPlanCard({
+  plan,
+  onRespond,
+}: {
+  plan: TmuxPendingPlan;
+  onRespond: (approved: boolean, feedback?: string) => void;
+}) {
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  return (
+    <div className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-3 py-3 mb-3">
+      <div className="text-xs uppercase tracking-wide text-amber-300 mb-2">
+        Plan ready for review
+      </div>
+      {plan.planFilePath && (
+        <div className="text-xs font-mono text-muted-foreground mb-2 break-all">
+          {plan.planFilePath}
+        </div>
+      )}
+      {plan.plan && (
+        <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded border border-border/70 bg-background/60 p-3 text-sm">
+          {plan.plan}
+        </pre>
+      )}
+      {plan.allowedPrompts.length > 0 && (
+        <div className="mt-2 text-xs text-muted-foreground">
+          Requests {plan.allowedPrompts.length} plan-scoped permission prompt(s).
+        </div>
+      )}
+      {showFeedback && (
+        <textarea
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          placeholder="What should Claude change?"
+          className="mt-3 w-full min-h-20 resize-none rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none"
+        />
+      )}
+      <div className="flex justify-end gap-2 mt-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            showFeedback ? onRespond(false, feedback) : setShowFeedback(true)
+          }
+        >
+          Request changes
+        </Button>
+        <Button size="sm" onClick={() => onRespond(true)}>
+          Approve plan
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TmuxPermissionCard({
+  permission,
+  onRespond,
+}: {
+  permission: TmuxPendingPermission;
+  onRespond: (allow: boolean, updatedPermissions?: unknown[]) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-3 py-3 mb-3">
+      <div className="text-xs uppercase tracking-wide text-amber-300 mb-2">
+        Claude needs permission
+      </div>
+      <div className="text-sm font-mono text-amber-100 mb-2">
+        {permission.toolName}
+      </div>
+      <ApprovalToolInput
+        toolName={permission.toolName}
+        toolInput={permission.toolInput}
+      />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={() => onRespond(false)}>
+          Deny
+        </Button>
+        {permission.permissionSuggestions.map((suggestion, index) => (
+          <Button
+            key={index}
+            variant="outline"
+            size="sm"
+            onClick={() => onRespond(true, [suggestion])}
+          >
+            Always allow
+          </Button>
+        ))}
+        <Button size="sm" onClick={() => onRespond(true)}>
+          Allow
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TmuxElicitationCard({
+  elicitation,
+  onRespond,
+}: {
+  elicitation: TmuxPendingElicitation;
+  onRespond: (
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, string>,
+  ) => void;
+}) {
+  const fields = elicitationSchemaFields(elicitation.requestedSchema);
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  return (
+    <div className="rounded-lg border border-purple-700/60 bg-purple-950/20 px-3 py-3 mb-3">
+      <div className="text-xs uppercase tracking-wide text-purple-300 mb-2">
+        MCP server requested input
+      </div>
+      <div className="text-sm font-medium mb-1">{elicitation.mcpServerName}</div>
+      <div className="text-sm text-muted-foreground mb-3">
+        {elicitation.message}
+      </div>
+      {elicitation.url && (
+        <div className="mb-3 text-xs font-mono break-all rounded border border-border bg-background/60 px-2 py-1.5">
+          {elicitation.url}
+        </div>
+      )}
+      {fields.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {fields.map((field) => (
+            <label key={field.key} className="block text-xs">
+              <span className="mb-1 block text-muted-foreground">{field.label}</span>
+              <input
+                value={values[field.key] ?? ""}
+                onChange={(e) =>
+                  setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                }
+                className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none"
+                type={field.sensitive ? "password" : "text"}
+              />
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={() => onRespond("cancel")}>
+          Cancel
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => onRespond("decline")}>
+          Decline
+        </Button>
+        <Button size="sm" onClick={() => onRespond("accept", values)}>
+          Submit
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── In-TUI selection prompt controls ───────────────────────────────────────
+
+const SELECTION_PROMPT_HINT =
+  /Enter\s+to\s+select|Tab\/Arrow\s+keys\s+to\s+navigate|Esc\s+to\s+cancel/i;
+
+export function parseTmuxSelectionPrompt(
+  snapshot: string,
+): TmuxSelectionPrompt | null {
+  if (!SELECTION_PROMPT_HINT.test(snapshot)) return null;
+
+  const options: TmuxSelectionOption[] = [];
+  let selectedOptionIndex = -1;
+
+  for (const line of snapshot.split(/\r?\n/)) {
+    const clean = stripAnsi(line).trimEnd();
+    const match = clean.match(/^(\s*[>›❯▸➜→]?\s*)(\d+)\.\s+(.+?)\s*$/);
+    if (!match) continue;
+
+    const prefix = match[1] ?? "";
+    const number = Number.parseInt(match[2] ?? "", 10);
+    const label = (match[3] ?? "").trim();
+    if (!Number.isFinite(number) || !label) continue;
+
+    const selected = /[>›❯▸➜→]/.test(prefix);
+    const optionIndex = options.length;
+    if (selected) selectedOptionIndex = optionIndex;
+    options.push({ number, label, optionIndex, selected });
+  }
+
+  if (options.length === 0) return null;
+  return {
+    options,
+    selectedOptionIndex: selectedOptionIndex >= 0 ? selectedOptionIndex : 0,
+  };
+}
+
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+}
+
+function TmuxSelectionPromptCard({
+  prompt,
+  busy,
+  onSelectOption,
+  onSendKeys,
+}: {
+  prompt: TmuxSelectionPrompt;
+  busy: boolean;
+  onSelectOption: (optionIndex: number) => void;
+  onSendKeys: (keys: string[]) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 px-3 py-3 mb-3">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-xs uppercase tracking-wide text-blue-300">
+          Claude is asking for a choice
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            className="h-7 w-7 p-0"
+            title="Move selection up"
+            onClick={() => onSendKeys(["Up"])}
+          >
+            <ChevronUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            className="h-7 w-7 p-0"
+            title="Move selection down"
+            onClick={() => onSendKeys(["Down"])}
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            className="h-7 w-7 p-0"
+            title="Select highlighted option"
+            onClick={() => onSendKeys(["Enter"])}
+          >
+            <CornerDownLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            className="h-7 w-7 p-0"
+            title="Cancel prompt"
+            onClick={() => onSendKeys(["Escape"])}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        {prompt.options.map((option) => {
+          const selected =
+            option.optionIndex === prompt.selectedOptionIndex || option.selected;
+          return (
+            <button
+              type="button"
+              key={`${option.number}-${option.label}`}
+              disabled={busy}
+              onClick={() => onSelectOption(option.optionIndex)}
+              className={cn(
+                "w-full min-w-0 rounded border px-2.5 py-2 text-left text-sm transition-colors",
+                "flex items-start gap-2",
+                selected
+                  ? "border-blue-500/70 bg-blue-500/15 text-blue-50"
+                  : "border-border/70 bg-background/50 hover:bg-muted/60",
+              )}
+            >
+              <span className="font-mono text-xs text-muted-foreground pt-0.5">
+                {option.number}.
+              </span>
+              <span className="min-w-0 flex-1 break-words">{option.label}</span>
+              {selected && <Check className="h-4 w-4 shrink-0 text-blue-300" />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function hookToolName(payload: unknown): string | null {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const value = p.tool_name ?? p.toolName;
+  return typeof value === "string" ? value : null;
+}
+
+function preToolAllow(updatedInput: Record<string, unknown>) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      updatedInput,
+    },
+  };
+}
+
+function preToolDeny(reason: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
+  };
+}
+
+function permissionRequestResponse(
+  permission: TmuxPendingPermission,
+  allow: boolean,
+  updatedPermissions?: unknown[],
+) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PermissionRequest",
+      decision: allow
+        ? {
+            behavior: "allow",
+            updatedInput: permission.toolInput,
+            ...(updatedPermissions ? { updatedPermissions } : {}),
+          }
+        : {
+            behavior: "deny",
+            message: "Permission denied by user.",
+          },
+    },
+  };
+}
+
+function elicitationResponse(
+  action: "accept" | "decline" | "cancel",
+  content?: Record<string, string>,
+) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "Elicitation",
+      action,
+      ...(action === "accept" ? { content: content ?? {} } : {}),
+    },
+  };
+}
+
+function elicitationSchemaFields(schema: Record<string, unknown> | null): Array<{
+  key: string;
+  label: string;
+  sensitive: boolean;
+}> {
+  const properties = schema?.properties;
+  if (!properties || typeof properties !== "object") return [];
+  return Object.entries(properties as Record<string, unknown>).map(([key, raw]) => {
+    const field = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const title = typeof field.title === "string" ? field.title : key;
+    const format = typeof field.format === "string" ? field.format : "";
+    return {
+      key,
+      label: title,
+      sensitive:
+        format.toLowerCase().includes("password") ||
+        key.toLowerCase().includes("password") ||
+        key.toLowerCase().includes("token"),
+    };
+  });
 }
 
 function modelObj(id: string) {

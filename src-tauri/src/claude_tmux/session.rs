@@ -615,9 +615,7 @@ impl TmuxSession {
             .exec(&["tmux", "kill-session", "-t", &self.tmux_session])
             .await;
 
-        if let Err(e) =
-            hooks::remove_session_dirs(&self.backend, &self.session_hook_paths).await
-        {
+        if let Err(e) = hooks::remove_session_dirs(&self.backend, &self.session_hook_paths).await {
             warn!(tab = %self.tab_id, error = %e, "remove_session_dirs failed");
         }
 
@@ -727,12 +725,14 @@ mod tests {
         let dead = s.status(false);
         assert!(!dead.running);
 
-        let resumed = build(&tmp, "env-1", "tab-2", Some("00000000-0000-0000-0000-000000000000"));
-        assert!(resumed.is_resume);
-        assert_eq!(
-            resumed.session_id,
-            "00000000-0000-0000-0000-000000000000"
+        let resumed = build(
+            &tmp,
+            "env-1",
+            "tab-2",
+            Some("00000000-0000-0000-0000-000000000000"),
         );
+        assert!(resumed.is_resume);
+        assert_eq!(resumed.session_id, "00000000-0000-0000-0000-000000000000");
         assert!(resumed.status(true).resumed);
     }
 
@@ -744,16 +744,16 @@ mod tests {
         assert_ne!(a.tmux_session, b.tmux_session);
         assert_ne!(a.session_id, b.session_id);
         // …but they share the workspace hook artifacts.
-        assert_eq!(
-            a.workspace_hook_paths.script,
-            b.workspace_hook_paths.script
-        );
+        assert_eq!(a.workspace_hook_paths.script, b.workspace_hook_paths.script);
         assert_eq!(
             a.workspace_hook_paths.claude_settings,
             b.workspace_hook_paths.claude_settings
         );
         // …and have distinct per-session pending dirs.
-        assert_ne!(a.session_hook_paths.session_dir, b.session_hook_paths.session_dir);
+        assert_ne!(
+            a.session_hook_paths.session_dir,
+            b.session_hook_paths.session_dir
+        );
     }
 
     #[test]
@@ -972,7 +972,9 @@ mod tests {
             "{}/PreToolUse-1234-5678.json",
             s.session_hook_paths.pending_dir
         );
-        fs::write(&pending, "{\"tool_name\":\"Bash\"}").await.unwrap();
+        fs::write(&pending, "{\"tool_name\":\"Bash\"}")
+            .await
+            .unwrap();
 
         let mut emitted: HashSet<String> = HashSet::new();
         let first = hooks::drain_pending(&backend, &s.session_hook_paths, &mut emitted)
@@ -1047,11 +1049,10 @@ mod tests {
             .await
             .unwrap();
 
-        let timeout_file = format!(
-            "{}/PreToolUse-id-1.json",
-            s.session_hook_paths.timeout_dir
-        );
-        fs::write(&timeout_file, "{\"timed_out\":true}").await.unwrap();
+        let timeout_file = format!("{}/PreToolUse-id-1.json", s.session_hook_paths.timeout_dir);
+        fs::write(&timeout_file, "{\"timed_out\":true}")
+            .await
+            .unwrap();
 
         let outs = hooks::drain_timeouts(&backend, &s.session_hook_paths)
             .await

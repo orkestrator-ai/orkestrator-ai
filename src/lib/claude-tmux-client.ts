@@ -55,6 +55,10 @@ export type TmuxEvent =
 
 export type HookEventKind =
   | "PreToolUse"
+  | "PermissionRequest"
+  | "Elicitation"
+  | "ElicitationResult"
+  | "UserPromptExpansion"
   | "PostToolUse"
   | "UserPromptSubmit"
   | "Stop"

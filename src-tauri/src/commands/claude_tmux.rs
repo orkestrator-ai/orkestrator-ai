@@ -4,8 +4,7 @@
 
 use crate::claude_tmux::{
     backend::Backend,
-    get_manager,
-    hooks,
+    get_manager, hooks,
     session::{tmux_session_name, TmuxSession, TmuxSessionStatus},
     transcript::{self, PreviousSessionInfo},
 };
@@ -166,9 +165,7 @@ pub async fn claude_tmux_stop(tab_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn claude_tmux_status(
-    tab_id: String,
-) -> Result<Option<TmuxSessionStatus>, String> {
+pub async fn claude_tmux_status(tab_id: String) -> Result<Option<TmuxSessionStatus>, String> {
     Ok(get_manager().status(&tab_id).await)
 }
 
@@ -182,10 +179,7 @@ pub async fn claude_tmux_send_text(tab_id: String, text: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub async fn claude_tmux_send_keys(
-    tab_id: String,
-    keys: Vec<String>,
-) -> Result<(), String> {
+pub async fn claude_tmux_send_keys(tab_id: String, keys: Vec<String>) -> Result<(), String> {
     let session = get_manager()
         .get(&tab_id)
         .await
@@ -216,11 +210,7 @@ pub async fn claude_tmux_capture_pane(tab_id: String) -> Result<String, String> 
 }
 
 #[tauri::command]
-pub async fn claude_tmux_resize(
-    tab_id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
+pub async fn claude_tmux_resize(tab_id: String, cols: u16, rows: u16) -> Result<(), String> {
     let session = get_manager()
         .get(&tab_id)
         .await

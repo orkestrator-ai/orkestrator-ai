@@ -296,7 +296,9 @@ fn summarize_transcript(content: &str) -> (Option<String>, u32) {
             Value::String(s) => Some(s.clone()),
             Value::Array(arr) => arr.iter().find_map(|item| {
                 if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    item.get("text").and_then(|t| t.as_str()).map(str::to_string)
+                    item.get("text")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string)
                 } else {
                     None
                 }
@@ -339,10 +341,7 @@ async fn file_mtime_unix(backend: &Backend, path: &str) -> Result<u64, String> {
                 .exec(&[
                     "sh",
                     "-c",
-                    &format!(
-                        "stat -c %Y {} 2>/dev/null || echo 0",
-                        shell_q(path)
-                    ),
+                    &format!("stat -c %Y {} 2>/dev/null || echo 0", shell_q(path)),
                 ])
                 .await?;
             Ok(out.stdout.trim().parse().unwrap_or(0))
@@ -588,10 +587,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let backend = local_backend(&dir);
         let cwd = "/Users/me/proj";
-        let proj_dir = path_in(
-            &dir,
-            &format!(".claude/projects/{}", encode_cwd(cwd)),
-        );
+        let proj_dir = path_in(&dir, &format!(".claude/projects/{}", encode_cwd(cwd)));
         fs::create_dir_all(&proj_dir).await.unwrap();
 
         // Older session.
@@ -617,13 +613,9 @@ mod tests {
         .unwrap();
 
         let claude_home = path_in(&dir, ".claude");
-        let sessions = list_previous_sessions(
-            &backend,
-            claude_home.to_str().unwrap(),
-            cwd,
-        )
-        .await
-        .unwrap();
+        let sessions = list_previous_sessions(&backend, claude_home.to_str().unwrap(), cwd)
+            .await
+            .unwrap();
 
         assert_eq!(sessions.len(), 2);
         // Newest first.
@@ -684,13 +676,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let backend = local_backend(&dir);
         let claude_home = path_in(&dir, ".claude");
-        let sessions = list_previous_sessions(
-            &backend,
-            claude_home.to_str().unwrap(),
-            "/path/nobody/uses",
-        )
-        .await
-        .unwrap();
+        let sessions =
+            list_previous_sessions(&backend, claude_home.to_str().unwrap(), "/path/nobody/uses")
+                .await
+                .unwrap();
         assert!(sessions.is_empty());
     }
 
