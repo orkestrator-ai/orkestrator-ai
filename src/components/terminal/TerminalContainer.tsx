@@ -696,8 +696,21 @@ export function TerminalContainer({
 
       const newTabId = `tab-${Date.now()}`;
 
+      const launchModeOverride = options?.agentLaunchMode;
+      const shouldUseOpenCodeNative =
+        type === "opencode" &&
+        (launchModeOverride === "native" || (!launchModeOverride && opencodeMode === "native"));
+      const shouldUseClaudeNative =
+        type === "claude" &&
+        (launchModeOverride === "native" ||
+          launchModeOverride === "tmux" ||
+          (!launchModeOverride && claudeMode === "native"));
+      const shouldUseCodexNative =
+        type === "codex" &&
+        (launchModeOverride === "native" || (!launchModeOverride && codexMode === "native"));
+
       // Check if we should create an opencode-native tab instead
-      if (type === "opencode" && opencodeMode === "native") {
+      if (shouldUseOpenCodeNative) {
         const newTab: TabInfo = {
           id: newTabId,
           type: "opencode-native",
@@ -715,8 +728,14 @@ export function TerminalContainer({
       }
 
       // Native Claude mode → pick the backend (SDK or tmux) by 3-tier resolution.
-      if (type === "claude" && claudeMode === "native") {
-        if (claudeNativeBackend === "tmux") {
+      if (shouldUseClaudeNative) {
+        const backend = launchModeOverride === "native"
+          ? "sdk"
+          : launchModeOverride === "tmux"
+            ? "tmux"
+            : claudeNativeBackend;
+
+        if (backend === "tmux") {
           const newTab: TabInfo = {
             id: newTabId,
             type: "claude-tmux",
@@ -748,7 +767,7 @@ export function TerminalContainer({
         return;
       }
 
-      if (type === "codex" && codexMode === "native") {
+      if (shouldUseCodexNative) {
         const newTab: TabInfo = {
           id: newTabId,
           type: "codex-native",
