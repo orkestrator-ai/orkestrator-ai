@@ -17,6 +17,7 @@ import type {
 import type {
   ClaudeMessage,
   ClaudeMessagePart,
+  QuestionInfo,
   ToolDiffMetadata,
 } from "@/lib/claude-client";
 
@@ -25,6 +26,48 @@ export interface TmuxPendingApproval {
   eventId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  payload: unknown;
+  receivedAt: string;
+}
+
+/** Structured AskUserQuestion hook awaiting the user's answers. */
+export interface TmuxPendingQuestion {
+  eventId: string;
+  questions: QuestionInfo[];
+  toolInput: Record<string, unknown>;
+  payload: unknown;
+  receivedAt: string;
+}
+
+/** Structured ExitPlanMode hook awaiting plan approval. */
+export interface TmuxPendingPlan {
+  eventId: string;
+  plan: string | null;
+  planFilePath: string | null;
+  allowedPrompts: unknown[];
+  toolInput: Record<string, unknown>;
+  payload: unknown;
+  receivedAt: string;
+}
+
+/** PermissionRequest hook awaiting an allow/deny decision. */
+export interface TmuxPendingPermission {
+  eventId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  permissionSuggestions: unknown[];
+  payload: unknown;
+  receivedAt: string;
+}
+
+/** MCP Elicitation hook awaiting form/url response. */
+export interface TmuxPendingElicitation {
+  eventId: string;
+  mcpServerName: string;
+  message: string;
+  mode: string | null;
+  url: string | null;
+  requestedSchema: Record<string, unknown> | null;
   payload: unknown;
   receivedAt: string;
 }
@@ -47,6 +90,10 @@ interface TmuxTabState {
   /** Native-shaped messages, ready for `<ClaudeMessage>`. */
   messages: ClaudeMessage[];
   pendingApprovals: TmuxPendingApproval[];
+  pendingQuestions: TmuxPendingQuestion[];
+  pendingPlans: TmuxPendingPlan[];
+  pendingPermissions: TmuxPendingPermission[];
+  pendingElicitations: TmuxPendingElicitation[];
   infoEvents: TmuxInfoEvent[];
   /** True if this tab is replaying a previously-recorded session. */
   resumed: boolean;
@@ -58,6 +105,10 @@ const emptyTabState = (): TmuxTabState => ({
   running: false,
   messages: [],
   pendingApprovals: [],
+  pendingQuestions: [],
+  pendingPlans: [],
+  pendingPermissions: [],
+  pendingElicitations: [],
   infoEvents: [],
   resumed: false,
 });
@@ -78,6 +129,14 @@ interface ClaudeTmuxState {
   applyTranscriptLine: (tabId: string, line: TranscriptLine) => void;
   addPendingApproval: (tabId: string, approval: TmuxPendingApproval) => void;
   removePendingApproval: (tabId: string, eventId: string) => void;
+  addPendingQuestion: (tabId: string, question: TmuxPendingQuestion) => void;
+  removePendingQuestion: (tabId: string, eventId: string) => void;
+  addPendingPlan: (tabId: string, plan: TmuxPendingPlan) => void;
+  removePendingPlan: (tabId: string, eventId: string) => void;
+  addPendingPermission: (tabId: string, permission: TmuxPendingPermission) => void;
+  removePendingPermission: (tabId: string, eventId: string) => void;
+  addPendingElicitation: (tabId: string, elicitation: TmuxPendingElicitation) => void;
+  removePendingElicitation: (tabId: string, eventId: string) => void;
   pushInfoEvent: (tabId: string, event: TmuxInfoEvent) => void;
   dismissInfoEvent: (tabId: string, id: string) => void;
 
@@ -134,6 +193,78 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
         ...s,
         pendingApprovals: s.pendingApprovals.filter(
           (a) => a.eventId !== eventId,
+        ),
+      })),
+    ),
+
+  addPendingQuestion: (tabId, question) =>
+    set((state) =>
+      patchTab(state, tabId, (s) =>
+        s.pendingQuestions.some((q) => q.eventId === question.eventId)
+          ? s
+          : { ...s, pendingQuestions: [...s.pendingQuestions, question] },
+      ),
+    ),
+
+  removePendingQuestion: (tabId, eventId) =>
+    set((state) =>
+      patchTab(state, tabId, (s) => ({
+        ...s,
+        pendingQuestions: s.pendingQuestions.filter((q) => q.eventId !== eventId),
+      })),
+    ),
+
+  addPendingPlan: (tabId, plan) =>
+    set((state) =>
+      patchTab(state, tabId, (s) =>
+        s.pendingPlans.some((p) => p.eventId === plan.eventId)
+          ? s
+          : { ...s, pendingPlans: [...s.pendingPlans, plan] },
+      ),
+    ),
+
+  removePendingPlan: (tabId, eventId) =>
+    set((state) =>
+      patchTab(state, tabId, (s) => ({
+        ...s,
+        pendingPlans: s.pendingPlans.filter((p) => p.eventId !== eventId),
+      })),
+    ),
+
+  addPendingPermission: (tabId, permission) =>
+    set((state) =>
+      patchTab(state, tabId, (s) =>
+        s.pendingPermissions.some((p) => p.eventId === permission.eventId)
+          ? s
+          : { ...s, pendingPermissions: [...s.pendingPermissions, permission] },
+      ),
+    ),
+
+  removePendingPermission: (tabId, eventId) =>
+    set((state) =>
+      patchTab(state, tabId, (s) => ({
+        ...s,
+        pendingPermissions: s.pendingPermissions.filter(
+          (p) => p.eventId !== eventId,
+        ),
+      })),
+    ),
+
+  addPendingElicitation: (tabId, elicitation) =>
+    set((state) =>
+      patchTab(state, tabId, (s) =>
+        s.pendingElicitations.some((e) => e.eventId === elicitation.eventId)
+          ? s
+          : { ...s, pendingElicitations: [...s.pendingElicitations, elicitation] },
+      ),
+    ),
+
+  removePendingElicitation: (tabId, eventId) =>
+    set((state) =>
+      patchTab(state, tabId, (s) => ({
+        ...s,
+        pendingElicitations: s.pendingElicitations.filter(
+          (e) => e.eventId !== eventId,
         ),
       })),
     ),
@@ -475,6 +606,97 @@ export function payloadToApproval(
     payload,
     receivedAt: new Date().toISOString(),
   };
+}
+
+export function payloadToQuestion(
+  eventId: string,
+  payload: unknown,
+): TmuxPendingQuestion {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const toolInput = payloadToolInput(p);
+  const questions = Array.isArray(toolInput.questions)
+    ? (toolInput.questions as QuestionInfo[])
+    : [];
+  return {
+    eventId,
+    questions,
+    toolInput,
+    payload,
+    receivedAt: new Date().toISOString(),
+  };
+}
+
+export function payloadToPlan(
+  eventId: string,
+  payload: unknown,
+): TmuxPendingPlan {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const toolInput = payloadToolInput(p);
+  return {
+    eventId,
+    plan: stringField(toolInput, "plan"),
+    planFilePath:
+      stringField(toolInput, "planFilePath") ?? stringField(toolInput, "plan_file_path"),
+    allowedPrompts: Array.isArray(toolInput.allowedPrompts)
+      ? toolInput.allowedPrompts
+      : Array.isArray(toolInput.allowed_prompts)
+        ? toolInput.allowed_prompts
+        : [],
+    toolInput,
+    payload,
+    receivedAt: new Date().toISOString(),
+  };
+}
+
+export function payloadToPermission(
+  eventId: string,
+  payload: unknown,
+): TmuxPendingPermission {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  return {
+    eventId,
+    toolName: stringField(p, "tool_name") ?? stringField(p, "toolName") ?? "tool",
+    toolInput: payloadToolInput(p),
+    permissionSuggestions: Array.isArray(p.permission_suggestions)
+      ? p.permission_suggestions
+      : Array.isArray(p.permissionSuggestions)
+        ? p.permissionSuggestions
+        : [],
+    payload,
+    receivedAt: new Date().toISOString(),
+  };
+}
+
+export function payloadToElicitation(
+  eventId: string,
+  payload: unknown,
+): TmuxPendingElicitation {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const requestedSchema = p.requested_schema ?? p.requestedSchema;
+  return {
+    eventId,
+    mcpServerName:
+      stringField(p, "mcp_server_name") ?? stringField(p, "mcpServerName") ?? "MCP server",
+    message: stringField(p, "message") ?? "MCP server requested input",
+    mode: stringField(p, "mode"),
+    url: stringField(p, "url"),
+    requestedSchema:
+      requestedSchema && typeof requestedSchema === "object"
+        ? (requestedSchema as Record<string, unknown>)
+        : null,
+    payload,
+    receivedAt: new Date().toISOString(),
+  };
+}
+
+function payloadToolInput(payload: Record<string, unknown>): Record<string, unknown> {
+  const raw = payload.tool_input ?? payload.toolInput;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+}
+
+function stringField(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 /** Build a `TmuxInfoEvent` from a non-blocking hook payload. */

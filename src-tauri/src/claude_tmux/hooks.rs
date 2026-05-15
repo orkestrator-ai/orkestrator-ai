@@ -1,7 +1,8 @@
 //! Claude Code hook integration for tmux mode.
 //!
 //! Claude Code calls user-defined "hook" shell commands at well-known points
-//! (PreToolUse, PostToolUse, UserPromptSubmit, Stop, Notification). We use
+//! (PreToolUse, PermissionRequest, Elicitation, PostToolUse,
+//! UserPromptSubmit, Stop, Notification). We use
 //! these hooks to surface tool decisions to our native UI.
 //!
 //! Layout:
@@ -32,6 +33,10 @@ const BACKUP_SENTINEL_NO_ORIGINAL: &str = "__orkestrator_no_original__";
 #[derive(Debug, Clone, Copy)]
 pub enum HookEventKind {
     PreToolUse,
+    PermissionRequest,
+    Elicitation,
+    ElicitationResult,
+    UserPromptExpansion,
     PostToolUse,
     UserPromptSubmit,
     Stop,
@@ -43,6 +48,10 @@ impl HookEventKind {
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "PreToolUse" => HookEventKind::PreToolUse,
+            "PermissionRequest" => HookEventKind::PermissionRequest,
+            "Elicitation" => HookEventKind::Elicitation,
+            "ElicitationResult" => HookEventKind::ElicitationResult,
+            "UserPromptExpansion" => HookEventKind::UserPromptExpansion,
             "PostToolUse" => HookEventKind::PostToolUse,
             "UserPromptSubmit" => HookEventKind::UserPromptSubmit,
             "Stop" => HookEventKind::Stop,
@@ -53,7 +62,12 @@ impl HookEventKind {
     }
 
     pub fn is_blocking(&self) -> bool {
-        matches!(self, HookEventKind::PreToolUse)
+        matches!(
+            self,
+            HookEventKind::PreToolUse
+                | HookEventKind::PermissionRequest
+                | HookEventKind::Elicitation
+        )
     }
 }
 
@@ -190,7 +204,7 @@ TIMEOUT_FILE="$TIMEOUT_DIR/${{EVENT_KIND}}-${{ID}}.json"
 printf '%s' "$PAYLOAD" > "$PENDING_FILE"
 
 case "$EVENT_KIND" in
-  PreToolUse)
+  PreToolUse|PermissionRequest|Elicitation)
     # Block until Rust writes a decision or we time out.
     i=0
     while [ $i -lt $((TIMEOUT_SECS * 4)) ]; do
@@ -223,9 +237,9 @@ esac
 /// Build the hooks object that our settings.local.json contributes. Returned
 /// as a JSON Value so the caller can merge it into any pre-existing settings.
 ///
-/// NOTE: We deliberately do *not* register a `PreToolUse` hook. The session
-/// is launched with `--dangerously-skip-permissions`, so the UI should not
-/// gate tool calls.
+/// NOTE: We only register `PreToolUse` for Claude Code's built-in
+/// user-interaction tools. General tool permissions remain bypassed by the
+/// session's `--dangerously-skip-permissions` launch flag.
 pub fn hooks_block(hook_script_path: &str) -> Value {
     let cmd = format!("bash {} ", shell_dq(hook_script_path)); // event kind appended below
 
@@ -242,11 +256,25 @@ pub fn hooks_block(hook_script_path: &str) -> Value {
     };
 
     json!({
-        "PostToolUse":      [mk("PostToolUse")],
-        "UserPromptSubmit": [mk_no_matcher("UserPromptSubmit")],
-        "Stop":             [mk_no_matcher("Stop")],
-        "Notification":     [mk_no_matcher("Notification")],
-        "SessionStart":     [mk_no_matcher("SessionStart")]
+        "PreToolUse": [
+            {
+                "matcher": "AskUserQuestion",
+                "hooks": [{ "type": "command", "command": format!("{}{}", cmd, "PreToolUse") }]
+            },
+            {
+                "matcher": "ExitPlanMode",
+                "hooks": [{ "type": "command", "command": format!("{}{}", cmd, "PreToolUse") }]
+            }
+        ],
+        "PermissionRequest": [mk("PermissionRequest")],
+        "Elicitation":       [mk_no_matcher("Elicitation")],
+        "ElicitationResult": [mk_no_matcher("ElicitationResult")],
+        "UserPromptExpansion": [mk_no_matcher("UserPromptExpansion")],
+        "PostToolUse":       [mk("PostToolUse")],
+        "UserPromptSubmit":  [mk_no_matcher("UserPromptSubmit")],
+        "Stop":              [mk_no_matcher("Stop")],
+        "Notification":      [mk_no_matcher("Notification")],
+        "SessionStart":      [mk_no_matcher("SessionStart")]
     })
 }
 
@@ -459,11 +487,22 @@ pub async fn reply_to_hook(
 /// Convenience: build a PreToolUse JSON response. `decision` is one of
 /// "approve" | "block". For "block", `reason` is shown to Claude.
 pub fn pre_tool_use_response(decision: &str, reason: Option<&str>) -> Value {
-    let mut out = json!({ "decision": decision });
+    let permission_decision = match decision {
+        "approve" | "allow" => "allow",
+        "block" | "deny" => "deny",
+        other => other,
+    };
+    let mut output = json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": permission_decision
+        }
+    });
     if let Some(r) = reason {
-        out["reason"] = Value::String(r.to_string());
+        output["hookSpecificOutput"]["permissionDecisionReason"] =
+            Value::String(r.to_string());
     }
-    out
+    output
 }
 
 fn parse_event_filename(name: &str) -> (String, String) {
@@ -521,15 +560,23 @@ mod tests {
     #[test]
     fn pre_tool_use_response_approve_has_no_reason() {
         let v = pre_tool_use_response("approve", None);
-        assert_eq!(v["decision"], "approve");
-        assert!(v.get("reason").is_none());
+        assert_eq!(
+            v["hookSpecificOutput"]["permissionDecision"],
+            "allow"
+        );
+        assert!(v["hookSpecificOutput"]
+            .get("permissionDecisionReason")
+            .is_none());
     }
 
     #[test]
     fn pre_tool_use_response_block_includes_reason() {
         let v = pre_tool_use_response("block", Some("nope"));
-        assert_eq!(v["decision"], "block");
-        assert_eq!(v["reason"], "nope");
+        assert_eq!(
+            v["hookSpecificOutput"]["permissionDecision"],
+            "deny"
+        );
+        assert_eq!(v["hookSpecificOutput"]["permissionDecisionReason"], "nope");
     }
 
     #[test]
@@ -537,6 +584,11 @@ mod tests {
         let v = hooks_block("/tmp/x/hook.sh");
         let obj = v.as_object().unwrap();
         for kind in [
+            "PreToolUse",
+            "PermissionRequest",
+            "Elicitation",
+            "ElicitationResult",
+            "UserPromptExpansion",
             "PostToolUse",
             "UserPromptSubmit",
             "Stop",
@@ -545,7 +597,8 @@ mod tests {
         ] {
             assert!(obj.contains_key(kind), "missing kind: {kind}");
         }
-        assert!(!obj.contains_key("PreToolUse"));
+        assert_eq!(v["PreToolUse"][0]["matcher"], "AskUserQuestion");
+        assert_eq!(v["PreToolUse"][1]["matcher"], "ExitPlanMode");
         let post = &v["PostToolUse"][0];
         assert_eq!(post["matcher"], "*");
         assert!(post["hooks"][0]["command"]
@@ -588,9 +641,13 @@ mod tests {
     }
 
     #[test]
-    fn hook_event_kind_blocking_only_pre_tool_use() {
+    fn hook_event_kind_blocking_for_interactive_events() {
         assert!(HookEventKind::PreToolUse.is_blocking());
+        assert!(HookEventKind::PermissionRequest.is_blocking());
+        assert!(HookEventKind::Elicitation.is_blocking());
         for k in [
+            HookEventKind::ElicitationResult,
+            HookEventKind::UserPromptExpansion,
             HookEventKind::PostToolUse,
             HookEventKind::UserPromptSubmit,
             HookEventKind::Stop,
@@ -633,7 +690,7 @@ mod tests {
         let script = hook_script(&ws, 60);
         assert!(script.contains("SESSIONS_DIR=\"/tmp/run/sessions\""));
         assert!(script.contains("session_id"));
-        assert!(script.contains("PreToolUse)"));
+        assert!(script.contains("PreToolUse|PermissionRequest|Elicitation)"));
         assert!(script.contains("timed_out"));
         // Each event is dispatched into a per-session subdir.
         assert!(script.contains("$SESSION_DIR/pending"));

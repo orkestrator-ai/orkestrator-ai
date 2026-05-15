@@ -18,6 +18,8 @@ const startSessionMock = mock(async () => ({
 const subscribeMock = mock(async () => () => {});
 const stopSessionMock = mock(async () => {});
 const capturePaneMock = mock(async () => "");
+const sendKeysMock = mock(async () => {});
+const replyHookMock = mock(async () => {});
 const submitMock = mock(async () => {});
 const answerPreToolUseMock = mock(async () => {});
 
@@ -27,11 +29,15 @@ mock.module("@/lib/claude-tmux-client", () => ({
   subscribe: subscribeMock,
   stopSession: stopSessionMock,
   capturePane: capturePaneMock,
+  sendKeys: sendKeysMock,
+  replyHook: replyHookMock,
   submit: submitMock,
   answerPreToolUse: answerPreToolUseMock,
 }));
 
-const { ClaudeTmuxChatTab } = await import("@/components/claude/ClaudeTmuxChatTab");
+const { ClaudeTmuxChatTab, parseTmuxSelectionPrompt } = await import(
+  "@/components/claude/ClaudeTmuxChatTab"
+);
 
 function seedPane(initialPrompt?: string) {
   usePaneLayoutStore.setState({
@@ -72,8 +78,11 @@ describe("ClaudeTmuxChatTab", () => {
     subscribeMock.mockClear();
     stopSessionMock.mockClear();
     capturePaneMock.mockClear();
+    sendKeysMock.mockClear();
+    replyHookMock.mockClear();
     submitMock.mockClear();
     answerPreToolUseMock.mockClear();
+    capturePaneMock.mockImplementation(async () => "");
     useClaudeTmuxStore.setState({ tabs: new Map() });
     seedPane("Run the audit");
   });
@@ -171,5 +180,212 @@ describe("ClaudeTmuxChatTab", () => {
 
     expect(modelButton.disabled).toBe(true);
     expect(planButton.disabled).toBe(true);
+  });
+
+  test("parses Claude Code in-TUI selection prompts from a tmux pane snapshot", () => {
+    const prompt = parseTmuxSelectionPrompt(`
+› 1. Kill stale tmux before launch (Recommended)
+  2. Always kill before launch
+  3. Randomize tmux session name
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+`);
+
+    expect(prompt?.selectedOptionIndex).toBe(0);
+    expect(prompt?.options.map((o) => o.label)).toEqual([
+      "Kill stale tmux before launch (Recommended)",
+      "Always kill before launch",
+      "Randomize tmux session name",
+    ]);
+  });
+
+  test("shows controls for Claude Code selection prompts and answers through tmux keys", async () => {
+    capturePaneMock.mockImplementation(async () => `
+  1. Kill stale tmux before launch (Recommended)
+› 2. Always kill before launch
+  3. Randomize tmux session name
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Randomize tmux session name/ }),
+    );
+
+    await waitFor(() => {
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"]);
+    });
+  });
+
+  test("answers AskUserQuestion hooks with PreToolUse updatedInput", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingQuestion("tab-1", {
+      eventId: "q-hook",
+      questions: [
+        {
+          question: "Which framework?",
+          header: "Framework",
+          options: [{ label: "React" }, { label: "Vue" }],
+          multiSelect: false,
+        },
+      ],
+      toolInput: {
+        questions: [
+          {
+            question: "Which framework?",
+            header: "Framework",
+            options: [{ label: "React" }, { label: "Vue" }],
+            multiSelect: false,
+          },
+        ],
+      },
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /React/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "PreToolUse",
+        "q-hook",
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            updatedInput: expect.objectContaining({
+              answers: { "Which framework?": "React" },
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  test("answers PermissionRequest hooks with nested permission decision", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingPermission("tab-1", {
+      eventId: "perm-hook",
+      toolName: "Bash",
+      toolInput: { command: "bun test", description: "Run tests" },
+      permissionSuggestions: [],
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "PermissionRequest",
+        "perm-hook",
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            hookEventName: "PermissionRequest",
+            decision: expect.objectContaining({
+              behavior: "allow",
+              updatedInput: { command: "bun test", description: "Run tests" },
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  test("answers MCP Elicitation hooks with form content", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingElicitation("tab-1", {
+      eventId: "elicit-hook",
+      mcpServerName: "docs-mcp",
+      message: "Provide credentials",
+      mode: "form",
+      url: null,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          username: { type: "string", title: "Username" },
+        },
+      },
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Username"), {
+      target: { value: "alice" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "Elicitation",
+        "elicit-hook",
+        {
+          hookSpecificOutput: {
+            hookEventName: "Elicitation",
+            action: "accept",
+            content: { username: "alice" },
+          },
+        },
+      );
+    });
   });
 });
