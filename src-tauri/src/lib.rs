@@ -422,6 +422,8 @@ pub fn run() {
             claude_tmux_start,
             claude_tmux_stop,
             claude_tmux_status,
+            claude_tmux_transcript,
+            claude_tmux_pending_hooks,
             claude_tmux_send_text,
             claude_tmux_send_keys,
             claude_tmux_submit,

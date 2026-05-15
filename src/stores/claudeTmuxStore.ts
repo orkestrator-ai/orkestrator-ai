@@ -100,9 +100,9 @@ interface TmuxTabState {
   resumed: boolean;
   /**
    * True while we believe Claude is mid-turn (between a `UserPromptSubmit`
-   * hook — or an optimistic flip on local submit — and the next `Stop` or
-   * `SubagentStop` hook). Drives the "Claude is thinking…" indicator,
-   * mirroring native mode's `session.isLoading`.
+   * hook — or an optimistic flip on local submit — and the next top-level
+   * `Stop` hook). Drives the "Claude is thinking…" indicator, mirroring native
+   * mode's `session.isLoading`.
    */
   busy: boolean;
   /** Wall-clock when busy flipped to true, for the elapsed counter. */
@@ -149,6 +149,16 @@ interface ClaudeTmuxState {
   removePendingPermission: (tabId: string, eventId: string) => void;
   addPendingElicitation: (tabId: string, elicitation: TmuxPendingElicitation) => void;
   removePendingElicitation: (tabId: string, eventId: string) => void;
+  replacePendingHooks: (
+    tabId: string,
+    pending: {
+      approvals: TmuxPendingApproval[];
+      questions: TmuxPendingQuestion[];
+      plans: TmuxPendingPlan[];
+      permissions: TmuxPendingPermission[];
+      elicitations: TmuxPendingElicitation[];
+    },
+  ) => void;
   pushInfoEvent: (tabId: string, event: TmuxInfoEvent) => void;
   dismissInfoEvent: (tabId: string, id: string) => void;
   setBusy: (tabId: string, busy: boolean) => void;
@@ -279,6 +289,18 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
         pendingElicitations: s.pendingElicitations.filter(
           (e) => e.eventId !== eventId,
         ),
+      })),
+    ),
+
+  replacePendingHooks: (tabId, pending) =>
+    set((state) =>
+      patchTab(state, tabId, (s) => ({
+        ...s,
+        pendingApprovals: pending.approvals,
+        pendingQuestions: pending.questions,
+        pendingPlans: pending.plans,
+        pendingPermissions: pending.permissions,
+        pendingElicitations: pending.elicitations,
       })),
     ),
 

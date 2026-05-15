@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeTmuxStore } from "@/stores/claudeTmuxStore";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
@@ -17,8 +17,18 @@ const startSessionMock = mock(async () => ({
   running: true,
   transcript_path: null,
   resumed: false,
+  busy: false,
 }));
-const subscribeMock = mock(async () => () => {});
+const getStatusMock = mock(async () => null);
+const getTranscriptMock = mock(async () => []);
+const getPendingHooksMock = mock(async () => []);
+let subscribedHandler: ((event: realTmuxClient.TmuxEvent) => void) | null = null;
+const subscribeMock = mock(async (handler: (event: realTmuxClient.TmuxEvent) => void) => {
+  subscribedHandler = handler;
+  return () => {
+    subscribedHandler = null;
+  };
+});
 const stopSessionMock = mock(async () => {});
 const capturePaneMock = mock(async () => "");
 const sendKeysMock = mock(async () => {});
@@ -55,6 +65,9 @@ const claudeMessageRenderMock = mock(
 mock.module("@/lib/claude-tmux-client", () => ({
   ...realTmuxClientSnapshot,
   startSession: startSessionMock,
+  getStatus: getStatusMock,
+  getTranscript: getTranscriptMock,
+  getPendingHooks: getPendingHooksMock,
   subscribe: subscribeMock,
   stopSession: stopSessionMock,
   capturePane: capturePaneMock,
@@ -111,6 +124,13 @@ describe("ClaudeTmuxChatTab", () => {
   beforeEach(() => {
     cleanup();
     startSessionMock.mockClear();
+    getStatusMock.mockClear();
+    getStatusMock.mockImplementation(async () => null);
+    getTranscriptMock.mockClear();
+    getTranscriptMock.mockImplementation(async () => []);
+    getPendingHooksMock.mockClear();
+    getPendingHooksMock.mockImplementation(async () => []);
+    subscribedHandler = null;
     subscribeMock.mockClear();
     stopSessionMock.mockClear();
     capturePaneMock.mockClear();
@@ -160,6 +180,196 @@ describe("ClaudeTmuxChatTab", () => {
       const tab = usePaneLayoutStore.getState().getAllTabs("env-1")[0];
       expect(tab?.initialPrompt).toBeUndefined();
     });
+  });
+
+  test("hydrates a running backend session and replays missed transcript before auto-starting", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+    getTranscriptMock.mockImplementation(async () => [
+      {
+        type: "user",
+        uuid: "u-1",
+        timestamp: "2026-05-15T12:00:00.000Z",
+        message: { role: "user", content: "Run the audit" },
+      },
+      {
+        type: "assistant",
+        uuid: "a-1",
+        timestamp: "2026-05-15T12:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Final result: tests pass." }],
+        },
+      },
+    ]);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+        initialPrompt="Run the audit"
+      />,
+    );
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.sessionId).toBe("session-existing");
+      expect(tab.messages.map((m) => m.content)).toEqual([
+        "Run the audit",
+        "Final result: tests pass.",
+      ]);
+      expect(tab.busy).toBe(false);
+    });
+
+    expect(startSessionMock).not.toHaveBeenCalled();
+  });
+
+  test("hydrates backend busy state and pending hook prompts", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: true,
+    }));
+    getPendingHooksMock.mockImplementation(async () => [
+      {
+        id: "q-hook",
+        kind: "PreToolUse",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+        },
+      },
+      {
+        id: "perm-hook",
+        kind: "PermissionRequest",
+        payload: {
+          tool_name: "Bash",
+          tool_input: { command: "bun test" },
+          permission_suggestions: [],
+        },
+      },
+    ]);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+        initialPrompt="Run the audit"
+      />,
+    );
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.busy).toBe(true);
+      expect(tab.pendingQuestions).toHaveLength(1);
+      expect(tab.pendingQuestions[0]!.eventId).toBe("q-hook");
+      expect(tab.pendingPermissions).toHaveLength(1);
+      expect(tab.pendingPermissions[0]!.eventId).toBe("perm-hook");
+    });
+    expect(startSessionMock).not.toHaveBeenCalled();
+  });
+
+  test("hydrates pending hook snapshot as authoritative and clears stale prompts", async () => {
+    useClaudeTmuxStore.getState().addPendingApproval("tab-1", {
+      eventId: "stale",
+      toolName: "Bash",
+      toolInput: {},
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.pendingApprovals).toEqual([]);
+    });
+  });
+
+  test("keeps busy during SubagentStop and clears it on top-level Stop", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().setBusy("tab-1", true);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "subagent-stop",
+        event_kind: "SubagentStop",
+        payload: {},
+      });
+    });
+    expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(true);
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "stop",
+        event_kind: "Stop",
+        payload: {},
+      });
+    });
+    expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(false);
   });
 
   test("typing / opens the built-in slash command menu and selecting one fills the input", async () => {

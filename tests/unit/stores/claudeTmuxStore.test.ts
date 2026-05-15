@@ -92,4 +92,46 @@ describe("claudeTmuxStore", () => {
       expect(tab.busyStartedAt).toBeNull();
     });
   });
+
+  describe("replacePendingHooks", () => {
+    test("replaces all pending hook buckets and clears stale entries", () => {
+      useClaudeTmuxStore.getState().addPendingApproval("tab-1", {
+        eventId: "old",
+        toolName: "Bash",
+        toolInput: {},
+        payload: {},
+        receivedAt: "old",
+      });
+
+      useClaudeTmuxStore.getState().replacePendingHooks("tab-1", {
+        approvals: [],
+        questions: [
+          {
+            eventId: "question",
+            questions: [],
+            toolInput: {},
+            payload: {},
+            receivedAt: "now",
+          },
+        ],
+        plans: [],
+        permissions: [
+          {
+            eventId: "permission",
+            toolName: "Bash",
+            toolInput: { command: "bun test" },
+            permissionSuggestions: [],
+            payload: {},
+            receivedAt: "now",
+          },
+        ],
+        elicitations: [],
+      });
+
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.pendingApprovals).toEqual([]);
+      expect(tab.pendingQuestions.map((q) => q.eventId)).toEqual(["question"]);
+      expect(tab.pendingPermissions.map((p) => p.eventId)).toEqual(["permission"]);
+    });
+  });
 });
