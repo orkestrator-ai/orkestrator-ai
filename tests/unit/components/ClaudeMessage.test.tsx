@@ -113,6 +113,53 @@ describe("ClaudeMessage", () => {
     expect(screen.getByRole("button", { name: "Copied text" })).toBeTruthy();
   });
 
+  test("renders thinking blocks collapsed by default while streaming", () => {
+    const message: ClaudeMessageType = {
+      id: "msg-thinking-streaming",
+      role: "assistant",
+      content: "",
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "thinking",
+          content: "I am mapping out the implementation details.",
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} isStreaming />);
+
+    const trigger = screen.getByRole("button", { name: /Thinking/i });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(trigger);
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("renders thinking blocks collapsed by default after completion", () => {
+    const message: ClaudeMessageType = {
+      id: "msg-thinking-complete",
+      role: "assistant",
+      content: "",
+      timestamp: "2026-03-07T12:00:00.000Z",
+      parts: [
+        {
+          type: "thinking",
+          content: "I am checking the final behavior.",
+        },
+        {
+          type: "text",
+          content: "Done.",
+        },
+      ],
+    };
+
+    render(<ClaudeMessage message={message} />);
+
+    expect(screen.getByRole("button", { name: /Thinking/i }).getAttribute("aria-expanded")).toBe("false");
+  });
+
   test("shows a Claude auth login action for authentication failures", () => {
     const createTab = mock(() => {});
     const message: ClaudeMessageType = {
