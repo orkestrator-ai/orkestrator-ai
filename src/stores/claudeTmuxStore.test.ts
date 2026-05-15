@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { TranscriptLine } from "@/lib/claude-tmux-client";
+import { ERROR_MESSAGE_PREFIX, type ClaudeMessage } from "@/lib/claude-client";
 import {
+  compactConsecutiveAssistantMessages,
   payloadToApproval,
   payloadToInfoEvent,
   useClaudeTmuxStore,
@@ -367,6 +369,129 @@ describe("applyTranscriptLine", () => {
     expect(thinking?.content).toContain("let me see");
     expect(text?.content).toContain("result");
     expect(tool?.toolName).toBe("Read");
+  });
+});
+
+describe("compactConsecutiveAssistantMessages", () => {
+  test("combines adjacent assistant transcript messages for native-style spacing", () => {
+    const messages: ClaudeMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "inspect",
+        timestamp: "2026-01-01T00:00:00Z",
+        parts: [{ type: "text", content: "inspect" }],
+      },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "",
+        timestamp: "2026-01-01T00:00:01Z",
+        parts: [
+          {
+            type: "tool-invocation",
+            toolName: "Read",
+            toolUseId: "tu1",
+            toolState: "success",
+          },
+        ],
+      },
+      {
+        id: "a2",
+        role: "assistant",
+        content: "",
+        timestamp: "2026-01-01T00:00:02Z",
+        parts: [
+          {
+            type: "tool-invocation",
+            toolName: "Grep",
+            toolUseId: "tu2",
+            toolState: "success",
+          },
+        ],
+      },
+      {
+        id: "a3",
+        role: "assistant",
+        content: "done",
+        timestamp: "2026-01-01T00:00:03Z",
+        parts: [{ type: "text", content: "done" }],
+      },
+    ];
+
+    const compacted = compactConsecutiveAssistantMessages(messages);
+
+    expect(compacted).toHaveLength(2);
+    expect(compacted[1]!.id).toBe("a1");
+    expect(compacted[1]!.timestamp).toBe("2026-01-01T00:00:01Z");
+    expect(compacted[1]!.content).toBe("done");
+    expect(compacted[1]!.parts.map((part) => part.type)).toEqual([
+      "tool-invocation",
+      "tool-invocation",
+      "text",
+    ]);
+  });
+
+  test("does not combine assistant messages across a visible user message", () => {
+    const messages: ClaudeMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: "first",
+        timestamp: "2026-01-01T00:00:00Z",
+        parts: [{ type: "text", content: "first" }],
+      },
+      {
+        id: "u1",
+        role: "user",
+        content: "next",
+        timestamp: "2026-01-01T00:01:00Z",
+        parts: [{ type: "text", content: "next" }],
+      },
+      {
+        id: "a2",
+        role: "assistant",
+        content: "second",
+        timestamp: "2026-01-01T00:02:00Z",
+        parts: [{ type: "text", content: "second" }],
+      },
+    ];
+
+    expect(compactConsecutiveAssistantMessages(messages)).toHaveLength(3);
+  });
+
+  test("does not combine assistant messages across error entries", () => {
+    const messages: ClaudeMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: "first",
+        timestamp: "2026-01-01T00:00:00Z",
+        parts: [{ type: "text", content: "first" }],
+      },
+      {
+        id: `${ERROR_MESSAGE_PREFIX}auth`,
+        role: "assistant",
+        content: "auth failed",
+        timestamp: "2026-01-01T00:00:01Z",
+        parts: [],
+      },
+      {
+        id: "a2",
+        role: "assistant",
+        content: "second",
+        timestamp: "2026-01-01T00:00:02Z",
+        parts: [{ type: "text", content: "second" }],
+      },
+    ];
+
+    const compacted = compactConsecutiveAssistantMessages(messages);
+
+    expect(compacted.map((message) => message.id)).toEqual([
+      "a1",
+      `${ERROR_MESSAGE_PREFIX}auth`,
+      "a2",
+    ]);
   });
 });
 
