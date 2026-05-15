@@ -6,6 +6,18 @@ This file provides specific guidance for AI agents working on this codebase.
 
 Orkestrator AI is a Tauri desktop application for managing isolated Docker-based and local-worktree development environments for Claude Code, Codex, and OpenCode.
 
+## Background Environment Reliability
+
+Environments can keep doing work while another environment is active in the UI. Do not assume the active React tree is mounted, subscribed to events, or able to receive every Tauri/SSE/tmux update.
+
+When adding or changing background behavior (agent sessions, tmux sessions, terminals, local servers, Docker operations, file watchers, PR monitoring, build pipelines, etc.):
+
+1. Keep the authoritative long-running state in the backend, bridge, persistent store, or external process — not only in mounted React component state.
+2. Make foreground UI components rehydrate from an authoritative snapshot when they mount or become active again.
+3. Treat live events as incremental updates, not the only source of truth. If events are missed while inactive, the UI must be able to catch up from status/transcript/history APIs.
+4. Test the inactive-environment path: start work, switch to another environment/tab, let the work progress or finish, then return and verify status, messages, pending prompts, and controls are correct.
+5. Avoid cleanup tied only to component unmount unless the user explicitly stopped the work. Unmount often means "not currently visible", not "cancel the background task".
+
 ## Tech Stack
 
 | Layer | Technology |

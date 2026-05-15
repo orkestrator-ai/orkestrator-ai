@@ -467,6 +467,44 @@ pub async fn drain_pending(
     Ok(events)
 }
 
+/// Return the currently pending blocking hooks without consuming the files and
+/// without consulting the poll loop's already-emitted set. This is used as an
+/// authoritative UI rehydration snapshot when a tab remounts after missing
+/// Tauri events while inactive.
+pub async fn list_pending_blocking(
+    backend: &Backend,
+    paths: &SessionHookPaths,
+) -> Result<Vec<PendingHookEvent>, String> {
+    let mut names = backend.list_dir(&paths.pending_dir).await?;
+    names.sort();
+
+    let mut events = Vec::new();
+    for name in names {
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let (kind, id) = parse_event_filename(&name);
+        let is_blocking = HookEventKind::from_str(&kind)
+            .map(|k| k.is_blocking())
+            .unwrap_or(false);
+        if !is_blocking {
+            continue;
+        }
+
+        let full = format!("{}/{}", paths.pending_dir, name);
+        let Some(content) = backend.read_file(&full).await? else {
+            continue;
+        };
+        let payload: Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => Value::String(content),
+        };
+        events.push(PendingHookEvent { id, kind, payload });
+    }
+
+    Ok(events)
+}
+
 /// Write a response file for a previously emitted blocking hook event.
 pub async fn reply_to_hook(
     backend: &Backend,

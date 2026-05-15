@@ -170,6 +170,26 @@ pub async fn claude_tmux_status(tab_id: String) -> Result<Option<TmuxSessionStat
 }
 
 #[tauri::command]
+pub async fn claude_tmux_transcript(tab_id: String) -> Result<Vec<Value>, String> {
+    let session = get_manager()
+        .get(&tab_id)
+        .await
+        .ok_or_else(|| "tmux session not running".to_string())?;
+    session.transcript_lines().await
+}
+
+#[tauri::command]
+pub async fn claude_tmux_pending_hooks(
+    tab_id: String,
+) -> Result<Vec<hooks::PendingHookEvent>, String> {
+    let session = get_manager()
+        .get(&tab_id)
+        .await
+        .ok_or_else(|| "tmux session not running".to_string())?;
+    session.pending_hooks().await
+}
+
+#[tauri::command]
 pub async fn claude_tmux_send_text(tab_id: String, text: String) -> Result<(), String> {
     let session = get_manager()
         .get(&tab_id)
@@ -284,4 +304,52 @@ pub async fn claude_tmux_list_previous_sessions(
     let (workspace, claude_home) = workspace_and_claude_home(&backend);
     let list = transcript::list_previous_sessions(&backend, &claude_home, &workspace).await?;
     Ok(list.into_iter().map(Into::into).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use tokio::fs;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn pending_hooks_command_returns_missing_session_error() {
+        let tab_id = format!("missing-{}", Uuid::new_v4());
+        let err = claude_tmux_pending_hooks(tab_id).await.unwrap_err();
+        assert_eq!(err, "tmux session not running");
+    }
+
+    #[tokio::test]
+    async fn pending_hooks_command_returns_session_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let tab_id = format!("tab-{}", Uuid::new_v4());
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = Arc::new(TmuxSession::build(
+            "env-command-test".to_string(),
+            tab_id.clone(),
+            backend.clone(),
+            None,
+        ));
+        hooks::ensure_session_dirs(&backend, &session.session_hook_paths)
+            .await
+            .unwrap();
+        let pending = format!(
+            "{}/PreToolUse-id-1.json",
+            session.session_hook_paths.pending_dir
+        );
+        fs::write(&pending, "{\"tool_name\":\"ExitPlanMode\"}")
+            .await
+            .unwrap();
+
+        get_manager().insert(tab_id.clone(), session).await;
+        let hooks = claude_tmux_pending_hooks(tab_id.clone()).await.unwrap();
+        get_manager().remove(&tab_id).await;
+
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].id, "id-1");
+        assert_eq!(hooks[0].kind, "PreToolUse");
+    }
 }

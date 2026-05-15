@@ -38,7 +38,9 @@ beforeEach(() => {
 import {
   answerPreToolUse,
   capturePane,
+  getPendingHooks,
   getStatus,
+  getTranscript,
   listPreviousSessions,
   replyHook,
   resize,
@@ -90,6 +92,18 @@ describe("claude-tmux-client invoke wrappers", () => {
   test("getStatus invokes the status command with tabId", async () => {
     await getStatus("tab-1");
     expect(calls[0]!.cmd).toBe("claude_tmux_status");
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
+  });
+
+  test("getTranscript invokes the transcript command with tabId", async () => {
+    await getTranscript("tab-1");
+    expect(calls[0]!.cmd).toBe("claude_tmux_transcript");
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
+  });
+
+  test("getPendingHooks invokes the pending hooks command with tabId", async () => {
+    await getPendingHooks("tab-1");
+    expect(calls[0]!.cmd).toBe("claude_tmux_pending_hooks");
     expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
   });
 

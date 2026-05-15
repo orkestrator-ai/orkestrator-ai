@@ -42,12 +42,16 @@ import {
 import {
   answerPreToolUse,
   capturePane,
+  getPendingHooks,
+  getStatus,
+  getTranscript,
   replyHook,
   sendKeys,
   startSession,
   stopSession,
   submit as submitToTmux,
   subscribe,
+  type TmuxPendingHook,
   type TmuxEvent,
 } from "@/lib/claude-tmux-client";
 import {
@@ -58,6 +62,7 @@ import {
   payloadToPlan,
   payloadToQuestion,
   useClaudeTmuxStore,
+  type TmuxPendingApproval,
   type TmuxPendingElicitation,
   type TmuxPendingPermission,
   type TmuxPendingPlan,
@@ -155,6 +160,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const removePendingPermission = useClaudeTmuxStore((s) => s.removePendingPermission);
   const addPendingElicitation = useClaudeTmuxStore((s) => s.addPendingElicitation);
   const removePendingElicitation = useClaudeTmuxStore((s) => s.removePendingElicitation);
+  const replacePendingHooks = useClaudeTmuxStore((s) => s.replacePendingHooks);
   const pushInfoEvent = useClaudeTmuxStore((s) => s.pushInfoEvent);
   const dismissInfoEvent = useClaudeTmuxStore((s) => s.dismissInfoEvent);
   const setTabBusy = useClaudeTmuxStore((s) => s.setBusy);
@@ -169,6 +175,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [planMode, setPlanMode] = useState(false);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [promptControlBusy, setPromptControlBusy] = useState(false);
+  const [backendHydrated, setBackendHydrated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
 
@@ -201,6 +208,59 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     0;
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
 
+  // 0. Reconnect to any already-running backend session and replay the full
+  // transcript. Tauri events are only delivered to mounted listeners, so a
+  // tmux tab hidden behind another environment can miss transcript updates.
+  useEffect(() => {
+    let cancelled = false;
+    setBackendHydrated(false);
+
+    const hydrate = async () => {
+      try {
+        const status = await getStatus(tabId);
+        if (cancelled) return;
+
+        if (status) {
+          startedRef.current = Boolean(status.running);
+          setRunning(tabId, status.running, {
+            environmentId: status.environment_id,
+            sessionId: status.session_id,
+            resumed: status.resumed,
+          });
+          setTabBusy(tabId, status.busy);
+
+          if (status.session_id) {
+            const lines = await getTranscript(tabId);
+            if (cancelled) return;
+            for (const line of lines) {
+              applyTranscriptLine(tabId, line);
+            }
+            const hooks = await getPendingHooks(tabId);
+            if (cancelled) return;
+            replacePendingHooks(tabId, pendingSnapshotFromHooks(hooks));
+          }
+        }
+      } catch (e) {
+        // A missing backend session is not fatal; the auto-start path below
+        // still handles new tabs with an initial prompt.
+        console.debug("[ClaudeTmuxChatTab] tmux hydrate failed", e);
+      } finally {
+        if (!cancelled) setBackendHydrated(true);
+      }
+    };
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    tabId,
+    setRunning,
+    setTabBusy,
+    applyTranscriptLine,
+    replacePendingHooks,
+  ]);
+
   // 1. Subscribe to backend events (one listener for the whole tab).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -232,15 +292,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           // events Claude Code emits for the agent lifecycle. We rely on
           // UserPromptSubmit/Stop here rather than transcript content so
           // tool-call turns (no final text) still clear the spinner.
-          // SubagentStop fires when a Task-tool subagent finishes; we treat
-          // it as the same end-of-turn signal so subagent-only turns still
-          // clear the spinner.
           if (ev.event_kind === "UserPromptSubmit") {
             setTabBusy(tabId, true);
-          } else if (
-            ev.event_kind === "Stop" ||
-            ev.event_kind === "SubagentStop"
-          ) {
+          } else if (ev.event_kind === "Stop") {
             setTabBusy(tabId, false);
           }
           if (ev.event_kind === "PreToolUse") {
@@ -354,11 +408,13 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   //    we wait for the user to click Start or Resume so they get a chance to
   //    pick a previous session before any new claude process is spawned.
   useEffect(() => {
+    if (!backendHydrated) return;
     if (!hasInitialPrompt) return;
     if (startedRef.current) return;
+    if (running) return;
     launchSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasInitialPrompt, tabId]);
+  }, [backendHydrated, hasInitialPrompt, tabId, running]);
 
   // 3. Auto-scroll to bottom on new content.
   useEffect(() => {
@@ -1158,6 +1214,33 @@ export function parseTmuxSelectionPrompt(
 function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+}
+
+function pendingSnapshotFromHooks(hooks: TmuxPendingHook[]) {
+  const approvals: TmuxPendingApproval[] = [];
+  const questions: TmuxPendingQuestion[] = [];
+  const plans: TmuxPendingPlan[] = [];
+  const permissions: TmuxPendingPermission[] = [];
+  const elicitations: TmuxPendingElicitation[] = [];
+
+  for (const hook of hooks) {
+    if (hook.kind === "PreToolUse") {
+      const toolName = hookToolName(hook.payload);
+      if (toolName === "AskUserQuestion") {
+        questions.push(payloadToQuestion(hook.id, hook.payload));
+      } else if (toolName === "ExitPlanMode") {
+        plans.push(payloadToPlan(hook.id, hook.payload));
+      } else {
+        approvals.push(payloadToApproval(hook.id, hook.payload));
+      }
+    } else if (hook.kind === "PermissionRequest") {
+      permissions.push(payloadToPermission(hook.id, hook.payload));
+    } else if (hook.kind === "Elicitation") {
+      elicitations.push(payloadToElicitation(hook.id, hook.payload));
+    }
+  }
+
+  return { approvals, questions, plans, permissions, elicitations };
 }
 
 function TmuxSelectionPromptCard({

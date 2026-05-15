@@ -90,6 +90,7 @@ pub struct TmuxSessionStatus {
     pub running: bool,
     pub transcript_path: Option<String>,
     pub resumed: bool,
+    pub busy: bool,
 }
 
 pub struct TmuxSession {
@@ -104,6 +105,10 @@ pub struct TmuxSession {
     pub transcript_path: Arc<Mutex<Option<String>>>,
     pub stop_notify: Arc<Notify>,
     poll_loop_running: AtomicBool,
+    /// True while Claude is mid-turn, as observed by hook events in the Rust
+    /// poll loop. Frontend listeners can be absent while an environment is
+    /// hidden, so status must carry the latest lifecycle state.
+    busy: AtomicBool,
     /// Unix-seconds when this `TmuxSession` was built. Used as a lower bound
     /// when discovering the transcript JSONL by mtime fallback.
     pub started_at_unix: u64,
@@ -170,6 +175,7 @@ impl TmuxSession {
             transcript_path: Arc::new(Mutex::new(None)),
             stop_notify: Arc::new(Notify::new()),
             poll_loop_running: AtomicBool::new(false),
+            busy: AtomicBool::new(false),
             started_at_unix,
             is_resume,
         }
@@ -184,7 +190,64 @@ impl TmuxSession {
             running,
             transcript_path: None,
             resumed: self.is_resume,
+            busy: self.busy.load(Ordering::SeqCst),
         }
+    }
+
+    async fn discover_transcript_path(&self) -> Result<Option<String>, String> {
+        if let Some(path) = self.transcript_path.lock().await.clone() {
+            return Ok(Some(path));
+        }
+
+        let cwd = match &self.backend {
+            Backend::Local { cwd } => cwd.clone(),
+            Backend::Container { .. } => "/workspace".to_string(),
+        };
+        let min_mtime = if self.is_resume {
+            None
+        } else {
+            Some(self.started_at_unix)
+        };
+        let found = transcript::find_transcript_path(
+            &self.backend,
+            &self.claude_home,
+            &cwd,
+            &self.session_id,
+            min_mtime,
+        )
+        .await?;
+        if let Some(path) = found.as_ref() {
+            let _ = self.transcript_path.lock().await.replace(path.clone());
+        }
+        Ok(found)
+    }
+
+    /// Read the complete JSONL transcript known for this session. This is
+    /// used by the frontend to catch up after the tab was unmounted while the
+    /// backend kept tailing tmux output.
+    pub async fn transcript_lines(&self) -> Result<Vec<Value>, String> {
+        let Some(path) = self.discover_transcript_path().await? else {
+            return Ok(Vec::new());
+        };
+        let content = self.backend.read_file(&path).await?.unwrap_or_default();
+        let mut lines = Vec::new();
+        for raw in content.lines() {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                lines.push(value);
+            }
+        }
+        Ok(lines)
+    }
+
+    /// Return currently pending blocking hook events for UI rehydration. Unlike
+    /// the poll loop, this intentionally ignores the already-emitted set so a
+    /// remounted tab can recover prompts whose live Tauri events were missed.
+    pub async fn pending_hooks(&self) -> Result<Vec<PendingHookEvent>, String> {
+        hooks::list_pending_blocking(&self.backend, &self.session_hook_paths).await
     }
 
     /// Start tmux + claude and spawn the poll loop. Idempotent if tmux
@@ -402,27 +465,9 @@ impl TmuxSession {
                 //    last written long ago, so we drop the started_at_unix
                 //    mtime gate to find it.
                 if tail.is_none() {
-                    let cwd = match &session.backend {
-                        Backend::Local { cwd } => cwd.clone(),
-                        Backend::Container { .. } => "/workspace".to_string(),
-                    };
-                    let min_mtime = if session.is_resume {
-                        None
-                    } else {
-                        Some(session.started_at_unix)
-                    };
-                    match transcript::find_transcript_path(
-                        &session.backend,
-                        &session.claude_home,
-                        &cwd,
-                        &session.session_id,
-                        min_mtime,
-                    )
-                    .await
-                    {
+                    match session.discover_transcript_path().await {
                         Ok(Some(p)) => {
                             info!(tab = %session.tab_id, path = %p, "Found transcript JSONL");
-                            let _ = session.transcript_path.lock().await.replace(p.clone());
                             tail = Some(TranscriptTail::new(p));
                         }
                         Ok(None) => {}
@@ -481,6 +526,7 @@ impl TmuxSession {
     }
 
     fn emit_hook(&self, app: &AppHandle, evt: PendingHookEvent) {
+        self.update_busy_from_hook_kind(&evt.kind);
         let _ = app.emit(
             TAURI_EVENT,
             TmuxEvent::Hook {
@@ -492,6 +538,14 @@ impl TmuxSession {
                 payload: evt.payload,
             },
         );
+    }
+
+    fn update_busy_from_hook_kind(&self, kind: &str) {
+        match kind {
+            "UserPromptSubmit" => self.busy.store(true, Ordering::SeqCst),
+            "Stop" => self.busy.store(false, Ordering::SeqCst),
+            _ => {}
+        }
     }
 
     pub async fn tmux_alive(&self) -> Result<bool, String> {
@@ -734,6 +788,74 @@ mod tests {
         assert!(resumed.is_resume);
         assert_eq!(resumed.session_id, "00000000-0000-0000-0000-000000000000");
         assert!(resumed.status(true).resumed);
+    }
+
+    #[test]
+    fn busy_status_tracks_top_level_turn_lifecycle_only() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+
+        assert!(!s.status(true).busy);
+        s.update_busy_from_hook_kind("UserPromptSubmit");
+        assert!(s.status(true).busy);
+        s.update_busy_from_hook_kind("SubagentStop");
+        assert!(s.status(true).busy);
+        s.update_busy_from_hook_kind("Stop");
+        assert!(!s.status(true).busy);
+    }
+
+    #[tokio::test]
+    async fn transcript_lines_reads_cached_path_and_skips_invalid_json() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+        let path = tmp.path().join("session.jsonl");
+        fs::write(
+            &path,
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\nnot-json\n{\"type\":\"assistant\"}\n",
+        )
+        .await
+        .unwrap();
+        let path = path.to_string_lossy().into_owned();
+        s.transcript_path.lock().await.replace(path);
+
+        let lines = s.transcript_lines().await.unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["type"], "user");
+        assert_eq!(lines[1]["type"], "assistant");
+    }
+
+    #[tokio::test]
+    async fn pending_hooks_returns_current_blocking_hooks_without_consuming_them() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let s = TmuxSession::build(
+            "env-pending".to_string(),
+            "tab-p".to_string(),
+            backend.clone(),
+            None,
+        );
+        hooks::ensure_session_dirs(&backend, &s.session_hook_paths)
+            .await
+            .unwrap();
+
+        let blocking = format!("{}/PreToolUse-id-1.json", s.session_hook_paths.pending_dir);
+        let info = format!(
+            "{}/Notification-id-2.json",
+            s.session_hook_paths.pending_dir
+        );
+        fs::write(&blocking, "{\"tool_name\":\"AskUserQuestion\"}")
+            .await
+            .unwrap();
+        fs::write(&info, "{\"message\":\"hello\"}").await.unwrap();
+
+        let pending = s.pending_hooks().await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "id-1");
+        assert_eq!(pending[0].kind, "PreToolUse");
+        assert!(std::path::Path::new(&blocking).exists());
+        assert!(std::path::Path::new(&info).exists());
     }
 
     #[test]

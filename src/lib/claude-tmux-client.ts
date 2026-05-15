@@ -85,6 +85,12 @@ export interface TranscriptLine {
   [key: string]: unknown;
 }
 
+export interface TmuxPendingHook {
+  id: string;
+  kind: HookEventKind | string;
+  payload: unknown;
+}
+
 export type TranscriptContent =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
@@ -109,6 +115,7 @@ export interface TmuxStatus {
   running: boolean;
   transcript_path: string | null;
   resumed: boolean;
+  busy: boolean;
 }
 
 /** Metadata about a previously-recorded session the user could resume. */
@@ -148,6 +155,14 @@ export async function stopSession(tabId: string): Promise<void> {
 
 export async function getStatus(tabId: string): Promise<TmuxStatus | null> {
   return invoke<TmuxStatus | null>("claude_tmux_status", { tabId });
+}
+
+export async function getTranscript(tabId: string): Promise<TranscriptLine[]> {
+  return invoke<TranscriptLine[]>("claude_tmux_transcript", { tabId });
+}
+
+export async function getPendingHooks(tabId: string): Promise<TmuxPendingHook[]> {
+  return invoke<TmuxPendingHook[]>("claude_tmux_pending_hooks", { tabId });
 }
 
 export async function submit(tabId: string, text: string): Promise<void> {
