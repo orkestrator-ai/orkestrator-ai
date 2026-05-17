@@ -2812,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "orkestrator-ai"
-version = "0.4.33"
+version = "0.4.34"
 dependencies = [
  "base64 0.22.1",
  "bollard",
