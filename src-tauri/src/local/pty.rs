@@ -38,11 +38,18 @@ pub struct LocalTerminalSession {
     pub cols: u16,
     pub rows: u16,
     pub is_active: bool,
+    pub bundled_bin_dir: Option<String>,
     pty_handle: Option<PtyHandle>,
 }
 
 impl LocalTerminalSession {
-    pub fn new(environment_id: &str, worktree_path: &str, cols: u16, rows: u16) -> Self {
+    pub fn new(
+        environment_id: &str,
+        worktree_path: &str,
+        cols: u16,
+        rows: u16,
+        bundled_bin_dir: Option<String>,
+    ) -> Self {
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
             environment_id: environment_id.to_string(),
@@ -50,6 +57,7 @@ impl LocalTerminalSession {
             cols,
             rows,
             is_active: false,
+            bundled_bin_dir,
             pty_handle: None,
         }
     }
@@ -76,6 +84,7 @@ impl LocalTerminalManager {
         worktree_path: &str,
         cols: u16,
         rows: u16,
+        bundled_bin_dir: Option<String>,
     ) -> Result<String, LocalPtyError> {
         debug!(
             environment_id = %environment_id,
@@ -99,7 +108,8 @@ impl LocalTerminalManager {
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
 
         // Create and store session
-        let mut session = LocalTerminalSession::new(environment_id, worktree_path, cols, rows);
+        let mut session =
+            LocalTerminalSession::new(environment_id, worktree_path, cols, rows, bundled_bin_dir);
         session.pty_handle = Some(PtyHandle::Pair(pair));
         session.is_active = true;
 
@@ -121,7 +131,7 @@ impl LocalTerminalManager {
     ) -> Result<mpsc::Receiver<Vec<u8>>, LocalPtyError> {
         debug!(session_id = %session_id, "Starting local terminal session");
 
-        let (worktree_path, pair) = {
+        let (worktree_path, bundled_bin_dir, pair) = {
             let mut sessions = self.sessions.lock().unwrap();
             let session = sessions
                 .get_mut(session_id)
@@ -139,7 +149,11 @@ impl LocalTerminalManager {
                 }
             };
 
-            (session.worktree_path.clone(), pair)
+            (
+                session.worktree_path.clone(),
+                session.bundled_bin_dir.clone(),
+                pair,
+            )
         };
 
         // Get the user's default shell
@@ -152,6 +166,13 @@ impl LocalTerminalManager {
         // Set up environment variables
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        if let Some(bin_dir) = bundled_bin_dir {
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{bin_dir}:{current_path}"));
+            cmd.env("CLAUDE_CLI_PATH", format!("{bin_dir}/claude"));
+            cmd.env("OPENCODE_CLI_PATH", format!("{bin_dir}/opencode"));
+            cmd.env("CODEX_CLI_PATH", format!("{bin_dir}/codex"));
+        }
 
         // Spawn the shell in the PTY
         let mut child = pair

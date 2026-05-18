@@ -12,8 +12,9 @@ use crate::models::EnvironmentType;
 use crate::storage::get_storage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tracing::info;
 
 fn resolve_backend(environment_id: &str) -> Result<Backend, String> {
@@ -59,6 +60,7 @@ fn workspace_and_claude_home(backend: &Backend) -> (String, String) {
 }
 
 async fn get_or_create(
+    app: &AppHandle,
     environment_id: &str,
     tab_id: &str,
     resume_session_id: Option<String>,
@@ -68,14 +70,54 @@ async fn get_or_create(
         return Ok(s);
     }
     let backend = resolve_backend(environment_id)?;
+    let claude_command = resolve_pinned_claude_command(app, &backend);
     let session = Arc::new(TmuxSession::build(
         environment_id.to_string(),
         tab_id.to_string(),
         backend,
         resume_session_id,
+        claude_command,
     ));
     mgr.insert(tab_id.to_string(), session.clone()).await;
     Ok(session)
+}
+
+fn resolve_pinned_claude_command(app: &AppHandle, backend: &Backend) -> Option<String> {
+    match backend {
+        Backend::Container { .. } => Some("/usr/local/share/npm-global/bin/claude".to_string()),
+        Backend::Local { .. } => resolve_bundled_claude_path(app),
+    }
+}
+
+fn resolve_bundled_claude_path(app: &AppHandle) -> Option<String> {
+    if let Ok(bundled) = app
+        .path()
+        .resolve("bin/claude", tauri::path::BaseDirectory::Resource)
+    {
+        if bundled.exists() {
+            return Some(bundled.to_string_lossy().to_string());
+        }
+    }
+
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let bundled = res_dir.join("bin").join("claude");
+        if bundled.exists() {
+            return Some(bundled.to_string_lossy().to_string());
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(workspace_root) = manifest_path.parent() {
+            let bundled = workspace_root.join("binaries").join("claude");
+            if bundled.exists() {
+                return Some(bundled.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
 }
 
 #[tauri::command]
@@ -125,7 +167,7 @@ pub async fn claude_tmux_start(
         }
     }
 
-    let session = get_or_create(&environment_id, &tab_id, resume_session_id).await?;
+    let session = get_or_create(&app, &environment_id, &tab_id, resume_session_id).await?;
     session
         .clone()
         .start(app, initial_prompt, model, plan_mode.unwrap_or(false))
@@ -331,6 +373,7 @@ mod tests {
             "env-command-test".to_string(),
             tab_id.clone(),
             backend.clone(),
+            None,
             None,
         ));
         hooks::ensure_session_dirs(&backend, &session.session_hook_paths)
