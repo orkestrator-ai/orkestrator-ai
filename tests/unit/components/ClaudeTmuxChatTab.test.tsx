@@ -683,6 +683,79 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     });
   });
 
+  test("answers confirmation prompts by sending the selected number", async () => {
+    capturePaneMock.mockImplementation(async () => `
+WARNING: Claude Code running in Bypass Permissions mode
+
+https://code.claude.com/docs/en/security
+
+› 1. No, exit
+  2. Yes, I accept
+
+Enter to confirm · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Yes, I accept/ }));
+
+    await waitFor(() => {
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2", "Enter"]);
+    });
+  });
+
+  test("moves confirmation prompt selection in the overlay before confirming", async () => {
+    capturePaneMock.mockImplementation(async () => `
+WARNING: Claude Code running in Bypass Permissions mode
+
+https://code.claude.com/docs/en/security
+
+› 1. No, exit
+  2. Yes, I accept
+
+Enter to confirm · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
+
+    fireEvent.click(screen.getByTitle("Move selection down"));
+    expect(sendKeysMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTitle("Select highlighted option"));
+
+    await waitFor(() => {
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2", "Enter"]);
+    });
+  });
+
   test("renders the active TUI question without stale numbered transcript lines", async () => {
     capturePaneMock.mockImplementation(async () => `
 1. Run \`git diff origin/main...HEAD\` to see all changes that will be in the PR
@@ -724,6 +797,43 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         name: /Unstage & add to \.gitignore \(Recommended\)/,
       }),
     ).toBeTruthy();
+  });
+
+  test("parses confirmation prompts with the full context instead of only the URL", () => {
+    const prompt = parseTmuxSelectionPrompt(`
+------------------------------------------------------------
+WARNING: Claude Code running in Bypass Permissions mode
+
+In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be restored if damaged.
+
+By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.
+
+https://code.claude.com/docs/en/security
+
+› 1. No, exit
+  2. Yes, I accept
+
+Enter to confirm · Esc to cancel
+`);
+
+    expect(prompt?.question).toBe(
+      [
+        "WARNING: Claude Code running in Bypass Permissions mode",
+        "",
+        "In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.",
+        "This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be restored if damaged.",
+        "",
+        "By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.",
+        "",
+        "https://code.claude.com/docs/en/security",
+      ].join("\n"),
+    );
+    expect(prompt?.selectedOptionIndex).toBe(0);
+    expect(prompt?.options.map((o) => o.label)).toEqual([
+      "No, exit",
+      "Yes, I accept",
+    ]);
   });
 
   test("answers AskUserQuestion hooks with PreToolUse updatedInput", async () => {
