@@ -609,7 +609,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     if (!option) return;
 
     if (prompt.inputMode === "number") {
-      await handlePromptKeys([String(option.number), "Enter"]);
+      const digits = String(option.number).split("");
+      await handlePromptKeys([...digits, "Enter"]);
       return;
     }
 
@@ -1255,9 +1256,7 @@ export function parseTmuxSelectionPrompt(
     question: parseTmuxSelectionQuestion(lines, blockStart),
     options,
     selectedOptionIndex: selectedOptionIndex >= 0 ? selectedOptionIndex : 0,
-    inputMode: /navigate|Tab\/Arrow|[↑↓]/i.test(hintLine)
-      ? "navigate"
-      : "number",
+    inputMode: /Enter\s+to\s+confirm/i.test(hintLine) ? "number" : "navigate",
   };
 }
 
@@ -1424,7 +1423,7 @@ function TmuxSelectionPromptCard({
 
   useEffect(() => {
     setLocalSelectedOptionIndex(prompt.selectedOptionIndex);
-  }, [prompt.selectedOptionIndex, prompt.options.length, prompt.inputMode]);
+  }, [prompt.inputMode, prompt.options.length]);
 
   const selectedOptionIndex =
     prompt.inputMode === "number"
