@@ -3,10 +3,10 @@
 //! These commands handle terminal sessions for local (worktree-based) environments,
 //! spawning native shell processes instead of Docker exec.
 
+use crate::commands::claude_tmux::{bundled_resource_dir_candidates, find_bundled_dir_containing};
 use crate::local::get_local_terminal_manager;
 use crate::storage::get_storage;
-use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 use tracing::{debug, info, instrument, warn};
 
 fn spawn_local_output_forwarder<R: Runtime>(
@@ -71,40 +71,8 @@ pub async fn create_local_terminal_session(
 }
 
 fn resolve_bundled_bin_dir(app_handle: &tauri::AppHandle) -> Option<String> {
-    if let Ok(bundled) = app_handle
-        .path()
-        .resolve("bin/claude", tauri::path::BaseDirectory::Resource)
-    {
-        if let Some(parent) = bundled.parent() {
-            if bundled.exists() {
-                return Some(parent.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    if let Ok(res_dir) = app_handle.path().resource_dir() {
-        let bundled = res_dir.join("bin").join("claude");
-        if let Some(parent) = bundled.parent() {
-            if bundled.exists() {
-                return Some(parent.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    {
-        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        if let Some(workspace_root) = manifest_path.parent() {
-            let bundled = workspace_root.join("binaries").join("claude");
-            if let Some(parent) = bundled.parent() {
-                if bundled.exists() {
-                    return Some(parent.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    None
+    let candidates = bundled_resource_dir_candidates(app_handle);
+    find_bundled_dir_containing(&candidates, "claude").map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Start a local terminal session and begin forwarding output

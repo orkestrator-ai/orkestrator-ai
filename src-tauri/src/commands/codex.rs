@@ -607,4 +607,14 @@ mod tests {
         assert!(!command.contains(CONTAINER_CODEX_RAW_LOG_DIR));
         assert!(!command.contains("%CODEX_RAW_LOG_DIR%"));
     }
+
+    #[test]
+    fn build_codex_bridge_start_command_prefers_pinned_codex_cli_path() {
+        let command = build_codex_bridge_start_command(false);
+
+        assert!(command.contains("if [ -n \"${CODEX_CLI_PATH:-}\" ] && [ -x \"$CODEX_CLI_PATH\" ]"));
+        assert!(command.contains("export CODEX_PATH=\"$CODEX_CLI_PATH\""));
+        assert!(command.contains("/usr/local/share/npm-global/bin/codex"));
+        assert!(command.contains("command -v codex"));
+    }
 }

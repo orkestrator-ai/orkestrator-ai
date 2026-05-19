@@ -931,6 +931,55 @@ mod tests {
         assert!(HOOK_TIMEOUT_SECS <= 3600);
     }
 
+    #[test]
+    fn build_defaults_claude_command_to_bare_name() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-d", "tab-d", None);
+        assert_eq!(s.claude_command, "claude");
+    }
+
+    #[test]
+    fn build_uses_explicit_claude_command_when_provided() {
+        let tmp = TempDir::new().unwrap();
+        let s = Arc::new(TmuxSession::build(
+            "env-x".to_string(),
+            "tab-x".to_string(),
+            Backend::Local {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            },
+            None,
+            Some("/opt/bin/claude".to_string()),
+        ));
+        assert_eq!(s.claude_command, "/opt/bin/claude");
+    }
+
+    #[tokio::test]
+    async fn resolve_claude_command_returns_absolute_path_when_executable() {
+        let tmp = TempDir::new().unwrap();
+        let bin = tmp.path().join("fake-claude");
+        std::fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin, perms).unwrap();
+        }
+
+        let s = Arc::new(TmuxSession::build(
+            "env-r".to_string(),
+            "tab-r".to_string(),
+            Backend::Local {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            },
+            None,
+            Some(bin.to_string_lossy().into_owned()),
+        ));
+
+        let resolved = s.resolve_claude_command().await.unwrap();
+        assert_eq!(resolved, bin.to_string_lossy());
+    }
+
     #[tokio::test]
     async fn install_then_uninstall_restores_original_settings() {
         let tmp = TempDir::new().unwrap();
