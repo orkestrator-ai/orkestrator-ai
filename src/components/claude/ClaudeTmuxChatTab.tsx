@@ -8,7 +8,7 @@
 // `<ClaudeMessage>` renderer; we only build a slim compose bar of our own
 // that matches the native styling and adds model / plan-mode controls.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Check,
@@ -39,6 +39,9 @@ import {
   SlashCommandMenu,
   type SlashCommand,
 } from "@/components/claude/SlashCommandMenu";
+import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
+import { useFileMentions } from "@/hooks/useFileMentions";
+import { useFileSearch } from "@/hooks/useFileSearch";
 import {
   answerPreToolUse,
   capturePane,
@@ -70,7 +73,9 @@ import {
   type TmuxPendingQuestion,
 } from "@/stores/claudeTmuxStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
+import { useEnvironmentStore } from "@/stores/environmentStore";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
+import type { FileCandidate } from "@/types";
 
 interface Props {
   tabId: string;
@@ -149,6 +154,9 @@ const TMUX_BUILTIN_SLASH_COMMANDS: SlashCommand[] = parseSlashCommands([
 
 export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Props) {
   const { environmentId, containerId } = data;
+  const worktreePath = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.worktreePath,
+  );
 
   const tabState = useClaudeTmuxStore((s) => s.tabs.get(tabId));
   const setRunning = useClaudeTmuxStore((s) => s.setRunning);
@@ -848,6 +856,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       <TmuxComposeBar
         value={draft}
         setValue={setDraft}
+        containerId={containerId}
+        worktreePath={worktreePath}
         disabled={!running}
         busy={sending || isThinking}
         autoFocus={isActive}
@@ -1623,6 +1633,8 @@ function modelObj(id: string) {
 interface TmuxComposeBarProps {
   value: string;
   setValue: (v: string) => void;
+  containerId?: string;
+  worktreePath?: string;
   disabled: boolean;
   busy: boolean;
   autoFocus?: boolean;
@@ -1637,6 +1649,8 @@ interface TmuxComposeBarProps {
 function TmuxComposeBar({
   value,
   setValue,
+  containerId,
+  worktreePath,
   disabled,
   busy,
   autoFocus,
@@ -1648,6 +1662,8 @@ function TmuxComposeBar({
   settingsLocked,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const prevFileMentionMenuOpen = useRef(false);
+  const pendingCursorPositionRef = useRef<number | null>(null);
   const modelObj = useMemo(
     () => TMUX_MODELS.find((m) => m.id === selectedModel) ?? TMUX_MODELS[1]!,
     [selectedModel],
@@ -1657,6 +1673,16 @@ function TmuxComposeBar({
   // TMUX_BUILTIN_SLASH_COMMANDS at the top of the file.
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const { searchFiles, error: fileSearchError, refresh: refreshFileTree } =
+    useFileSearch(containerId, worktreePath, false);
+  const {
+    isMenuOpen: fileMentionMenuOpen,
+    selectedIndex: fileMentionSelectedIndex,
+    filteredFiles,
+    handleCursorChange: detectFileMention,
+    handleKeyDown: handleFileMentionKeyDown,
+    closeMenu: closeFileMentionMenu,
+  } = useFileMentions({ searchFiles });
 
   const filteredSlashCommands = useMemo(() => {
     if (!value.startsWith("/")) return [];
@@ -1672,6 +1698,36 @@ function TmuxComposeBar({
   // Open/close the menu based on whether the input *currently* looks like
   // the start of a slash command (no space yet → still typing the command
   // name; space typed → user has moved on to arguments, hide the menu).
+  useEffect(() => {
+    if (fileMentionMenuOpen) {
+      setSlashMenuOpen(false);
+    }
+  }, [fileMentionMenuOpen]);
+
+  useEffect(() => {
+    if (fileSearchError) {
+      console.debug("[ClaudeTmuxChatTab] Failed to load files for @mentions", fileSearchError);
+    }
+  }, [fileSearchError]);
+
+  useEffect(() => {
+    const wasOpen = prevFileMentionMenuOpen.current;
+    prevFileMentionMenuOpen.current = fileMentionMenuOpen;
+    if (!wasOpen && fileMentionMenuOpen) {
+      refreshFileTree();
+    }
+  }, [fileMentionMenuOpen, refreshFileTree]);
+
+  useLayoutEffect(() => {
+    const cursorPosition = pendingCursorPositionRef.current;
+    const textarea = textareaRef.current;
+    if (cursorPosition === null || !textarea) return;
+
+    textarea.focus();
+    textarea.setSelectionRange(cursorPosition, cursorPosition);
+    pendingCursorPositionRef.current = null;
+  }, [value]);
+
   useEffect(() => {
     if (!value.startsWith("/")) {
       setSlashMenuOpen(false);
@@ -1704,9 +1760,37 @@ function TmuxComposeBar({
     textareaRef.current?.focus();
   };
 
+  const updateFileMentionDetection = (position: number, currentValue: string) => {
+    detectFileMention(position, currentValue);
+  };
+
+  const selectFileMention = (file: FileCandidate) => {
+    const textarea = textareaRef.current;
+    const cursorPosition = textarea?.selectionStart ?? value.length;
+    const textBeforeCursor = value.slice(0, cursorPosition);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    const atStart = atMatch ? textBeforeCursor.length - atMatch[0].length : cursorPosition;
+    const insertedText = `@${file.relativePath} `;
+    const nextValue =
+      value.slice(0, atStart) + insertedText + value.slice(cursorPosition);
+
+    pendingCursorPositionRef.current = atStart + insertedText.length;
+    setValue(nextValue);
+    closeFileMentionMenu();
+  };
+
   return (
     <div className="shrink-0 border-t border-border bg-background p-3">
       <div className="relative">
+        {fileMentionMenuOpen && (
+          <FileMentionMenu
+            files={filteredFiles}
+            selectedIndex={fileMentionSelectedIndex}
+            onSelect={selectFileMention}
+            onClose={closeFileMentionMenu}
+          />
+        )}
+
         {slashMenuOpen && filteredSlashCommands.length > 0 && (
           <SlashCommandMenu
             commands={filteredSlashCommands}
@@ -1718,8 +1802,32 @@ function TmuxComposeBar({
         <textarea
           ref={textareaRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            const nextValue = e.target.value;
+            setValue(nextValue);
+            updateFileMentionDetection(e.target.selectionStart, nextValue);
+          }}
+          onClick={(e) => {
+            updateFileMentionDetection(e.currentTarget.selectionStart, e.currentTarget.value);
+          }}
+          onKeyUp={(e) => {
+            if (
+              e.key === "ArrowLeft" ||
+              e.key === "ArrowRight" ||
+              e.key === "Home" ||
+              e.key === "End" ||
+              e.key === "Backspace" ||
+              e.key === "Delete"
+            ) {
+              updateFileMentionDetection(e.currentTarget.selectionStart, e.currentTarget.value);
+            }
+          }}
           onKeyDown={(e) => {
+            if (fileMentionMenuOpen && filteredFiles.length > 0) {
+              const handled = handleFileMentionKeyDown(e, selectFileMention);
+              if (handled) return;
+            }
+
             // Slash-command menu takes keyboard priority while open.
             if (slashMenuOpen && filteredSlashCommands.length > 0) {
               switch (e.key) {
@@ -1770,7 +1878,7 @@ function TmuxComposeBar({
           placeholder={
             disabled
               ? "Session not running"
-              : "Ask Claude anything… (Shift+Enter for newline; / for commands)"
+              : "Ask Claude anything… (@ to mention, / for commands)"
           }
           disabled={disabled || busy}
           rows={2}

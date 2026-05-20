@@ -1,10 +1,25 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { mockReadImage } from "../../mocks/clipboard";
 
 const mockWriteContainerFile = mock(async () => {});
 const mockWriteLocalFile = mock(async () => "/tmp/file.png");
 const mockSerializeForLLM = mock((text: string, _mentions?: unknown[]) => text);
+
+// Snapshot modules before stubbing them so later suites that exercise the
+// real file mention flow do not inherit these isolated compose-bar stubs.
+import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
+import * as realUseFileMentions from "@/hooks/useFileMentions";
+import * as realUseFileSearch from "@/hooks/useFileSearch";
+const realFileMentionMenuSnapshot = { ...realFileMentionMenu };
+const realUseFileMentionsSnapshot = { ...realUseFileMentions };
+const realUseFileSearchSnapshot = { ...realUseFileSearch };
+
+afterAll(() => {
+  mock.module("@/components/chat/FileMentionMenu", () => realFileMentionMenuSnapshot);
+  mock.module("@/hooks/useFileMentions", () => realUseFileMentionsSnapshot);
+  mock.module("@/hooks/useFileSearch", () => realUseFileSearchSnapshot);
+});
 
 // --- Module mocks (must be before component import) ---
 

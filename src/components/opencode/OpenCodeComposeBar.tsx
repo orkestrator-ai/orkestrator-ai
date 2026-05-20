@@ -252,10 +252,10 @@ export function OpenCodeComposeBar({
   );
 
   const handleCursorPositionChange = useCallback(
-    (position: number) => {
-      detectFileMention(position, text);
+    (position: number, currentText: string) => {
+      detectFileMention(position, currentText);
     },
-    [detectFileMention, text]
+    [detectFileMention]
   );
 
   const handleFileMentionSelect = useCallback(

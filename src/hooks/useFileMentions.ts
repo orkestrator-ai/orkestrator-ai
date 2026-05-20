@@ -101,14 +101,14 @@ export function useFileMentions({
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
-          setSelectedIndex((prev) =>
-            prev < filteredFiles.length - 1 ? prev + 1 : prev
-          );
+          setSelectedIndex((prev) => (prev + 1) % filteredFiles.length);
           return true;
 
         case "ArrowUp":
           event.preventDefault();
-          setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+          setSelectedIndex((prev) =>
+            prev === 0 ? filteredFiles.length - 1 : prev - 1
+          );
           return true;
 
         case "Tab":
@@ -118,6 +118,7 @@ export function useFileMentions({
             onSelect(filteredFiles[safeSelectedIndex]);
             setIsMenuOpen(false);
             setSearchQuery("");
+            setSelectedIndex(0);
             return true;
           }
           break;
@@ -126,6 +127,7 @@ export function useFileMentions({
           event.preventDefault();
           setIsMenuOpen(false);
           setSearchQuery("");
+          setSelectedIndex(0);
           return true;
       }
 
@@ -140,6 +142,7 @@ export function useFileMentions({
   const closeMenu = useCallback(() => {
     setIsMenuOpen(false);
     setSearchQuery("");
+    setSelectedIndex(0);
   }, []);
 
   /**

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { MentionableInput } from "./MentionableInput";
 
 describe("MentionableInput", () => {
@@ -56,5 +56,27 @@ describe("MentionableInput", () => {
     const mentionSpan = input!.querySelector("[data-mention='true']");
     expect(mentionSpan).not.toBeNull();
     expect(mentionSpan!.textContent).toBe("@utils.ts");
+  });
+
+  test("reports the current editable text with cursor changes after input", () => {
+    let cursorText = "";
+    const { container } = render(
+      <MentionableInput
+        value=""
+        mentions={[]}
+        onChange={() => {}}
+        onCursorChange={(_, text) => {
+          cursorText = text;
+        }}
+      />,
+    );
+
+    const input = container.querySelector("[contenteditable]");
+    expect(input).not.toBeNull();
+
+    input!.textContent = "@utils";
+    fireEvent.input(input!);
+
+    expect(cursorText).toBe("@utils");
   });
 });

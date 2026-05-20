@@ -5,9 +5,12 @@ import { useClaudeTmuxStore } from "@/stores/claudeTmuxStore";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
 import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
 import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
+import type { FileCandidate } from "@/types";
 
 const realTmuxClientSnapshot = { ...realTmuxClient };
 const realClaudeMessageSnapshot = { ...realClaudeMessage };
+const getFileTreeMock = mock(async () => []);
+const getLocalFileTreeMock = mock(async () => []);
 
 const startSessionMock = mock(async () => ({
   tab_id: "tab-1",
@@ -83,6 +86,21 @@ mock.module("@/components/claude/ClaudeMessage", () => ({
   ClaudeMessage: claudeMessageRenderMock,
 }));
 
+mock.module("@/lib/tauri", () => ({
+  getFileTree: getFileTreeMock,
+  getLocalFileTree: getLocalFileTreeMock,
+}));
+
+mock.module("@/components/chat/FileMentionMenu", () => ({
+  FileMentionMenu: ({ files }: { files: FileCandidate[] }) => (
+    <div>
+      {files.map((file) => (
+        <div key={file.relativePath}>{file.filename}</div>
+      ))}
+    </div>
+  ),
+}));
+
 const { ClaudeTmuxChatTab, parseTmuxSelectionPrompt } = await import(
   "@/components/claude/ClaudeTmuxChatTab"
 );
@@ -123,6 +141,10 @@ describe("ClaudeTmuxChatTab", () => {
 
   beforeEach(() => {
     cleanup();
+    getFileTreeMock.mockReset();
+    getFileTreeMock.mockResolvedValue([]);
+    getLocalFileTreeMock.mockReset();
+    getLocalFileTreeMock.mockResolvedValue([]);
     startSessionMock.mockClear();
     getStatusMock.mockClear();
     getStatusMock.mockImplementation(async () => null);
@@ -443,6 +465,59 @@ describe("ClaudeTmuxChatTab", () => {
     await screen.findByText("Slash Commands");
     fireEvent.keyDown(textarea, { key: "Escape" });
     expect(screen.queryByText("Slash Commands")).toBeNull();
+  });
+
+  test("inserts a selected @ file mention into the tmux compose input", async () => {
+    useClaudeTmuxStore.getState().setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    getFileTreeMock.mockResolvedValue([
+      {
+        name: "src",
+        path: "src",
+        isDirectory: true,
+        children: [
+          {
+            name: "Button.tsx",
+            path: "src/components/Button.tsx",
+            isDirectory: false,
+            extension: ".tsx",
+          },
+        ],
+      },
+    ]);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
+
+    const cursorPosition = "Review @".length;
+    fireEvent.change(textarea, {
+      target: {
+        value: "Review @",
+        selectionStart: cursorPosition,
+        selectionEnd: cursorPosition,
+      },
+    });
+    textarea.setSelectionRange(cursorPosition, cursorPosition);
+    fireEvent.click(textarea);
+
+    await screen.findByText("Button.tsx");
+
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("Review @src/components/Button.tsx ");
+    });
+    expect(screen.queryByText("Button.tsx")).toBeNull();
   });
 
   test("locks launch-only model and plan controls once the session is running", async () => {

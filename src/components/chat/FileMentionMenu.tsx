@@ -84,7 +84,17 @@ export function FileMentionMenu({
               ref={isSelected ? selectedRef : undefined}
               role="option"
               aria-selected={isSelected}
-              onClick={() => onSelect(file)}
+              onMouseDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                onSelect(file);
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                if (event.detail === 0) {
+                  onSelect(file);
+                }
+              }}
               className={cn(
                 "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
                 isSelected

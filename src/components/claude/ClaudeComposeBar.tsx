@@ -221,10 +221,10 @@ export function ClaudeComposeBar({
 
   // Handle cursor change for @ detection
   const handleCursorPositionChange = useCallback(
-    (position: number) => {
-      detectFileMention(position, text);
+    (position: number, currentText: string) => {
+      detectFileMention(position, currentText);
     },
-    [detectFileMention, text]
+    [detectFileMention]
   );
 
   // Handle file mention selection

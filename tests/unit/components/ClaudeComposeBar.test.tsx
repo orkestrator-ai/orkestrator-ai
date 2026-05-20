@@ -11,13 +11,19 @@ const mockSerializeForLLM = mock((text: string, _mentions?: unknown[]) => text);
 // renders the real SlashCommandMenu and would otherwise see this file's
 // null-component stub via Bun's module cache).
 import * as realSlashCommandMenu from "@/components/claude/SlashCommandMenu";
+import * as realUseFileMentions from "@/hooks/useFileMentions";
+import * as realUseFileSearch from "@/hooks/useFileSearch";
 const realSlashCommandMenuSnapshot = { ...realSlashCommandMenu };
+const realUseFileMentionsSnapshot = { ...realUseFileMentions };
+const realUseFileSearchSnapshot = { ...realUseFileSearch };
 
 afterAll(() => {
   mock.module(
     "@/components/claude/SlashCommandMenu",
     () => realSlashCommandMenuSnapshot,
   );
+  mock.module("@/hooks/useFileMentions", () => realUseFileMentionsSnapshot);
+  mock.module("@/hooks/useFileSearch", () => realUseFileSearchSnapshot);
 });
 
 // --- Module mocks (must be before component import) ---
