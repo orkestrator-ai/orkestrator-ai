@@ -2,12 +2,20 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeTmuxStore } from "@/stores/claudeTmuxStore";
+import { useEnvironmentStore } from "@/stores/environmentStore";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
+import * as realTauri from "@/lib/tauri";
 import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
 import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
+import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
+import type { FileCandidate } from "@/types";
 
 const realTmuxClientSnapshot = { ...realTmuxClient };
+const realTauriSnapshot = { ...realTauri };
 const realClaudeMessageSnapshot = { ...realClaudeMessage };
+const realFileMentionMenuSnapshot = { ...realFileMentionMenu };
+const getFileTreeMock = mock(async () => []);
+const getLocalFileTreeMock = mock(async () => []);
 
 const startSessionMock = mock(async () => ({
   tab_id: "tab-1",
@@ -83,6 +91,21 @@ mock.module("@/components/claude/ClaudeMessage", () => ({
   ClaudeMessage: claudeMessageRenderMock,
 }));
 
+mock.module("@/lib/tauri", () => ({
+  getFileTree: getFileTreeMock,
+  getLocalFileTree: getLocalFileTreeMock,
+}));
+
+mock.module("@/components/chat/FileMentionMenu", () => ({
+  FileMentionMenu: ({ files }: { files: FileCandidate[] }) => (
+    <div>
+      {files.map((file) => (
+        <div key={file.relativePath}>{file.filename}</div>
+      ))}
+    </div>
+  ),
+}));
+
 const { ClaudeTmuxChatTab, parseTmuxSelectionPrompt } = await import(
   "@/components/claude/ClaudeTmuxChatTab"
 );
@@ -118,11 +141,17 @@ function seedPane(initialPrompt?: string) {
 describe("ClaudeTmuxChatTab", () => {
   afterAll(() => {
     mock.module("@/lib/claude-tmux-client", () => realTmuxClientSnapshot);
+    mock.module("@/lib/tauri", () => realTauriSnapshot);
     mock.module("@/components/claude/ClaudeMessage", () => realClaudeMessageSnapshot);
+    mock.module("@/components/chat/FileMentionMenu", () => realFileMentionMenuSnapshot);
   });
 
   beforeEach(() => {
     cleanup();
+    getFileTreeMock.mockReset();
+    getFileTreeMock.mockResolvedValue([]);
+    getLocalFileTreeMock.mockReset();
+    getLocalFileTreeMock.mockResolvedValue([]);
     startSessionMock.mockClear();
     getStatusMock.mockClear();
     getStatusMock.mockImplementation(async () => null);
@@ -151,6 +180,17 @@ describe("ClaudeTmuxChatTab", () => {
       },
     ]);
     useClaudeTmuxStore.setState({ tabs: new Map() });
+    useEnvironmentStore.setState({
+      environments: [],
+      isLoading: false,
+      error: null,
+      workspaceReadyEnvironments: new Set(),
+      deletingEnvironments: new Set(),
+      pendingSetupCommands: new Map(),
+      setupCommandsResolved: new Set(),
+      setupScriptsRunning: new Set(),
+      sessionActivated: new Set(),
+    });
     seedPane("Run the audit");
   });
 
@@ -443,6 +483,147 @@ describe("ClaudeTmuxChatTab", () => {
     await screen.findByText("Slash Commands");
     fireEvent.keyDown(textarea, { key: "Escape" });
     expect(screen.queryByText("Slash Commands")).toBeNull();
+  });
+
+  test("inserts a selected @ file mention into the tmux compose input", async () => {
+    useClaudeTmuxStore.getState().setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    getFileTreeMock.mockResolvedValue([
+      {
+        name: "src",
+        path: "src",
+        isDirectory: true,
+        children: [
+          {
+            name: "Button.tsx",
+            path: "src/components/Button.tsx",
+            isDirectory: false,
+            extension: ".tsx",
+          },
+        ],
+      },
+    ]);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
+
+    const cursorPosition = "Review @".length;
+    fireEvent.change(textarea, {
+      target: {
+        value: "Review @",
+        selectionStart: cursorPosition,
+        selectionEnd: cursorPosition,
+      },
+    });
+    textarea.setSelectionRange(cursorPosition, cursorPosition);
+    fireEvent.click(textarea);
+
+    await screen.findByText("Button.tsx");
+
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("Review @src/components/Button.tsx ");
+    });
+    expect(screen.queryByText("Button.tsx")).toBeNull();
+  });
+
+  test("loads @ file suggestions from a local worktree when no container is present", async () => {
+    useClaudeTmuxStore.getState().setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    useEnvironmentStore.setState({
+      environments: [
+        {
+          id: "env-1",
+          projectId: "project-1",
+          name: "Local env",
+          branch: "main",
+          containerId: null,
+          status: "running",
+          prUrl: null,
+          prState: null,
+          hasMergeConflicts: null,
+          createdAt: new Date().toISOString(),
+          networkAccessMode: "restricted",
+          order: 0,
+          environmentType: "local",
+          worktreePath: "/tmp/local-repo",
+        },
+      ],
+    });
+    getLocalFileTreeMock.mockResolvedValue([
+      {
+        name: "local.ts",
+        path: "src/local.ts",
+        isDirectory: false,
+        extension: ".ts",
+      },
+    ]);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", isLocal: true }}
+        isActive
+      />,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: {
+        value: "@",
+        selectionStart: 1,
+        selectionEnd: 1,
+      },
+    });
+
+    await waitFor(() => {
+      expect(getLocalFileTreeMock).toHaveBeenCalledWith("/tmp/local-repo");
+    });
+    expect(await screen.findByText("local.ts")).toBeTruthy();
+    expect(getFileTreeMock).not.toHaveBeenCalled();
+  });
+
+  test("keeps Enter from submitting while an empty @ file mention menu is open", async () => {
+    useClaudeTmuxStore.getState().setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: {
+        value: "@missing",
+        selectionStart: "@missing".length,
+        selectionEnd: "@missing".length,
+      },
+    });
+
+    submitMock.mockClear();
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(submitMock).not.toHaveBeenCalled();
+    expect(textarea.value).toBe("@missing");
   });
 
   test("locks launch-only model and plan controls once the session is running", async () => {

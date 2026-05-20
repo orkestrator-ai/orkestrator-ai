@@ -15,7 +15,7 @@ interface MentionableInputProps {
   value: string;
   mentions: FileMention[];
   onChange: (text: string, mentions: FileMention[]) => void;
-  onCursorChange?: (position: number) => void;
+  onCursorChange?: (position: number, text: string) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   placeholder?: string;
   disabled?: boolean;
@@ -68,6 +68,10 @@ function getCursorOffset(element: HTMLElement): number {
   }
 
   const range = selection.getRangeAt(0);
+  if (!element.contains(range.startContainer)) {
+    return extractText(element).length;
+  }
+
   const preCaretRange = range.cloneRange();
   preCaretRange.selectNodeContents(element);
   preCaretRange.setEnd(range.startContainer, range.startOffset);
@@ -172,6 +176,7 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
     const isComposingRef = useRef(false);
     const pendingCursorRef = useRef<number | null>(null);
     const initializedRef = useRef(false);
+    const lastCursorPositionRef = useRef(value.length);
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
@@ -180,7 +185,13 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
       insertMention: (mention: FileMention) => {
         if (!inputRef.current) return;
 
-        const cursorPos = getCursorOffset(inputRef.current);
+        const activeSelection = window.getSelection();
+        const cursorPos =
+          activeSelection
+          && activeSelection.rangeCount > 0
+          && inputRef.current.contains(activeSelection.getRangeAt(0).startContainer)
+            ? getCursorOffset(inputRef.current)
+            : lastCursorPositionRef.current;
         const currentText = extractText(inputRef.current);
         const textBefore = currentText.slice(0, cursorPos);
         const atMatch = textBefore.match(/@([^\s@]*)$/);
@@ -194,6 +205,7 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
           const newMentions = [...mentions, mention];
 
           pendingCursorRef.current = atStart + mention.filename.length + 2;
+          lastCursorPositionRef.current = pendingCursorRef.current;
           onChange(newText, newMentions);
         }
       },
@@ -216,6 +228,7 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
       lastMentionsRef.current = mentions;
 
       const cursorPos = isFirstRender ? value.length : getCursorOffset(inputRef.current);
+      lastCursorPositionRef.current = cursorPos;
       inputRef.current.innerHTML = renderContent(value, mentions);
       setCursorOffset(inputRef.current, cursorPos);
     }, [value, mentions]);
@@ -223,6 +236,7 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
     useLayoutEffect(() => {
       if (pendingCursorRef.current !== null && inputRef.current) {
         setCursorOffset(inputRef.current, pendingCursorRef.current);
+        lastCursorPositionRef.current = pendingCursorRef.current;
         pendingCursorRef.current = null;
       }
     }, [value, mentions]);
@@ -240,7 +254,9 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
       onChange(newText, remainingMentions);
 
       if (onCursorChange) {
-        onCursorChange(getCursorOffset(inputRef.current));
+        const cursorPosition = getCursorOffset(inputRef.current);
+        lastCursorPositionRef.current = cursorPosition;
+        onCursorChange(cursorPosition, newText);
       }
     }, [mentions, onChange, onCursorChange]);
 
@@ -263,7 +279,9 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
         const range = selection.getRangeAt(0);
         if (!inputRef.current.contains(range.commonAncestorContainer)) return;
 
-        onCursorChange(getCursorOffset(inputRef.current));
+        const cursorPosition = getCursorOffset(inputRef.current);
+        lastCursorPositionRef.current = cursorPosition;
+        onCursorChange(cursorPosition, extractText(inputRef.current));
       };
 
       document.addEventListener("selectionchange", handleSelectionChange);

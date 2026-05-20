@@ -288,10 +288,10 @@ export function CodexComposeBar({
   );
 
   const handleCursorPositionChange = useCallback(
-    (position: number) => {
-      detectFileMention(position, text);
+    (position: number, currentText: string) => {
+      detectFileMention(position, currentText);
     },
-    [detectFileMention, text],
+    [detectFileMention],
   );
 
   const handleFileMentionSelect = useCallback(
@@ -428,7 +428,7 @@ export function CodexComposeBar({
           onChange={handleTextAndMentionsChange}
           onCursorChange={handleCursorPositionChange}
           onKeyDown={(event) => {
-            if (fileMentionMenuOpen && filteredFiles.length > 0) {
+            if (fileMentionMenuOpen) {
               const handled = handleFileMentionKeyDown(event, (file) => {
                 const mention = createMention(file);
                 inputRef.current?.insertMention(mention);
