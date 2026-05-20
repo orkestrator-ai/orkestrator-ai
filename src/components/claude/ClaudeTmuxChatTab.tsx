@@ -8,7 +8,7 @@
 // `<ClaudeMessage>` renderer; we only build a slim compose bar of our own
 // that matches the native styling and adds model / plan-mode controls.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Check,
@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
+import { ClaudeQuestionCard } from "@/components/claude/ClaudeQuestionCard";
 import { ResumeTmuxSessionDialog } from "@/components/claude/ResumeTmuxSessionDialog";
 import { formatElapsed } from "@/lib/format-elapsed";
 import {
@@ -39,6 +40,9 @@ import {
   SlashCommandMenu,
   type SlashCommand,
 } from "@/components/claude/SlashCommandMenu";
+import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
+import { useFileMentions } from "@/hooks/useFileMentions";
+import { useFileSearch } from "@/hooks/useFileSearch";
 import {
   answerPreToolUse,
   capturePane,
@@ -70,7 +74,9 @@ import {
   type TmuxPendingQuestion,
 } from "@/stores/claudeTmuxStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
+import { useEnvironmentStore } from "@/stores/environmentStore";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
+import type { FileCandidate } from "@/types";
 
 interface Props {
   tabId: string;
@@ -149,6 +155,9 @@ const TMUX_BUILTIN_SLASH_COMMANDS: SlashCommand[] = parseSlashCommands([
 
 export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Props) {
   const { environmentId, containerId } = data;
+  const worktreePath = useEnvironmentStore(
+    (state) => state.getEnvironmentById(environmentId)?.worktreePath,
+  );
 
   const tabState = useClaudeTmuxStore((s) => s.tabs.get(tabId));
   const setRunning = useClaudeTmuxStore((s) => s.setRunning);
@@ -498,8 +507,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
 
   const handleQuestionAnswer = async (
     question: TmuxPendingQuestion,
-    answers: Record<string, string>,
-  ) => {
+    answers: string[][],
+  ): Promise<boolean> => {
     try {
       await replyHook(
         tabId,
@@ -508,12 +517,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         preToolAllow({
           ...question.toolInput,
           questions: question.questions,
-          answers,
+          answers: questionAnswersToRecord(question.questions, answers),
         }),
       );
       removePendingQuestion(tabId, question.eventId);
+      return true;
     } catch (e) {
       setError(String(e));
+      return false;
     }
   };
 
@@ -795,10 +806,15 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           ))}
 
           {pendingQuestions.map((q) => (
-            <TmuxQuestionCard
+            <ClaudeQuestionCard
               key={q.eventId}
-              question={q}
-              onSubmit={(answers) => handleQuestionAnswer(q, answers)}
+              question={{
+                id: q.eventId,
+                sessionId: tabState?.sessionId ?? tabId,
+                questions: q.questions,
+                toolUseId: q.eventId,
+              }}
+              onSubmitAnswers={(answers) => handleQuestionAnswer(q, answers)}
               onDismiss={() => handleQuestionReject(q)}
             />
           ))}
@@ -871,6 +887,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       <TmuxComposeBar
         value={draft}
         setValue={setDraft}
+        containerId={containerId}
+        worktreePath={worktreePath}
         disabled={!running}
         busy={sending || isThinking || modelSwitching}
         autoFocus={isActive}
@@ -954,114 +972,6 @@ function StartScreen({
 }
 
 // ─── Structured hook cards ──────────────────────────────────────────────────
-
-function TmuxQuestionCard({
-  question,
-  onSubmit,
-  onDismiss,
-}: {
-  question: TmuxPendingQuestion;
-  onSubmit: (answers: Record<string, string>) => void;
-  onDismiss: () => void;
-}) {
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-
-  const setAnswer = (questionText: string, label: string, multi: boolean) => {
-    setAnswers((prev) => {
-      const current = prev[questionText] ?? [];
-      if (!multi) return { ...prev, [questionText]: [label] };
-      return current.includes(label)
-        ? { ...prev, [questionText]: current.filter((x) => x !== label) }
-        : { ...prev, [questionText]: [...current, label] };
-    });
-  };
-
-  const ready = question.questions.every((q) => (answers[q.question] ?? []).length > 0);
-  const submit = () => {
-    const mapped: Record<string, string> = {};
-    for (const q of question.questions) {
-      mapped[q.question] = (answers[q.question] ?? []).join(", ");
-    }
-    onSubmit(mapped);
-  };
-
-  return (
-    <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 px-3 py-3 mb-3">
-      <div className="text-xs uppercase tracking-wide text-blue-300 mb-2">
-        Claude has a question
-      </div>
-      <div className="space-y-4">
-        {question.questions.map((q) => {
-          const selected = answers[q.question] ?? [];
-          const options = q.options ?? [];
-          return (
-            <div key={q.question} className="space-y-2">
-              <div className="text-sm font-medium text-foreground">
-                {q.header || q.question}
-              </div>
-              {q.header && (
-                <div className="text-sm text-muted-foreground">{q.question}</div>
-              )}
-              <div className="space-y-1">
-                {options.length === 0 && (
-                  <input
-                    value={selected[0] ?? ""}
-                    onChange={(e) =>
-                      setAnswers((prev) => ({
-                        ...prev,
-                        [q.question]: e.target.value.trim()
-                          ? [e.target.value]
-                          : [],
-                      }))
-                    }
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none"
-                  />
-                )}
-                {options.map((option) => {
-                  const isSelected = selected.includes(option.label);
-                  return (
-                    <button
-                      key={option.label}
-                      type="button"
-                      onClick={() =>
-                        setAnswer(q.question, option.label, q.multiSelect ?? false)
-                      }
-                      className={cn(
-                        "w-full min-w-0 rounded border px-2.5 py-2 text-left text-sm transition-colors",
-                        "flex items-start gap-2",
-                        isSelected
-                          ? "border-blue-500/70 bg-blue-500/15 text-blue-50"
-                          : "border-border/70 bg-background/50 hover:bg-muted/60",
-                      )}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block break-words">{option.label}</span>
-                        {option.description && (
-                          <span className="block text-xs text-muted-foreground">
-                            {option.description}
-                          </span>
-                        )}
-                      </span>
-                      {isSelected && <Check className="h-4 w-4 shrink-0 text-blue-300" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex justify-end gap-2 mt-3">
-        <Button variant="ghost" size="sm" onClick={onDismiss}>
-          Dismiss
-        </Button>
-        <Button size="sm" onClick={submit} disabled={!ready}>
-          Submit
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 function TmuxPlanCard({
   plan,
@@ -1564,6 +1474,17 @@ function hookToolName(payload: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function questionAnswersToRecord(
+  questions: TmuxPendingQuestion["questions"],
+  answers: string[][],
+): Record<string, string> {
+  const mapped: Record<string, string> = {};
+  questions.forEach((question, index) => {
+    mapped[question.question] = (answers[index] ?? []).join(", ");
+  });
+  return mapped;
+}
+
 function preToolAllow(updatedInput: Record<string, unknown>) {
   return {
     hookSpecificOutput: {
@@ -1654,6 +1575,8 @@ function modelCommandArg(id: string) {
 interface TmuxComposeBarProps {
   value: string;
   setValue: (v: string) => void;
+  containerId?: string;
+  worktreePath?: string;
   disabled: boolean;
   busy: boolean;
   autoFocus?: boolean;
@@ -1670,6 +1593,8 @@ interface TmuxComposeBarProps {
 function TmuxComposeBar({
   value,
   setValue,
+  containerId,
+  worktreePath,
   disabled,
   busy,
   autoFocus,
@@ -1683,6 +1608,8 @@ function TmuxComposeBar({
   planLocked,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const prevFileMentionMenuOpen = useRef(false);
+  const pendingCursorPositionRef = useRef<number | null>(null);
   const modelObj = useMemo(
     () => TMUX_MODELS.find((m) => m.id === selectedModel) ?? TMUX_MODELS[1]!,
     [selectedModel],
@@ -1692,6 +1619,16 @@ function TmuxComposeBar({
   // TMUX_BUILTIN_SLASH_COMMANDS at the top of the file.
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const { searchFiles, error: fileSearchError, refresh: refreshFileTree } =
+    useFileSearch(containerId, worktreePath, false);
+  const {
+    isMenuOpen: fileMentionMenuOpen,
+    selectedIndex: fileMentionSelectedIndex,
+    filteredFiles,
+    handleCursorChange: detectFileMention,
+    handleKeyDown: handleFileMentionKeyDown,
+    closeMenu: closeFileMentionMenu,
+  } = useFileMentions({ searchFiles });
 
   const filteredSlashCommands = useMemo(() => {
     if (!value.startsWith("/")) return [];
@@ -1707,6 +1644,36 @@ function TmuxComposeBar({
   // Open/close the menu based on whether the input *currently* looks like
   // the start of a slash command (no space yet → still typing the command
   // name; space typed → user has moved on to arguments, hide the menu).
+  useEffect(() => {
+    if (fileMentionMenuOpen) {
+      setSlashMenuOpen(false);
+    }
+  }, [fileMentionMenuOpen]);
+
+  useEffect(() => {
+    if (fileSearchError) {
+      console.debug("[ClaudeTmuxChatTab] Failed to load files for @mentions", fileSearchError);
+    }
+  }, [fileSearchError]);
+
+  useEffect(() => {
+    const wasOpen = prevFileMentionMenuOpen.current;
+    prevFileMentionMenuOpen.current = fileMentionMenuOpen;
+    if (!wasOpen && fileMentionMenuOpen) {
+      refreshFileTree();
+    }
+  }, [fileMentionMenuOpen, refreshFileTree]);
+
+  useLayoutEffect(() => {
+    const cursorPosition = pendingCursorPositionRef.current;
+    const textarea = textareaRef.current;
+    if (cursorPosition === null || !textarea) return;
+
+    textarea.focus();
+    textarea.setSelectionRange(cursorPosition, cursorPosition);
+    pendingCursorPositionRef.current = null;
+  }, [value]);
+
   useEffect(() => {
     if (!value.startsWith("/")) {
       setSlashMenuOpen(false);
@@ -1739,9 +1706,37 @@ function TmuxComposeBar({
     textareaRef.current?.focus();
   };
 
+  const updateFileMentionDetection = (position: number, currentValue: string) => {
+    detectFileMention(position, currentValue);
+  };
+
+  const selectFileMention = (file: FileCandidate) => {
+    const textarea = textareaRef.current;
+    const cursorPosition = textarea?.selectionStart ?? value.length;
+    const textBeforeCursor = value.slice(0, cursorPosition);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    const atStart = atMatch ? textBeforeCursor.length - atMatch[0].length : cursorPosition;
+    const insertedText = `@${file.relativePath} `;
+    const nextValue =
+      value.slice(0, atStart) + insertedText + value.slice(cursorPosition);
+
+    pendingCursorPositionRef.current = atStart + insertedText.length;
+    setValue(nextValue);
+    closeFileMentionMenu();
+  };
+
   return (
     <div className="shrink-0 border-t border-border bg-background p-3">
       <div className="relative">
+        {fileMentionMenuOpen && (
+          <FileMentionMenu
+            files={filteredFiles}
+            selectedIndex={fileMentionSelectedIndex}
+            onSelect={selectFileMention}
+            onClose={closeFileMentionMenu}
+          />
+        )}
+
         {slashMenuOpen && filteredSlashCommands.length > 0 && (
           <SlashCommandMenu
             commands={filteredSlashCommands}
@@ -1753,8 +1748,32 @@ function TmuxComposeBar({
         <textarea
           ref={textareaRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            const nextValue = e.target.value;
+            setValue(nextValue);
+            updateFileMentionDetection(e.target.selectionStart, nextValue);
+          }}
+          onClick={(e) => {
+            updateFileMentionDetection(e.currentTarget.selectionStart, e.currentTarget.value);
+          }}
+          onKeyUp={(e) => {
+            if (
+              e.key === "ArrowLeft" ||
+              e.key === "ArrowRight" ||
+              e.key === "Home" ||
+              e.key === "End" ||
+              e.key === "Backspace" ||
+              e.key === "Delete"
+            ) {
+              updateFileMentionDetection(e.currentTarget.selectionStart, e.currentTarget.value);
+            }
+          }}
           onKeyDown={(e) => {
+            if (fileMentionMenuOpen) {
+              const handled = handleFileMentionKeyDown(e, selectFileMention);
+              if (handled) return;
+            }
+
             // Slash-command menu takes keyboard priority while open.
             if (slashMenuOpen && filteredSlashCommands.length > 0) {
               switch (e.key) {
@@ -1805,7 +1824,7 @@ function TmuxComposeBar({
           placeholder={
             disabled
               ? "Session not running"
-              : "Ask Claude anything… (Shift+Enter for newline; / for commands)"
+              : "Ask Claude anything… (@ to mention, / for commands)"
           }
           disabled={disabled || busy}
           rows={2}

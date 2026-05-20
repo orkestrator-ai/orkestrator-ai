@@ -7,11 +7,26 @@ import type { ClaudeClient, ClaudeQuestionRequest, QuestionInfo } from "@/lib/cl
 import { answerQuestion } from "@/lib/claude-client";
 import { useClaudeStore } from "@/stores/claudeStore";
 
-interface ClaudeQuestionCardProps {
+type SubmitAnswersHandler = (
+  answers: string[][]
+) => Promise<boolean | void> | boolean | void;
+
+interface ClaudeQuestionCardBaseProps {
   question: ClaudeQuestionRequest;
-  client: ClaudeClient;
-  sessionId: string;
+  onDismiss?: () => Promise<void> | void;
 }
+
+type ClaudeQuestionCardProps =
+  | (ClaudeQuestionCardBaseProps & {
+      client: ClaudeClient;
+      sessionId: string;
+      onSubmitAnswers?: never;
+    })
+  | (ClaudeQuestionCardBaseProps & {
+      client?: never;
+      sessionId?: never;
+      onSubmitAnswers: SubmitAnswersHandler;
+    });
 
 /** Single question item with options or text input */
 function QuestionItem({
@@ -211,6 +226,8 @@ export function ClaudeQuestionCard({
   question,
   client,
   sessionId,
+  onSubmitAnswers,
+  onDismiss,
 }: ClaudeQuestionCardProps) {
   const { removePendingQuestion } = useClaudeStore();
 
@@ -299,8 +316,10 @@ export function ClaudeQuestionCard({
 
     setIsSubmitting(true);
     try {
-      const success = await answerQuestion(client, sessionId, question.id, effectiveAnswers);
-      if (success) {
+      const success = onSubmitAnswers
+        ? (await onSubmitAnswers(effectiveAnswers)) !== false
+        : await answerQuestion(client, sessionId, question.id, effectiveAnswers);
+      if (success && !onSubmitAnswers) {
         removePendingQuestion(question.id);
       }
     } catch (error) {
@@ -314,6 +333,7 @@ export function ClaudeQuestionCard({
     canSubmit,
     client,
     sessionId,
+    onSubmitAnswers,
     question.id,
     question.questions,
     mergeAnswerForIndex,
@@ -322,8 +342,12 @@ export function ClaudeQuestionCard({
 
   // Handle dismiss - just remove the question locally (server will handle timeout)
   const handleDismiss = useCallback(() => {
+    if (onDismiss) {
+      void onDismiss();
+      return;
+    }
     removePendingQuestion(question.id);
-  }, [question.id, removePendingQuestion]);
+  }, [onDismiss, question.id, removePendingQuestion]);
 
   // Determine button text
   const isLastQuestion = currentQuestionIndex === questionCount - 1;
