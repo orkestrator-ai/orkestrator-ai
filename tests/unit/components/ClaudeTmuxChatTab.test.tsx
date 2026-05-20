@@ -1251,6 +1251,192 @@ Enter to confirm · Esc to cancel
     });
   });
 
+  test("maps multi-question and multi-select AskUserQuestion answers", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingQuestion("tab-1", {
+      eventId: "q-hook",
+      questions: [
+        {
+          question: "Which frameworks?",
+          header: "Frameworks",
+          options: [{ label: "React" }, { label: "Vue" }],
+          multiSelect: true,
+        },
+        {
+          question: "Any notes?",
+          header: "Notes",
+          options: [],
+          multiSelect: false,
+        },
+      ],
+      toolInput: {
+        questions: [
+          {
+            question: "Which frameworks?",
+            header: "Frameworks",
+            options: [{ label: "React" }, { label: "Vue" }],
+            multiSelect: true,
+          },
+          {
+            question: "Any notes?",
+            header: "Notes",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      },
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /React/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Vue/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByPlaceholderText(/Type your answer/i), {
+      target: { value: "Prefer TypeScript-first tooling" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "PreToolUse",
+        "q-hook",
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            updatedInput: expect.objectContaining({
+              answers: {
+                "Which frameworks?": "React, Vue",
+                "Any notes?": "Prefer TypeScript-first tooling",
+              },
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  test("keeps AskUserQuestion pending when replyHook fails", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingQuestion("tab-1", {
+      eventId: "q-hook",
+      questions: [
+        {
+          question: "Which framework?",
+          header: "Framework",
+          options: [{ label: "React" }],
+          multiSelect: false,
+        },
+      ],
+      toolInput: {
+        questions: [
+          {
+            question: "Which framework?",
+            header: "Framework",
+            options: [{ label: "React" }],
+            multiSelect: false,
+          },
+        ],
+      },
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+    replyHookMock.mockImplementationOnce(async () => {
+      throw new Error("bridge down");
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /React/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Error: bridge down")).toBeTruthy();
+      expect(useClaudeTmuxStore.getState().getTab("tab-1").pendingQuestions).toHaveLength(1);
+    });
+  });
+
+  test("dismisses AskUserQuestion hooks with a PreToolUse denial", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingQuestion("tab-1", {
+      eventId: "q-hook",
+      questions: [
+        {
+          question: "Which framework?",
+          header: "Framework",
+          options: [{ label: "React" }],
+          multiSelect: false,
+        },
+      ],
+      toolInput: {
+        questions: [
+          {
+            question: "Which framework?",
+            header: "Framework",
+            options: [{ label: "React" }],
+            multiSelect: false,
+          },
+        ],
+      },
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "PreToolUse",
+        "q-hook",
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            permissionDecision: "deny",
+            permissionDecisionReason: "User declined to answer the question.",
+          }),
+        }),
+      );
+      expect(useClaudeTmuxStore.getState().getTab("tab-1").pendingQuestions).toEqual([]);
+    });
+  });
+
   test("answers plan approvals and change requests", async () => {
     useClaudeTmuxStore
       .getState()
