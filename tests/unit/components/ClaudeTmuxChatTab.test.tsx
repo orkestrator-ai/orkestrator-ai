@@ -38,6 +38,7 @@ const subscribeMock = mock(async (handler: (event: realTmuxClient.TmuxEvent) => 
   };
 });
 const stopSessionMock = mock(async () => {});
+const interruptSessionMock = mock(async () => {});
 const capturePaneMock = mock(async () => "");
 const sendKeysMock = mock(async () => {});
 const replyHookMock = mock(async () => {});
@@ -78,6 +79,7 @@ mock.module("@/lib/claude-tmux-client", () => ({
   getPendingHooks: getPendingHooksMock,
   subscribe: subscribeMock,
   stopSession: stopSessionMock,
+  interruptSession: interruptSessionMock,
   capturePane: capturePaneMock,
   sendKeys: sendKeysMock,
   replyHook: replyHookMock,
@@ -162,6 +164,7 @@ describe("ClaudeTmuxChatTab", () => {
     subscribedHandler = null;
     subscribeMock.mockClear();
     stopSessionMock.mockClear();
+    interruptSessionMock.mockClear();
     capturePaneMock.mockClear();
     sendKeysMock.mockClear();
     replyHookMock.mockClear();
@@ -678,7 +681,7 @@ describe("ClaudeTmuxChatTab", () => {
     });
   });
 
-  test("stops the running tmux session from the header", async () => {
+  test("interrupts the running tmux session from the header", async () => {
     useClaudeTmuxStore
       .getState()
       .setRunning("tab-1", true, {
@@ -694,9 +697,67 @@ describe("ClaudeTmuxChatTab", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
 
-    expect(stopSessionMock).toHaveBeenCalledWith("tab-1");
+    expect(interruptSessionMock).toHaveBeenCalledWith("tab-1");
+    expect(stopSessionMock).not.toHaveBeenCalled();
+  });
+
+  test("shows an enabled interrupt button in the compose bar while busy and keeps draft editable", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().setBusy("tab-1", true);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = screen.getByPlaceholderText(
+      /Ask Claude anything/,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "continue with this" } });
+    expect(textarea.value).toBe("continue with this");
+
+    fireEvent.click(screen.getByTitle("Interrupt current response"));
+
+    await waitFor(() => {
+      expect(interruptSessionMock).toHaveBeenCalledWith("tab-1");
+    });
+    expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(false);
+  });
+
+  test("shows interrupt errors without clearing busy state", async () => {
+    interruptSessionMock.mockImplementationOnce(async () => {
+      throw new Error("interrupt failed");
+    });
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().setBusy("tab-1", true);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("Interrupt current response"));
+
+    expect(await screen.findByText("Error: interrupt failed")).toBeTruthy();
+    expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(true);
   });
 
   test("shows submit errors and re-enables compose after a failed prompt", async () => {

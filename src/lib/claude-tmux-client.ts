@@ -153,6 +153,10 @@ export async function stopSession(tabId: string): Promise<void> {
   await invoke("claude_tmux_stop", { tabId });
 }
 
+export async function interruptSession(tabId: string): Promise<void> {
+  await invoke("claude_tmux_interrupt", { tabId });
+}
+
 export async function getStatus(tabId: string): Promise<TmuxStatus | null> {
   return invoke<TmuxStatus | null>("claude_tmux_status", { tabId });
 }

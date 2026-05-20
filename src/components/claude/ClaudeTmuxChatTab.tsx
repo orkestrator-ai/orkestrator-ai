@@ -48,10 +48,10 @@ import {
   getPendingHooks,
   getStatus,
   getTranscript,
+  interruptSession,
   replyHook,
   sendKeys,
   startSession,
-  stopSession,
   submit as submitToTmux,
   subscribe,
   type TmuxPendingHook,
@@ -490,6 +490,17 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     }
   };
 
+  const handleInterrupt = async () => {
+    if (!running) return;
+    setError(null);
+    try {
+      await interruptSession(tabId);
+      setTabBusy(tabId, false);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const handleApproval = async (
     eventId: string,
     decision: "approve" | "block",
@@ -692,10 +703,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           <button
             type="button"
             className="text-muted-foreground hover:text-foreground"
-            onClick={() => stopSession(tabId)}
+            onClick={handleInterrupt}
             disabled={!running}
+            title="Interrupt the current Claude turn without closing tmux"
           >
-            Stop
+            Interrupt
           </button>
         </div>
       </div>
@@ -859,9 +871,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         containerId={containerId}
         worktreePath={worktreePath}
         disabled={!running}
-        busy={sending || isThinking}
+        busy={isThinking}
+        submitting={sending}
         autoFocus={isActive}
         onSubmit={handleSubmit}
+        onInterrupt={handleInterrupt}
         selectedModel={selectedModel}
         onSelectModel={setSelectedModel}
         planMode={planMode}
@@ -1637,8 +1651,10 @@ interface TmuxComposeBarProps {
   worktreePath?: string;
   disabled: boolean;
   busy: boolean;
+  submitting: boolean;
   autoFocus?: boolean;
   onSubmit: () => void;
+  onInterrupt: () => void;
   selectedModel: string;
   onSelectModel: (id: string) => void;
   planMode: boolean;
@@ -1653,8 +1669,10 @@ function TmuxComposeBar({
   worktreePath,
   disabled,
   busy,
+  submitting,
   autoFocus,
   onSubmit,
+  onInterrupt,
   selectedModel,
   onSelectModel,
   planMode,
@@ -1870,7 +1888,13 @@ function TmuxComposeBar({
 
             // Enter submits; Shift+Enter (and Cmd/Ctrl+Enter, for muscle
             // memory) inserts a newline.
-            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+            if (
+              !busy &&
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.metaKey &&
+              !e.ctrlKey
+            ) {
               e.preventDefault();
               onSubmit();
             }
@@ -1880,7 +1904,7 @@ function TmuxComposeBar({
               ? "Session not running"
               : "Ask Claude anything… (@ to mention, / for commands)"
           }
-          disabled={disabled || busy}
+          disabled={disabled || submitting}
           rows={2}
           autoFocus={autoFocus}
           className={cn(
@@ -1985,10 +2009,10 @@ function TmuxComposeBar({
         {/* Send / Stop button */}
         <Button
           size="sm"
-          onClick={onSubmit}
-          disabled={disabled || busy || !value.trim()}
+          onClick={busy ? onInterrupt : onSubmit}
+          disabled={disabled || submitting || (!busy && !value.trim())}
           className="h-7 w-7 p-0 rounded-full"
-          title="Send (↵)"
+          title={busy ? "Interrupt current response" : "Send (↵)"}
         >
           {busy ? (
             <Square className="w-3.5 h-3.5" />

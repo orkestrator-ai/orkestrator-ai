@@ -15,3 +15,7 @@ pub mod session;
 pub mod transcript;
 
 pub use manager::{get_manager, init_manager};
+
+#[cfg(test)]
+pub(crate) static TEST_PATH_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
