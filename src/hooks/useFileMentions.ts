@@ -94,18 +94,20 @@ export function useFileMentions({
       event: React.KeyboardEvent,
       onSelect: (file: FileCandidate) => void
     ): boolean => {
-      if (!isMenuOpen || filteredFiles.length === 0) {
+      if (!isMenuOpen) {
         return false;
       }
 
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
+          if (filteredFiles.length === 0) return true;
           setSelectedIndex((prev) => (prev + 1) % filteredFiles.length);
           return true;
 
         case "ArrowUp":
           event.preventDefault();
+          if (filteredFiles.length === 0) return true;
           setSelectedIndex((prev) =>
             prev === 0 ? filteredFiles.length - 1 : prev - 1
           );
@@ -113,6 +115,10 @@ export function useFileMentions({
 
         case "Tab":
         case "Enter":
+          if (filteredFiles.length === 0) {
+            event.preventDefault();
+            return true;
+          }
           if (filteredFiles[safeSelectedIndex]) {
             event.preventDefault();
             onSelect(filteredFiles[safeSelectedIndex]);

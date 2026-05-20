@@ -5,6 +5,7 @@ import { mockReadImage } from "../../mocks/clipboard";
 const mockWriteContainerFile = mock(async () => {});
 const mockWriteLocalFile = mock(async () => "/tmp/file.png");
 const mockSerializeForLLM = mock((text: string, _mentions?: unknown[]) => text);
+const mockHandleFileMentionCursorChange = mock(() => {});
 
 // Snapshot modules before stubbing them so later suites that exercise the
 // real file mention flow do not inherit these isolated compose-bar stubs.
@@ -45,13 +46,17 @@ mock.module("@/components/chat/MentionableInput", () => ({
     disabled?: boolean;
     onKeyDown?: (e: unknown) => void;
     onChange?: (text: string, mentions: unknown[]) => void;
+    onCursorChange?: (position: number, text: string) => void;
   }) => (
     <textarea
       data-testid="mentionable-input"
       value={props.value}
       placeholder={props.placeholder}
       disabled={props.disabled}
-      onChange={(e) => props.onChange?.(e.target.value, [])}
+      onChange={(e) => {
+        props.onChange?.(e.target.value, []);
+        props.onCursorChange?.(e.target.selectionStart, e.target.value);
+      }}
       onKeyDown={props.onKeyDown as React.KeyboardEventHandler}
     />
   ),
@@ -75,7 +80,7 @@ mock.module("@/hooks/useFileMentions", () => ({
     isMenuOpen: false,
     selectedIndex: 0,
     filteredFiles: [],
-    handleCursorChange: () => {},
+    handleCursorChange: mockHandleFileMentionCursorChange,
     handleKeyDown: () => false,
     closeMenu: () => {},
     serializeForLLM: mockSerializeForLLM,
@@ -177,6 +182,7 @@ describe("CodexComposeBar", () => {
     mockWriteLocalFile.mockReset();
     mockSerializeForLLM.mockReset();
     mockSerializeForLLM.mockImplementation((text: string) => text);
+    mockHandleFileMentionCursorChange.mockReset();
     mockReadImage.mockImplementation(async () => ({
       rgba: async () => new Uint8Array([255, 0, 0, 255]),
       size: async () => ({ width: 1, height: 1 }),
@@ -375,6 +381,23 @@ describe("CodexComposeBar", () => {
     await waitFor(() => {
       expect(onSend).toHaveBeenCalledWith("@app -> src/app.ts", []);
     });
+  });
+
+  test("passes current editable text to file mention detection", async () => {
+    renderComposeBar();
+    const input = screen.getByTestId("mentionable-input") as HTMLTextAreaElement;
+
+    fireEvent.change(input, {
+      target: {
+        value: "Review @app",
+        selectionStart: "Review @app".length,
+      },
+    });
+
+    expect(mockHandleFileMentionCursorChange).toHaveBeenCalledWith(
+      "Review @app".length,
+      "Review @app",
+    );
   });
 
   test("selects a slash command instead of sending when Enter is pressed on slash input", async () => {

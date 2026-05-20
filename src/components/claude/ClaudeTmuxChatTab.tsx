@@ -1823,7 +1823,7 @@ function TmuxComposeBar({
             }
           }}
           onKeyDown={(e) => {
-            if (fileMentionMenuOpen && filteredFiles.length > 0) {
+            if (fileMentionMenuOpen) {
               const handled = handleFileMentionKeyDown(e, selectFileMention);
               if (handled) return;
             }
