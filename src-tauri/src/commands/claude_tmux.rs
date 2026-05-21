@@ -141,10 +141,7 @@ pub(crate) fn find_bundled_binary(candidates: &[PathBuf], binary_name: &str) -> 
 /// Pure helper: pick the first directory in `candidates` that contains `marker`,
 /// returning that directory (not the marker file). Used by callers that need
 /// to set `PATH=<dir>:...` rather than a specific binary path.
-pub(crate) fn find_bundled_dir_containing(
-    candidates: &[PathBuf],
-    marker: &str,
-) -> Option<PathBuf> {
+pub(crate) fn find_bundled_dir_containing(candidates: &[PathBuf], marker: &str) -> Option<PathBuf> {
     find_bundled_binary(candidates, marker).and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
@@ -232,6 +229,16 @@ pub async fn claude_tmux_stop(tab_id: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn claude_tmux_interrupt(tab_id: String) -> Result<(), String> {
+    info!(tab = %tab_id, "claude_tmux_interrupt");
+    let session = get_manager()
+        .get(&tab_id)
+        .await
+        .ok_or_else(|| "tmux session not running".to_string())?;
+    session.interrupt().await
 }
 
 #[tauri::command]
@@ -380,9 +387,58 @@ pub async fn claude_tmux_list_previous_sessions(
 mod tests {
     use super::*;
     use std::fs as std_fs;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
     use tokio::fs;
     use uuid::Uuid;
+
+    fn install_fake_tmux(dir: &std::path::Path, log_path: &std::path::Path) {
+        let script = dir.join("tmux");
+        std_fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display(),
+            ),
+        )
+        .unwrap();
+        let mut perms = std_fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std_fs::set_permissions(&script, perms).unwrap();
+    }
+
+    async fn with_fake_tmux<F, Fut>(tmp: &TempDir, f: F)
+    where
+        F: FnOnce(std::path::PathBuf) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let _guard = crate::claude_tmux::TEST_PATH_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let bin_dir = tmp.path().join("bin");
+        std_fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = tmp.path().join("tmux.log");
+        install_fake_tmux(&bin_dir, &log_path);
+
+        let original_path = std::env::var_os("PATH");
+        let path = match original_path.as_ref() {
+            Some(existing) => {
+                let mut paths = vec![bin_dir.clone()];
+                paths.extend(std::env::split_paths(existing));
+                std::env::join_paths(paths).unwrap()
+            }
+            None => bin_dir.into_os_string(),
+        };
+        std::env::set_var("PATH", path);
+
+        f(log_path).await;
+
+        match original_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
 
     #[test]
     fn find_bundled_binary_returns_first_existing_path() {
@@ -444,6 +500,41 @@ mod tests {
         let tab_id = format!("missing-{}", Uuid::new_v4());
         let err = claude_tmux_pending_hooks(tab_id).await.unwrap_err();
         assert_eq!(err, "tmux session not running");
+    }
+
+    #[tokio::test]
+    async fn interrupt_command_returns_missing_session_error() {
+        let tab_id = format!("missing-{}", Uuid::new_v4());
+        let err = claude_tmux_interrupt(tab_id).await.unwrap_err();
+        assert_eq!(err, "tmux session not running");
+    }
+
+    #[tokio::test]
+    async fn interrupt_command_sends_escape_to_existing_session() {
+        let tmp = TempDir::new().unwrap();
+        let tab_id = format!("tab-{}", Uuid::new_v4());
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let session = Arc::new(TmuxSession::build(
+            "env-command-test".to_string(),
+            tab_id.clone(),
+            backend,
+            None,
+            None,
+        ));
+        let tmux_session = session.tmux_session.clone();
+        get_manager().insert(tab_id.clone(), session).await;
+        let command_tab_id = tab_id.clone();
+
+        with_fake_tmux(&tmp, |log_path| async move {
+            claude_tmux_interrupt(command_tab_id).await.unwrap();
+            let log = fs::read_to_string(log_path).await.unwrap();
+            assert!(log.contains(&format!("send-keys -t {} Escape", tmux_session)));
+        })
+        .await;
+
+        get_manager().remove(&tab_id).await;
     }
 
     #[tokio::test]

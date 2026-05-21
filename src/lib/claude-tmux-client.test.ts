@@ -41,6 +41,7 @@ import {
   getPendingHooks,
   getStatus,
   getTranscript,
+  interruptSession,
   listPreviousSessions,
   replyHook,
   resize,
@@ -86,6 +87,12 @@ describe("claude-tmux-client invoke wrappers", () => {
   test("stopSession invokes the stop command with tabId", async () => {
     await stopSession("tab-1");
     expect(calls[0]!.cmd).toBe("claude_tmux_stop");
+    expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
+  });
+
+  test("interruptSession invokes the interrupt command with tabId", async () => {
+    await interruptSession("tab-1");
+    expect(calls[0]!.cmd).toBe("claude_tmux_interrupt");
     expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
   });
 

@@ -421,6 +421,7 @@ pub fn run() {
             // Claude tmux mode (local + container)
             claude_tmux_start,
             claude_tmux_stop,
+            claude_tmux_interrupt,
             claude_tmux_status,
             claude_tmux_transcript,
             claude_tmux_pending_hooks,

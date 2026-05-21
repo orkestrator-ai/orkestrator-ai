@@ -621,6 +621,15 @@ impl TmuxSession {
         Ok(())
     }
 
+    /// Interrupt the current Claude turn without tearing down the tmux
+    /// session. Escape is Claude Code's in-TUI interrupt key; unlike Ctrl-C,
+    /// it avoids sending SIGINT to the foreground process.
+    pub async fn interrupt(&self) -> Result<(), String> {
+        self.send_keys(&["Escape"]).await?;
+        self.busy.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
     /// Capture the visible pane (the TUI) as text. We deliberately omit `-e`
     /// (which preserves ANSI escape sequences) because the frontend renders
     /// the result in a plain `<pre>` — the raw escape bytes appear as
@@ -741,6 +750,8 @@ mod tests {
     use super::*;
     use crate::claude_tmux::hooks::{self, HOOK_TIMEOUT_SECS};
     use std::collections::HashSet;
+    use std::fs as std_fs;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
     use tokio::fs;
 
@@ -754,6 +765,56 @@ mod tests {
             resume.map(str::to_string),
             None,
         ))
+    }
+
+    fn install_fake_tmux(dir: &std::path::Path, log_path: &std::path::Path, status: i32) {
+        let script = dir.join("tmux");
+        std_fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ {} -ne 0 ]; then echo 'tmux failed' >&2; fi\nexit {}\n",
+                log_path.display(),
+                status,
+                status,
+            ),
+        )
+        .unwrap();
+        let mut perms = std_fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std_fs::set_permissions(&script, perms).unwrap();
+    }
+
+    async fn with_fake_tmux<F, Fut>(tmp: &TempDir, status: i32, f: F)
+    where
+        F: FnOnce(std::path::PathBuf) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let _guard = crate::claude_tmux::TEST_PATH_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let bin_dir = tmp.path().join("bin");
+        std_fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = tmp.path().join("tmux.log");
+        install_fake_tmux(&bin_dir, &log_path, status);
+
+        let original_path = std::env::var_os("PATH");
+        let path = match original_path.as_ref() {
+            Some(existing) => {
+                let mut paths = vec![bin_dir.clone()];
+                paths.extend(std::env::split_paths(existing));
+                std::env::join_paths(paths).unwrap()
+            }
+            None => bin_dir.into_os_string(),
+        };
+        std::env::set_var("PATH", path);
+
+        f(log_path).await;
+
+        match original_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
     }
 
     #[test]
@@ -829,6 +890,39 @@ mod tests {
         assert!(s.status(true).busy);
         s.update_busy_from_hook_kind("Stop");
         assert!(!s.status(true).busy);
+    }
+
+    #[tokio::test]
+    async fn interrupt_sends_escape_and_clears_busy_on_success() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+        s.update_busy_from_hook_kind("UserPromptSubmit");
+
+        with_fake_tmux(&tmp, 0, |log_path| async move {
+            s.interrupt().await.unwrap();
+
+            assert!(!s.status(true).busy);
+            let log = fs::read_to_string(log_path).await.unwrap();
+            assert!(log.contains(&format!("send-keys -t {} Escape", s.tmux_session)));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn interrupt_preserves_busy_when_tmux_send_fails() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+        s.update_busy_from_hook_kind("UserPromptSubmit");
+
+        with_fake_tmux(&tmp, 1, |log_path| async move {
+            let err = s.interrupt().await.unwrap_err();
+
+            assert!(err.contains("tmux failed"));
+            assert!(s.status(true).busy);
+            let log = fs::read_to_string(log_path).await.unwrap();
+            assert!(log.contains(&format!("send-keys -t {} Escape", s.tmux_session)));
+        })
+        .await;
     }
 
     #[tokio::test]
