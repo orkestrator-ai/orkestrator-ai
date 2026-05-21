@@ -41,8 +41,9 @@ import { InitializationLogs } from "./InitializationLogs";
 import {
   parseDraggableTabId,
   parseEdgeDroppableId,
-  isPaneLeaf,
   isGitFileStatus,
+  type EdgeDirection,
+  type PaneLeaf,
   type TabInfo,
 } from "@/types/paneLayout";
 import type { ClaudeNativeBackend } from "@/types";
@@ -102,6 +103,126 @@ const customCollisionDetection: CollisionDetection = (args) => {
   // Last resort: use closestCenter to find the nearest target
   return closestCenter(args);
 };
+
+let tabIdCounter = 0;
+
+function createUniqueTabId(prefix: string): string {
+  tabIdCounter = (tabIdCounter + 1) % Number.MAX_SAFE_INTEGER;
+  return `${prefix}-${Date.now()}-${tabIdCounter}`;
+}
+
+type TerminalTabDragEndAction =
+  | { type: "none" }
+  | {
+      type: "split";
+      targetPaneId: string;
+      edge: EdgeDirection;
+      tabId: string;
+      fromPaneId: string;
+    }
+  | {
+      type: "move";
+      fromPaneId: string;
+      toPaneId: string;
+      tabId: string;
+      toIndex?: number;
+    }
+  | {
+      type: "reorder";
+      paneId: string;
+      fromIndex: number;
+      toIndex: number;
+    };
+
+export function getTerminalTabDragEndAction({
+  activeId,
+  overId,
+  lastDragOverPaneId,
+  getPane,
+}: {
+  activeId: string;
+  overId: string | null | undefined;
+  lastDragOverPaneId: string | null;
+  getPane: (paneId: string) => PaneLeaf | null;
+}): TerminalTabDragEndAction {
+  if (!overId) return { type: "none" };
+
+  const draggedTab = parseDraggableTabId(activeId);
+  if (!draggedTab) return { type: "none" };
+
+  const edgeDrop = parseEdgeDroppableId(overId);
+  if (edgeDrop) {
+    return {
+      type: "split",
+      targetPaneId: edgeDrop.paneId,
+      edge: edgeDrop.direction,
+      tabId: draggedTab.tabId,
+      fromPaneId: draggedTab.paneId,
+    };
+  }
+
+  if (overId.startsWith("tabbar:")) {
+    const targetPaneId = overId.replace("tabbar:", "");
+
+    if (draggedTab.paneId === targetPaneId) {
+      const pane = getPane(targetPaneId);
+      if (!pane) return { type: "none" };
+
+      const fromIndex = pane.tabs.findIndex((t) => t.id === draggedTab.tabId);
+      const toIndex = pane.tabs.length - 1;
+      if (fromIndex === -1 || fromIndex === toIndex) return { type: "none" };
+
+      return { type: "reorder", paneId: draggedTab.paneId, fromIndex, toIndex };
+    }
+
+    return {
+      type: "move",
+      fromPaneId: draggedTab.paneId,
+      toPaneId: targetPaneId,
+      tabId: draggedTab.tabId,
+    };
+  }
+
+  const overTab = parseDraggableTabId(overId);
+  if (!overTab) return { type: "none" };
+
+  if (overTab.tabId === draggedTab.tabId && overTab.paneId === draggedTab.paneId) {
+    if (lastDragOverPaneId && lastDragOverPaneId !== draggedTab.paneId) {
+      return {
+        type: "move",
+        fromPaneId: draggedTab.paneId,
+        toPaneId: lastDragOverPaneId,
+        tabId: draggedTab.tabId,
+      };
+    }
+
+    return { type: "none" };
+  }
+
+  if (draggedTab.paneId === overTab.paneId) {
+    const pane = getPane(draggedTab.paneId);
+    if (!pane) return { type: "none" };
+
+    const fromIndex = pane.tabs.findIndex((t) => t.id === draggedTab.tabId);
+    const toIndex = pane.tabs.findIndex((t) => t.id === overTab.tabId);
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+      return { type: "none" };
+    }
+
+    return { type: "reorder", paneId: draggedTab.paneId, fromIndex, toIndex };
+  }
+
+  const targetPane = getPane(overTab.paneId);
+  if (!targetPane) return { type: "none" };
+
+  return {
+    type: "move",
+    fromPaneId: draggedTab.paneId,
+    toPaneId: overTab.paneId,
+    tabId: draggedTab.tabId,
+    toIndex: targetPane.tabs.findIndex((t) => t.id === overTab.tabId),
+  };
+}
 
 function createClaudeNativeLikeTab({
   id,
@@ -468,7 +589,7 @@ export function TerminalContainer({
 
           // Create setup tab first
           const setupTab: TabInfo = {
-            id: "setup-" + Date.now(),
+            id: createUniqueTabId("setup"),
             type: "plain",
             initialCommands: setupCommands,
             isSetupTab: true,
@@ -656,7 +777,7 @@ export function TerminalContainer({
 
         if (isClaudeNative) {
           const backend = pending.claudeNativeBackend ?? claudeNativeBackend;
-          const newTabId = `claude-${backend}-${Date.now()}`;
+          const newTabId = createUniqueTabId(`claude-${backend}`);
           const newTab = createClaudeNativeLikeTab({
             id: newTabId,
             nativeBackend: backend,
@@ -667,7 +788,7 @@ export function TerminalContainer({
           });
           addTab(pending.targetPaneId, newTab, environmentId);
         } else if (isCodexNative) {
-          const newTabId = `codex-native-${Date.now()}`;
+          const newTabId = createUniqueTabId("codex-native");
           const newTab: TabInfo = {
             id: newTabId,
             type: "codex-native",
@@ -681,7 +802,7 @@ export function TerminalContainer({
           addTab(pending.targetPaneId, newTab, environmentId);
         } else {
           // Create OpenCode native tab
-          const newTabId = `opencode-native-${Date.now()}`;
+          const newTabId = createUniqueTabId("opencode-native");
           const newTab: TabInfo = {
             id: newTabId,
             type: "opencode-native",
@@ -741,7 +862,7 @@ export function TerminalContainer({
         return;
       }
 
-      const newTabId = `tab-${Date.now()}`;
+      const newTabId = createUniqueTabId("tab");
 
       const launchModeOverride = options?.agentLaunchMode;
       const shouldUseOpenCodeNative =
@@ -860,7 +981,7 @@ export function TerminalContainer({
         return;
       }
 
-      const newTabId = `file-${Date.now()}`;
+      const newTabId = createUniqueTabId("file");
       // Validate gitStatus using type guard instead of unsafe cast
       const validatedGitStatus = isGitFileStatus(options?.gitStatus)
         ? options.gitStatus
@@ -1024,78 +1145,22 @@ export function TerminalContainer({
       const activeId = active.id as string;
       const overId = over.id as string;
 
-      // Parse the dragged tab
-      const draggedTab = parseDraggableTabId(activeId);
-      if (!draggedTab) return;
+      const action = getTerminalTabDragEndAction({
+        activeId,
+        overId,
+        lastDragOverPaneId,
+        getPane,
+      });
 
-      // Check if dropped on an edge (for splitting)
-      const edgeDrop = parseEdgeDroppableId(overId);
-      if (edgeDrop) {
-        console.debug("[TerminalContainer] Split at edge:", edgeDrop.direction, "from pane:", draggedTab.paneId);
-        splitPaneAtEdge(edgeDrop.paneId, edgeDrop.direction, draggedTab.tabId, draggedTab.paneId);
-        return;
-      }
-
-      // Check if dropped on a tabbar
-      if (overId.startsWith("tabbar:")) {
-        const targetPaneId = overId.replace("tabbar:", "");
-
-        if (draggedTab.paneId === targetPaneId) {
-          // Same pane, dropped on tabbar area (not on a specific tab)
-          // Move tab to the end of the tab list
-          const pane = getPane(targetPaneId);
-          if (pane && isPaneLeaf(pane)) {
-            const fromIndex = pane.tabs.findIndex((t) => t.id === draggedTab.tabId);
-            const toIndex = pane.tabs.length - 1;
-            if (fromIndex !== -1 && fromIndex !== toIndex) {
-              console.debug("[TerminalContainer] Moving tab to end:", fromIndex, "->", toIndex);
-              reorderTabs(draggedTab.paneId, fromIndex, toIndex);
-            }
-          }
-        } else {
-          // Different pane - move tab to end of target pane
-          console.debug("[TerminalContainer] Moving tab to different pane");
-          moveTab(draggedTab.paneId, targetPaneId, draggedTab.tabId);
-        }
-        return;
-      }
-
-      // Check if dropped on another tab (for reordering)
-      const overTab = parseDraggableTabId(overId);
-      if (overTab) {
-        // When dragging across panes, the target pane's SortableContext includes
-        // the dragged tab's ID (with source pane ID). If we detect a collision with
-        // our own dragged item, use lastDragOverPaneId to determine the target pane.
-        if (overTab.tabId === draggedTab.tabId && overTab.paneId === draggedTab.paneId) {
-          if (lastDragOverPaneId && lastDragOverPaneId !== draggedTab.paneId) {
-            console.debug("[TerminalContainer] Self-collision - moving to lastDragOverPaneId:", lastDragOverPaneId);
-            moveTab(draggedTab.paneId, lastDragOverPaneId, draggedTab.tabId);
-          } else {
-            console.debug("[TerminalContainer] Self-collision but no valid target pane");
-          }
-          return;
-        }
-
-        if (draggedTab.paneId === overTab.paneId) {
-          // Same pane - reorder
-          const pane = getPane(draggedTab.paneId);
-          if (pane && isPaneLeaf(pane)) {
-            const fromIndex = pane.tabs.findIndex((t) => t.id === draggedTab.tabId);
-            const toIndex = pane.tabs.findIndex((t) => t.id === overTab.tabId);
-            if (fromIndex !== -1 && toIndex !== -1 && fromIndex !== toIndex) {
-              console.debug("[TerminalContainer] Reordering tabs:", fromIndex, "->", toIndex);
-              reorderTabs(draggedTab.paneId, fromIndex, toIndex);
-            }
-          }
-        } else {
-          // Different pane - move tab to position
-          const targetPane = getPane(overTab.paneId);
-          if (targetPane && isPaneLeaf(targetPane)) {
-            const toIndex = targetPane.tabs.findIndex((t) => t.id === overTab.tabId);
-            console.debug("[TerminalContainer] Moving tab to position:", toIndex);
-            moveTab(draggedTab.paneId, overTab.paneId, draggedTab.tabId, toIndex);
-          }
-        }
+      if (action.type === "split") {
+        console.debug("[TerminalContainer] Split at edge:", action.edge, "from pane:", action.fromPaneId);
+        splitPaneAtEdge(action.targetPaneId, action.edge, action.tabId, action.fromPaneId);
+      } else if (action.type === "reorder") {
+        console.debug("[TerminalContainer] Reordering tabs:", action.fromIndex, "->", action.toIndex);
+        reorderTabs(action.paneId, action.fromIndex, action.toIndex);
+      } else if (action.type === "move") {
+        console.debug("[TerminalContainer] Moving tab to pane:", action.toPaneId, "index:", action.toIndex);
+        moveTab(action.fromPaneId, action.toPaneId, action.tabId, action.toIndex);
       }
     },
     [dragOverPaneId, getPane, moveTab, reorderTabs, splitPaneAtEdge]
