@@ -282,6 +282,20 @@ describe("paneLayoutStore tab cleanup", () => {
     expect(deleteCodexSession).toHaveBeenCalledWith(expect.anything(), "codex-session");
     expect(usePaneLayoutStore.getState().getAllTabs("env-reset")).toEqual([]);
   });
+
+  test("removing the last tab in the root pane keeps an empty leaf", () => {
+    seedSingleTabEnvironment("env-root", null, { id: "tab-only", type: "plain" });
+
+    usePaneLayoutStore.getState().removeTab("default", "tab-only");
+
+    const envState = usePaneLayoutStore.getState().environments.get("env-root");
+    expect(envState).toBeDefined();
+    const root = envState!.root as { kind: "leaf"; id: string; tabs: unknown[]; activeTabId: string | null };
+    expect(root.kind).toBe("leaf");
+    expect(root.id).toBe("default");
+    expect(root.tabs).toEqual([]);
+    expect(root.activeTabId).toBeNull();
+  });
 });
 
 describe("paneLayoutStore environment scoping", () => {

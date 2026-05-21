@@ -249,11 +249,19 @@ fn workspace_hook_paths_for_backend(
 
 async fn kill_tmux_sessions_for_env(backend: &Backend, environment_id: &str) {
     let prefix = format!("orkestrator-{}-", short_id(environment_id));
-    let Ok(out) = backend
+    let out = match backend
         .exec(&["tmux", "list-sessions", "-F", "#{session_name}"])
         .await
-    else {
-        return;
+    {
+        Ok(out) => out,
+        Err(e) => {
+            tracing::debug!(
+                env = %environment_id,
+                error = %e,
+                "tmux list-sessions failed; nothing to clean"
+            );
+            return;
+        }
     };
 
     for name in out.stdout.lines().map(str::trim).filter(|name| {
@@ -279,10 +287,12 @@ pub async fn stop_tmux_sessions_for_environment(environment_id: &str) {
     let mut backend_and_hooks: Option<(Backend, hooks::WorkspaceHookPaths)> = None;
 
     for session in sessions {
-        backend_and_hooks = Some((
-            session.backend.clone(),
-            session.workspace_hook_paths.clone(),
-        ));
+        if backend_and_hooks.is_none() {
+            backend_and_hooks = Some((
+                session.backend.clone(),
+                session.workspace_hook_paths.clone(),
+            ));
+        }
         if let Err(e) = session.stop().await {
             tracing::warn!(
                 env = %environment_id,
@@ -678,6 +688,81 @@ mod tests {
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0].id, "id-1");
         assert_eq!(hooks[0].kind, "PreToolUse");
+    }
+
+    // NOTE: `shutdown_all_tmux_sessions` is exercised by the components it
+    // composes — `TmuxSessionManager::drain` (covered in
+    // `claude_tmux::manager::tests`), `kill_tmux_sessions_for_env` (test
+    // below), and `hooks::uninstall_workspace_hooks` (covered in
+    // `claude_tmux::hooks::tests`). A direct test would call `drain` on the
+    // shared global manager and race with other tmux tests inserting into
+    // it, so we avoid it here.
+
+    #[tokio::test]
+    async fn kill_tmux_sessions_for_env_targets_only_matching_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+
+        let env_a = format!("env-prefix-a-{}", Uuid::new_v4());
+        let env_b = format!("env-prefix-b-{}", Uuid::new_v4());
+        let session_a = tmux_session_name(&env_a, "tab-a");
+        let session_b = tmux_session_name(&env_b, "tab-b");
+
+        // Install a fake tmux that returns both session names from list-sessions
+        // and logs subsequent calls.
+        let _guard = crate::claude_tmux::TEST_PATH_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let bin_dir = tmp.path().join("bin");
+        std_fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = tmp.path().join("tmux.log");
+        let script = bin_dir.join("tmux");
+        std_fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\nif [ \"$1\" = \"list-sessions\" ]; then\n  printf '%s\\n' '{a}' '{b}'\nfi\nexit 0\n",
+                log = log_path.display(),
+                a = session_a,
+                b = session_b,
+            ),
+        )
+        .unwrap();
+        let mut perms = std_fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std_fs::set_permissions(&script, perms).unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        let path = match original_path.as_ref() {
+            Some(existing) => {
+                let mut paths = vec![bin_dir.clone()];
+                paths.extend(std::env::split_paths(existing));
+                std::env::join_paths(paths).unwrap()
+            }
+            None => bin_dir.into_os_string(),
+        };
+        std::env::set_var("PATH", path);
+
+        kill_tmux_sessions_for_env(&backend, &env_a).await;
+
+        let log = fs::read_to_string(&log_path).await.unwrap();
+        assert!(
+            log.contains(&format!("kill-session -t {}", session_a)),
+            "expected kill of env_a session, got log:\n{}",
+            log,
+        );
+        assert!(
+            !log.contains(&format!("kill-session -t {}", session_b)),
+            "env_b session was killed by env_a cleanup, log:\n{}",
+            log,
+        );
+
+        match original_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
     }
 
     #[tokio::test]

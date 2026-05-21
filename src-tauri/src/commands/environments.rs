@@ -863,13 +863,16 @@ pub async fn delete_environment(environment_id: String) -> Result<(), String> {
     };
 
     if let Some(env) = environment {
+        // Close terminal/tmux sessions for either backend. Local terminal
+        // cleanup is a no-op for container envs, and tmux cleanup uses the
+        // backend stored on each tracked session.
+        close_local_terminal_sessions_for_environment(&environment_id);
+        stop_tmux_sessions_for_environment(&environment_id).await;
+
         // Handle based on environment type
         if env.is_local() {
             // Local environment: stop servers and delete worktree
             info!(environment_id = %environment_id, "Deleting local environment");
-
-            close_local_terminal_sessions_for_environment(&environment_id);
-            stop_tmux_sessions_for_environment(&environment_id).await;
 
             // Stop any running local servers
             if let Err(e) = stop_all_local_servers(&environment_id).await {
@@ -1762,11 +1765,14 @@ pub async fn stop_environment(environment_id: String) -> Result<(), String> {
         "Found environment"
     );
 
+    // Close terminal/tmux sessions before either-backend container stop.
+    // Local terminal cleanup is a no-op for container envs; tmux cleanup
+    // uses the backend stored on each tracked session.
+    close_local_terminal_sessions_for_environment(&environment_id);
+    stop_tmux_sessions_for_environment(&environment_id).await;
+
     // Handle local environments differently
     if environment.is_local() {
-        close_local_terminal_sessions_for_environment(&environment_id);
-        stop_tmux_sessions_for_environment(&environment_id).await;
-
         // Stop any running local servers
         if let Err(e) = stop_all_local_servers(&environment_id).await {
             warn!(environment_id = %environment_id, error = %e, "Error stopping local servers");

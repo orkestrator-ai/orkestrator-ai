@@ -218,7 +218,7 @@ function cleanupTerminalTab(envId: string, containerId: string | null, tabId: st
       : tauri.detachTerminal(sessionData.sessionId);
 
     close.catch((err) => {
-      console.error("[PaneLayout] Error closing terminal session:", err);
+      console.debug("[PaneLayout] Error closing terminal session:", err);
     });
   }
 
@@ -239,7 +239,7 @@ function cleanupClaudeNativeTab(envId: string, tabId: string) {
   store.setSession(sessionKey, null);
   if (client && session?.sessionId) {
     deleteClaudeSession(client, session.sessionId).catch((err) => {
-      console.error("[PaneLayout] Error deleting Claude native session:", err);
+      console.debug("[PaneLayout] Error deleting Claude native session:", err);
     });
   }
 }
@@ -253,7 +253,7 @@ function cleanupOpenCodeNativeTab(envId: string, tabId: string) {
   store.setSession(sessionKey, null);
   if (client && session?.sessionId) {
     deleteOpenCodeSession(client, session.sessionId).catch((err) => {
-      console.error("[PaneLayout] Error deleting OpenCode native session:", err);
+      console.debug("[PaneLayout] Error deleting OpenCode native session:", err);
     });
   }
 }
@@ -267,19 +267,16 @@ function cleanupCodexNativeTab(envId: string, tabId: string) {
   store.setSession(sessionKey, null);
   if (client && session?.sessionId) {
     deleteCodexSession(client, session.sessionId).catch((err) => {
-      console.error("[PaneLayout] Error deleting Codex native session:", err);
+      console.debug("[PaneLayout] Error deleting Codex native session:", err);
     });
   }
 }
 
 function cleanupClaudeTmuxTab(tabId: string) {
-  stopClaudeTmuxSession(tabId)
-    .catch((err) => {
-      console.error("[PaneLayout] Error stopping Claude tmux session:", err);
-    })
-    .finally(() => {
-      useClaudeTmuxStore.getState().resetTab(tabId);
-    });
+  useClaudeTmuxStore.getState().resetTab(tabId);
+  stopClaudeTmuxSession(tabId).catch((err) => {
+    console.debug("[PaneLayout] Error stopping Claude tmux session:", err);
+  });
 }
 
 function cleanupTabResources(envId: string, containerId: string | null, tab: TabInfo) {
