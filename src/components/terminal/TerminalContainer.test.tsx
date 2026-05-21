@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { useEffect } from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { TerminalProvider, useTerminalContext, type TerminalTabType, type CreateTabOptions } from "@/contexts";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
 import { useConfigStore } from "@/stores/configStore";
@@ -134,6 +134,13 @@ describe("TerminalContainer", () => {
       ...state,
       config: {
         ...state.config,
+        global: {
+          ...state.config.global,
+          opencodeMode: "terminal",
+          claudeMode: "terminal",
+          claudeNativeBackend: "sdk",
+          codexMode: "native",
+        },
         repositories: {},
       },
     }));
@@ -491,6 +498,146 @@ describe("TerminalContainer", () => {
     expect(markSetupScriptsCompleteMock).toHaveBeenCalledWith("env-hidden");
   });
 
+  test("creates a Claude tmux tab for ready local environments when Claude native backend is tmux", async () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          claudeMode: "native",
+          claudeNativeBackend: "tmux",
+        },
+        repositories: {},
+      },
+    }));
+
+    useEnvironmentStore.setState((state) => ({
+      ...state,
+      environments: state.environments.map((env) =>
+        env.id === "env-hidden"
+          ? {
+              ...env,
+              containerId: null,
+              environmentType: "local",
+              worktreePath: "/tmp/env-hidden-worktree",
+            }
+          : env
+      ),
+      setupCommandsResolved: new Set(["env-hidden"]),
+    }));
+
+    useClaudeOptionsStore.setState({
+      options: {
+        "env-hidden": {
+          launchAgent: true,
+          agentType: "claude",
+          initialPrompt: "Use tmux",
+        },
+      },
+      pendingNativeLaunches: {},
+    });
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId={null}
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(1);
+      expect(envHidden.root.tabs[0]?.type).toBe("claude-tmux");
+      expect(envHidden.root.tabs[0]?.initialPrompt).toBe("Use tmux");
+      expect(envHidden.root.tabs[0]?.claudeTmuxData).toEqual({
+        containerId: undefined,
+        environmentId: "env-hidden",
+        isLocal: true,
+      });
+    });
+  });
+
+  test("creates setup and Claude tmux tabs for local environments with setup commands", async () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          claudeMode: "native",
+          claudeNativeBackend: "tmux",
+        },
+        repositories: {},
+      },
+    }));
+
+    useEnvironmentStore.setState((state) => ({
+      ...state,
+      environments: state.environments.map((env) =>
+        env.id === "env-hidden"
+          ? {
+              ...env,
+              containerId: null,
+              environmentType: "local",
+              worktreePath: "/tmp/env-hidden-worktree",
+            }
+          : env
+      ),
+      pendingSetupCommands: new Map([["env-hidden", ["bun install"]]]),
+      setupCommandsResolved: new Set(["env-hidden"]),
+    }));
+
+    useClaudeOptionsStore.setState({
+      options: {
+        "env-hidden": {
+          launchAgent: true,
+          agentType: "claude",
+          initialPrompt: "After setup",
+        },
+      },
+      pendingNativeLaunches: {},
+    });
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId={null}
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(2);
+      expect(envHidden.root.tabs[0]?.type).toBe("plain");
+      expect(envHidden.root.tabs[0]?.initialCommands).toEqual(["bun install"]);
+      expect(envHidden.root.tabs[0]?.isSetupTab).toBe(true);
+      expect(envHidden.root.tabs[1]?.type).toBe("claude-tmux");
+      expect(envHidden.root.tabs[1]?.initialPrompt).toBe("After setup");
+      expect(envHidden.root.activeTabId).toBe("default");
+    });
+
+    expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-hidden")).toBe(
+      true
+    );
+  });
+
   test("resumes a pending container native launch after the environment remounts", async () => {
     useConfigStore.setState((state) => ({
       ...state,
@@ -546,7 +693,9 @@ describe("TerminalContainer", () => {
     // Simulate the old timer clearing transient options while the durable
     // launch intent survives the component unmount.
     useClaudeOptionsStore.getState().clearOptions("env-hidden");
-    useEnvironmentStore.getState().setWorkspaceReady("env-hidden", true);
+    await act(async () => {
+      useEnvironmentStore.getState().setWorkspaceReady("env-hidden", true);
+    });
 
     render(
       <TerminalProvider>
@@ -568,6 +717,86 @@ describe("TerminalContainer", () => {
 
       const nativeTab = envHidden.root.tabs.find((tab) => tab.type === "codex-native");
       expect(nativeTab?.initialPrompt).toBe("Continue after setup");
+      expect(
+        useClaudeOptionsStore.getState().getPendingNativeLaunch("env-hidden")
+      ).toBeUndefined();
+      expect(useEnvironmentStore.getState().isSetupScriptsRunning("env-hidden")).toBe(false);
+    });
+  });
+
+  test("launches Claude tmux after container setup when Claude native backend is tmux", async () => {
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          claudeMode: "native",
+          claudeNativeBackend: "tmux",
+        },
+        repositories: {},
+      },
+    }));
+
+    useClaudeOptionsStore.setState({
+      options: {
+        "env-hidden": {
+          launchAgent: true,
+          agentType: "claude",
+          initialPrompt: "Continue in tmux",
+        },
+      },
+      pendingNativeLaunches: {},
+    });
+
+    render(
+      <TerminalProvider>
+        <TerminalContainer
+          environmentId="env-hidden"
+          containerId="container-hidden"
+          isContainerRunning
+          isActive={false}
+        />
+      </TerminalProvider>
+    );
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      expect(envHidden.root.tabs).toHaveLength(1);
+      expect(envHidden.root.tabs[0]?.type).toBe("plain");
+      expect(useClaudeOptionsStore.getState().getPendingNativeLaunch("env-hidden")).toEqual({
+        containerId: "container-hidden",
+        environmentId: "env-hidden",
+        initialPrompt: "Continue in tmux",
+        targetPaneId: "default",
+        agentType: "claude",
+        claudeNativeBackend: "tmux",
+      });
+    });
+
+    await act(async () => {
+      useEnvironmentStore.getState().setWorkspaceReady("env-hidden", true);
+    });
+
+    await waitFor(() => {
+      const envHidden = usePaneLayoutStore.getState().environments.get("env-hidden");
+      expect(envHidden?.root.kind).toBe("leaf");
+      if (!envHidden || envHidden.root.kind !== "leaf") {
+        throw new Error("env-hidden root should be a leaf");
+      }
+
+      const tmuxTab = envHidden.root.tabs.find((tab) => tab.type === "claude-tmux");
+      expect(tmuxTab?.initialPrompt).toBe("Continue in tmux");
+      expect(tmuxTab?.claudeTmuxData).toEqual({
+        containerId: "container-hidden",
+        environmentId: "env-hidden",
+        isLocal: false,
+      });
       expect(
         useClaudeOptionsStore.getState().getPendingNativeLaunch("env-hidden")
       ).toBeUndefined();

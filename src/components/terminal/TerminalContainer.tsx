@@ -45,6 +45,7 @@ import {
   isGitFileStatus,
   type TabInfo,
 } from "@/types/paneLayout";
+import type { ClaudeNativeBackend } from "@/types";
 
 interface TerminalContainerProps {
   environmentId: string;
@@ -101,6 +102,50 @@ const customCollisionDetection: CollisionDetection = (args) => {
   // Last resort: use closestCenter to find the nearest target
   return closestCenter(args);
 };
+
+function createClaudeNativeLikeTab({
+  id,
+  nativeBackend,
+  containerId,
+  environmentId,
+  isLocal,
+  initialPrompt,
+  displayTitle,
+}: {
+  id: string;
+  nativeBackend: ClaudeNativeBackend;
+  containerId?: string;
+  environmentId: string;
+  isLocal: boolean;
+  initialPrompt?: string;
+  displayTitle?: string;
+}): TabInfo {
+  if (nativeBackend === "tmux") {
+    return {
+      id,
+      type: "claude-tmux",
+      claudeTmuxData: {
+        containerId: isLocal ? undefined : containerId,
+        environmentId,
+        isLocal,
+      },
+      initialPrompt,
+      displayTitle,
+    };
+  }
+
+  return {
+    id,
+    type: "claude-native",
+    claudeNativeData: {
+      containerId: isLocal ? undefined : containerId,
+      environmentId,
+      isLocal,
+    },
+    initialPrompt,
+    displayTitle,
+  };
+}
 
 export function TerminalContainer({
   environmentId,
@@ -432,12 +477,13 @@ export function TerminalContainer({
 
           // Then create agent tab (which becomes active)
           if (useNativeClaude) {
-            const agentTab: TabInfo = {
+            const agentTab = createClaudeNativeLikeTab({
               id: "default",
-              type: "claude-native",
-              claudeNativeData: { containerId: undefined, environmentId, isLocal: true },
+              nativeBackend: claudeNativeBackend,
+              environmentId,
+              isLocal: true,
               initialPrompt: pendingInitialPrompt,
-            };
+            });
             addTab("default", agentTab, environmentId);
           } else if (useNativeCodex) {
             const agentTab: TabInfo = {
@@ -487,12 +533,13 @@ export function TerminalContainer({
             "tab",
           );
           if (useNativeClaude) {
-            const initialTab: TabInfo = {
+            const initialTab = createClaudeNativeLikeTab({
               id: "default",
-              type: "claude-native",
-              claudeNativeData: { containerId: undefined, environmentId, isLocal: true },
+              nativeBackend: claudeNativeBackend,
+              environmentId,
+              isLocal: true,
               initialPrompt: pendingInitialPrompt,
-            };
+            });
             addTab("default", initialTab, environmentId);
           } else if (useNativeCodex) {
             const initialTab: TabInfo = {
@@ -535,6 +582,7 @@ export function TerminalContainer({
           initialPrompt: pendingInitialPrompt,
           targetPaneId: "default",
           agentType: useNativeClaude ? "claude" : useNativeCodex ? "codex" : "opencode",
+          claudeNativeBackend: useNativeClaude ? claudeNativeBackend : undefined,
         });
         console.log(
           "[TerminalContainer] Pending native",
@@ -554,7 +602,7 @@ export function TerminalContainer({
         addTab("default", initialTab, environmentId);
       }
     }
-  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, environmentId, currentEnvState, opencodeMode, claudeMode, codexMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning, setPendingNativeLaunch, setOptions, worktreePath]);
+  }, [isEnvironmentRunning, containerId, isLocalEnvironmentReady, isLocalEnvironment, setupCommandsResolved, claudeOptions, initialize, addTab, environmentId, currentEnvState, opencodeMode, claudeMode, claudeNativeBackend, codexMode, setWorkspaceReady, consumePendingSetupCommands, setSetupScriptsRunning, setPendingNativeLaunch, setOptions, worktreePath]);
 
   // Reset pane layout when container changes within the same environment
   // (e.g., container was stopped and restarted with a new ID)
@@ -607,18 +655,16 @@ export function TerminalContainer({
         );
 
         if (isClaudeNative) {
-          // Create Claude native tab
-          const newTabId = `claude-native-${Date.now()}`;
-          const newTab: TabInfo = {
+          const backend = pending.claudeNativeBackend ?? claudeNativeBackend;
+          const newTabId = `claude-${backend}-${Date.now()}`;
+          const newTab = createClaudeNativeLikeTab({
             id: newTabId,
-            type: "claude-native",
-            claudeNativeData: {
-              containerId: isLocalEnvironment ? undefined : pending.containerId ?? undefined,
-              environmentId: pending.environmentId,
-              isLocal: isLocalEnvironment,
-            },
+            nativeBackend: backend,
+            containerId: pending.containerId ?? undefined,
+            environmentId: pending.environmentId,
+            isLocal: isLocalEnvironment,
             initialPrompt: pending.initialPrompt,
-          };
+          });
           addTab(pending.targetPaneId, newTab, environmentId);
         } else if (isCodexNative) {
           const newTabId = `codex-native-${Date.now()}`;
@@ -665,6 +711,7 @@ export function TerminalContainer({
     clearPendingNativeLaunch,
     clearOptions,
     setSetupScriptsRunning,
+    claudeNativeBackend,
   ]);
 
   // Register terminal write function with context
@@ -735,34 +782,16 @@ export function TerminalContainer({
             ? "tmux"
             : claudeNativeBackend;
 
-        if (backend === "tmux") {
-          const newTab: TabInfo = {
-            id: newTabId,
-            type: "claude-tmux",
-            claudeTmuxData: {
-              containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
-              environmentId,
-              isLocal: isLocalEnvironment,
-            },
-            initialPrompt: options?.initialPrompt,
-            displayTitle: options?.displayTitle,
-          };
-          console.debug("[TerminalContainer] Creating claude-tmux tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
-          addTab(activePaneId, newTab, environmentId);
-          return;
-        }
-        const newTab: TabInfo = {
+        const newTab = createClaudeNativeLikeTab({
           id: newTabId,
-          type: "claude-native",
-          claudeNativeData: {
-            containerId: isLocalEnvironment ? undefined : containerId ?? undefined,
-            environmentId,
-            isLocal: isLocalEnvironment,
-          },
+          nativeBackend: backend,
+          containerId: containerId ?? undefined,
+          environmentId,
+          isLocal: isLocalEnvironment,
           initialPrompt: options?.initialPrompt,
           displayTitle: options?.displayTitle,
-        };
-        console.debug("[TerminalContainer] Creating claude-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
+        });
+        console.debug("[TerminalContainer] Creating", newTab.type, "tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
         return;
       }
