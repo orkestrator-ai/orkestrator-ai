@@ -310,10 +310,7 @@ export function ClaudeComposeBar({
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // Handle file mention menu navigation first (it takes priority over slash commands)
     if (fileMentionMenuOpen) {
-      const handled = handleFileMentionKeyDown(event, (file) => {
-        const mention = createMention(file);
-        inputRef.current?.insertMention(mention);
-      });
+      const handled = handleFileMentionKeyDown(event, handleFileMentionSelect);
       if (handled) return;
     }
 

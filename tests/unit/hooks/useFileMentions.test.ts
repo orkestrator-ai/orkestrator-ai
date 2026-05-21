@@ -14,6 +14,7 @@ function keyEvent(key: string) {
   return {
     key,
     preventDefault: mock(() => {}),
+    stopPropagation: mock(() => {}),
   } as unknown as KeyboardEvent;
 }
 
@@ -39,6 +40,7 @@ describe("useFileMentions", () => {
     });
 
     expect(downEvent.preventDefault).toHaveBeenCalled();
+    expect(downEvent.stopPropagation).toHaveBeenCalled();
     expect(result.current.selectedIndex).toBe(1);
 
     const upEvent = keyEvent("ArrowUp");
@@ -47,6 +49,7 @@ describe("useFileMentions", () => {
     });
 
     expect(upEvent.preventDefault).toHaveBeenCalled();
+    expect(upEvent.stopPropagation).toHaveBeenCalled();
     expect(result.current.selectedIndex).toBe(0);
 
     const enterEvent = keyEvent("Enter");
@@ -55,6 +58,7 @@ describe("useFileMentions", () => {
     });
 
     expect(enterEvent.preventDefault).toHaveBeenCalled();
+    expect(enterEvent.stopPropagation).toHaveBeenCalled();
     expect(onSelect).toHaveBeenCalledWith(files[0]);
     expect(result.current.isMenuOpen).toBe(false);
   });
@@ -99,6 +103,7 @@ describe("useFileMentions", () => {
     });
 
     expect(tabEvent.preventDefault).toHaveBeenCalled();
+    expect(tabEvent.stopPropagation).toHaveBeenCalled();
     expect(onSelect).toHaveBeenCalledWith(files[0]);
     expect(result.current.isMenuOpen).toBe(false);
     expect(result.current.searchQuery).toBe("");
@@ -123,6 +128,7 @@ describe("useFileMentions", () => {
     });
 
     expect(escapeEvent.preventDefault).toHaveBeenCalled();
+    expect(escapeEvent.stopPropagation).toHaveBeenCalled();
     expect(result.current.isMenuOpen).toBe(false);
     expect(result.current.searchQuery).toBe("");
     expect(result.current.selectedIndex).toBe(0);
@@ -146,6 +152,7 @@ describe("useFileMentions", () => {
     });
 
     expect(enterEvent.preventDefault).toHaveBeenCalled();
+    expect(enterEvent.stopPropagation).toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
     expect(result.current.isMenuOpen).toBe(true);
 
@@ -153,6 +160,20 @@ describe("useFileMentions", () => {
       result.current.handleKeyDown(keyEvent("Escape"), onSelect);
     });
     expect(result.current.isMenuOpen).toBe(false);
+  });
+
+  test("does not handle keys when the menu is closed", () => {
+    const { result } = renderHook(() =>
+      useFileMentions({
+        searchFiles: () => files,
+      }),
+    );
+
+    const enterEvent = keyEvent("Enter");
+
+    expect(result.current.handleKeyDown(enterEvent, () => {})).toBe(false);
+    expect(enterEvent.preventDefault).not.toHaveBeenCalled();
+    expect(enterEvent.stopPropagation).not.toHaveBeenCalled();
   });
 
   test("resets selection when the search query changes", () => {
@@ -212,5 +233,25 @@ describe("useFileMentions", () => {
         { id: "mention-2", filename: "beta.ts", relativePath: "src/beta.ts" },
       ]),
     ).toBe("Read [@alpha.ts](src/alpha.ts) and [@beta.ts](src/beta.ts)");
+  });
+
+  test("serializes repeated mentions with regex-special filenames", () => {
+    const { result } = renderHook(() =>
+      useFileMentions({
+        searchFiles: () => files,
+      }),
+    );
+
+    expect(
+      result.current.serializeForLLM("Open @foo.test.ts and @foo.test.ts", [
+        {
+          id: "mention-special",
+          filename: "foo.test.ts",
+          relativePath: "src/foo.test.ts",
+        },
+      ]),
+    ).toBe(
+      "Open [@foo.test.ts](src/foo.test.ts) and [@foo.test.ts](src/foo.test.ts)",
+    );
   });
 });

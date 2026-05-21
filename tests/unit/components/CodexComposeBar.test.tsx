@@ -6,6 +6,14 @@ const mockWriteContainerFile = mock(async () => {});
 const mockWriteLocalFile = mock(async () => "/tmp/file.png");
 const mockSerializeForLLM = mock((text: string, _mentions?: unknown[]) => text);
 const mockHandleFileMentionCursorChange = mock(() => {});
+const mockHandleFileMentionKeyDown = mock(() => false);
+const mockCloseFileMentionMenu = mock(() => {});
+const mockCreateMention = mock(() => ({
+  id: "mention-created",
+  filename: "app.ts",
+  relativePath: "src/app.ts",
+}));
+let mockFileMentionMenuOpen = false;
 
 // Snapshot modules before stubbing them so later suites that exercise the
 // real file mention flow do not inherit these isolated compose-bar stubs.
@@ -77,14 +85,14 @@ mock.module("@/components/chat/FileMentionMenu", () => ({
 
 mock.module("@/hooks/useFileMentions", () => ({
   useFileMentions: () => ({
-    isMenuOpen: false,
+    isMenuOpen: mockFileMentionMenuOpen,
     selectedIndex: 0,
     filteredFiles: [],
     handleCursorChange: mockHandleFileMentionCursorChange,
-    handleKeyDown: () => false,
-    closeMenu: () => {},
+    handleKeyDown: mockHandleFileMentionKeyDown,
+    closeMenu: mockCloseFileMentionMenu,
     serializeForLLM: mockSerializeForLLM,
-    createMention: () => ({}),
+    createMention: mockCreateMention,
   }),
 }));
 
@@ -183,6 +191,16 @@ describe("CodexComposeBar", () => {
     mockSerializeForLLM.mockReset();
     mockSerializeForLLM.mockImplementation((text: string) => text);
     mockHandleFileMentionCursorChange.mockReset();
+    mockHandleFileMentionKeyDown.mockReset();
+    mockHandleFileMentionKeyDown.mockImplementation(() => false);
+    mockCloseFileMentionMenu.mockReset();
+    mockCreateMention.mockReset();
+    mockCreateMention.mockImplementation(() => ({
+      id: "mention-created",
+      filename: "app.ts",
+      relativePath: "src/app.ts",
+    }));
+    mockFileMentionMenuOpen = false;
     mockReadImage.mockImplementation(async () => ({
       rgba: async () => new Uint8Array([255, 0, 0, 255]),
       size: async () => ({ width: 1, height: 1 }),
@@ -398,6 +416,29 @@ describe("CodexComposeBar", () => {
       "Review @app".length,
       "Review @app",
     );
+  });
+
+  test("file mention key selection uses the shared select handler and skips submit", async () => {
+    const selectedFile = {
+      filename: "app.ts",
+      relativePath: "src/app.ts",
+      isDirectory: false,
+    };
+    mockFileMentionMenuOpen = true;
+    mockHandleFileMentionKeyDown.mockImplementation((_event, onSelect) => {
+      (onSelect as (file: typeof selectedFile) => void)(selectedFile);
+      return true;
+    });
+    useCodexStore.getState().setDraftText(SESSION_KEY, "Review @app");
+
+    const { onSend } = renderComposeBar();
+    fireEvent.keyDown(screen.getByTestId("mentionable-input"), { key: "Enter" });
+
+    await waitFor(() => {
+      expect(mockCreateMention).toHaveBeenCalledWith(selectedFile);
+    });
+    expect(mockCloseFileMentionMenu).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   test("selects a slash command instead of sending when Enter is pressed on slash input", async () => {
