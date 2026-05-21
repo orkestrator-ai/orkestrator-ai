@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
+import { ClaudeQuestionCard } from "@/components/claude/ClaudeQuestionCard";
 import { ResumeTmuxSessionDialog } from "@/components/claude/ResumeTmuxSessionDialog";
 import { formatElapsed } from "@/lib/format-elapsed";
 import {
@@ -183,6 +184,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [showTui, setShowTui] = useState(false);
   const [tuiSnapshot, setTuiSnapshot] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
+  const [modelSwitching, setModelSwitching] = useState(false);
   const [planMode, setPlanMode] = useState(false);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [promptControlBusy, setPromptControlBusy] = useState(false);
@@ -470,7 +472,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     // `isThinking` covers the post-HTTP window where Claude is still
     // processing but `sending` has already reset; without it a user could
     // submit a second message before the first turn finishes.
-    if (!text || sending || isThinking) return;
+    if (!text || sending || isThinking || modelSwitching) return;
     setSending(true);
     setError(null);
     // Optimistically flip the "Claude is thinking…" indicator on submit so
@@ -516,8 +518,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
 
   const handleQuestionAnswer = async (
     question: TmuxPendingQuestion,
-    answers: Record<string, string>,
-  ) => {
+    answers: string[][],
+  ): Promise<boolean> => {
     try {
       await replyHook(
         tabId,
@@ -526,12 +528,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         preToolAllow({
           ...question.toolInput,
           questions: question.questions,
-          answers,
+          answers: questionAnswersToRecord(question.questions, answers),
         }),
       );
       removePendingQuestion(tabId, question.eventId);
+      return true;
     } catch (e) {
       setError(String(e));
+      return false;
     }
   };
 
@@ -643,6 +647,28 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const handleResume = (sessionId: string) => {
     setResumeDialogOpen(false);
     launchSession(sessionId);
+  };
+
+  const handleSelectModel = async (modelId: string) => {
+    if (modelId === selectedModel || modelSwitching) return;
+
+    if (!hasStarted || !running) {
+      setSelectedModel(modelId);
+      return;
+    }
+
+    if (sending || isThinking) return;
+
+    setModelSwitching(true);
+    setError(null);
+    try {
+      await submitToTmux(tabId, `/model ${modelCommandArg(modelId)}`);
+      setSelectedModel(modelId);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setModelSwitching(false);
+    }
   };
 
   // Tick once a second while the spinner is visible so the elapsed counter
@@ -792,10 +818,15 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           ))}
 
           {pendingQuestions.map((q) => (
-            <TmuxQuestionCard
+            <ClaudeQuestionCard
               key={q.eventId}
-              question={q}
-              onSubmit={(answers) => handleQuestionAnswer(q, answers)}
+              question={{
+                id: q.eventId,
+                sessionId: tabState?.sessionId ?? tabId,
+                questions: q.questions,
+                toolUseId: q.eventId,
+              }}
+              onSubmitAnswers={(answers) => handleQuestionAnswer(q, answers)}
               onDismiss={() => handleQuestionReject(q)}
             />
           ))}
@@ -872,15 +903,19 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         worktreePath={worktreePath}
         disabled={!running}
         busy={isThinking}
-        submitting={sending}
+        submitting={sending || modelSwitching}
         autoFocus={isActive}
         onSubmit={handleSubmit}
         onInterrupt={handleInterrupt}
         selectedModel={selectedModel}
-        onSelectModel={setSelectedModel}
+        onSelectModel={(modelId) => {
+          void handleSelectModel(modelId);
+        }}
         planMode={planMode}
         onTogglePlanMode={setPlanMode}
-        settingsLocked={hasStarted}
+        modelDisabled={(hasStarted && !running) || sending || isThinking || modelSwitching}
+        modelSwitching={modelSwitching}
+        planLocked={hasStarted}
       />
 
       <ResumeTmuxSessionDialog
@@ -951,114 +986,6 @@ function StartScreen({
 }
 
 // ─── Structured hook cards ──────────────────────────────────────────────────
-
-function TmuxQuestionCard({
-  question,
-  onSubmit,
-  onDismiss,
-}: {
-  question: TmuxPendingQuestion;
-  onSubmit: (answers: Record<string, string>) => void;
-  onDismiss: () => void;
-}) {
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-
-  const setAnswer = (questionText: string, label: string, multi: boolean) => {
-    setAnswers((prev) => {
-      const current = prev[questionText] ?? [];
-      if (!multi) return { ...prev, [questionText]: [label] };
-      return current.includes(label)
-        ? { ...prev, [questionText]: current.filter((x) => x !== label) }
-        : { ...prev, [questionText]: [...current, label] };
-    });
-  };
-
-  const ready = question.questions.every((q) => (answers[q.question] ?? []).length > 0);
-  const submit = () => {
-    const mapped: Record<string, string> = {};
-    for (const q of question.questions) {
-      mapped[q.question] = (answers[q.question] ?? []).join(", ");
-    }
-    onSubmit(mapped);
-  };
-
-  return (
-    <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 px-3 py-3 mb-3">
-      <div className="text-xs uppercase tracking-wide text-blue-300 mb-2">
-        Claude has a question
-      </div>
-      <div className="space-y-4">
-        {question.questions.map((q) => {
-          const selected = answers[q.question] ?? [];
-          const options = q.options ?? [];
-          return (
-            <div key={q.question} className="space-y-2">
-              <div className="text-sm font-medium text-foreground">
-                {q.header || q.question}
-              </div>
-              {q.header && (
-                <div className="text-sm text-muted-foreground">{q.question}</div>
-              )}
-              <div className="space-y-1">
-                {options.length === 0 && (
-                  <input
-                    value={selected[0] ?? ""}
-                    onChange={(e) =>
-                      setAnswers((prev) => ({
-                        ...prev,
-                        [q.question]: e.target.value.trim()
-                          ? [e.target.value]
-                          : [],
-                      }))
-                    }
-                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none"
-                  />
-                )}
-                {options.map((option) => {
-                  const isSelected = selected.includes(option.label);
-                  return (
-                    <button
-                      key={option.label}
-                      type="button"
-                      onClick={() =>
-                        setAnswer(q.question, option.label, q.multiSelect ?? false)
-                      }
-                      className={cn(
-                        "w-full min-w-0 rounded border px-2.5 py-2 text-left text-sm transition-colors",
-                        "flex items-start gap-2",
-                        isSelected
-                          ? "border-blue-500/70 bg-blue-500/15 text-blue-50"
-                          : "border-border/70 bg-background/50 hover:bg-muted/60",
-                      )}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block break-words">{option.label}</span>
-                        {option.description && (
-                          <span className="block text-xs text-muted-foreground">
-                            {option.description}
-                          </span>
-                        )}
-                      </span>
-                      {isSelected && <Check className="h-4 w-4 shrink-0 text-blue-300" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex justify-end gap-2 mt-3">
-        <Button variant="ghost" size="sm" onClick={onDismiss}>
-          Dismiss
-        </Button>
-        <Button size="sm" onClick={submit} disabled={!ready}>
-          Submit
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 function TmuxPlanCard({
   plan,
@@ -1561,6 +1488,17 @@ function hookToolName(payload: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function questionAnswersToRecord(
+  questions: TmuxPendingQuestion["questions"],
+  answers: string[][],
+): Record<string, string> {
+  const mapped: Record<string, string> = {};
+  questions.forEach((question, index) => {
+    mapped[question.question] = (answers[index] ?? []).join(", ");
+  });
+  return mapped;
+}
+
 function preToolAllow(updatedInput: Record<string, unknown>) {
   return {
     hookSpecificOutput: {
@@ -1642,6 +1580,10 @@ function modelObj(id: string) {
   return TMUX_MODELS.find((m) => m.id === id) ?? TMUX_MODELS[1]!;
 }
 
+function modelCommandArg(id: string) {
+  return modelObj(id).id;
+}
+
 // ─── Compose bar ─────────────────────────────────────────────────────────────
 
 interface TmuxComposeBarProps {
@@ -1659,7 +1601,9 @@ interface TmuxComposeBarProps {
   onSelectModel: (id: string) => void;
   planMode: boolean;
   onTogglePlanMode: (v: boolean) => void;
-  settingsLocked: boolean;
+  modelDisabled: boolean;
+  modelSwitching: boolean;
+  planLocked: boolean;
 }
 
 function TmuxComposeBar({
@@ -1677,7 +1621,9 @@ function TmuxComposeBar({
   onSelectModel,
   planMode,
   onTogglePlanMode,
-  settingsLocked,
+  modelDisabled,
+  modelSwitching,
+  planLocked,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevFileMentionMenuOpen = useRef(false);
@@ -1928,16 +1874,21 @@ function TmuxComposeBar({
         </button>
 
         {/* Model picker — selectable before launch even while compose is
-            disabled, so users can pre-pick from the start screen. */}
+            disabled, and after launch it sends Claude Code's /model command
+            into the running tmux pane. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              disabled={settingsLocked}
+              disabled={modelDisabled}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-60"
               title={
-                settingsLocked
-                  ? "Model is fixed for this tmux session"
-                  : "Select the model for the next tmux launch"
+                modelSwitching
+                  ? "Switching Claude model"
+                  : modelDisabled
+                    ? "Wait for Claude to finish before changing the model"
+                    : disabled
+                      ? "Select the model for the next tmux launch"
+                      : "Switch the model for this tmux session"
               }
             >
               <ChevronDown className="w-3 h-3" />
@@ -1976,10 +1927,10 @@ function TmuxComposeBar({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              disabled={settingsLocked}
+              disabled={planLocked}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-60"
               title={
-                settingsLocked
+                planLocked
                   ? "Plan mode is fixed for this tmux session"
                   : "Select the launch mode for the next tmux session"
               }

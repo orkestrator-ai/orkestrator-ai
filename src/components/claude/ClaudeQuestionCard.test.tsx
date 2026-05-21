@@ -168,6 +168,53 @@ describe("ClaudeQuestionCard", () => {
     expect(args[3]).toEqual([["Green"]]);
   });
 
+  test("submits through the callback mode without using the native client store path", async () => {
+    const onSubmitAnswers = mock(async () => true);
+
+    render(
+      <ClaudeQuestionCard
+        question={twoQuestions()}
+        onSubmitAnswers={onSubmitAnswers}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Red/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: /Two/ }));
+
+    const submit = screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+
+    expect(onSubmitAnswers).toHaveBeenCalledWith([["Red"], ["Two"]]);
+    expect(mockAnswerQuestion).not.toHaveBeenCalled();
+    expect(mockRemovePendingQuestion).not.toHaveBeenCalled();
+  });
+
+  test("callback mode treats false as a failed submit and re-enables the button", async () => {
+    const onSubmitAnswers = mock(async () => false);
+
+    render(
+      <ClaudeQuestionCard
+        question={singleQuestionWithOptions()}
+        onSubmitAnswers={onSubmitAnswers}
+      />
+    );
+
+    const input = screen.getByPlaceholderText(/Type your own answer/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Green" } });
+
+    const submit = screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+
+    expect(onSubmitAnswers).toHaveBeenCalledTimes(1);
+    expect(mockRemovePendingQuestion).not.toHaveBeenCalled();
+    expect(submit.disabled).toBe(false);
+  });
+
   test("custom typed answer persists when navigating between questions", () => {
     render(
       <ClaudeQuestionCard
@@ -394,5 +441,36 @@ describe("ClaudeQuestionCard", () => {
     } finally {
       mockAnswerQuestion.mockImplementation(async () => true);
     }
+  });
+
+  test("dismiss removes the native pending question by default", () => {
+    render(
+      <ClaudeQuestionCard
+        question={singleQuestionWithOptions()}
+        client={client}
+        sessionId="s-1"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(mockRemovePendingQuestion).toHaveBeenCalledWith("q-1");
+  });
+
+  test("dismiss delegates to the callback path when provided", () => {
+    const onDismiss = mock(() => {});
+
+    render(
+      <ClaudeQuestionCard
+        question={singleQuestionWithOptions()}
+        onSubmitAnswers={mock(async () => true)}
+        onDismiss={onDismiss}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(mockRemovePendingQuestion).not.toHaveBeenCalled();
   });
 });
