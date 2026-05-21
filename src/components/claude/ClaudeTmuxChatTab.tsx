@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ClaudeMessage } from "@/components/claude/ClaudeMessage";
 import { ClaudeQuestionCard } from "@/components/claude/ClaudeQuestionCard";
+import { ClaudeTmuxInteractiveTerminal } from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import { ResumeTmuxSessionDialog } from "@/components/claude/ResumeTmuxSessionDialog";
 import { formatElapsed } from "@/lib/format-elapsed";
 import {
@@ -182,6 +183,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showTui, setShowTui] = useState(false);
+  const [interactiveMode, setInteractiveMode] = useState(false);
   const [tuiSnapshot, setTuiSnapshot] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
   const [modelSwitching, setModelSwitching] = useState(false);
@@ -715,13 +717,35 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           <button
             type="button"
             className={cn(
+              "px-1.5 py-0.5 rounded transition-colors flex items-center gap-1",
+              interactiveMode
+                ? "text-foreground bg-muted/40 hover:bg-muted/60"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+              !running && "opacity-50 cursor-not-allowed",
+            )}
+            onClick={() => {
+              if (running) setInteractiveMode((v) => !v);
+            }}
+            disabled={!running}
+            title={
+              interactiveMode
+                ? "Switch back to the native tmux transcript view"
+                : "Attach an interactive terminal to this tmux session"
+            }
+          >
+            <TerminalIcon className="w-3 h-3" />
+            {interactiveMode ? "Native" : "Terminal"}
+          </button>
+          <button
+            type="button"
+            className={cn(
               "px-1.5 py-0.5 rounded hover:bg-muted/50 transition-colors flex items-center gap-1",
               showTui
                 ? "text-foreground bg-muted/40"
                 : "text-muted-foreground hover:text-foreground",
             )}
             onClick={() => setShowTui((v) => !v)}
-            title="Toggle a live view of the underlying tmux pane (debug)"
+            title="Toggle a live text snapshot of the underlying tmux pane"
           >
             <TerminalIcon className="w-3 h-3" />
             {showTui ? "Hide TUI" : "Show TUI"}
@@ -766,157 +790,167 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         </div>
       )}
 
-      {/* Raw TUI panel (debug) */}
-      {showTui && (
-        <div className="border-b border-border bg-black p-2 shrink-0">
-          <div className="text-[10px] uppercase tracking-wide text-amber-400 mb-1">
-            Raw tmux pane (refreshing)
-          </div>
-          <pre className="text-[11px] font-mono whitespace-pre-wrap max-h-72 overflow-auto text-zinc-200">
-            {tuiSnapshot || "(empty)"}
-          </pre>
-        </div>
-      )}
-
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
-          {messages.length === 0 && !hasPendingHookCards && (
-            showStartScreen ? (
-              <StartScreen
-                onStartFresh={() => launchSession()}
-                onPickResume={() => setResumeDialogOpen(true)}
-                selectedModel={modelObj(selectedModel).name}
-                planMode={planMode}
-              />
-            ) : (
-              <div className="text-xs text-muted-foreground italic py-8 text-center">
-                {running
-                  ? "Waiting for Claude…"
-                  : "Starting Claude under tmux…"}
+      {interactiveMode ? (
+        <ClaudeTmuxInteractiveTerminal
+          tabId={tabId}
+          isActive={isActive}
+          className="flex-1"
+        />
+      ) : (
+        <>
+          {/* Raw TUI panel (debug) */}
+          {showTui && (
+            <div className="border-b border-border bg-black p-2 shrink-0">
+              <div className="text-[10px] uppercase tracking-wide text-amber-400 mb-1">
+                Raw tmux pane (refreshing)
               </div>
-            )
+              <pre className="text-[11px] font-mono whitespace-pre-wrap max-h-72 overflow-auto text-zinc-200">
+                {tuiSnapshot || "(empty)"}
+              </pre>
+            </div>
           )}
 
-          {displayMessages.map((m, idx) => (
-            <ClaudeMessage
-              key={m.id}
-              message={m}
-              previousMessage={displayMessages[idx - 1] ?? null}
-              isStreaming={running}
-              containerId={containerId}
-            />
-          ))}
+          {/* Messages */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto">
+            <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
+              {messages.length === 0 && !hasPendingHookCards && (
+                showStartScreen ? (
+                  <StartScreen
+                    onStartFresh={() => launchSession()}
+                    onPickResume={() => setResumeDialogOpen(true)}
+                    selectedModel={modelObj(selectedModel).name}
+                    planMode={planMode}
+                  />
+                ) : (
+                  <div className="text-xs text-muted-foreground italic py-8 text-center">
+                    {running
+                      ? "Waiting for Claude..."
+                      : "Starting Claude under tmux..."}
+                  </div>
+                )
+              )}
 
-          {pendingApprovals.map((a) => (
-            <ApprovalCard
-              key={a.eventId}
-              approval={a}
-              onApprove={() => handleApproval(a.eventId, "approve")}
-              onDeny={() => handleApproval(a.eventId, "block")}
-            />
-          ))}
+              {displayMessages.map((m, idx) => (
+                <ClaudeMessage
+                  key={m.id}
+                  message={m}
+                  previousMessage={displayMessages[idx - 1] ?? null}
+                  isStreaming={running}
+                  containerId={containerId}
+                />
+              ))}
 
-          {pendingQuestions.map((q) => (
-            <ClaudeQuestionCard
-              key={q.eventId}
-              question={{
-                id: q.eventId,
-                sessionId: tabState?.sessionId ?? tabId,
-                questions: q.questions,
-                toolUseId: q.eventId,
-              }}
-              onSubmitAnswers={(answers) => handleQuestionAnswer(q, answers)}
-              onDismiss={() => handleQuestionReject(q)}
-            />
-          ))}
+              {pendingApprovals.map((a) => (
+                <ApprovalCard
+                  key={a.eventId}
+                  approval={a}
+                  onApprove={() => handleApproval(a.eventId, "approve")}
+                  onDeny={() => handleApproval(a.eventId, "block")}
+                />
+              ))}
 
-          {pendingPlans.map((p) => (
-            <TmuxPlanCard
-              key={p.eventId}
-              plan={p}
-              onRespond={(approved, feedback) =>
-                handlePlanResponse(p, approved, feedback)
-              }
-            />
-          ))}
+              {pendingQuestions.map((q) => (
+                <ClaudeQuestionCard
+                  key={q.eventId}
+                  question={{
+                    id: q.eventId,
+                    sessionId: tabState?.sessionId ?? tabId,
+                    questions: q.questions,
+                    toolUseId: q.eventId,
+                  }}
+                  onSubmitAnswers={(answers) => handleQuestionAnswer(q, answers)}
+                  onDismiss={() => handleQuestionReject(q)}
+                />
+              ))}
 
-          {pendingPermissions.map((p) => (
-            <TmuxPermissionCard
-              key={p.eventId}
-              permission={p}
-              onRespond={(allow, updatedPermissions) =>
-                handlePermissionResponse(p, allow, updatedPermissions)
-              }
-            />
-          ))}
+              {pendingPlans.map((p) => (
+                <TmuxPlanCard
+                  key={p.eventId}
+                  plan={p}
+                  onRespond={(approved, feedback) =>
+                    handlePlanResponse(p, approved, feedback)
+                  }
+                />
+              ))}
 
-          {pendingElicitations.map((e) => (
-            <TmuxElicitationCard
-              key={e.eventId}
-              elicitation={e}
-              onRespond={(action, content) =>
-                handleElicitationResponse(e, action, content)
-              }
-            />
-          ))}
+              {pendingPermissions.map((p) => (
+                <TmuxPermissionCard
+                  key={p.eventId}
+                  permission={p}
+                  onRespond={(allow, updatedPermissions) =>
+                    handlePermissionResponse(p, allow, updatedPermissions)
+                  }
+                />
+              ))}
 
-          {selectionPrompt && (
-            <TmuxSelectionPromptCard
-              prompt={selectionPrompt}
-              busy={promptControlBusy}
-              onSelectOption={(optionIndex) =>
-                handleSelectPromptOption(selectionPrompt, optionIndex)
-              }
-              onSendKeys={handlePromptKeys}
-            />
-          )}
-        </div>
-      </div>
+              {pendingElicitations.map((e) => (
+                <TmuxElicitationCard
+                  key={e.eventId}
+                  elicitation={e}
+                  onRespond={(action, content) =>
+                    handleElicitationResponse(e, action, content)
+                  }
+                />
+              ))}
 
-      {/* "Claude is thinking…" indicator — matches the native tab so the UI
-          looks the same between modes. Shown only while running so a freshly
-          mounted tab without a session doesn't flash a misleading spinner. */}
-      {isThinking && running && (
-        <div className="shrink-0 px-2 @sm:px-4 py-2 border-t border-border/40">
-          <div className="max-w-3xl mx-auto min-w-0">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-xs">Claude is thinking...</span>
-              {elapsedSeconds !== null && elapsedSeconds > 0 && (
-                <span className="text-xs text-muted-foreground/50">
-                  {formatElapsed(elapsedSeconds)}
-                </span>
+              {selectionPrompt && (
+                <TmuxSelectionPromptCard
+                  prompt={selectionPrompt}
+                  busy={promptControlBusy}
+                  onSelectOption={(optionIndex) =>
+                    handleSelectPromptOption(selectionPrompt, optionIndex)
+                  }
+                  onSendKeys={handlePromptKeys}
+                />
               )}
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Compose bar — stays "busy" for the full turn (HTTP submit + Claude
-          processing) so a user can't queue a second message before the
-          previous one finishes. Mirrors the spinner condition above. */}
-      <TmuxComposeBar
-        value={draft}
-        setValue={setDraft}
-        containerId={containerId}
-        worktreePath={worktreePath}
-        disabled={!running}
-        busy={isThinking}
-        submitting={sending || modelSwitching}
-        autoFocus={isActive}
-        onSubmit={handleSubmit}
-        onInterrupt={handleInterrupt}
-        selectedModel={selectedModel}
-        onSelectModel={(modelId) => {
-          void handleSelectModel(modelId);
-        }}
-        planMode={planMode}
-        onTogglePlanMode={setPlanMode}
-        modelDisabled={(hasStarted && !running) || sending || isThinking || modelSwitching}
-        modelSwitching={modelSwitching}
-        planLocked={hasStarted}
-      />
+          {/* "Claude is thinking…" indicator — matches the native tab so the UI
+              looks the same between modes. Shown only while running so a freshly
+              mounted tab without a session doesn't flash a misleading spinner. */}
+          {isThinking && running && (
+            <div className="shrink-0 px-2 @sm:px-4 py-2 border-t border-border/40">
+              <div className="max-w-3xl mx-auto min-w-0">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-xs">Claude is thinking...</span>
+                  {elapsedSeconds !== null && elapsedSeconds > 0 && (
+                    <span className="text-xs text-muted-foreground/50">
+                      {formatElapsed(elapsedSeconds)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Compose bar — stays "busy" for the full turn (HTTP submit + Claude
+              processing) so a user can't queue a second message before the
+              previous one finishes. Mirrors the spinner condition above. */}
+          <TmuxComposeBar
+            value={draft}
+            setValue={setDraft}
+            containerId={containerId}
+            worktreePath={worktreePath}
+            disabled={!running}
+            busy={isThinking}
+            submitting={sending || modelSwitching}
+            autoFocus={isActive}
+            onSubmit={handleSubmit}
+            onInterrupt={handleInterrupt}
+            selectedModel={selectedModel}
+            onSelectModel={(modelId) => {
+              void handleSelectModel(modelId);
+            }}
+            planMode={planMode}
+            onTogglePlanMode={setPlanMode}
+            modelDisabled={(hasStarted && !running) || sending || isThinking || modelSwitching}
+            modelSwitching={modelSwitching}
+            planLocked={hasStarted}
+          />
+        </>
+      )}
 
       <ResumeTmuxSessionDialog
         open={resumeDialogOpen}

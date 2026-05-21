@@ -41,6 +41,7 @@ pub struct LocalTerminalSession {
     pub rows: u16,
     pub is_active: bool,
     pub bundled_bin_dir: Option<String>,
+    pub command: Option<Vec<String>>,
     pty_handle: Option<PtyHandle>,
     child_pid: Option<u32>,
     child_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
@@ -54,6 +55,24 @@ impl LocalTerminalSession {
         rows: u16,
         bundled_bin_dir: Option<String>,
     ) -> Self {
+        Self::new_with_command(
+            environment_id,
+            worktree_path,
+            cols,
+            rows,
+            bundled_bin_dir,
+            None,
+        )
+    }
+
+    pub fn new_with_command(
+        environment_id: &str,
+        worktree_path: &str,
+        cols: u16,
+        rows: u16,
+        bundled_bin_dir: Option<String>,
+        command: Option<Vec<String>>,
+    ) -> Self {
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
             environment_id: environment_id.to_string(),
@@ -62,6 +81,7 @@ impl LocalTerminalSession {
             rows,
             is_active: false,
             bundled_bin_dir,
+            command,
             pty_handle: None,
             child_pid: None,
             child_killer: None,
@@ -92,6 +112,27 @@ impl LocalTerminalManager {
         rows: u16,
         bundled_bin_dir: Option<String>,
     ) -> Result<String, LocalPtyError> {
+        self.create_session_with_command(
+            environment_id,
+            worktree_path,
+            cols,
+            rows,
+            bundled_bin_dir,
+            None,
+        )
+        .await
+    }
+
+    /// Create a new local terminal session with a specific command.
+    pub async fn create_session_with_command(
+        &self,
+        environment_id: &str,
+        worktree_path: &str,
+        cols: u16,
+        rows: u16,
+        bundled_bin_dir: Option<String>,
+        command: Option<Vec<String>>,
+    ) -> Result<String, LocalPtyError> {
         debug!(
             environment_id = %environment_id,
             worktree_path = %worktree_path,
@@ -114,8 +155,23 @@ impl LocalTerminalManager {
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
 
         // Create and store session
-        let mut session =
-            LocalTerminalSession::new(environment_id, worktree_path, cols, rows, bundled_bin_dir);
+        let mut session = match command {
+            Some(command) => LocalTerminalSession::new_with_command(
+                environment_id,
+                worktree_path,
+                cols,
+                rows,
+                bundled_bin_dir,
+                Some(command),
+            ),
+            None => LocalTerminalSession::new(
+                environment_id,
+                worktree_path,
+                cols,
+                rows,
+                bundled_bin_dir,
+            ),
+        };
         session.pty_handle = Some(PtyHandle::Pair(pair));
         session.is_active = true;
 
@@ -137,7 +193,7 @@ impl LocalTerminalManager {
     ) -> Result<mpsc::Receiver<Vec<u8>>, LocalPtyError> {
         debug!(session_id = %session_id, "Starting local terminal session");
 
-        let (worktree_path, bundled_bin_dir, pair) = {
+        let (worktree_path, bundled_bin_dir, command, pair) = {
             let mut sessions = self.sessions.lock().unwrap();
             let session = sessions
                 .get_mut(session_id)
@@ -158,6 +214,7 @@ impl LocalTerminalManager {
             (
                 session.worktree_path.clone(),
                 session.bundled_bin_dir.clone(),
+                session.command.clone(),
                 pair,
             )
         };
@@ -165,8 +222,16 @@ impl LocalTerminalManager {
         // Get the user's default shell
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-        // Build the command to run in the PTY
-        let mut cmd = CommandBuilder::new(&shell);
+        // Build the command to run in the PTY.
+        let command = command.filter(|parts| !parts.is_empty());
+        let mut cmd = match command {
+            Some(parts) => {
+                let mut cmd = CommandBuilder::new(&parts[0]);
+                cmd.args(&parts[1..]);
+                cmd
+            }
+            None => CommandBuilder::new(&shell),
+        };
         cmd.cwd(&worktree_path);
 
         // Set up environment variables
@@ -496,18 +561,14 @@ mod tests {
 
     #[test]
     fn new_session_plumbs_bundled_bin_dir() {
-        let s = LocalTerminalSession::new(
-            "env-1",
-            "/tmp/work",
-            80,
-            24,
-            Some("/opt/bin".to_string()),
-        );
+        let s =
+            LocalTerminalSession::new("env-1", "/tmp/work", 80, 24, Some("/opt/bin".to_string()));
         assert_eq!(s.environment_id, "env-1");
         assert_eq!(s.worktree_path, "/tmp/work");
         assert_eq!(s.cols, 80);
         assert_eq!(s.rows, 24);
         assert_eq!(s.bundled_bin_dir.as_deref(), Some("/opt/bin"));
+        assert!(s.command.is_none());
         assert!(!s.is_active);
         assert!(!s.session_id.is_empty());
     }
@@ -516,6 +577,23 @@ mod tests {
     fn new_session_accepts_no_bundled_bin_dir() {
         let s = LocalTerminalSession::new("env-1", "/tmp/work", 80, 24, None);
         assert!(s.bundled_bin_dir.is_none());
+        assert!(s.command.is_none());
+    }
+
+    #[test]
+    fn new_with_command_stores_command() {
+        let s = LocalTerminalSession::new_with_command(
+            "env-1",
+            "/tmp/work",
+            80,
+            24,
+            None,
+            Some(vec!["tmux".to_string(), "attach-session".to_string()]),
+        );
+        assert_eq!(
+            s.command,
+            Some(vec!["tmux".to_string(), "attach-session".to_string()])
+        );
     }
 
     #[tokio::test]

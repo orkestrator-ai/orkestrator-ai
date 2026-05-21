@@ -8,15 +8,17 @@ use crate::claude_tmux::{
     session::{short_id, tmux_session_name, TmuxSession, TmuxSessionStatus},
     transcript::{self, PreviousSessionInfo},
 };
+use crate::local::get_local_terminal_manager;
 use crate::models::EnvironmentType;
+use crate::pty::get_terminal_manager;
 use crate::storage::get_storage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
-use tracing::info;
+use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tracing::{debug, info, warn};
 
 fn resolve_backend(environment_id: &str) -> Result<Backend, String> {
     let storage = get_storage().map_err(|e| e.to_string())?;
@@ -247,6 +249,25 @@ fn workspace_hook_paths_for_backend(
     )
 }
 
+fn spawn_interactive_output_forwarder<R: Runtime>(
+    app: AppHandle<R>,
+    terminal_session_id: String,
+    mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        while let Some(data) = output_rx.recv().await {
+            if let Err(e) = app.emit(&format!("terminal-output-{}", terminal_session_id), data) {
+                warn!(
+                    session_id = %terminal_session_id,
+                    error = ?e,
+                    "failed to emit tmux interactive terminal output"
+                );
+            }
+        }
+        debug!(session_id = %terminal_session_id, "tmux interactive output forwarder ended");
+    });
+}
+
 async fn kill_tmux_sessions_for_env(backend: &Backend, environment_id: &str) {
     let prefix = format!("orkestrator-{}-", short_id(environment_id));
     let out = match backend
@@ -383,6 +404,170 @@ pub async fn claude_tmux_pending_hooks(
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.pending_hooks().await
+}
+
+#[tauri::command]
+pub async fn claude_tmux_create_interactive_terminal(
+    tab_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<String, String> {
+    let session = get_manager()
+        .get(&tab_id)
+        .await
+        .ok_or_else(|| "tmux session not running".to_string())?;
+
+    if !session.tmux_alive().await? {
+        return Err("tmux session not running".to_string());
+    }
+
+    let command = vec![
+        "tmux".to_string(),
+        "attach-session".to_string(),
+        "-t".to_string(),
+        session.tmux_session.clone(),
+    ];
+
+    match &session.backend {
+        Backend::Local { cwd } => {
+            let manager = get_local_terminal_manager()
+                .ok_or_else(|| "Local terminal manager not initialized".to_string())?;
+            manager
+                .create_session_with_command(
+                    &session.environment_id,
+                    cwd,
+                    cols,
+                    rows,
+                    None,
+                    Some(command),
+                )
+                .await
+                .map_err(|e| e.to_string())
+        }
+        Backend::Container { container_id } => {
+            let manager = get_terminal_manager()
+                .ok_or_else(|| "Terminal manager not initialized".to_string())?;
+            manager
+                .create_session_with_command(container_id, cols, rows, Some("node"), command)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn claude_tmux_start_interactive_terminal<R: Runtime>(
+    app: AppHandle<R>,
+    terminal_session_id: String,
+) -> Result<(), String> {
+    if let Some(manager) = get_local_terminal_manager() {
+        if manager.get_session(&terminal_session_id).is_some() {
+            let output_rx = manager
+                .start_session(&terminal_session_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            spawn_interactive_output_forwarder(app, terminal_session_id, output_rx);
+            return Ok(());
+        }
+    }
+
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    if manager.get_session(&terminal_session_id).is_some() {
+        let output_rx = manager
+            .start_session(&terminal_session_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        spawn_interactive_output_forwarder(app, terminal_session_id, output_rx);
+        return Ok(());
+    }
+
+    Err("tmux interactive terminal session not found".to_string())
+}
+
+#[tauri::command]
+pub async fn claude_tmux_write_interactive_terminal(
+    terminal_session_id: String,
+    data: String,
+) -> Result<(), String> {
+    if let Some(manager) = get_local_terminal_manager() {
+        if manager.get_session(&terminal_session_id).is_some() {
+            return manager
+                .write_to_session(&terminal_session_id, data.into_bytes())
+                .await
+                .map_err(|e| e.to_string());
+        }
+    }
+
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    if manager.get_session(&terminal_session_id).is_some() {
+        return manager
+            .write_to_session(&terminal_session_id, data.into_bytes())
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    Err("tmux interactive terminal session not found".to_string())
+}
+
+#[tauri::command]
+pub async fn claude_tmux_resize_interactive_terminal(
+    terminal_session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    if let Some(manager) = get_local_terminal_manager() {
+        if manager.get_session(&terminal_session_id).is_some() {
+            return manager
+                .resize_session(&terminal_session_id, cols, rows)
+                .map_err(|e| e.to_string());
+        }
+    }
+
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    if manager.get_session(&terminal_session_id).is_some() {
+        return manager
+            .resize_session(&terminal_session_id, cols, rows)
+            .await
+            .map_err(|e| e.to_string());
+    }
+
+    Err("tmux interactive terminal session not found".to_string())
+}
+
+#[tauri::command]
+pub async fn claude_tmux_detach_interactive_terminal(
+    terminal_session_id: String,
+) -> Result<(), String> {
+    const TMUX_DETACH_CLIENT: &[u8] = b"\x02d";
+
+    if let Some(manager) = get_local_terminal_manager() {
+        if manager.get_session(&terminal_session_id).is_some() {
+            let _ = manager
+                .write_to_session(&terminal_session_id, TMUX_DETACH_CLIENT.to_vec())
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            return manager
+                .close_session(&terminal_session_id)
+                .map_err(|e| e.to_string());
+        }
+    }
+
+    let manager =
+        get_terminal_manager().ok_or_else(|| "Terminal manager not initialized".to_string())?;
+    if manager.get_session(&terminal_session_id).is_some() {
+        let _ = manager
+            .write_to_session(&terminal_session_id, TMUX_DETACH_CLIENT.to_vec())
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        return manager
+            .close_session(&terminal_session_id)
+            .map_err(|e| e.to_string());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

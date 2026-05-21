@@ -83,6 +83,30 @@ impl TerminalManager {
         rows: u16,
         user: Option<&str>,
     ) -> Result<String, PtyError> {
+        self.create_session_with_command(
+            container_id,
+            cols,
+            rows,
+            user,
+            vec![
+                "/bin/zsh".to_string(),
+                "-c".to_string(),
+                build_container_terminal_start_command().to_string(),
+            ],
+        )
+        .await
+    }
+
+    /// Create a new terminal session for a container with a specific command.
+    #[instrument(skip(self, command), fields(container_id = %container_id, cols, rows, user))]
+    pub async fn create_session_with_command(
+        &self,
+        container_id: &str,
+        cols: u16,
+        rows: u16,
+        user: Option<&str>,
+        command: Vec<String>,
+    ) -> Result<String, PtyError> {
         debug!("Creating terminal session");
         let docker = Self::connect_docker()?;
 
@@ -105,19 +129,17 @@ impl TerminalManager {
         // Convert to references for the API
         let env_refs: Vec<&str> = env_vars.iter().map(|s| s.as_str()).collect();
 
-        // Create exec instance with TTY
-        // Run workspace-setup.sh first (handles clone, env files, project setup)
-        // then exec into zsh - all visible in the terminal
+        // Create exec instance with TTY. The default command runs
+        // workspace-setup.sh and then opens zsh; callers can supply a narrower
+        // command for purpose-built terminal attachments.
+        let cmd_refs: Vec<&str> = command.iter().map(String::as_str).collect();
+
         let config = CreateExecOptions {
             attach_stdin: Some(true),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             tty: Some(true),
-            cmd: Some(vec![
-                "/bin/zsh",
-                "-c",
-                build_container_terminal_start_command(),
-            ]),
+            cmd: Some(cmd_refs),
             working_dir: Some("/workspace"),
             env: Some(env_refs),
             user: Some(user.unwrap_or("node")), // Use provided user or default to node

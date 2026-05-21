@@ -193,6 +193,52 @@ export async function resize(
   await invoke("claude_tmux_resize", { tabId, cols, rows });
 }
 
+export async function createInteractiveTerminal(
+  tabId: string,
+  cols: number,
+  rows: number,
+): Promise<string> {
+  return invoke<string>("claude_tmux_create_interactive_terminal", {
+    tabId,
+    cols,
+    rows,
+  });
+}
+
+export async function startInteractiveTerminal(
+  terminalSessionId: string,
+): Promise<void> {
+  await invoke("claude_tmux_start_interactive_terminal", { terminalSessionId });
+}
+
+export async function writeInteractiveTerminal(
+  terminalSessionId: string,
+  data: string,
+): Promise<void> {
+  await invoke("claude_tmux_write_interactive_terminal", {
+    terminalSessionId,
+    data,
+  });
+}
+
+export async function resizeInteractiveTerminal(
+  terminalSessionId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  await invoke("claude_tmux_resize_interactive_terminal", {
+    terminalSessionId,
+    cols,
+    rows,
+  });
+}
+
+export async function detachInteractiveTerminal(
+  terminalSessionId: string,
+): Promise<void> {
+  await invoke("claude_tmux_detach_interactive_terminal", { terminalSessionId });
+}
+
 /**
  * Resolve a PreToolUse hook decision.
  * - "approve": tool is allowed (Claude skips its own permission prompt)
