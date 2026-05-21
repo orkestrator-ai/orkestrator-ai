@@ -46,6 +46,17 @@ export function useFileMentions({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  const closeMenu = useCallback(() => {
+    setIsMenuOpen(false);
+    setSearchQuery("");
+    setSelectedIndex(0);
+  }, []);
+
+  const handleMenuKey = useCallback((event: React.KeyboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
   // Filter files based on current search query
   const filteredFiles = useMemo(() => {
     if (!isMenuOpen) return [];
@@ -100,13 +111,13 @@ export function useFileMentions({
 
       switch (event.key) {
         case "ArrowDown":
-          event.preventDefault();
+          handleMenuKey(event);
           if (filteredFiles.length === 0) return true;
           setSelectedIndex((prev) => (prev + 1) % filteredFiles.length);
           return true;
 
         case "ArrowUp":
-          event.preventDefault();
+          handleMenuKey(event);
           if (filteredFiles.length === 0) return true;
           setSelectedIndex((prev) =>
             prev === 0 ? filteredFiles.length - 1 : prev - 1
@@ -115,41 +126,28 @@ export function useFileMentions({
 
         case "Tab":
         case "Enter":
+          handleMenuKey(event);
           if (filteredFiles.length === 0) {
-            event.preventDefault();
             return true;
           }
           if (filteredFiles[safeSelectedIndex]) {
-            event.preventDefault();
-            onSelect(filteredFiles[safeSelectedIndex]);
-            setIsMenuOpen(false);
-            setSearchQuery("");
-            setSelectedIndex(0);
+            const selectedFile = filteredFiles[safeSelectedIndex];
+            closeMenu();
+            onSelect(selectedFile);
             return true;
           }
           break;
 
         case "Escape":
-          event.preventDefault();
-          setIsMenuOpen(false);
-          setSearchQuery("");
-          setSelectedIndex(0);
+          handleMenuKey(event);
+          closeMenu();
           return true;
       }
 
       return false;
     },
-    [isMenuOpen, filteredFiles, safeSelectedIndex]
+    [closeMenu, filteredFiles, handleMenuKey, isMenuOpen, safeSelectedIndex]
   );
-
-  /**
-   * Close the menu.
-   */
-  const closeMenu = useCallback(() => {
-    setIsMenuOpen(false);
-    setSearchQuery("");
-    setSelectedIndex(0);
-  }, []);
 
   /**
    * Serialize text for LLM by replacing @filename with markdown link.

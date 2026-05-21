@@ -280,10 +280,7 @@ export function OpenCodeComposeBar({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (fileMentionMenuOpen) {
-      const handled = handleFileMentionKeyDown(event, (file) => {
-        const mention = createMention(file);
-        inputRef.current?.insertMention(mention);
-      });
+      const handled = handleFileMentionKeyDown(event, handleFileMentionSelect);
       if (handled) return;
     }
 

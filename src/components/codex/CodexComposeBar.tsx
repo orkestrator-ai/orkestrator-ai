@@ -429,10 +429,7 @@ export function CodexComposeBar({
           onCursorChange={handleCursorPositionChange}
           onKeyDown={(event) => {
             if (fileMentionMenuOpen) {
-              const handled = handleFileMentionKeyDown(event, (file) => {
-                const mention = createMention(file);
-                inputRef.current?.insertMention(mention);
-              });
+              const handled = handleFileMentionKeyDown(event, handleFileMentionSelect);
               if (handled) {
                 return;
               }
