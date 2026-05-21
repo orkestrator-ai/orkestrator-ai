@@ -597,6 +597,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_session_runs_custom_command() {
+        let tmp = TempDir::new().unwrap();
+        let manager = LocalTerminalManager::new();
+        let worktree = tmp.path().to_string_lossy();
+        let session_id = manager
+            .create_session_with_command(
+                "env-1",
+                &worktree,
+                80,
+                24,
+                None,
+                Some(vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "printf custom-command".to_string(),
+                ]),
+            )
+            .await
+            .unwrap();
+
+        let mut output_rx = manager.start_session(&session_id).await.unwrap();
+        let mut output = Vec::new();
+
+        for _ in 0..10 {
+            let chunk =
+                tokio::time::timeout(std::time::Duration::from_millis(250), output_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap_or_default();
+            output.extend(chunk);
+            if String::from_utf8_lossy(&output).contains("custom-command") {
+                break;
+            }
+        }
+
+        let _ = manager.close_session(&session_id);
+        assert!(String::from_utf8_lossy(&output).contains("custom-command"));
+    }
+
+    #[tokio::test]
     async fn close_sessions_for_environment_removes_only_matching_sessions() {
         let tmp = TempDir::new().unwrap();
         let manager = LocalTerminalManager::new();

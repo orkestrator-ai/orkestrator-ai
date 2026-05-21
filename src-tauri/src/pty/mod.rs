@@ -107,6 +107,12 @@ impl TerminalManager {
         user: Option<&str>,
         command: Vec<String>,
     ) -> Result<String, PtyError> {
+        if command.is_empty() {
+            return Err(PtyError::ExecFailed(
+                "Terminal command cannot be empty".to_string(),
+            ));
+        }
+
         debug!("Creating terminal session");
         let docker = Self::connect_docker()?;
 
@@ -401,5 +407,21 @@ mod tests {
         assert!(command.contains("source /usr/local/bin/orkestrator-runtime-env.sh"));
         assert!(command.contains("orkestrator_source_runtime_env"));
         assert!(command.ends_with("exec /bin/zsh"));
+    }
+
+    #[tokio::test]
+    async fn create_session_with_command_rejects_empty_command_before_docker() {
+        let manager = TerminalManager::new();
+        let err = manager
+            .create_session_with_command("container-1", 80, 24, None, Vec::new())
+            .await
+            .unwrap_err();
+
+        match err {
+            PtyError::ExecFailed(message) => {
+                assert_eq!(message, "Terminal command cannot be empty");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

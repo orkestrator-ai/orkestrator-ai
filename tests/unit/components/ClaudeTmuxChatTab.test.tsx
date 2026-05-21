@@ -7,12 +7,14 @@ import * as realTmuxClient from "@/lib/claude-tmux-client";
 import * as realTauri from "@/lib/tauri";
 import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
 import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
+import * as realInteractiveTerminal from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
 import type { FileCandidate } from "@/types";
 
 const realTmuxClientSnapshot = { ...realTmuxClient };
 const realTauriSnapshot = { ...realTauri };
 const realClaudeMessageSnapshot = { ...realClaudeMessage };
+const realInteractiveTerminalSnapshot = { ...realInteractiveTerminal };
 const realFileMentionMenuSnapshot = { ...realFileMentionMenu };
 const getFileTreeMock = mock(async () => []);
 const getLocalFileTreeMock = mock(async () => []);
@@ -70,6 +72,24 @@ const claudeMessageRenderMock = mock(
     </div>
   ),
 );
+const interactiveTerminalRenderMock = mock(
+  ({
+    tabId,
+    isActive,
+    className,
+  }: {
+    tabId: string;
+    isActive: boolean;
+    className?: string;
+  }) => (
+    <div
+      data-testid="tmux-interactive-terminal"
+      data-tab-id={tabId}
+      data-active={String(isActive)}
+      className={className}
+    />
+  ),
+);
 
 mock.module("@/lib/claude-tmux-client", () => ({
   ...realTmuxClientSnapshot,
@@ -91,6 +111,10 @@ mock.module("@/lib/claude-tmux-client", () => ({
 mock.module("@/components/claude/ClaudeMessage", () => ({
   ...realClaudeMessageSnapshot,
   ClaudeMessage: claudeMessageRenderMock,
+}));
+
+mock.module("@/components/claude/ClaudeTmuxInteractiveTerminal", () => ({
+  ClaudeTmuxInteractiveTerminal: interactiveTerminalRenderMock,
 }));
 
 mock.module("@/lib/tauri", () => ({
@@ -145,6 +169,7 @@ describe("ClaudeTmuxChatTab", () => {
     mock.module("@/lib/claude-tmux-client", () => realTmuxClientSnapshot);
     mock.module("@/lib/tauri", () => realTauriSnapshot);
     mock.module("@/components/claude/ClaudeMessage", () => realClaudeMessageSnapshot);
+    mock.module("@/components/claude/ClaudeTmuxInteractiveTerminal", () => realInteractiveTerminalSnapshot);
     mock.module("@/components/chat/FileMentionMenu", () => realFileMentionMenuSnapshot);
   });
 
@@ -172,6 +197,7 @@ describe("ClaudeTmuxChatTab", () => {
     answerPreToolUseMock.mockClear();
     listPreviousSessionsMock.mockClear();
     claudeMessageRenderMock.mockClear();
+    interactiveTerminalRenderMock.mockClear();
     capturePaneMock.mockImplementation(async () => "");
     submitMock.mockImplementation(async () => {});
     listPreviousSessionsMock.mockImplementation(async () => [
@@ -223,6 +249,64 @@ describe("ClaudeTmuxChatTab", () => {
       const tab = usePaneLayoutStore.getState().getAllTabs("env-1")[0];
       expect(tab?.initialPrompt).toBeUndefined();
     });
+  });
+
+  test("toggles between native transcript and interactive terminal mode while running", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const terminalButton = await waitFor(() => {
+      const button = screen.getByRole("button", { name: /terminal/i });
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+      return button;
+    });
+
+    fireEvent.click(terminalButton);
+
+    const terminal = screen.getByTestId("tmux-interactive-terminal");
+    expect(terminal.getAttribute("data-tab-id")).toBe("tab-1");
+    expect(terminal.getAttribute("data-active")).toBe("true");
+    expect(interactiveTerminalRenderMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /native/i }));
+
+    expect(screen.queryByTestId("tmux-interactive-terminal")).toBeNull();
+    expect(screen.getByRole("button", { name: /terminal/i })).toBeTruthy();
+  });
+
+  test("keeps interactive terminal mode disabled until a tmux session is running", async () => {
+    seedPane();
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const terminalButton = screen.getByRole("button", { name: /terminal/i });
+    expect((terminalButton as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(terminalButton);
+
+    expect(screen.queryByTestId("tmux-interactive-terminal")).toBeNull();
   });
 
   test("hydrates a running backend session and replays missed transcript before auto-starting", async () => {

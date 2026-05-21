@@ -118,24 +118,49 @@ export function ClaudeTmuxInteractiveTerminal({
     let cancelled = false;
 
     const connect = async () => {
+      let createdSessionId: string | null = null;
+      let activeUnlisten: UnlistenFn | null = null;
+
+      const cleanupCreatedSession = () => {
+        const unlisten = activeUnlisten;
+        activeUnlisten = null;
+        unlisten?.();
+        if (unlistenRef.current === unlisten) {
+          unlistenRef.current = null;
+        }
+        if (createdSessionId) {
+          void detachInteractiveTerminal(createdSessionId);
+        }
+        if (sessionIdRef.current === createdSessionId) {
+          sessionIdRef.current = null;
+        }
+      };
+
       try {
         const sessionId = await createInteractiveTerminal(
           tabId,
           terminal.cols || 120,
           terminal.rows || 30,
         );
+        createdSessionId = sessionId;
         if (cancelled) {
           void detachInteractiveTerminal(sessionId);
           return;
         }
 
         sessionIdRef.current = sessionId;
-        unlistenRef.current = await listen<number[]>(
+        activeUnlisten = await listen<number[]>(
           `terminal-output-${sessionId}`,
           (event) => {
             terminal.write(new Uint8Array(event.payload));
           },
         );
+        if (cancelled) {
+          cleanupCreatedSession();
+          return;
+        }
+        unlistenRef.current = activeUnlisten;
+
         await startInteractiveTerminal(sessionId);
         if (cancelled) return;
         setConnected(true);
@@ -143,6 +168,7 @@ export function ClaudeTmuxInteractiveTerminal({
         fit();
         terminal.focus();
       } catch (e) {
+        cleanupCreatedSession();
         if (!cancelled) setError(String(e));
       }
     };

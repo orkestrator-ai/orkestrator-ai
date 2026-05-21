@@ -285,9 +285,12 @@ async fn kill_tmux_sessions_for_env(backend: &Backend, environment_id: &str) {
         }
     };
 
-    for name in out.stdout.lines().map(str::trim).filter(|name| {
-        !name.is_empty() && name.starts_with(&prefix)
-    }) {
+    for name in out
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.starts_with(&prefix))
+    {
         if let Err(e) = backend.exec(&["tmux", "kill-session", "-t", name]).await {
             tracing::warn!(
                 env = %environment_id,
@@ -334,7 +337,8 @@ pub async fn stop_tmux_sessions_for_environment(environment_id: &str) {
     if let Some((backend, workspace_hook_paths)) = backend_and_hooks {
         kill_tmux_sessions_for_env(&backend, environment_id).await;
         if mgr.sessions_in_env(environment_id).await == 0 {
-            if let Err(e) = hooks::uninstall_workspace_hooks(&backend, &workspace_hook_paths).await {
+            if let Err(e) = hooks::uninstall_workspace_hooks(&backend, &workspace_hook_paths).await
+            {
                 tracing::warn!(env = %environment_id, error = %e, "uninstall_workspace_hooks failed");
             }
         }
@@ -347,12 +351,13 @@ pub async fn shutdown_all_tmux_sessions() {
     let mut envs: HashMap<String, (Backend, hooks::WorkspaceHookPaths)> = HashMap::new();
 
     for session in sessions {
-        envs.entry(session.environment_id.clone()).or_insert_with(|| {
-            (
-                session.backend.clone(),
-                session.workspace_hook_paths.clone(),
-            )
-        });
+        envs.entry(session.environment_id.clone())
+            .or_insert_with(|| {
+                (
+                    session.backend.clone(),
+                    session.workspace_hook_paths.clone(),
+                )
+            });
         if let Err(e) = session.stop().await {
             tracing::warn!(
                 env = %session.environment_id,
@@ -811,6 +816,36 @@ mod tests {
         let tab_id = format!("missing-{}", Uuid::new_v4());
         let err = claude_tmux_interrupt(tab_id).await.unwrap_err();
         assert_eq!(err, "tmux session not running");
+    }
+
+    #[tokio::test]
+    async fn interactive_terminal_commands_handle_missing_sessions() {
+        crate::local::init_local_terminal_manager();
+        crate::pty::init_terminal_manager();
+
+        let tab_id = format!("missing-{}", Uuid::new_v4());
+        let err = claude_tmux_create_interactive_terminal(tab_id, 120, 30)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "tmux session not running");
+
+        let terminal_session_id = format!("pty-{}", Uuid::new_v4());
+        let err = claude_tmux_write_interactive_terminal(
+            terminal_session_id.clone(),
+            "input".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "tmux interactive terminal session not found");
+
+        let err = claude_tmux_resize_interactive_terminal(terminal_session_id.clone(), 100, 25)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "tmux interactive terminal session not found");
+
+        claude_tmux_detach_interactive_terminal(terminal_session_id)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
