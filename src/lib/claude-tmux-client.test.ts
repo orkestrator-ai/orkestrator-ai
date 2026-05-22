@@ -38,6 +38,8 @@ beforeEach(() => {
 import {
   answerPreToolUse,
   capturePane,
+  createInteractiveTerminal,
+  detachInteractiveTerminal,
   getPendingHooks,
   getStatus,
   getTranscript,
@@ -45,11 +47,14 @@ import {
   listPreviousSessions,
   replyHook,
   resize,
+  resizeInteractiveTerminal,
   sendKeys,
   sendText,
+  startInteractiveTerminal,
   startSession,
   stopSession,
   submit,
+  writeInteractiveTerminal,
 } from "./claude-tmux-client";
 
 describe("claude-tmux-client invoke wrappers", () => {
@@ -149,6 +154,29 @@ describe("claude-tmux-client invoke wrappers", () => {
       cols: 200,
       rows: 50,
     });
+  });
+
+  test("interactive terminal wrappers forward command names and arguments", async () => {
+    await createInteractiveTerminal("tab-1", 120, 40);
+    await startInteractiveTerminal("pty-1");
+    await writeInteractiveTerminal("pty-1", "abc");
+    await resizeInteractiveTerminal("pty-1", 140, 45);
+    await detachInteractiveTerminal("pty-1");
+
+    expect(calls.map((call) => call.cmd)).toEqual([
+      "claude_tmux_create_interactive_terminal",
+      "claude_tmux_start_interactive_terminal",
+      "claude_tmux_write_interactive_terminal",
+      "claude_tmux_resize_interactive_terminal",
+      "claude_tmux_detach_interactive_terminal",
+    ]);
+    expect(calls.map((call) => call.args)).toEqual([
+      { tabId: "tab-1", cols: 120, rows: 40 },
+      { terminalSessionId: "pty-1" },
+      { terminalSessionId: "pty-1", data: "abc" },
+      { terminalSessionId: "pty-1", cols: 140, rows: 45 },
+      { terminalSessionId: "pty-1" },
+    ]);
   });
 
   test("answerPreToolUse forwards decision and optional reason", async () => {
