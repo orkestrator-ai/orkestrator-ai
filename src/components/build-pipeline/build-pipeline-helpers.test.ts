@@ -161,7 +161,7 @@ describe("createBuildReviewPrompt", () => {
   test("includes commit step", () => {
     const result = createBuildReviewPrompt(null, "");
     expect(result).toContain("## Step 1: Commit Changes");
-    expect(result).toContain("conventional commit format");
+    expect(result).toContain("conventional-commit format");
     expect(result).toContain("Do NOT reference Claude");
   });
 
@@ -184,9 +184,11 @@ describe("createBuildReviewPrompt", () => {
 
   test("includes all review categories", () => {
     const result = createBuildReviewPrompt(null, "");
-    expect(result).toContain("Logic and correctness");
-    expect(result).toContain("Readability");
-    expect(result).toContain("Performance");
+    expect(result).toContain("Bugs and correctness");
+    expect(result).toContain("Edge cases");
+    expect(result).toContain("Concurrency and race conditions");
+    expect(result).toContain("Error handling");
+    expect(result).toContain("performance");
   });
 
   test("includes test coverage review step", () => {
@@ -199,9 +201,10 @@ describe("createBuildReviewPrompt", () => {
   test("includes structured output format", () => {
     const result = createBuildReviewPrompt(baseTask, "");
     expect(result).toContain("## Output Format");
-    expect(result).toContain("File and line number(s)");
-    expect(result).toContain("Code snippet");
-    expect(result).toContain("Potential solution(s)");
+    expect(result).toContain("## Issues");
+    expect(result).toContain("### 1. [P0|P1|P2][conf:NN][category] Short title");
+    expect(result).toContain("File: path/to/file.ts:LINE");
+    expect(result).toContain("Suggestion:");
   });
 
   test("includes ticket context when task is provided", () => {
