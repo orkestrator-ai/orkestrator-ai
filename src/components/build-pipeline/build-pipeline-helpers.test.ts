@@ -187,6 +187,8 @@ describe("createBuildReviewPrompt", () => {
     expect(result).toContain("Bugs and correctness");
     expect(result).toContain("Edge cases");
     expect(result).toContain("Concurrency and race conditions");
+    expect(result).toContain("Error handling");
+    expect(result).toContain("performance");
     expect(result).toContain("Performance");
   });
 
@@ -200,6 +202,8 @@ describe("createBuildReviewPrompt", () => {
   test("includes structured output format", () => {
     const result = createBuildReviewPrompt(baseTask, "");
     expect(result).toContain("## Output Format");
+    expect(result).toContain("## Issues");
+    expect(result).toContain("### 1. [P0|P1|P2][conf:NN][category] Short title");
     expect(result).toContain("File: path/to/file.ts:LINE");
     expect(result).toContain("Evidence:");
     expect(result).toContain("Suggestion:");
