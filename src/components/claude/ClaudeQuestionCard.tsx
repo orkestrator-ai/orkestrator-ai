@@ -3,13 +3,17 @@ import { Check, Circle, HelpCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { ClaudeClient, ClaudeQuestionRequest, QuestionInfo } from "@/lib/claude-client";
+import type { ClaudeClient, ClaudeQuestionRequest, QuestionInfo, QuestionOption } from "@/lib/claude-client";
 import { answerQuestion } from "@/lib/claude-client";
 import { useClaudeStore } from "@/stores/claudeStore";
 
 type SubmitAnswersHandler = (
   answers: string[][]
 ) => Promise<boolean | void> | boolean | void;
+
+function optionValue(option: QuestionOption): string {
+  return option.value ?? option.label;
+}
 
 interface ClaudeQuestionCardBaseProps {
   question: ClaudeQuestionRequest;
@@ -57,46 +61,46 @@ function QuestionItem({
   // Determine if this question allows custom input
   const hasOptions = info.options && info.options.length > 0;
   const isMultiple = info.multiSelect ?? false;
-  const optionLabels = useMemo(
-    () => new Set((info.options ?? []).map((o) => o.label)),
+  const optionValues = useMemo(
+    () => new Set((info.options ?? []).map(optionValue)),
     [info.options]
   );
   // Custom answers that have been committed (via Enter) and are not in the option list
   const committedCustomAnswers = useMemo(
-    () => answer.filter((a) => !optionLabels.has(a)),
-    [answer, optionLabels]
+    () => answer.filter((a) => !optionValues.has(a)),
+    [answer, optionValues]
   );
 
   // Handle option selection
   const handleOptionClick = useCallback(
-    (label: string) => {
+    (value: string) => {
       let nextAnswer: string[];
       if (isMultiple) {
         // Toggle selection for multiple choice
-        if (answer.includes(label)) {
-          nextAnswer = answer.filter((a) => a !== label);
+        if (answer.includes(value)) {
+          nextAnswer = answer.filter((a) => a !== value);
         } else {
-          nextAnswer = [...answer, label];
+          nextAnswer = [...answer, value];
         }
       } else {
         // Single selection - replace any existing selection
-        if (answer.includes(label)) {
+        if (answer.includes(value)) {
           nextAnswer = allowOptionDeselect ? [] : answer;
         } else {
           // Preserve any committed custom answers when switching option in single-select
-          nextAnswer = [...committedCustomAnswers, label];
+          nextAnswer = [...committedCustomAnswers, value];
         }
       }
       onAnswerChange(nextAnswer);
-      onOptionSelect?.(label, nextAnswer);
+      onOptionSelect?.(value, nextAnswer);
     },
     [
       answer,
       isMultiple,
       onAnswerChange,
       onOptionSelect,
-      committedCustomAnswers,
       allowOptionDeselect,
+      committedCustomAnswers,
     ]
   );
 
@@ -116,11 +120,11 @@ function QuestionItem({
       // chips and keep the currently-selected option (if any) alongside the
       // new chip, mirroring how handleOptionClick keeps chips alongside
       // the option.
-      const selectedOption = answer.filter((a) => optionLabels.has(a));
+      const selectedOption = answer.filter((a) => optionValues.has(a));
       onAnswerChange([...selectedOption, trimmed]);
     }
     onCustomTextChange("");
-  }, [customText, answer, isMultiple, onAnswerChange, onCustomTextChange, optionLabels]);
+  }, [customText, answer, isMultiple, onAnswerChange, onCustomTextChange, optionValues]);
 
   const handleRemoveCustomAnswer = useCallback(
     (label: string) => {
@@ -154,13 +158,14 @@ function QuestionItem({
       {hasOptions && (
         <div className="space-y-1">
           {info.options.map((option, optIndex) => {
-            const isSelected = answer.includes(option.label);
+            const value = optionValue(option);
+            const isSelected = answer.includes(value);
             return (
               <button
                 key={optIndex}
                 type="button"
                 disabled={disabled}
-                onClick={() => handleOptionClick(option.label)}
+                onClick={() => handleOptionClick(value)}
                 className={cn(
                   "w-full text-left px-3 py-2.5 rounded-md transition-colors",
                   "hover:bg-muted/70 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",

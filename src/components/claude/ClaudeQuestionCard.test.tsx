@@ -215,6 +215,67 @@ describe("ClaudeQuestionCard", () => {
     expect(submit.disabled).toBe(false);
   });
 
+  test("initial answers can preselect an option without custom input and submit on re-click", async () => {
+    const onSubmitAnswers = mock(async () => true);
+
+    render(
+      <ClaudeQuestionCard
+        question={singleQuestionWithOptions()}
+        initialAnswers={[["Red"]]}
+        allowCustomAnswer={false}
+        allowOptionDeselect={false}
+        submitOnOptionSelect
+        onSubmitAnswers={onSubmitAnswers}
+      />
+    );
+
+    expect(screen.queryByPlaceholderText(/Type your own answer/i)).toBeNull();
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Red/ }));
+    });
+
+    expect(onSubmitAnswers).toHaveBeenCalledWith([["Red"]]);
+  });
+
+  test("submit-on-option-select treats false as a failed submit and re-enables controls", async () => {
+    const onSubmitAnswers = mock(async () => false);
+
+    render(
+      <ClaudeQuestionCard
+        question={singleQuestionWithOptions()}
+        allowCustomAnswer={false}
+        submitOnOptionSelect
+        onSubmitAnswers={onSubmitAnswers}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Blue/ }));
+    });
+
+    expect(onSubmitAnswers).toHaveBeenCalledWith([["Blue"]]);
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test("submit-on-option-select does not auto-submit multi-question cards", () => {
+    const onSubmitAnswers = mock(async () => true);
+
+    render(
+      <ClaudeQuestionCard
+        question={twoQuestions()}
+        submitOnOptionSelect
+        onSubmitAnswers={onSubmitAnswers}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Red/ }));
+
+    expect(onSubmitAnswers).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeTruthy();
+  });
+
   test("custom typed answer persists when navigating between questions", () => {
     render(
       <ClaudeQuestionCard

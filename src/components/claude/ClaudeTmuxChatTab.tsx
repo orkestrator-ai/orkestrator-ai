@@ -647,9 +647,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     prompt: TmuxSelectionPrompt,
     answers: string[][],
   ): Promise<boolean> => {
-    const selectedLabel = answers[0]?.[0];
+    const selectedValue = answers[0]?.[0];
     const selectedOption = prompt.options.find(
-      (option) => option.label === selectedLabel,
+      (option) => selectionPromptOptionValue(option) === selectedValue,
     );
     if (!selectedOption) return false;
 
@@ -1418,7 +1418,10 @@ function selectionPromptToQuestion(
       {
         question: prompt.question ?? "Choose an option",
         header: "Claude is asking for a choice",
-        options: prompt.options.map((option) => ({ label: option.label })),
+        options: prompt.options.map((option) => ({
+          label: option.label,
+          value: selectionPromptOptionValue(option),
+        })),
         multiSelect: false,
       },
     ],
@@ -1427,7 +1430,11 @@ function selectionPromptToQuestion(
 
 function selectionPromptInitialAnswer(prompt: TmuxSelectionPrompt): string[] {
   const selected = prompt.options[prompt.selectedOptionIndex];
-  return selected ? [selected.label] : [];
+  return selected ? [selectionPromptOptionValue(selected)] : [];
+}
+
+function selectionPromptOptionValue(option: TmuxSelectionOption): string {
+  return `${option.optionIndex}:${option.number}:${option.label}`;
 }
 
 function selectionPromptKey(prompt: TmuxSelectionPrompt): string {

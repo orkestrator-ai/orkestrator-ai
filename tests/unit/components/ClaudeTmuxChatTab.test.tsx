@@ -1365,6 +1365,119 @@ Enter to confirm · Esc to cancel
     });
   });
 
+  test("duplicate number-mode labels still submit the clicked option number", async () => {
+    capturePaneMock.mockImplementation(async () => `
+Choose the retry scope
+
+› 1. Retry
+  2. Retry
+
+Enter to confirm · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
+
+    const retryButtons = screen.getAllByRole("button", { name: "Retry" });
+    fireEvent.click(retryButtons[1]!);
+
+    await waitFor(() => {
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2", "Enter"]);
+    });
+  });
+
+  test("dismisses selection prompts by sending Escape", async () => {
+    capturePaneMock.mockImplementation(async () => `
+› 1. No, exit
+  2. Yes, I accept
+
+Enter to confirm · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    await waitFor(() => {
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Escape"]);
+    });
+  });
+
+  test("keeps selection prompt controls disabled while tmux keys are pending", async () => {
+    let resolveSendKeys: (() => void) | null = null;
+    sendKeysMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSendKeys = resolve;
+        }),
+    );
+    capturePaneMock.mockImplementation(async () => `
+› 1. No, exit
+  2. Yes, I accept
+
+Enter to confirm · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
+
+    const noButton = screen.getByRole("button", { name: /No, exit/ }) as HTMLButtonElement;
+    const yesButton = screen.getByRole("button", { name: /Yes, I accept/ }) as HTMLButtonElement;
+    fireEvent.click(yesButton);
+
+    await waitFor(() => {
+      expect(sendKeysMock).toHaveBeenCalledTimes(1);
+      expect(yesButton.disabled).toBe(true);
+    });
+
+    fireEvent.click(noButton);
+    expect(sendKeysMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSendKeys?.();
+    });
+  });
+
   test("splits multi-digit option numbers into individual digit keys", async () => {
     let pane = "";
     for (let i = 1; i <= 10; i++) {
