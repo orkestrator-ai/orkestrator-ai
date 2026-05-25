@@ -61,7 +61,7 @@ describe("createReviewPrompt", () => {
     expect(result).toContain("LLM-specific risks");
   });
 
-  test("gates findings on confidence and severity", () => {
+  test("gates issues on confidence and severity", () => {
     const result = createReviewPrompt("main");
     expect(result).toContain("confidence >= 75");
     expect(result).toContain("P0 (broken/crash/data-loss/security)");
@@ -83,8 +83,10 @@ describe("createReviewPrompt", () => {
     expect(result).toContain("## Risk Profile");
     expect(result).toContain("Overall risk: low | medium | high");
     expect(result).toContain("## Test Results");
-    expect(result).toContain("## Findings");
-    expect(result).toContain("### [P0|P1|P2][conf:NN][category] Short title");
+    expect(result).toContain("## Issues");
+    expect(result).toContain("Number issues sequentially starting at 1");
+    expect(result).toContain("### 1. [P0|P1|P2][conf:NN][category] Short title");
+    expect(result).not.toContain("## Findings");
     expect(result).toContain("Symbol:");
     expect(result).toContain("## Test Coverage Gaps");
     expect(result).toContain("## Verdict");
