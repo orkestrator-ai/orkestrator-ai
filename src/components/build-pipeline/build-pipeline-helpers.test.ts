@@ -189,6 +189,7 @@ describe("createBuildReviewPrompt", () => {
     expect(result).toContain("Concurrency and race conditions");
     expect(result).toContain("Error handling");
     expect(result).toContain("performance");
+    expect(result).toContain("Performance");
   });
 
   test("includes test coverage review step", () => {
@@ -204,6 +205,7 @@ describe("createBuildReviewPrompt", () => {
     expect(result).toContain("## Issues");
     expect(result).toContain("### 1. [P0|P1|P2][conf:NN][category] Short title");
     expect(result).toContain("File: path/to/file.ts:LINE");
+    expect(result).toContain("Evidence:");
     expect(result).toContain("Suggestion:");
   });
 
