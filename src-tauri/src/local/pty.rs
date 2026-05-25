@@ -3,7 +3,8 @@
 //! Handles terminal sessions that spawn local shell processes in worktree directories,
 //! as opposed to Docker exec sessions for containerized environments.
 
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize};
+use super::process::kill_process;
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtyPair, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -40,7 +41,10 @@ pub struct LocalTerminalSession {
     pub rows: u16,
     pub is_active: bool,
     pub bundled_bin_dir: Option<String>,
+    pub command: Option<Vec<String>>,
     pty_handle: Option<PtyHandle>,
+    child_pid: Option<u32>,
+    child_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
 }
 
 impl LocalTerminalSession {
@@ -51,6 +55,24 @@ impl LocalTerminalSession {
         rows: u16,
         bundled_bin_dir: Option<String>,
     ) -> Self {
+        Self::new_with_command(
+            environment_id,
+            worktree_path,
+            cols,
+            rows,
+            bundled_bin_dir,
+            None,
+        )
+    }
+
+    pub fn new_with_command(
+        environment_id: &str,
+        worktree_path: &str,
+        cols: u16,
+        rows: u16,
+        bundled_bin_dir: Option<String>,
+        command: Option<Vec<String>>,
+    ) -> Self {
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
             environment_id: environment_id.to_string(),
@@ -59,7 +81,10 @@ impl LocalTerminalSession {
             rows,
             is_active: false,
             bundled_bin_dir,
+            command,
             pty_handle: None,
+            child_pid: None,
+            child_killer: None,
         }
     }
 }
@@ -87,6 +112,27 @@ impl LocalTerminalManager {
         rows: u16,
         bundled_bin_dir: Option<String>,
     ) -> Result<String, LocalPtyError> {
+        self.create_session_with_command(
+            environment_id,
+            worktree_path,
+            cols,
+            rows,
+            bundled_bin_dir,
+            None,
+        )
+        .await
+    }
+
+    /// Create a new local terminal session with a specific command.
+    pub async fn create_session_with_command(
+        &self,
+        environment_id: &str,
+        worktree_path: &str,
+        cols: u16,
+        rows: u16,
+        bundled_bin_dir: Option<String>,
+        command: Option<Vec<String>>,
+    ) -> Result<String, LocalPtyError> {
         debug!(
             environment_id = %environment_id,
             worktree_path = %worktree_path,
@@ -109,8 +155,23 @@ impl LocalTerminalManager {
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
 
         // Create and store session
-        let mut session =
-            LocalTerminalSession::new(environment_id, worktree_path, cols, rows, bundled_bin_dir);
+        let mut session = match command {
+            Some(command) => LocalTerminalSession::new_with_command(
+                environment_id,
+                worktree_path,
+                cols,
+                rows,
+                bundled_bin_dir,
+                Some(command),
+            ),
+            None => LocalTerminalSession::new(
+                environment_id,
+                worktree_path,
+                cols,
+                rows,
+                bundled_bin_dir,
+            ),
+        };
         session.pty_handle = Some(PtyHandle::Pair(pair));
         session.is_active = true;
 
@@ -132,7 +193,7 @@ impl LocalTerminalManager {
     ) -> Result<mpsc::Receiver<Vec<u8>>, LocalPtyError> {
         debug!(session_id = %session_id, "Starting local terminal session");
 
-        let (worktree_path, bundled_bin_dir, pair) = {
+        let (worktree_path, bundled_bin_dir, command, pair) = {
             let mut sessions = self.sessions.lock().unwrap();
             let session = sessions
                 .get_mut(session_id)
@@ -153,6 +214,7 @@ impl LocalTerminalManager {
             (
                 session.worktree_path.clone(),
                 session.bundled_bin_dir.clone(),
+                session.command.clone(),
                 pair,
             )
         };
@@ -160,8 +222,16 @@ impl LocalTerminalManager {
         // Get the user's default shell
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-        // Build the command to run in the PTY
-        let mut cmd = CommandBuilder::new(&shell);
+        // Build the command to run in the PTY.
+        let command = command.filter(|parts| !parts.is_empty());
+        let mut cmd = match command {
+            Some(parts) => {
+                let mut cmd = CommandBuilder::new(&parts[0]);
+                cmd.args(&parts[1..]);
+                cmd
+            }
+            None => CommandBuilder::new(&shell),
+        };
         cmd.cwd(&worktree_path);
 
         // Set up environment variables
@@ -177,6 +247,8 @@ impl LocalTerminalManager {
             .slave
             .spawn_command(cmd)
             .map_err(|e| LocalPtyError::Pty(e.to_string()))?;
+        let child_pid = child.process_id();
+        let child_killer = child.clone_killer();
 
         // Drop the slave - we don't need it after spawning
         drop(pair.slave);
@@ -206,6 +278,8 @@ impl LocalTerminalManager {
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(session) = sessions.get_mut(session_id) {
                 session.pty_handle = Some(PtyHandle::Master(pair.master));
+                session.child_pid = child_pid;
+                session.child_killer = Some(child_killer);
             }
         }
 
@@ -345,13 +419,57 @@ impl LocalTerminalManager {
         }
 
         // Remove session
-        let mut sessions = self.sessions.lock().unwrap();
-        if sessions.remove(session_id).is_none() {
-            return Err(LocalPtyError::SessionNotFound(session_id.to_string()));
+        let mut session = {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions
+                .remove(session_id)
+                .ok_or_else(|| LocalPtyError::SessionNotFound(session_id.to_string()))?
+        };
+
+        if let Some(mut killer) = session.child_killer.take() {
+            if let Err(e) = killer.kill() {
+                warn!(session_id = %session_id, error = %e, "Failed to kill local terminal child via PTY killer");
+            }
+        } else if let Some(pid) = session.child_pid {
+            if let Err(e) = kill_process(pid) {
+                warn!(session_id = %session_id, pid = pid, error = %e, "Failed to kill local terminal child process");
+            }
         }
 
         info!(session_id = %session_id, "Local terminal session closed");
         Ok(())
+    }
+
+    /// Close every local terminal session for an environment.
+    pub fn close_sessions_for_environment(&self, environment_id: &str) {
+        let session_ids: Vec<String> = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .values()
+                .filter(|session| session.environment_id == environment_id)
+                .map(|session| session.session_id.clone())
+                .collect()
+        };
+
+        for session_id in session_ids {
+            if let Err(e) = self.close_session(&session_id) {
+                warn!(session_id = %session_id, error = %e, "Failed to close local terminal session for environment");
+            }
+        }
+    }
+
+    /// Close every tracked local terminal session.
+    pub fn shutdown_all(&self) {
+        let session_ids: Vec<String> = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.keys().cloned().collect()
+        };
+
+        for session_id in session_ids {
+            if let Err(e) = self.close_session(&session_id) {
+                warn!(session_id = %session_id, error = %e, "Failed to close local terminal session during shutdown");
+            }
+        }
     }
 
     /// Get session info
@@ -423,6 +541,18 @@ pub fn get_local_terminal_manager() -> Option<&'static LocalTerminalManager> {
     LOCAL_TERMINAL_MANAGER.get()
 }
 
+pub fn close_local_terminal_sessions_for_environment(environment_id: &str) {
+    if let Some(manager) = get_local_terminal_manager() {
+        manager.close_sessions_for_environment(environment_id);
+    }
+}
+
+pub fn shutdown_all_local_terminal_sessions() {
+    if let Some(manager) = get_local_terminal_manager() {
+        manager.shutdown_all();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,18 +561,14 @@ mod tests {
 
     #[test]
     fn new_session_plumbs_bundled_bin_dir() {
-        let s = LocalTerminalSession::new(
-            "env-1",
-            "/tmp/work",
-            80,
-            24,
-            Some("/opt/bin".to_string()),
-        );
+        let s =
+            LocalTerminalSession::new("env-1", "/tmp/work", 80, 24, Some("/opt/bin".to_string()));
         assert_eq!(s.environment_id, "env-1");
         assert_eq!(s.worktree_path, "/tmp/work");
         assert_eq!(s.cols, 80);
         assert_eq!(s.rows, 24);
         assert_eq!(s.bundled_bin_dir.as_deref(), Some("/opt/bin"));
+        assert!(s.command.is_none());
         assert!(!s.is_active);
         assert!(!s.session_id.is_empty());
     }
@@ -451,6 +577,109 @@ mod tests {
     fn new_session_accepts_no_bundled_bin_dir() {
         let s = LocalTerminalSession::new("env-1", "/tmp/work", 80, 24, None);
         assert!(s.bundled_bin_dir.is_none());
+        assert!(s.command.is_none());
+    }
+
+    #[test]
+    fn new_with_command_stores_command() {
+        let s = LocalTerminalSession::new_with_command(
+            "env-1",
+            "/tmp/work",
+            80,
+            24,
+            None,
+            Some(vec!["tmux".to_string(), "attach-session".to_string()]),
+        );
+        assert_eq!(
+            s.command,
+            Some(vec!["tmux".to_string(), "attach-session".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn start_session_runs_custom_command() {
+        let tmp = TempDir::new().unwrap();
+        let manager = LocalTerminalManager::new();
+        let worktree = tmp.path().to_string_lossy();
+        let session_id = manager
+            .create_session_with_command(
+                "env-1",
+                &worktree,
+                80,
+                24,
+                None,
+                Some(vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "printf custom-command".to_string(),
+                ]),
+            )
+            .await
+            .unwrap();
+
+        let mut output_rx = manager.start_session(&session_id).await.unwrap();
+        let mut output = Vec::new();
+
+        for _ in 0..10 {
+            let chunk =
+                tokio::time::timeout(std::time::Duration::from_millis(250), output_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap_or_default();
+            output.extend(chunk);
+            if String::from_utf8_lossy(&output).contains("custom-command") {
+                break;
+            }
+        }
+
+        let _ = manager.close_session(&session_id);
+        assert!(String::from_utf8_lossy(&output).contains("custom-command"));
+    }
+
+    #[tokio::test]
+    async fn close_sessions_for_environment_removes_only_matching_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let manager = LocalTerminalManager::new();
+        let worktree = tmp.path().to_string_lossy();
+        let env1_a = manager
+            .create_session("env-1", &worktree, 80, 24, None)
+            .await
+            .unwrap();
+        let env1_b = manager
+            .create_session("env-1", &worktree, 80, 24, None)
+            .await
+            .unwrap();
+        let env2 = manager
+            .create_session("env-2", &worktree, 80, 24, None)
+            .await
+            .unwrap();
+
+        manager.close_sessions_for_environment("env-1");
+
+        assert!(manager.get_session(&env1_a).is_none());
+        assert!(manager.get_session(&env1_b).is_none());
+        assert!(manager.get_session(&env2).is_some());
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_removes_all_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let manager = LocalTerminalManager::new();
+        let worktree = tmp.path().to_string_lossy();
+        let first = manager
+            .create_session("env-1", &worktree, 80, 24, None)
+            .await
+            .unwrap();
+        let second = manager
+            .create_session("env-2", &worktree, 80, 24, None)
+            .await
+            .unwrap();
+
+        manager.shutdown_all();
+
+        assert!(manager.get_session(&first).is_none());
+        assert!(manager.get_session(&second).is_none());
+        assert!(manager.list_sessions().is_empty());
     }
 
     #[test]

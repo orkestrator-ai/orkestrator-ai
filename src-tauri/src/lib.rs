@@ -425,6 +425,11 @@ pub fn run() {
             claude_tmux_status,
             claude_tmux_transcript,
             claude_tmux_pending_hooks,
+            claude_tmux_create_interactive_terminal,
+            claude_tmux_start_interactive_terminal,
+            claude_tmux_write_interactive_terminal,
+            claude_tmux_resize_interactive_terminal,
+            claude_tmux_detach_interactive_terminal,
             claude_tmux_send_text,
             claude_tmux_send_keys,
             claude_tmux_submit,
@@ -445,7 +450,11 @@ pub fn run() {
                 tauri::async_runtime::block_on(async {
                     let result = tokio::time::timeout(
                         std::time::Duration::from_secs(5),
-                        local::shutdown_all_local_servers(),
+                        async {
+                            local::shutdown_all_local_terminal_sessions();
+                            commands::shutdown_all_tmux_sessions().await;
+                            local::shutdown_all_local_servers().await;
+                        },
                     )
                     .await;
                     if result.is_err() {
