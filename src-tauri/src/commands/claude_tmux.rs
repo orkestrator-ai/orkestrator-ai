@@ -869,7 +869,7 @@ mod tests {
         with_fake_tmux(&tmp, |log_path| async move {
             claude_tmux_interrupt(command_tab_id).await.unwrap();
             let log = fs::read_to_string(log_path).await.unwrap();
-            assert!(log.contains(&format!("send-keys -t {} Escape", tmux_session)));
+            assert!(log.contains(&format!("send-keys -t {} -- Escape", tmux_session)));
         })
         .await;
 
