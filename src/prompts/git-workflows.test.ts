@@ -9,11 +9,23 @@ import {
 // --- createReviewPrompt ---
 
 describe("createReviewPrompt", () => {
-  test("includes commit step", () => {
+  test("includes commit step with rollback-point guardrails", () => {
     const result = createReviewPrompt("main");
-    expect(result).toContain("## Step 1: Commit Changes");
-    expect(result).toContain("conventional commit format");
+    expect(result).toContain("## Step 1: Commit Changes (rollback point)");
+    expect(result).toContain("conventional-commit format");
     expect(result).toContain("Do NOT reference Claude");
+    expect(result).toContain("git status --porcelain");
+    expect(result).toContain("git diff HEAD");
+    expect(result).toContain(".env*");
+    expect(result).toContain("node_modules");
+  });
+
+  test("includes prompt-injection defence", () => {
+    const result = createReviewPrompt("main");
+    expect(result).toContain("Security and instruction hierarchy");
+    expect(result).toContain("untrusted data");
+    expect(result).toContain("ignore previous instructions");
+    expect(result).toContain("Redact");
   });
 
   test("includes test run step", () => {
@@ -29,11 +41,32 @@ describe("createReviewPrompt", () => {
     expect(result).toContain("git diff origin/main...HEAD");
   });
 
-  test("includes all review categories", () => {
+  test("includes expanded review rubric with bugs, edge cases, race conditions", () => {
     const result = createReviewPrompt("main");
-    expect(result).toContain("Logic and correctness");
-    expect(result).toContain("Readability");
-    expect(result).toContain("Performance");
+    expect(result).toContain("Bugs and correctness");
+    expect(result).toContain("intended consequence does not arise");
+    expect(result).toContain("off-by-one");
+    expect(result).toContain("Edge cases");
+    expect(result).toContain("idempotency");
+    expect(result).toContain("Concurrency and race conditions");
+    expect(result).toContain("TOCTOU");
+    expect(result).toContain("Error handling");
+  });
+
+  test("includes expanded security checklist", () => {
+    const result = createReviewPrompt("main");
+    expect(result).toContain("Authentication, session handling");
+    expect(result).toContain("SSRF");
+    expect(result).toContain("supply-chain");
+    expect(result).toContain("LLM-specific risks");
+  });
+
+  test("gates findings on confidence and severity", () => {
+    const result = createReviewPrompt("main");
+    expect(result).toContain("confidence >= 75");
+    expect(result).toContain("P0 (broken/crash/data-loss/security)");
+    expect(result).toContain("P1");
+    expect(result).toContain("P2");
   });
 
   test("includes test coverage review step", () => {
@@ -43,24 +76,41 @@ describe("createReviewPrompt", () => {
     expect(result).toContain("not modified in this change");
   });
 
-  test("includes structured output format", () => {
+  test("includes markdown output sections", () => {
     const result = createReviewPrompt("main");
     expect(result).toContain("## Output Format");
-    expect(result).toContain("File and line number(s)");
-    expect(result).toContain("Code snippet");
-    expect(result).toContain("Potential solution(s)");
-    expect(result).toContain("test coverage gaps");
+    expect(result).toContain("## Review Scope");
+    expect(result).toContain("## Risk Profile");
+    expect(result).toContain("Overall risk: low | medium | high");
+    expect(result).toContain("## Test Results");
+    expect(result).toContain("## Findings");
+    expect(result).toContain("### [P0|P1|P2][conf:NN][category] Short title");
+    expect(result).toContain("Symbol:");
+    expect(result).toContain("## Test Coverage Gaps");
+    expect(result).toContain("## Verdict");
+    expect(result).toContain("## Summary");
+  });
+
+  test("uses safer no-issues wording", () => {
+    const result = createReviewPrompt("main");
+    expect(result).toContain(
+      'No high-confidence issues were found in the reviewed scope.',
+    );
+    expect(result).toContain("Do NOT claim the code is correct");
+    expect(result).not.toContain("meets best practices");
+  });
+
+  test("allows clarifying questions (action bar variant)", () => {
+    const result = createReviewPrompt("main");
+    expect(result).toContain("Ask clarifying questions if needed");
+    expect(result).not.toContain("automated pipeline");
   });
 
   test("uses the provided target branch", () => {
     const result = createReviewPrompt("develop");
     expect(result).toContain("git diff origin/develop...HEAD");
-  });
-
-  test("output format includes test results reporting", () => {
-    const result = createReviewPrompt("main");
-    expect(result).toContain("Report test suite results");
-    expect(result).toContain("total tests run, passed, and failed");
+    expect(result).toContain("Base ref: origin/develop...HEAD");
+    expect(result).not.toContain("origin/main...HEAD");
   });
 });
 
