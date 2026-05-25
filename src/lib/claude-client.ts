@@ -115,6 +115,7 @@ export interface ClaudeModel {
 export interface QuestionOption {
   label: string;
   description?: string;
+  value?: string;
 }
 
 /** Question info structure */

@@ -3,7 +3,7 @@ import { Check, Circle, HelpCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { ClaudeClient, ClaudeQuestionRequest, QuestionInfo } from "@/lib/claude-client";
+import type { ClaudeClient, ClaudeQuestionRequest, QuestionInfo, QuestionOption } from "@/lib/claude-client";
 import { answerQuestion } from "@/lib/claude-client";
 import { useClaudeStore } from "@/stores/claudeStore";
 
@@ -11,8 +11,16 @@ type SubmitAnswersHandler = (
   answers: string[][]
 ) => Promise<boolean | void> | boolean | void;
 
+function optionValue(option: QuestionOption): string {
+  return option.value ?? option.label;
+}
+
 interface ClaudeQuestionCardBaseProps {
   question: ClaudeQuestionRequest;
+  initialAnswers?: string[][];
+  allowCustomAnswer?: boolean;
+  allowOptionDeselect?: boolean;
+  submitOnOptionSelect?: boolean;
   onDismiss?: () => Promise<void> | void;
 }
 
@@ -35,47 +43,65 @@ function QuestionItem({
   customText,
   onAnswerChange,
   onCustomTextChange,
+  onOptionSelect,
+  allowCustomAnswer,
+  allowOptionDeselect,
+  disabled,
 }: {
   info: QuestionInfo;
   answer: string[];
   customText: string;
   onAnswerChange: (newAnswer: string[]) => void;
   onCustomTextChange: (newText: string) => void;
+  onOptionSelect?: (label: string, nextAnswer: string[]) => void;
+  allowCustomAnswer: boolean;
+  allowOptionDeselect: boolean;
+  disabled: boolean;
 }) {
   // Determine if this question allows custom input
   const hasOptions = info.options && info.options.length > 0;
   const isMultiple = info.multiSelect ?? false;
-  const optionLabels = useMemo(
-    () => new Set((info.options ?? []).map((o) => o.label)),
+  const optionValues = useMemo(
+    () => new Set((info.options ?? []).map(optionValue)),
     [info.options]
   );
   // Custom answers that have been committed (via Enter) and are not in the option list
   const committedCustomAnswers = useMemo(
-    () => answer.filter((a) => !optionLabels.has(a)),
-    [answer, optionLabels]
+    () => answer.filter((a) => !optionValues.has(a)),
+    [answer, optionValues]
   );
 
   // Handle option selection
   const handleOptionClick = useCallback(
-    (label: string) => {
+    (value: string) => {
+      let nextAnswer: string[];
       if (isMultiple) {
         // Toggle selection for multiple choice
-        if (answer.includes(label)) {
-          onAnswerChange(answer.filter((a) => a !== label));
+        if (answer.includes(value)) {
+          nextAnswer = answer.filter((a) => a !== value);
         } else {
-          onAnswerChange([...answer, label]);
+          nextAnswer = [...answer, value];
         }
       } else {
         // Single selection - replace any existing selection
-        if (answer.includes(label)) {
-          onAnswerChange([]);
+        if (answer.includes(value)) {
+          nextAnswer = allowOptionDeselect ? [] : answer;
         } else {
           // Preserve any committed custom answers when switching option in single-select
-          onAnswerChange([...committedCustomAnswers, label]);
+          nextAnswer = [...committedCustomAnswers, value];
         }
       }
+      onAnswerChange(nextAnswer);
+      onOptionSelect?.(value, nextAnswer);
     },
-    [answer, isMultiple, onAnswerChange, committedCustomAnswers]
+    [
+      answer,
+      isMultiple,
+      onAnswerChange,
+      onOptionSelect,
+      allowOptionDeselect,
+      committedCustomAnswers,
+    ]
   );
 
   // Commit current draft customText into the answer array (so it shows as a chip).
@@ -94,11 +120,11 @@ function QuestionItem({
       // chips and keep the currently-selected option (if any) alongside the
       // new chip, mirroring how handleOptionClick keeps chips alongside
       // the option.
-      const selectedOption = answer.filter((a) => optionLabels.has(a));
+      const selectedOption = answer.filter((a) => optionValues.has(a));
       onAnswerChange([...selectedOption, trimmed]);
     }
     onCustomTextChange("");
-  }, [customText, answer, isMultiple, onAnswerChange, onCustomTextChange, optionLabels]);
+  }, [customText, answer, isMultiple, onAnswerChange, onCustomTextChange, optionValues]);
 
   const handleRemoveCustomAnswer = useCallback(
     (label: string) => {
@@ -132,15 +158,18 @@ function QuestionItem({
       {hasOptions && (
         <div className="space-y-1">
           {info.options.map((option, optIndex) => {
-            const isSelected = answer.includes(option.label);
+            const value = optionValue(option);
+            const isSelected = answer.includes(value);
             return (
               <button
                 key={optIndex}
                 type="button"
-                onClick={() => handleOptionClick(option.label)}
+                disabled={disabled}
+                onClick={() => handleOptionClick(value)}
                 className={cn(
                   "w-full text-left px-3 py-2.5 rounded-md transition-colors",
                   "hover:bg-muted/70 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
+                  disabled && "opacity-70 cursor-not-allowed hover:bg-transparent",
                   isSelected ? "bg-muted" : "bg-transparent"
                 )}
               >
@@ -199,31 +228,37 @@ function QuestionItem({
         </div>
       )}
 
-      {/* Custom text input - always show for Claude questions */}
-      <div className="pt-2">
-        <Input
-          placeholder={
-            hasOptions
-              ? "Type your own answer (press Enter to add)"
-              : "Type your answer"
-          }
-          value={customText}
-          onChange={(e) => onCustomTextChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="h-9 text-sm bg-transparent border-muted-foreground/20 focus:border-primary"
-        />
-        {customText.trim().length > 0 && (
-          <p className="text-[11px] text-muted-foreground mt-1">
-            Your typed answer will be included when you submit.
-          </p>
-        )}
-      </div>
+      {allowCustomAnswer && (
+        <div className="pt-2">
+          <Input
+            placeholder={
+              hasOptions
+                ? "Type your own answer (press Enter to add)"
+                : "Type your answer"
+            }
+            value={customText}
+            onChange={(e) => onCustomTextChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={disabled}
+            className="h-9 text-sm bg-transparent border-muted-foreground/20 focus:border-primary"
+          />
+          {customText.trim().length > 0 && (
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Your typed answer will be included when you submit.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 export function ClaudeQuestionCard({
   question,
+  initialAnswers,
+  allowCustomAnswer = true,
+  allowOptionDeselect = true,
+  submitOnOptionSelect = false,
   client,
   sessionId,
   onSubmitAnswers,
@@ -233,7 +268,7 @@ export function ClaudeQuestionCard({
 
   // Track answers for each question (committed option selections + Enter-committed custom answers)
   const [answers, setAnswers] = useState<string[][]>(
-    () => question.questions.map(() => [])
+    () => question.questions.map((_, i) => [...(initialAnswers?.[i] ?? [])])
   );
   // Track in-progress (uncommitted) custom text per question. Lifted to parent so it
   // survives navigation between questions (the QuestionItem remounts on index change),
@@ -302,18 +337,7 @@ export function ClaudeQuestionCard({
     });
   }, [currentQuestionIndex]);
 
-  // Handle next question or submit
-  const handleNext = useCallback(async () => {
-    if (currentQuestionIndex < questionCount - 1) {
-      // Go to next question
-      setCurrentQuestionIndex((prev) => prev + 1);
-      return;
-    }
-    // Submit all answers — include any uncommitted custom text so nothing is lost
-    if (!canSubmit) return;
-
-    const effectiveAnswers = question.questions.map((_, i) => mergeAnswerForIndex(i));
-
+  const submitAnswers = useCallback(async (effectiveAnswers: string[][]) => {
     setIsSubmitting(true);
     try {
       const success = onSubmitAnswers
@@ -328,17 +352,42 @@ export function ClaudeQuestionCard({
       setIsSubmitting(false);
     }
   }, [
-    currentQuestionIndex,
-    questionCount,
-    canSubmit,
     client,
     sessionId,
     onSubmitAnswers,
     question.id,
-    question.questions,
-    mergeAnswerForIndex,
     removePendingQuestion,
   ]);
+
+  // Handle next question or submit
+  const handleNext = useCallback(async () => {
+    if (currentQuestionIndex < questionCount - 1) {
+      // Go to next question
+      setCurrentQuestionIndex((prev) => prev + 1);
+      return;
+    }
+    // Submit all answers — include any uncommitted custom text so nothing is lost
+    if (!canSubmit) return;
+
+    const effectiveAnswers = question.questions.map((_, i) => mergeAnswerForIndex(i));
+    await submitAnswers(effectiveAnswers);
+  }, [
+    currentQuestionIndex,
+    questionCount,
+    canSubmit,
+    question.questions,
+    mergeAnswerForIndex,
+    submitAnswers,
+  ]);
+
+  const handleOptionSelect = useCallback(
+    (_label: string, nextAnswer: string[]) => {
+      if (!submitOnOptionSelect || isSubmitting || nextAnswer.length === 0) return;
+      if (questionCount !== 1) return;
+      void submitAnswers([nextAnswer]);
+    },
+    [submitOnOptionSelect, isSubmitting, questionCount, submitAnswers],
+  );
 
   // Handle dismiss - just remove the question locally (server will handle timeout)
   const handleDismiss = useCallback(() => {
@@ -432,6 +481,10 @@ export function ClaudeQuestionCard({
           customText={currentCustomText}
           onAnswerChange={handleAnswerChange}
           onCustomTextChange={handleCustomTextChange}
+          onOptionSelect={handleOptionSelect}
+          allowCustomAnswer={allowCustomAnswer}
+          allowOptionDeselect={allowOptionDeselect}
+          disabled={isSubmitting}
         />
       </div>
 
