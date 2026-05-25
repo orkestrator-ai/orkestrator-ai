@@ -587,7 +587,15 @@ impl TmuxSession {
             if !part.is_empty() {
                 let out = self
                     .backend
-                    .exec(&["tmux", "send-keys", "-t", &self.tmux_session, "-l", part])
+                    .exec(&[
+                        "tmux",
+                        "send-keys",
+                        "-t",
+                        &self.tmux_session,
+                        "-l",
+                        "--",
+                        part,
+                    ])
                     .await?;
                 if !out.success() {
                     return Err(out.stderr);
@@ -606,6 +614,7 @@ impl TmuxSession {
 
     pub async fn send_keys(&self, keys: &[&str]) -> Result<(), String> {
         let mut args: Vec<&str> = vec!["tmux", "send-keys", "-t", &self.tmux_session];
+        args.push("--");
         args.extend_from_slice(keys);
         let out = self.backend.exec(&args).await?;
         if !out.success() {
@@ -896,7 +905,26 @@ mod tests {
 
             assert!(!s.status(true).busy);
             let log = fs::read_to_string(log_path).await.unwrap();
-            assert!(log.contains(&format!("send-keys -t {} Escape", s.tmux_session)));
+            assert!(log.contains(&format!("send-keys -t {} -- Escape", s.tmux_session)));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn send_text_terminates_options_before_literal_text() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+
+        with_fake_tmux(&tmp, 0, |log_path| async move {
+            s.send_text("- review this\nnext line").await.unwrap();
+
+            let log = fs::read_to_string(log_path).await.unwrap();
+            assert!(log.contains(&format!(
+                "send-keys -t {} -l -- - review this",
+                s.tmux_session
+            )));
+            assert!(log.contains(&format!("send-keys -t {} -- M-Enter", s.tmux_session)));
+            assert!(log.contains(&format!("send-keys -t {} -l -- next line", s.tmux_session)));
         })
         .await;
     }
@@ -913,7 +941,7 @@ mod tests {
             assert!(err.contains("tmux failed"));
             assert!(s.status(true).busy);
             let log = fs::read_to_string(log_path).await.unwrap();
-            assert!(log.contains(&format!("send-keys -t {} Escape", s.tmux_session)));
+            assert!(log.contains(&format!("send-keys -t {} -- Escape", s.tmux_session)));
         })
         .await;
     }
