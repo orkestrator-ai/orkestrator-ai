@@ -13,15 +13,12 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
-  ChevronUp,
-  CornerDownLeft,
   History,
   Loader2,
   Plus,
   Sparkles,
   Square,
   Terminal as TerminalIcon,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -646,6 +643,20 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     await handlePromptKeys(keys);
   };
 
+  const handleSelectionPromptAnswers = async (
+    prompt: TmuxSelectionPrompt,
+    answers: string[][],
+  ): Promise<boolean> => {
+    const selectedLabel = answers[0]?.[0];
+    const selectedOption = prompt.options.find(
+      (option) => option.label === selectedLabel,
+    );
+    if (!selectedOption) return false;
+
+    await handleSelectPromptOption(prompt, selectedOption.optionIndex);
+    return true;
+  };
+
   const handleResume = (sessionId: string) => {
     setResumeDialogOpen(false);
     launchSession(sessionId);
@@ -894,13 +905,17 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
               ))}
 
               {selectionPrompt && (
-                <TmuxSelectionPromptCard
-                  prompt={selectionPrompt}
-                  busy={promptControlBusy}
-                  onSelectOption={(optionIndex) =>
-                    handleSelectPromptOption(selectionPrompt, optionIndex)
+                <ClaudeQuestionCard
+                  key={selectionPromptKey(selectionPrompt)}
+                  question={selectionPromptToQuestion(selectionPrompt, tabId)}
+                  initialAnswers={[selectionPromptInitialAnswer(selectionPrompt)]}
+                  allowCustomAnswer={false}
+                  allowOptionDeselect={false}
+                  submitOnOptionSelect
+                  onSubmitAnswers={(answers) =>
+                    handleSelectionPromptAnswers(selectionPrompt, answers)
                   }
-                  onSendKeys={handlePromptKeys}
+                  onDismiss={() => handlePromptKeys(["Escape"])}
                 />
               )}
             </div>
@@ -1391,129 +1406,38 @@ function pendingSnapshotFromHooks(hooks: TmuxPendingHook[]) {
   return { approvals, questions, plans, permissions, elicitations };
 }
 
-function TmuxSelectionPromptCard({
-  prompt,
-  busy,
-  onSelectOption,
-  onSendKeys,
-}: {
-  prompt: TmuxSelectionPrompt;
-  busy: boolean;
-  onSelectOption: (optionIndex: number) => void;
-  onSendKeys: (keys: string[]) => void;
-}) {
-  const [localSelectedOptionIndex, setLocalSelectedOptionIndex] = useState(
-    prompt.selectedOptionIndex,
-  );
-
-  useEffect(() => {
-    setLocalSelectedOptionIndex(prompt.selectedOptionIndex);
-  }, [prompt.inputMode, prompt.options.length]);
-
-  const selectedOptionIndex =
-    prompt.inputMode === "number"
-      ? localSelectedOptionIndex
-      : prompt.selectedOptionIndex;
-
-  const moveSelection = (delta: -1 | 1) => {
-    if (prompt.inputMode === "number") {
-      setLocalSelectedOptionIndex((current) =>
-        Math.min(Math.max(current + delta, 0), prompt.options.length - 1),
-      );
-      return;
-    }
-    onSendKeys([delta < 0 ? "Up" : "Down"]);
+function selectionPromptToQuestion(
+  prompt: TmuxSelectionPrompt,
+  tabId: string,
+) {
+  return {
+    id: selectionPromptKey(prompt),
+    sessionId: tabId,
+    toolUseId: selectionPromptKey(prompt),
+    questions: [
+      {
+        question: prompt.question ?? "Choose an option",
+        header: "Claude is asking for a choice",
+        options: prompt.options.map((option) => ({ label: option.label })),
+        multiSelect: false,
+      },
+    ],
   };
+}
 
-  return (
-    <div className="rounded-lg border border-blue-700/60 bg-blue-950/20 px-3 py-3 mb-3">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="text-xs uppercase tracking-wide text-blue-300">
-          Claude is asking for a choice
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            className="h-7 w-7 p-0"
-            title="Move selection up"
-            onClick={() => moveSelection(-1)}
-          >
-            <ChevronUp className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            className="h-7 w-7 p-0"
-            title="Move selection down"
-            onClick={() => moveSelection(1)}
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            className="h-7 w-7 p-0"
-            title="Select highlighted option"
-            onClick={() => onSelectOption(selectedOptionIndex)}
-          >
-            <CornerDownLeft className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            className="h-7 w-7 p-0"
-            title="Cancel prompt"
-            onClick={() => onSendKeys(["Escape"])}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-      {prompt.question && (
-        <div className="mb-3 whitespace-pre-wrap text-sm text-foreground">
-          {prompt.question}
-        </div>
-      )}
+function selectionPromptInitialAnswer(prompt: TmuxSelectionPrompt): string[] {
+  const selected = prompt.options[prompt.selectedOptionIndex];
+  return selected ? [selected.label] : [];
+}
 
-      <div className="space-y-1">
-        {prompt.options.map((option) => {
-          const selected =
-            option.optionIndex === selectedOptionIndex ||
-            (prompt.inputMode === "navigate" && option.selected);
-          return (
-            <button
-              type="button"
-              key={`${option.number}-${option.label}`}
-              disabled={busy}
-              onClick={() => onSelectOption(option.optionIndex)}
-              className={cn(
-                "w-full min-w-0 rounded border px-2.5 py-2 text-left text-sm transition-colors",
-                "flex items-start gap-2",
-                selected
-                  ? "border-blue-500/70 bg-blue-500/15 text-blue-50"
-                  : "border-border/70 bg-background/50 hover:bg-muted/60",
-              )}
-            >
-              <span className="font-mono text-xs text-muted-foreground pt-0.5">
-                {option.number}.
-              </span>
-              <span className="min-w-0 flex-1 break-words">{option.label}</span>
-              {selected && <Check className="h-4 w-4 shrink-0 text-blue-300" />}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
+function selectionPromptKey(prompt: TmuxSelectionPrompt): string {
+  return [
+    "tmux-selection",
+    prompt.inputMode,
+    prompt.selectedOptionIndex,
+    prompt.question ?? "",
+    ...prompt.options.map((option) => `${option.number}:${option.label}`),
+  ].join("|");
 }
 
 function hookToolName(payload: unknown): string | null {

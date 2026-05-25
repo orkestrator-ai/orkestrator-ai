@@ -1216,7 +1216,7 @@ Enter to confirm · Esc to cancel
     });
   });
 
-  test("moves confirmation prompt selection in the overlay before confirming", async () => {
+  test("submits the highlighted confirmation option through the shared question card", async () => {
     capturePaneMock.mockImplementation(async () => `
 WARNING: Claude Code running in Bypass Permissions mode
 
@@ -1244,13 +1244,10 @@ Enter to confirm · Esc to cancel
 
     expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
 
-    fireEvent.click(screen.getByTitle("Move selection down"));
-    expect(sendKeysMock).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByTitle("Select highlighted option"));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2", "Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1", "Enter"]);
     });
   });
 
@@ -1334,7 +1331,7 @@ Enter to confirm · Esc to cancel
     ]);
   });
 
-  test("clamps the number-mode local highlight at the option list bounds", async () => {
+  test("clicking a different number-mode answer submits that number", async () => {
     capturePaneMock.mockImplementation(async () => `
 WARNING: Claude Code running in Bypass Permissions mode
 
@@ -1362,19 +1359,7 @@ Enter to confirm · Esc to cancel
 
     expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
 
-    // Up at index 0 is a no-op.
-    fireEvent.click(screen.getByTitle("Move selection up"));
-    fireEvent.click(screen.getByTitle("Select highlighted option"));
-    await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenLastCalledWith("tab-1", ["1", "Enter"]);
-    });
-
-    sendKeysMock.mockClear();
-
-    // Down twice should stop at the last option (index 1).
-    fireEvent.click(screen.getByTitle("Move selection down"));
-    fireEvent.click(screen.getByTitle("Move selection down"));
-    fireEvent.click(screen.getByTitle("Select highlighted option"));
+    fireEvent.click(screen.getByRole("button", { name: /Yes, I accept/ }));
     await waitFor(() => {
       expect(sendKeysMock).toHaveBeenLastCalledWith("tab-1", ["2", "Enter"]);
     });
