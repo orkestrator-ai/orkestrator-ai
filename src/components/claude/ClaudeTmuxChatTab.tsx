@@ -221,6 +221,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       pendingPermissions.length +
       pendingElicitations.length >
     0;
+  const visibleSelectionPrompt = hasPendingHookCards ? null : selectionPrompt;
   const displayMessages = useMemo(
     () => compactConsecutiveAssistantMessages(messages),
     [messages],
@@ -236,7 +237,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       pendingElicitations: pendingElicitations.length,
       infoEvents: infoEvents.length,
       isThinking,
-      selectionPrompt: selectionPrompt ? selectionPromptKey(selectionPrompt) : null,
+      selectionPrompt: visibleSelectionPrompt ? selectionPromptKey(visibleSelectionPrompt) : null,
     }),
     [
       messages,
@@ -247,7 +248,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       pendingElicitations.length,
       infoEvents.length,
       isThinking,
-      selectionPrompt,
+      visibleSelectionPrompt,
     ],
   );
   const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
@@ -286,7 +287,17 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             }
             const hooks = await getPendingHooks(tabId);
             if (cancelled) return;
-            replacePendingHooks(tabId, pendingSnapshotFromHooks(hooks));
+            const hooksToRender = hooks.filter(
+              (hook) => !shouldAutoAllowPermissionHook(hook),
+            );
+            replacePendingHooks(tabId, pendingSnapshotFromHooks(hooksToRender));
+            for (const hook of hooks) {
+              if (shouldAutoAllowPermissionHook(hook)) {
+                void autoAllowPermissionHook(tabId, hook.id, hook.payload).catch((e) => {
+                  if (!cancelled) setError(String(e));
+                });
+              }
+            }
           }
         }
       } catch (e) {
@@ -361,7 +372,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
               addPendingApproval(tabId, payloadToApproval(ev.event_id, ev.payload));
             }
           } else if (ev.event_kind === "PermissionRequest") {
-            addPendingPermission(tabId, payloadToPermission(ev.event_id, ev.payload));
+            if (isQuestionPermissionPayload(ev.payload)) {
+              void autoAllowPermissionHook(tabId, ev.event_id, ev.payload).catch((e) =>
+                setError(String(e)),
+              );
+              removePendingPermission(tabId, ev.event_id);
+            } else {
+              addPendingPermission(tabId, payloadToPermission(ev.event_id, ev.payload));
+            }
           } else if (ev.event_kind === "Elicitation") {
             addPendingElicitation(tabId, payloadToElicitation(ev.event_id, ev.payload));
           } else if (
@@ -928,16 +946,16 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
                 />
               ))}
 
-              {selectionPrompt && (
+              {visibleSelectionPrompt && (
                 <ClaudeQuestionCard
-                  key={selectionPromptKey(selectionPrompt)}
-                  question={selectionPromptToQuestion(selectionPrompt, tabId)}
-                  initialAnswers={[selectionPromptInitialAnswer(selectionPrompt)]}
+                  key={selectionPromptKey(visibleSelectionPrompt)}
+                  question={selectionPromptToQuestion(visibleSelectionPrompt, tabId)}
+                  initialAnswers={[selectionPromptInitialAnswer(visibleSelectionPrompt)]}
                   allowCustomAnswer={false}
                   allowOptionDeselect={false}
                   hideDismiss
                   onSubmitAnswers={(answers) =>
-                    handleSelectionPromptAnswers(selectionPrompt, answers)
+                    handleSelectionPromptAnswers(visibleSelectionPrompt, answers)
                   }
                 />
               )}
@@ -1441,6 +1459,28 @@ function pendingSnapshotFromHooks(hooks: TmuxPendingHook[]) {
   }
 
   return { approvals, questions, plans, permissions, elicitations };
+}
+
+function shouldAutoAllowPermissionHook(hook: TmuxPendingHook): boolean {
+  return hook.kind === "PermissionRequest" && isQuestionPermissionPayload(hook.payload);
+}
+
+function isQuestionPermissionPayload(payload: unknown): boolean {
+  return hookToolName(payload) === "AskUserQuestion";
+}
+
+async function autoAllowPermissionHook(
+  tabId: string,
+  eventId: string,
+  payload: unknown,
+): Promise<void> {
+  const permission = payloadToPermission(eventId, payload);
+  await replyHook(
+    tabId,
+    "PermissionRequest",
+    eventId,
+    permissionRequestResponse(permission, true),
+  );
 }
 
 function selectionPromptToQuestion(
