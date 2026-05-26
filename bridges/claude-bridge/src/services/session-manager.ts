@@ -991,7 +991,6 @@ Plan mode is read-only: do not write or edit files until the user approves your 
           "WebFetch",
           "AskUserQuestion",
           "Task",
-          "TodoWrite",
           // Allow all MCP tools
           "mcp:*",
         ],
