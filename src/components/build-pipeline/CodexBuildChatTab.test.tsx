@@ -28,6 +28,15 @@ mock.module("@/lib/codex-client", () => ({
 // global bun module cache and breaks useScrollLock.test.ts. The real hook
 // returns safe defaults (isAtBottom: true) when no viewport is found.
 
+// Snapshot the real ScrollArea/Separator modules before stubbing so afterAll
+// can restore them — Bun caches mock.module factories globally and would
+// otherwise leak these stubs into sibling test files that need the real
+// ScrollArea viewport.
+import * as realScrollAreaModule from "@/components/ui/scroll-area";
+import * as realSeparatorModule from "@/components/ui/separator";
+const realScrollAreaSnapshot = { ...realScrollAreaModule };
+const realSeparatorSnapshot = { ...realSeparatorModule };
+
 mock.module("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
@@ -448,6 +457,8 @@ function resetStores() {
 
 describe("CodexBuildChatTab", () => {
   afterAll(() => {
+    mock.module("@/components/ui/scroll-area", () => realScrollAreaSnapshot);
+    mock.module("@/components/ui/separator", () => realSeparatorSnapshot);
     mock.restore();
   });
 
