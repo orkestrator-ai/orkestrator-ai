@@ -600,10 +600,7 @@ pub async fn claude_tmux_submit(tab_id: String, text: String) -> Result<(), Stri
         .get(&tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
-    if !text.is_empty() {
-        session.send_text(&text).await?;
-    }
-    session.send_enter().await
+    session.submit(&text).await
 }
 
 #[tauri::command]

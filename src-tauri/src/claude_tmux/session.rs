@@ -445,8 +445,7 @@ impl TmuxSession {
         }
 
         self.wait_for_tui_input_ready().await?;
-        self.send_text(prompt).await?;
-        self.send_enter().await
+        self.submit(prompt).await
     }
 
     async fn wait_for_tui_input_ready(&self) -> Result<(), String> {
@@ -650,41 +649,59 @@ impl TmuxSession {
         Ok(out.success())
     }
 
-    /// Send literal text into the tmux pane (no trailing Enter). Newlines are
-    /// sent as Alt-Enter because the Claude TUI interprets a bare Enter as
-    /// "submit"; M-Enter inserts a newline without submitting.
+    /// Send text into the tmux pane (no trailing Enter) using a tmux paste
+    /// buffer with bracketed-paste mode. The Claude TUI recognizes bracketed
+    /// paste and ingests the whole payload as a single unit — newlines stay
+    /// as newlines instead of being interpreted as submits, and we avoid
+    /// firing one tmux command per line for long inputs.
     pub async fn send_text(&self, text: &str) -> Result<(), String> {
         if text.is_empty() {
             return Ok(());
         }
-        let parts: Vec<&str> = text.split('\n').collect();
-        for (idx, part) in parts.iter().enumerate() {
-            if !part.is_empty() {
-                let out = self
-                    .backend
-                    .exec(&[
-                        "tmux",
-                        "send-keys",
-                        "-t",
-                        &self.tmux_session,
-                        "-l",
-                        "--",
-                        part,
-                    ])
-                    .await?;
-                if !out.success() {
-                    return Err(out.stderr);
-                }
-            }
-            if idx + 1 < parts.len() {
-                self.send_keys(&["M-Enter"]).await?;
-            }
+        let buffer_name = format!("claude-tmux-input-{}", self.tmux_session);
+        let load = self
+            .backend
+            .exec_with_stdin(
+                &["tmux", "load-buffer", "-b", &buffer_name, "-"],
+                Some(text),
+            )
+            .await?;
+        if !load.success() {
+            return Err(load.stderr);
+        }
+        let paste = self
+            .backend
+            .exec(&[
+                "tmux",
+                "paste-buffer",
+                "-p",
+                "-d",
+                "-b",
+                &buffer_name,
+                "-t",
+                &self.tmux_session,
+            ])
+            .await?;
+        if !paste.success() {
+            return Err(paste.stderr);
         }
         Ok(())
     }
 
     pub async fn send_enter(&self) -> Result<(), String> {
         self.send_keys(&["Enter"]).await
+    }
+
+    /// Send text then submit it. The settle delay between paste and Enter
+    /// gives the Claude TUI time to finish ingesting the bracketed paste;
+    /// without it a fast Enter can be absorbed into the paste and the prompt
+    /// is left sitting in the compose area instead of being submitted.
+    pub async fn submit(&self, text: &str) -> Result<(), String> {
+        if !text.is_empty() {
+            self.send_text(text).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        self.send_enter().await
     }
 
     pub async fn send_keys(&self, keys: &[&str]) -> Result<(), String> {
@@ -1061,7 +1078,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_text_terminates_options_before_literal_text() {
+    async fn send_text_uses_bracketed_paste_buffer() {
         let tmp = TempDir::new().unwrap();
         let s = build(&tmp, "env-1", "tab-1", None);
 
@@ -1069,12 +1086,42 @@ mod tests {
             s.send_text("- review this\nnext line").await.unwrap();
 
             let log = fs::read_to_string(log_path).await.unwrap();
+            let buffer_name = format!("claude-tmux-input-{}", s.tmux_session);
+            assert!(log.contains(&format!("load-buffer -b {buffer_name} -")));
             assert!(log.contains(&format!(
-                "send-keys -t {} -l -- - review this",
+                "paste-buffer -p -d -b {buffer_name} -t {}",
                 s.tmux_session
             )));
-            assert!(log.contains(&format!("send-keys -t {} -- M-Enter", s.tmux_session)));
-            assert!(log.contains(&format!("send-keys -t {} -l -- next line", s.tmux_session)));
+            // Per-line send-keys is no longer used for paste delivery.
+            assert!(!log.contains("send-keys"));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn submit_pastes_text_then_presses_enter() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+
+        with_fake_tmux(&tmp, 0, |log_path| async move {
+            s.submit("hello").await.unwrap();
+
+            let log = fs::read_to_string(log_path).await.unwrap();
+            let buffer_name = format!("claude-tmux-input-{}", s.tmux_session);
+            let load_pos = log
+                .find(&format!("load-buffer -b {buffer_name} -"))
+                .expect("load-buffer logged");
+            let paste_pos = log
+                .find(&format!(
+                    "paste-buffer -p -d -b {buffer_name} -t {}",
+                    s.tmux_session
+                ))
+                .expect("paste-buffer logged");
+            let enter_pos = log
+                .find(&format!("send-keys -t {} -- Enter", s.tmux_session))
+                .expect("Enter logged");
+            assert!(load_pos < paste_pos);
+            assert!(paste_pos < enter_pos);
         })
         .await;
     }
