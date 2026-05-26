@@ -62,7 +62,15 @@ mock.module("sonner", () => ({
   toast: { success: () => {}, error: () => {} },
 }));
 
-// Mock heavy UI components so rendering is fast
+// Mock heavy UI components so rendering is fast.
+// Snapshot the real modules first so afterAll can restore them — Bun caches
+// mock.module factories globally, so without restoration these stubs leak
+// into sibling test files that need the real ScrollArea viewport.
+import * as realScrollAreaModule from "@/components/ui/scroll-area";
+import * as realSeparatorModule from "@/components/ui/separator";
+const realScrollAreaSnapshot = { ...realScrollAreaModule };
+const realSeparatorSnapshot = { ...realSeparatorModule };
+
 mock.module("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ScrollBar: () => null,
@@ -255,6 +263,8 @@ function resetStores() {
 
 describe("BuildChatTab", () => {
   afterAll(() => {
+    mock.module("@/components/ui/scroll-area", () => realScrollAreaSnapshot);
+    mock.module("@/components/ui/separator", () => realSeparatorSnapshot);
     mock.restore();
   });
 

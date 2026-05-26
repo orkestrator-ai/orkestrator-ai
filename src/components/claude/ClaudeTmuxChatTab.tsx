@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
   ArrowUp,
   Check,
   ChevronDown,
@@ -21,7 +22,9 @@ import {
   Terminal as TerminalIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useScrollLock } from "@/hooks";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -223,6 +226,36 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     [messages],
   );
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
+  const scrollTrigger = useMemo(
+    () => ({
+      messages,
+      pendingApprovals: pendingApprovals.length,
+      pendingQuestions: pendingQuestions.length,
+      pendingPlans: pendingPlans.length,
+      pendingPermissions: pendingPermissions.length,
+      pendingElicitations: pendingElicitations.length,
+      infoEvents: infoEvents.length,
+      isThinking,
+      selectionPrompt: selectionPrompt ? selectionPromptKey(selectionPrompt) : null,
+    }),
+    [
+      messages,
+      pendingApprovals.length,
+      pendingQuestions.length,
+      pendingPlans.length,
+      pendingPermissions.length,
+      pendingElicitations.length,
+      infoEvents.length,
+      isThinking,
+      selectionPrompt,
+    ],
+  );
+  const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
+    scrollTrigger,
+    mountTrigger: interactiveMode ? undefined : backendHydrated,
+    isActive: isActive && !interactiveMode,
+    persistKey: `claude-tmux-${tabId}`,
+  });
 
   // 0. Reconnect to any already-running backend session and replay the full
   // transcript. Tauri events are only delivered to mounted listeners, so a
@@ -433,17 +466,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendHydrated, hasInitialPrompt, tabId, running]);
 
-  // 3. Auto-scroll to bottom on new content.
-  useEffect(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [
-    tabState?.messages.length,
-    tabState?.pendingApprovals.length,
-    tabState?.infoEvents.length,
-  ]);
-
-  // 4. Raw TUI snapshot polling. The snapshot powers both the optional debug
+  // 3. Raw TUI snapshot polling. The snapshot powers both the optional debug
   //    pane and the interactive controls for Claude Code's in-TUI prompts.
   useEffect(() => {
     if (!showTui && !running) {
@@ -823,7 +846,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           )}
 
           {/* Messages */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
             <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
               {messages.length === 0 && !hasPendingHookCards && (
                 showStartScreen ? (
@@ -919,7 +942,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
                 />
               )}
             </div>
-          </div>
+          </ScrollArea>
 
           {/* "Claude is thinking…" indicator — matches the native tab so the UI
               looks the same between modes. Shown only while running so a freshly
@@ -937,6 +960,20 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {!isAtBottom && (
+            <div className="flex justify-end px-4 py-1">
+              <button
+                type="button"
+                onClick={scrollToBottom}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 shadow-sm transition-colors"
+                aria-label="Scroll to bottom of conversation"
+              >
+                <ArrowDown className="w-3.5 h-3.5" />
+                <span>Scroll down</span>
+              </button>
             </div>
           )}
 

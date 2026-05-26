@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useClaudeTmuxStore } from "@/stores/claudeTmuxStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
+import { clearPersistedScrollState } from "@/hooks/useScrollLock";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
 import * as realTauri from "@/lib/tauri";
 import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
@@ -209,6 +210,7 @@ describe("ClaudeTmuxChatTab", () => {
       },
     ]);
     useClaudeTmuxStore.setState({ tabs: new Map() });
+    clearPersistedScrollState("claude-tmux-tab-1");
     useEnvironmentStore.setState({
       environments: [],
       isLoading: false,
@@ -295,12 +297,255 @@ describe("ClaudeTmuxChatTab", () => {
     const terminal = screen.getByTestId("tmux-interactive-terminal");
     expect(terminal.getAttribute("data-tab-id")).toBe("tab-1");
     expect(terminal.getAttribute("data-active")).toBe("true");
-    expect(interactiveTerminalRenderMock).toHaveBeenCalledTimes(1);
+    // Pinned: useScrollLock's isActive/mountTrigger flip on the interactive
+    // toggle causes one extra render on top of the initial mount.
+    expect(interactiveTerminalRenderMock).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole("button", { name: /native/i }));
 
     expect(screen.queryByTestId("tmux-interactive-terminal")).toBeNull();
     expect(screen.getByRole("button", { name: /terminal/i })).toBeTruthy();
+  });
+
+  test("shows a scroll down button after the user scrolls up in native tmux transcript mode", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const viewport = await waitFor(() => {
+      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
+      expect(element).toBeTruthy();
+      return element as HTMLElement;
+    });
+
+    let scrollTop = 100;
+    Object.defineProperty(viewport, "scrollTop", {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(viewport, "scrollHeight", {
+      get: () => 1000,
+      configurable: true,
+    });
+    Object.defineProperty(viewport, "clientHeight", {
+      get: () => 400,
+      configurable: true,
+    });
+
+    fireEvent.scroll(viewport);
+
+    const scrollButton = await screen.findByRole("button", {
+      name: /scroll to bottom of conversation/i,
+    });
+    expect(scrollButton).toBeTruthy();
+
+    viewport.scrollTo = mock(() => {});
+    fireEvent.click(scrollButton);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", {
+          name: /scroll to bottom of conversation/i,
+        }),
+      ).toBeNull();
+    });
+  });
+
+  test("hides the scroll down button while interactive terminal mode is active", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const viewport = await waitFor(() => {
+      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
+      expect(element).toBeTruthy();
+      return element as HTMLElement;
+    });
+
+    let scrollTop = 100;
+    Object.defineProperty(viewport, "scrollTop", {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(viewport, "scrollHeight", { get: () => 1000, configurable: true });
+    Object.defineProperty(viewport, "clientHeight", { get: () => 400, configurable: true });
+
+    fireEvent.scroll(viewport);
+    await screen.findByRole("button", { name: /scroll to bottom of conversation/i });
+
+    // Switch into interactive terminal mode — the ScrollArea unmounts and the
+    // scroll-down affordance must disappear with it.
+    fireEvent.click(await screen.findByRole("button", { name: /terminal/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tmux-interactive-terminal")).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: /scroll to bottom of conversation/i }),
+      ).toBeNull();
+    });
+  });
+
+  test("auto-scrolls to bottom when new transcript content arrives while at the bottom", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const viewport = await waitFor(() => {
+      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
+      expect(element).toBeTruthy();
+      return element as HTMLElement;
+    });
+
+    let scrollTop = 0;
+    Object.defineProperty(viewport, "scrollTop", {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(viewport, "scrollHeight", { get: () => 1200, configurable: true });
+    Object.defineProperty(viewport, "clientHeight", { get: () => 400, configurable: true });
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "transcript-line",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-existing",
+        line: {
+          type: "assistant",
+          uuid: "a-new",
+          timestamp: "2026-05-15T12:02:00.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Streaming chunk" }],
+          },
+        },
+      });
+    });
+
+    await waitFor(() => expect(scrollTop).toBe(1200));
+  });
+
+  test("restores scroll position after the tab is hidden and shown again", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    const { rerender } = render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const viewport = await waitFor(() => {
+      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
+      expect(element).toBeTruthy();
+      return element as HTMLElement;
+    });
+
+    let scrollTop = 250;
+    Object.defineProperty(viewport, "scrollTop", {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(viewport, "scrollHeight", { get: () => 1000, configurable: true });
+    Object.defineProperty(viewport, "clientHeight", { get: () => 400, configurable: true });
+
+    // Scroll up so the persisted state should remember a non-bottom position.
+    fireEvent.scroll(viewport);
+    await screen.findByRole("button", { name: /scroll to bottom of conversation/i });
+
+    // Deactivate the tab (e.g., user switched panes); hook persists state.
+    rerender(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive={false}
+      />,
+    );
+
+    // Simulate the viewport scrolling away while inactive (other tab work),
+    // then reactivate and assert the persisted scrollTop is restored.
+    scrollTop = 0;
+    rerender(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(scrollTop).toBe(250));
+    expect(
+      screen.queryByRole("button", { name: /scroll to bottom of conversation/i }),
+    ).not.toBeNull();
   });
 
   test("keeps interactive terminal mode disabled until a tmux session is running", async () => {
