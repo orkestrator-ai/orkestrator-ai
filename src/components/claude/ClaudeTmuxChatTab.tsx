@@ -683,12 +683,10 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     const option = prompt.options[optionIndex];
     if (!option) return;
 
-    if (prompt.inputMode === "number") {
-      const digits = String(option.number).split("");
-      await handlePromptKeys([...digits, "Enter"]);
-      return;
-    }
-
+    // Claude Code renders numeric prefixes in some confirmation prompts, but
+    // current TUI builds do not treat those numbers as selection shortcuts.
+    // Drive the real highlighted selection instead; otherwise `2` + Enter can
+    // confirm the default "No, exit" option on the bypass-permissions prompt.
     const delta = optionIndex - prompt.selectedOptionIndex;
     const navKey = delta > 0 ? "Down" : "Up";
     const keys: string[] = Array.from({ length: Math.abs(delta) }, () => navKey);
