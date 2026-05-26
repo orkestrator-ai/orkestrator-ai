@@ -188,8 +188,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [promptControlBusy, setPromptControlBusy] = useState(false);
   const [backendHydrated, setBackendHydrated] = useState(false);
-  const [dismissedSelectionPromptKeys, setDismissedSelectionPromptKeys] =
-    useState<Set<string>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
 
@@ -210,16 +208,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     () => parseTmuxSelectionPrompt(tuiSnapshot),
     [tuiSnapshot],
   );
-  const selectionPromptId = useMemo(
-    () => (selectionPrompt ? selectionPromptKey(selectionPrompt) : null),
-    [selectionPrompt],
-  );
-  const visibleSelectionPrompt =
-    selectionPrompt &&
-    selectionPromptId &&
-    !dismissedSelectionPromptKeys.has(selectionPromptId)
-      ? selectionPrompt
-      : null;
   const resumedSession = tabState?.resumed ?? false;
   const hasStarted = startedRef.current || running;
   const showStartScreen = !hasStarted && !hasInitialPrompt;
@@ -308,7 +296,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           });
           return;
         case "initial-prompt-sent":
-          clearTabInitialPrompt(tabId, environmentId);
+          if (ev.environment_id === environmentId) {
+            clearTabInitialPrompt(tabId, environmentId);
+          }
           return;
         case "stopped":
           setRunning(tabId, false, { sessionId: null });
@@ -668,15 +658,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     return true;
   };
 
-  const handleDismissSelectionPrompt = useCallback(() => {
-    if (!selectionPromptId) return;
-    setDismissedSelectionPromptKeys((prev) => {
-      const next = new Set(prev);
-      next.add(selectionPromptId);
-      return next;
-    });
-  }, [selectionPromptId]);
-
   const handleResume = (sessionId: string) => {
     setResumeDialogOpen(false);
     launchSession(sessionId);
@@ -924,17 +905,17 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
                 />
               ))}
 
-              {visibleSelectionPrompt && (
+              {selectionPrompt && (
                 <ClaudeQuestionCard
-                  key={selectionPromptKey(visibleSelectionPrompt)}
-                  question={selectionPromptToQuestion(visibleSelectionPrompt, tabId)}
-                  initialAnswers={[selectionPromptInitialAnswer(visibleSelectionPrompt)]}
+                  key={selectionPromptKey(selectionPrompt)}
+                  question={selectionPromptToQuestion(selectionPrompt, tabId)}
+                  initialAnswers={[selectionPromptInitialAnswer(selectionPrompt)]}
                   allowCustomAnswer={false}
                   allowOptionDeselect={false}
+                  hideDismiss
                   onSubmitAnswers={(answers) =>
-                    handleSelectionPromptAnswers(visibleSelectionPrompt, answers)
+                    handleSelectionPromptAnswers(selectionPrompt, answers)
                   }
-                  onDismiss={handleDismissSelectionPrompt}
                 />
               )}
             </div>

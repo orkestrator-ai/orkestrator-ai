@@ -859,16 +859,40 @@ fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next();
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
+        if ch != '\x1b' {
+            out.push(ch);
             continue;
         }
-        out.push(ch);
+        match chars.peek() {
+            Some(&'[') => {
+                // CSI: ESC [ <params> <letter>
+                chars.next();
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            Some(&']') => {
+                // OSC: ESC ] ... BEL or ESC \ (ST)
+                chars.next();
+                loop {
+                    match chars.next() {
+                        Some('\x07') | None => break,
+                        Some('\x1b') => {
+                            chars.next(); // consume the \ of ST
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some(_) => {
+                // Two-char sequences: ESC M (reverse index), ESC O (SS3), etc.
+                chars.next();
+            }
+            None => {}
+        }
     }
     out
 }
@@ -1197,6 +1221,32 @@ node@host:/workspace$
         assert!(pane_has_claude_exited(
             "\u{1b}[31m[claude exited]\u{1b}[0m\nnode@host:/workspace$"
         ));
+    }
+
+    #[test]
+    fn strip_ansi_handles_osc_sequences() {
+        // OSC terminated by BEL
+        assert_eq!(strip_ansi("\x1b]0;window title\x07hello"), "hello");
+        // OSC terminated by ST (ESC \)
+        assert_eq!(strip_ansi("\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\"), "link");
+    }
+
+    #[test]
+    fn strip_ansi_handles_two_char_escape_sequences() {
+        // ESC M (reverse index) — only two chars consumed
+        assert_eq!(strip_ansi("\x1bMtext"), "text");
+    }
+
+    #[test]
+    fn pane_has_selection_prompt_survives_osc_wrapped_text() {
+        let pane = "\x1b]0;claude\x07\
+WARNING: Claude Code running in Bypass Permissions mode\n\
+\n\
+› 1. No, exit\n\
+  2. Yes, I accept\n\
+\n\
+Enter to confirm · Esc to cancel\n";
+        assert!(pane_has_selection_prompt(pane));
     }
 
     #[test]

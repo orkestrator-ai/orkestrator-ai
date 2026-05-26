@@ -1424,7 +1424,7 @@ Enter to confirm · Esc to cancel
     });
   });
 
-  test("dismisses selection prompts locally without sending keys", async () => {
+  test("selection prompts do not show a Dismiss button", async () => {
     capturePaneMock.mockImplementation(async () => `
 › 1. No, exit
   2. Yes, I accept
@@ -1447,13 +1447,7 @@ Enter to confirm · Esc to cancel
     );
 
     expect(await screen.findByText("Claude is asking for a choice")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-
-    await waitFor(() => {
-      expect(screen.queryByText("Claude is asking for a choice")).toBeNull();
-    });
-    expect(sendKeysMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
   });
 
   test("keeps selection prompt controls disabled while tmux keys are pending", async () => {
