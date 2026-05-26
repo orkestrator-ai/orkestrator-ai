@@ -1693,7 +1693,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     expect(screen.queryByText("Claude is asking for a choice")).toBeNull();
   });
 
-  test("answers confirmation prompts by sending the selected number on submit", async () => {
+  test("answers confirmation prompts by navigating to the selected option on submit", async () => {
     capturePaneMock.mockImplementation(async () => `
 WARNING: Claude Code running in Bypass Permissions mode
 
@@ -1727,7 +1727,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2", "Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"]);
     });
   });
 
@@ -1762,7 +1762,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1", "Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Enter"]);
     });
   });
 
@@ -1846,7 +1846,7 @@ Enter to confirm · Esc to cancel
     ]);
   });
 
-  test("submitting a different number-mode answer sends that number", async () => {
+  test("submitting a different confirmation answer navigates before enter", async () => {
     capturePaneMock.mockImplementation(async () => `
 WARNING: Claude Code running in Bypass Permissions mode
 
@@ -1879,11 +1879,11 @@ Enter to confirm · Esc to cancel
 
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenLastCalledWith("tab-1", ["2", "Enter"]);
+      expect(sendKeysMock).toHaveBeenLastCalledWith("tab-1", ["Down", "Enter"]);
     });
   });
 
-  test("duplicate number-mode labels still submit the clicked option number", async () => {
+  test("duplicate labels still navigate to the clicked option", async () => {
     capturePaneMock.mockImplementation(async () => `
 Choose the retry scope
 
@@ -1916,7 +1916,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2", "Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"]);
     });
   });
 
@@ -1997,7 +1997,7 @@ Enter to confirm · Esc to cancel
     });
   });
 
-  test("splits multi-digit option numbers into individual digit keys", async () => {
+  test("navigates to multi-digit numbered options instead of typing digits", async () => {
     let pane = "";
     for (let i = 1; i <= 10; i++) {
       pane += `${i === 1 ? "› " : "  "}${i}. Option ${i}\n`;
@@ -2026,7 +2026,18 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1", "0", "Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", [
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Down",
+        "Enter",
+      ]);
     });
   });
 
