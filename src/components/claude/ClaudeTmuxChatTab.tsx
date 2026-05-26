@@ -188,6 +188,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [promptControlBusy, setPromptControlBusy] = useState(false);
   const [backendHydrated, setBackendHydrated] = useState(false);
+  const [dismissedSelectionPromptKeys, setDismissedSelectionPromptKeys] =
+    useState<Set<string>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
 
@@ -208,6 +210,16 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     () => parseTmuxSelectionPrompt(tuiSnapshot),
     [tuiSnapshot],
   );
+  const selectionPromptId = useMemo(
+    () => (selectionPrompt ? selectionPromptKey(selectionPrompt) : null),
+    [selectionPrompt],
+  );
+  const visibleSelectionPrompt =
+    selectionPrompt &&
+    selectionPromptId &&
+    !dismissedSelectionPromptKeys.has(selectionPromptId)
+      ? selectionPrompt
+      : null;
   const resumedSession = tabState?.resumed ?? false;
   const hasStarted = startedRef.current || running;
   const showStartScreen = !hasStarted && !hasInitialPrompt;
@@ -294,6 +306,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             sessionId: ev.session_id,
             resumed: ev.resumed,
           });
+          return;
+        case "initial-prompt-sent":
+          clearTabInitialPrompt(tabId, environmentId);
           return;
         case "stopped":
           setRunning(tabId, false, { sessionId: null });
@@ -385,6 +400,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     removePendingElicitation,
     pushInfoEvent,
     setTabBusy,
+    clearTabInitialPrompt,
+    environmentId,
   ]);
 
   // Common "start the tmux session" path used by both auto-start (initial
@@ -399,11 +416,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         planMode,
         resumeSessionId,
       })
-        .then(() => {
-          if (initialPrompt?.trim()) {
-            clearTabInitialPrompt(tabId, environmentId);
-          }
-        })
         .catch((e) => {
           // Re-arm so the user can retry from the start screen.
           startedRef.current = false;
@@ -416,7 +428,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       initialPrompt,
       selectedModel,
       planMode,
-      clearTabInitialPrompt,
     ],
   );
 
@@ -656,6 +667,15 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     await handleSelectPromptOption(prompt, selectedOption.optionIndex);
     return true;
   };
+
+  const handleDismissSelectionPrompt = useCallback(() => {
+    if (!selectionPromptId) return;
+    setDismissedSelectionPromptKeys((prev) => {
+      const next = new Set(prev);
+      next.add(selectionPromptId);
+      return next;
+    });
+  }, [selectionPromptId]);
 
   const handleResume = (sessionId: string) => {
     setResumeDialogOpen(false);
@@ -904,18 +924,17 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
                 />
               ))}
 
-              {selectionPrompt && (
+              {visibleSelectionPrompt && (
                 <ClaudeQuestionCard
-                  key={selectionPromptKey(selectionPrompt)}
-                  question={selectionPromptToQuestion(selectionPrompt, tabId)}
-                  initialAnswers={[selectionPromptInitialAnswer(selectionPrompt)]}
+                  key={selectionPromptKey(visibleSelectionPrompt)}
+                  question={selectionPromptToQuestion(visibleSelectionPrompt, tabId)}
+                  initialAnswers={[selectionPromptInitialAnswer(visibleSelectionPrompt)]}
                   allowCustomAnswer={false}
                   allowOptionDeselect={false}
-                  submitOnOptionSelect
                   onSubmitAnswers={(answers) =>
-                    handleSelectionPromptAnswers(selectionPrompt, answers)
+                    handleSelectionPromptAnswers(visibleSelectionPrompt, answers)
                   }
-                  onDismiss={() => handlePromptKeys(["Escape"])}
+                  onDismiss={handleDismissSelectionPrompt}
                 />
               )}
             </div>
