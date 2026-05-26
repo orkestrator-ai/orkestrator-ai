@@ -164,10 +164,10 @@ If a command was not run, say why — do not pretend it ran.
 
 ## Issues
 
-For each issue use this exact numbered heading and body format. Number issues sequentially starting at 1. Put the title on its own line immediately under the numbered severity/confidence/category heading:
+For each issue use this exact numbered heading and body format. Number issues sequentially starting at 1. Put the title on its own Markdown heading line immediately under the numbered severity/confidence/category heading:
 
 ### 1. [P0|P1|P2][conf:NN][category]
-Short title
+#### Short title
 - File: path/to/file.ts:LINE
 - Symbol: ClassName.methodName (or function name; "" if module-level)
 - Description: 1-3 sentences explaining what is wrong and why it matters.
@@ -207,7 +207,7 @@ Begin by running the git commands to understand the current state.
 | 2 | Run full project test suite; record failures |
 | 3 | Diff against `origin/<targetBranch>...HEAD`; review bugs/edge-cases/race-conditions, error handling, expanded security checklist; typecheck/build; gate issues at confidence >= 75 with P0/P1/P2 severity |
 | 4 | Audit test coverage for all impacted files (whole test files, not only diff hunks) |
-| Output | Markdown sections: Review Scope, Risk Profile, Test Results, Strengths, Issues (numbered and tagged `### 1. [P0\|P1\|P2][conf:NN][category]`), Test Coverage Gaps, Verdict, Summary |
+| Output | Markdown sections: Review Scope, Risk Profile, Test Results, Strengths, Issues (numbered and tagged `### 1. [P0\|P1\|P2][conf:NN][category]` with `####` title headings), Test Coverage Gaps, Verdict, Summary |
 
 ## Related prompts (not this button)
 
