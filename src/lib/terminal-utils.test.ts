@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  detectContainerSetupReadiness,
   ENVIRONMENT_ALREADY_READY_MARKER,
   ENVIRONMENT_SETUP_FAILED_MARKER,
   SETUP_DONE_OSC_DATA,
@@ -41,5 +42,22 @@ describe("terminal-utils", () => {
   test("exports explicit reused and failed workspace markers", () => {
     expect(ENVIRONMENT_ALREADY_READY_MARKER).toBe("Workspace already set up.");
     expect(ENVIRONMENT_SETUP_FAILED_MARKER).toBe("=== Workspace Setup Failed ===");
+  });
+
+  test("detects container setup readiness from restored terminal output", () => {
+    expect(detectContainerSetupReadiness("\u001b[32m=== Workspace Ready ===\u001b[0m")).toEqual({
+      ready: true,
+      failed: false,
+    });
+    expect(
+      detectContainerSetupReadiness("=== Workspace Setup Failed ===\n=== Workspace Ready ===")
+    ).toEqual({
+      ready: true,
+      failed: true,
+    });
+    expect(detectContainerSetupReadiness("installing packages\n")).toEqual({
+      ready: false,
+      failed: false,
+    });
   });
 });
