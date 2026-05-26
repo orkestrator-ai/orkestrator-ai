@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import * as realSessionStore from "@/stores/sessionStore";
 
 // Mock modules that require a real Tauri runtime or have side effects.
 // IMPORTANT: Do NOT mock @/stores (barrel) or @/lib/tauri here — doing so
@@ -71,9 +72,14 @@ const persistentSessionStore = {
   error: null,
 };
 
+const realSessionStoreSnapshot = { ...realSessionStore };
 mock.module("@/stores/sessionStore", () => ({
   useSessionStore: () => persistentSessionStore,
 }));
+
+afterAll(() => {
+  mock.module("@/stores/sessionStore", () => realSessionStoreSnapshot);
+});
 
 let storedContainerElement: HTMLDivElement;
 
