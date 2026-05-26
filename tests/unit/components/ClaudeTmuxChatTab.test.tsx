@@ -656,6 +656,24 @@ describe("ClaudeTmuxChatTab", () => {
           permission_suggestions: [],
         },
       },
+      {
+        id: "question-permission-hook",
+        kind: "PermissionRequest",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          permission_suggestions: [],
+        },
+      },
     ]);
 
     render(
@@ -675,7 +693,189 @@ describe("ClaudeTmuxChatTab", () => {
       expect(tab.pendingPermissions).toHaveLength(1);
       expect(tab.pendingPermissions[0]!.eventId).toBe("perm-hook");
     });
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "PermissionRequest",
+        "question-permission-hook",
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            hookEventName: "PermissionRequest",
+            decision: expect.objectContaining({
+              behavior: "allow",
+            }),
+          }),
+        }),
+      );
+    });
     expect(startSessionMock).not.toHaveBeenCalled();
+  });
+
+  test("auto-allows AskUserQuestion PermissionRequest hooks without rendering the legacy permission card", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "question-permission-hook",
+        event_kind: "PermissionRequest",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          permission_suggestions: [],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(replyHookMock).toHaveBeenCalledWith(
+        "tab-1",
+        "PermissionRequest",
+        "question-permission-hook",
+        expect.objectContaining({
+          hookSpecificOutput: expect.objectContaining({
+            hookEventName: "PermissionRequest",
+            decision: expect.objectContaining({
+              behavior: "allow",
+            }),
+          }),
+        }),
+      );
+    });
+    expect(useClaudeTmuxStore.getState().getTab("tab-1").pendingPermissions).toEqual([]);
+    expect(screen.queryByText("Claude needs permission")).toBeNull();
+  });
+
+  test("keeps a recoverable permission card when hydrated AskUserQuestion PermissionRequest auto-allow fails", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+    getPendingHooksMock.mockImplementation(async () => [
+      {
+        id: "question-permission-hook",
+        kind: "PermissionRequest",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          permission_suggestions: [],
+        },
+      },
+    ]);
+    replyHookMock.mockImplementationOnce(async () => {
+      throw new Error("bridge unavailable");
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.pendingPermissions).toHaveLength(1);
+      expect(tab.pendingPermissions[0]!.eventId).toBe("question-permission-hook");
+    });
+    expect(await screen.findByText("Claude needs permission")).toBeTruthy();
+  });
+
+  test("keeps a recoverable permission card when live AskUserQuestion PermissionRequest auto-allow fails", async () => {
+    replyHookMock.mockImplementationOnce(async () => {
+      throw new Error("bridge unavailable");
+    });
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "question-permission-hook",
+        event_kind: "PermissionRequest",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          permission_suggestions: [],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.pendingPermissions).toHaveLength(1);
+      expect(tab.pendingPermissions[0]!.eventId).toBe("question-permission-hook");
+    });
+    expect(await screen.findByText("Claude needs permission")).toBeTruthy();
   });
 
   test("hydrates pending hook snapshot as authoritative and clears stale prompts", async () => {
@@ -1440,6 +1640,57 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     await waitFor(() => {
       expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"]);
     });
+  });
+
+  test("does not render a parsed TUI selection prompt while a native hook question is pending", async () => {
+    capturePaneMock.mockImplementation(async () => `
+Which framework?
+
+› 1. React
+  2. Vue
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+`);
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+    useClaudeTmuxStore.getState().addPendingQuestion("tab-1", {
+      eventId: "q-hook",
+      questions: [
+        {
+          question: "Which framework?",
+          header: "Framework",
+          options: [{ label: "React" }, { label: "Vue" }],
+          multiSelect: false,
+        },
+      ],
+      toolInput: {
+        questions: [
+          {
+            question: "Which framework?",
+            header: "Framework",
+            options: [{ label: "React" }, { label: "Vue" }],
+            multiSelect: false,
+          },
+        ],
+      },
+      payload: {},
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Claude needs your input")).toBeTruthy();
+    expect(screen.queryByText("Claude is asking for a choice")).toBeNull();
   });
 
   test("answers confirmation prompts by sending the selected number on submit", async () => {
