@@ -773,6 +773,111 @@ describe("ClaudeTmuxChatTab", () => {
     expect(screen.queryByText("Claude needs permission")).toBeNull();
   });
 
+  test("keeps a recoverable permission card when hydrated AskUserQuestion PermissionRequest auto-allow fails", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+    getPendingHooksMock.mockImplementation(async () => [
+      {
+        id: "question-permission-hook",
+        kind: "PermissionRequest",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          permission_suggestions: [],
+        },
+      },
+    ]);
+    replyHookMock.mockImplementationOnce(async () => {
+      throw new Error("bridge unavailable");
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.pendingPermissions).toHaveLength(1);
+      expect(tab.pendingPermissions[0]!.eventId).toBe("question-permission-hook");
+    });
+    expect(await screen.findByText("Claude needs permission")).toBeTruthy();
+  });
+
+  test("keeps a recoverable permission card when live AskUserQuestion PermissionRequest auto-allow fails", async () => {
+    replyHookMock.mockImplementationOnce(async () => {
+      throw new Error("bridge unavailable");
+    });
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "question-permission-hook",
+        event_kind: "PermissionRequest",
+        payload: {
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Which framework?",
+                header: "Framework",
+                options: [{ label: "React" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          permission_suggestions: [],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      const tab = useClaudeTmuxStore.getState().getTab("tab-1");
+      expect(tab.pendingPermissions).toHaveLength(1);
+      expect(tab.pendingPermissions[0]!.eventId).toBe("question-permission-hook");
+    });
+    expect(await screen.findByText("Claude needs permission")).toBeTruthy();
+  });
+
   test("hydrates pending hook snapshot as authoritative and clears stale prompts", async () => {
     useClaudeTmuxStore.getState().addPendingApproval("tab-1", {
       eventId: "stale",

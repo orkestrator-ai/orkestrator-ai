@@ -294,7 +294,13 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             for (const hook of hooks) {
               if (shouldAutoAllowPermissionHook(hook)) {
                 void autoAllowPermissionHook(tabId, hook.id, hook.payload).catch((e) => {
-                  if (!cancelled) setError(String(e));
+                  if (!cancelled) {
+                    addPendingPermission(
+                      tabId,
+                      payloadToPermission(hook.id, hook.payload),
+                    );
+                    setError(String(e));
+                  }
                 });
               }
             }
@@ -318,6 +324,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     setRunning,
     setTabBusy,
     applyTranscriptLine,
+    addPendingPermission,
     replacePendingHooks,
   ]);
 
@@ -373,9 +380,13 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             }
           } else if (ev.event_kind === "PermissionRequest") {
             if (isQuestionPermissionPayload(ev.payload)) {
-              void autoAllowPermissionHook(tabId, ev.event_id, ev.payload).catch((e) =>
-                setError(String(e)),
-              );
+              void autoAllowPermissionHook(tabId, ev.event_id, ev.payload).catch((e) => {
+                addPendingPermission(
+                  tabId,
+                  payloadToPermission(ev.event_id, ev.payload),
+                );
+                setError(String(e));
+              });
               removePendingPermission(tabId, ev.event_id);
             } else {
               addPendingPermission(tabId, payloadToPermission(ev.event_id, ev.payload));
