@@ -2,12 +2,15 @@ import { describe, expect, test } from "bun:test";
 import {
   detectContainerSetupReadiness,
   ENVIRONMENT_ALREADY_READY_MARKER,
+  ENVIRONMENT_READY_MARKER_ALT_DASH,
+  ENVIRONMENT_READY_MARKER_ALT_TILDE,
   ENVIRONMENT_SETUP_FAILED_MARKER,
   SETUP_DONE_OSC_DATA,
   SETUP_DONE_OSC_ID,
   SETUP_DONE_PRINTF_CMD,
   SETUP_FAILED_OSC_DATA,
   SETUP_FAILED_PRINTF_CMD,
+  SETUP_COMPLETE_MARKER,
   stripAnsi,
   tabTypeToSessionType,
 } from "./terminal-utils";
@@ -24,6 +27,10 @@ describe("terminal-utils", () => {
 
   test("strips ANSI control sequences", () => {
     expect(stripAnsi("\u001b[31merror\u001b[0m")).toBe("error");
+  });
+
+  test("strips OSC control sequences", () => {
+    expect(stripAnsi("before\u001b]9999;setup_done\u0007after")).toBe("beforeafter");
   });
 
   test("exports the setup-complete OSC printf command", () => {
@@ -46,6 +53,22 @@ describe("terminal-utils", () => {
 
   test("detects container setup readiness from restored terminal output", () => {
     expect(detectContainerSetupReadiness("\u001b[32m=== Workspace Ready ===\u001b[0m")).toEqual({
+      ready: true,
+      failed: false,
+    });
+    expect(detectContainerSetupReadiness(ENVIRONMENT_READY_MARKER_ALT_TILDE)).toEqual({
+      ready: true,
+      failed: false,
+    });
+    expect(detectContainerSetupReadiness(ENVIRONMENT_READY_MARKER_ALT_DASH)).toEqual({
+      ready: true,
+      failed: false,
+    });
+    expect(detectContainerSetupReadiness(ENVIRONMENT_ALREADY_READY_MARKER)).toEqual({
+      ready: true,
+      failed: false,
+    });
+    expect(detectContainerSetupReadiness(SETUP_COMPLETE_MARKER)).toEqual({
       ready: true,
       failed: false,
     });
