@@ -27,6 +27,7 @@ function normalizeTodoStatus(status: unknown): TodoStatus | undefined {
   if (normalized === "running" || normalized === "active") return "in_progress";
   if (normalized === "todo" || normalized === "open") return "pending";
   if (normalized === "canceled") return "cancelled";
+  if (normalized === "deleted") return "cancelled";
 
   return TODO_STATUSES.includes(normalized as TodoStatus)
     ? (normalized as TodoStatus)
@@ -55,6 +56,9 @@ function taskCandidatesFromPayload(value: unknown): unknown[] {
 
   const candidate = value as Record<string, unknown>;
 
+  if (Array.isArray(candidate.newTodos)) return candidate.newTodos;
+  if (Array.isArray(candidate.new_todos)) return candidate.new_todos;
+  if (Array.isArray(candidate.todos)) return candidate.todos;
   if (Array.isArray(candidate.tasks)) return candidate.tasks;
   if (Array.isArray(candidate.items)) return candidate.items;
 
@@ -64,6 +68,22 @@ function taskCandidatesFromPayload(value: unknown): unknown[] {
   return [candidate];
 }
 
+function looksLikePlaceholderTaskLabel(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return /^(?:task\s*)?#?\d+$/.test(normalized);
+}
+
+function bestTaskContent(...values: unknown[]): string | undefined {
+  const candidates = values
+    .map((value) => readString(value))
+    .filter((value): value is string => typeof value === "string");
+
+  return (
+    candidates.find((value) => !looksLikePlaceholderTaskLabel(value)) ??
+    candidates[0]
+  );
+}
+
 function taskContentFromRecord(record: Record<string, unknown>): string | undefined {
   const taskId = readString(
     record.taskId,
@@ -71,23 +91,31 @@ function taskContentFromRecord(record: Record<string, unknown>): string | undefi
     record.task_id,
     record.id,
   );
-  const content = readString(
-    record.content,
+  const content = bestTaskContent(
+    record.subject,
     record.title,
+    record.content,
     record.task,
     record.description,
     record.name,
     record.text,
+    record.activeForm,
+    record.active_form,
   );
 
-  if (content && taskId) return `#${taskId} ${content}`;
+  if (content && taskId && !content.includes(`#${taskId}`)) {
+    return `#${taskId} ${content}`;
+  }
   if (content) return content;
   if (taskId) return `Task #${taskId}`;
 
   return undefined;
 }
 
-function parseTaskItemsFromPayload(value: unknown): TodoItem[] {
+function parseTaskItemsFromPayload(
+  value: unknown,
+  options?: { requireRecognizedStatus?: boolean },
+): TodoItem[] {
   return taskCandidatesFromPayload(value).flatMap((candidate) => {
     if (typeof candidate === "string") {
       const content = candidate.trim();
@@ -99,10 +127,12 @@ function parseTaskItemsFromPayload(value: unknown): TodoItem[] {
     const record = candidate as Record<string, unknown>;
     const content = taskContentFromRecord(record);
     if (!content) return [];
+    const status = normalizeTodoStatus(record.status);
+    if (options?.requireRecognizedStatus && !status) return [];
 
     return [{
       content,
-      status: normalizeTodoStatus(record.status) ?? "pending",
+      status: status ?? "pending",
     }];
   });
 }
@@ -114,6 +144,12 @@ function extractTodos(value: unknown): unknown[] {
 
   if (typeof value === "object" && value !== null) {
     const candidate = value as Record<string, unknown>;
+    if (Array.isArray(candidate.newTodos)) {
+      return candidate.newTodos;
+    }
+    if (Array.isArray(candidate.new_todos)) {
+      return candidate.new_todos;
+    }
     if (Array.isArray(candidate.todos)) {
       return candidate.todos;
     }
@@ -127,7 +163,9 @@ export function parseTodosFromOutput(toolOutput?: string): TodoItem[] {
 
   try {
     const parsed = JSON.parse(toolOutput) as unknown;
-    return extractTodos(parsed).filter(isTodoItem);
+    return parseTaskItemsFromPayload(extractTodos(parsed), {
+      requireRecognizedStatus: true,
+    });
   } catch {
     return [];
   }
@@ -150,7 +188,9 @@ export function getTodoItems(
   toolName?: string,
 ): TodoItem[] {
   const todosFromArgs = Array.isArray(toolArgs?.todos)
-    ? toolArgs.todos.filter(isTodoItem)
+    ? parseTaskItemsFromPayload(toolArgs.todos, {
+        requireRecognizedStatus: true,
+      })
     : [];
 
   if (todosFromArgs.length > 0) {
@@ -176,8 +216,12 @@ export function getTodoItems(
 const TASK_TODO_TOOL_NAMES = new Set([
   "taskcreate",
   "taskupdate",
+  "taskget",
+  "tasklist",
   "task_create",
   "task_update",
+  "task_get",
+  "task_list",
 ]);
 const TODO_TOOL_NAMES = new Set(["todowrite", "todo_list"]);
 
@@ -204,6 +248,8 @@ export function getTodoToolLabel(toolName?: string): string {
   if (normalized === "todo_list") return "Todo List";
   if (normalized === "taskcreate" || normalized === "task_create") return "Task Create";
   if (normalized === "taskupdate" || normalized === "task_update") return "Task Update";
+  if (normalized === "taskget" || normalized === "task_get") return "Task Get";
+  if (normalized === "tasklist" || normalized === "task_list") return "Task List";
 
   return toolName || "TodoWrite";
 }
