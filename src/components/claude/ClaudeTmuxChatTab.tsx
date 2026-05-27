@@ -62,7 +62,6 @@ import {
 import {
   payloadToApproval,
   payloadToElicitation,
-  payloadToInfoEvent,
   payloadToPermission,
   payloadToPlan,
   payloadToQuestion,
@@ -174,8 +173,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const addPendingElicitation = useClaudeTmuxStore((s) => s.addPendingElicitation);
   const removePendingElicitation = useClaudeTmuxStore((s) => s.removePendingElicitation);
   const replacePendingHooks = useClaudeTmuxStore((s) => s.replacePendingHooks);
-  const pushInfoEvent = useClaudeTmuxStore((s) => s.pushInfoEvent);
-  const dismissInfoEvent = useClaudeTmuxStore((s) => s.dismissInfoEvent);
   const setTabBusy = useClaudeTmuxStore((s) => s.setBusy);
   const clearTabInitialPrompt = usePaneLayoutStore((s) => s.clearTabInitialPrompt);
 
@@ -203,7 +200,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const pendingPlans = tabState?.pendingPlans ?? [];
   const pendingPermissions = tabState?.pendingPermissions ?? [];
   const pendingElicitations = tabState?.pendingElicitations ?? [];
-  const infoEvents = tabState?.infoEvents ?? [];
   const running = tabState?.running ?? false;
   const isThinking = tabState?.busy ?? false;
   const busyStartedAt = tabState?.busyStartedAt ?? null;
@@ -235,7 +231,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       pendingPlans: pendingPlans.length,
       pendingPermissions: pendingPermissions.length,
       pendingElicitations: pendingElicitations.length,
-      infoEvents: infoEvents.length,
       isThinking,
       selectionPrompt: visibleSelectionPrompt ? selectionPromptKey(visibleSelectionPrompt) : null,
     }),
@@ -246,7 +241,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       pendingPlans.length,
       pendingPermissions.length,
       pendingElicitations.length,
-      infoEvents.length,
       isThinking,
       visibleSelectionPrompt,
     ],
@@ -393,19 +387,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             }
           } else if (ev.event_kind === "Elicitation") {
             addPendingElicitation(tabId, payloadToElicitation(ev.event_id, ev.payload));
-          } else if (
-            // PostToolUse fires after every tool call, and lifecycle hooks are
-            // consumed for busy-state only; surfacing them as visible info rows
-            // is noise.
-            ev.event_kind !== "PostToolUse" &&
-            ev.event_kind !== "UserPromptSubmit" &&
-            ev.event_kind !== "Stop" &&
-            ev.event_kind !== "SubagentStop"
-          ) {
-            pushInfoEvent(
-              tabId,
-              payloadToInfoEvent(ev.event_id, ev.event_kind, ev.payload),
-            );
           }
           break;
         case "hook-timed-out":
@@ -450,7 +431,6 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     removePendingPermission,
     addPendingElicitation,
     removePendingElicitation,
-    pushInfoEvent,
     setTabBusy,
     clearTabInitialPrompt,
     environmentId,
@@ -816,31 +796,10 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         </div>
       </div>
 
-      {/* Inline error / info bar */}
+      {/* Inline error bar */}
       {error && (
         <div className="px-3 py-1.5 text-xs text-red-400 bg-red-950/30 border-b border-red-900/40 shrink-0">
           {error}
-        </div>
-      )}
-      {infoEvents.length > 0 && (
-        <div className="px-3 py-1 border-b border-border/60 space-y-0.5 shrink-0">
-          {infoEvents.slice(-3).map((ev) => (
-            <div
-              key={ev.id}
-              className="flex items-center justify-between text-[11px] text-muted-foreground"
-            >
-              <span className="truncate">
-                <span className="opacity-60">[{ev.kind}]</span> {ev.message}
-              </span>
-              <button
-                type="button"
-                onClick={() => dismissInfoEvent(tabId, ev.id)}
-                className="ml-2 opacity-50 hover:opacity-100"
-              >
-                ×
-              </button>
-            </div>
-          ))}
         </div>
       )}
 
