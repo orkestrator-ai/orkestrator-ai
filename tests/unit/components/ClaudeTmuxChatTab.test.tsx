@@ -957,6 +957,50 @@ describe("ClaudeTmuxChatTab", () => {
     expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(false);
   });
 
+  test("does not render non-actionable hook notifications above the transcript", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "session-start",
+        event_kind: "SessionStart",
+        payload: {},
+      });
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "notification",
+        event_kind: "Notification",
+        payload: { message: "Background note" },
+      });
+    });
+
+    expect(useClaudeTmuxStore.getState().getTab("tab-1").infoEvents).toEqual([]);
+    expect(screen.queryByText("SessionStart")).toBeNull();
+    expect(screen.queryByText("Background note")).toBeNull();
+  });
+
   test("typing / opens the built-in slash command menu and selecting one fills the input", async () => {
     useClaudeTmuxStore
       .getState()
