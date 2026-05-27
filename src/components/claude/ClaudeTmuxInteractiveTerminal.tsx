@@ -139,6 +139,10 @@ export function ClaudeTmuxInteractiveTerminal({
       };
 
       try {
+        if (!environmentId) {
+          setError("No environment specified for interactive terminal");
+          return;
+        }
         const sessionId = await createInteractiveTerminal(
           tabId,
           terminal.cols || 120,
