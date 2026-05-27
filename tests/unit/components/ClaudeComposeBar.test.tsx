@@ -4,6 +4,11 @@ import { mockReadImage } from "../../mocks/clipboard";
 
 const mockWriteContainerFile = mock(async () => {});
 const mockWriteLocalFile = mock(async () => "/tmp/file.png");
+const mockUpdateGlobalConfig = mock(async (global: any) => ({
+  version: "1.0",
+  global,
+  repositories: {},
+}));
 const mockSerializeForLLM = mock((text: string, _mentions?: unknown[]) => text);
 const mockHandleFileMentionCursorChange = mock(() => {});
 const mockHandleFileMentionKeyDown = mock(() => false);
@@ -42,6 +47,7 @@ mock.module("@/lib/tauri", () => ({
   readFileBase64: async () => "",
   writeContainerFile: mockWriteContainerFile,
   writeLocalFile: mockWriteLocalFile,
+  updateGlobalConfig: mockUpdateGlobalConfig,
   getFileTree: async () => [],
   getLocalFileTree: async () => [],
 }));
@@ -123,6 +129,7 @@ mock.module("@/lib/canvas-utils", () => ({
 
 import { ClaudeComposeBar } from "../../../src/components/claude/ClaudeComposeBar";
 import { useClaudeStore } from "../../../src/stores/claudeStore";
+import { useConfigStore } from "../../../src/stores/configStore";
 import { useEnvironmentStore } from "../../../src/stores/environmentStore";
 
 if (typeof globalThis.ImageData === "undefined") {
@@ -175,6 +182,12 @@ describe("ClaudeComposeBar", () => {
     mockReadImage.mockReset();
     mockWriteContainerFile.mockReset();
     mockWriteLocalFile.mockReset();
+    mockUpdateGlobalConfig.mockReset();
+    mockUpdateGlobalConfig.mockImplementation(async (global: any) => ({
+      version: "1.0",
+      global,
+      repositories: {},
+    }));
     mockSerializeForLLM.mockReset();
     mockSerializeForLLM.mockImplementation((text: string) => text);
     mockHandleFileMentionCursorChange.mockReset();
@@ -211,6 +224,7 @@ describe("ClaudeComposeBar", () => {
       sessionInitData: new Map(),
       contextUsage: new Map(),
     });
+    useConfigStore.getState().updateGlobalConfig({ claudeModel: "opus" });
   });
 
   afterEach(() => {
@@ -228,6 +242,22 @@ describe("ClaudeComposeBar", () => {
     renderComposeBar();
     // First model should be shown as default
     expect(screen.getByText("Opus")).toBeTruthy();
+  });
+
+  test("persists selected model as the Claude global default", async () => {
+    renderComposeBar();
+
+    const modelTrigger = screen.getByText("Opus").closest("button");
+    expect(modelTrigger).toBeTruthy();
+    fireEvent.pointerDown(modelTrigger!);
+    fireEvent.click(await screen.findByText("Sonnet"));
+
+    await waitFor(() => {
+      expect(mockUpdateGlobalConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ claudeModel: "sonnet" }),
+      );
+    });
+    expect(useConfigStore.getState().config.global.claudeModel).toBe("sonnet");
   });
 
   test("renders effort label (defaults to 'High')", () => {
