@@ -99,6 +99,24 @@ describe("claudeTmuxStore", () => {
       expect(useClaudeTmuxStore.getState().getTab(env1Key).sessionId).toBe("s-1");
       expect(useClaudeTmuxStore.getState().getTab(env2Key).sessionId).toBe("s-2");
     });
+
+    test("returns emptyTabState for bare tabId when it matches multiple environments (ambiguous)", () => {
+      const env1Key = createClaudeTmuxStateKey("env-1", "default");
+      const env2Key = createClaudeTmuxStateKey("env-2", "default");
+
+      useClaudeTmuxStore
+        .getState()
+        .setRunning(env1Key, true, { environmentId: "env-1", sessionId: "s-1" });
+      useClaudeTmuxStore
+        .getState()
+        .setRunning(env2Key, true, { environmentId: "env-2", sessionId: "s-2" });
+
+      // Bare tabId "default" matches both env-1 and env-2 → ambiguous → emptyTabState
+      const tab = useClaudeTmuxStore.getState().getTab("default");
+      expect(tab.running).toBe(false);
+      expect(tab.sessionId).toBeNull();
+      expect(tab.messages).toEqual([]);
+    });
   });
 
   describe("resetTab", () => {

@@ -100,25 +100,28 @@ mock.module("@/lib/claude-tmux-client", () => ({
   getPendingHooks: getPendingHooksMock,
   subscribe: subscribeMock,
   stopSession: stopSessionMock,
-  interruptSession: (tabId: string) => interruptSessionMock(tabId),
-  capturePane: (tabId: string) => capturePaneMock(tabId),
-  sendKeys: (tabId: string, keys: string[]) => sendKeysMock(tabId, keys),
+  interruptSession: (tabId: string, environmentId?: string) =>
+    interruptSessionMock(tabId, environmentId),
+  capturePane: (tabId: string, environmentId?: string) =>
+    capturePaneMock(tabId, environmentId),
+  sendKeys: (tabId: string, keys: string[], environmentId?: string) =>
+    sendKeysMock(tabId, keys, environmentId),
   replyHook: (
     tabId: string,
     eventKind: realTmuxClient.HookEventKind,
     eventId: string,
     response: unknown,
-  ) => replyHookMock(tabId, eventKind, eventId, response),
-  submit: (tabId: string, text: string) => submitMock(tabId, text),
+    environmentId?: string,
+  ) => replyHookMock(tabId, eventKind, eventId, response, environmentId),
+  submit: (tabId: string, text: string, environmentId?: string) =>
+    submitMock(tabId, text, environmentId),
   answerPreToolUse: (
     tabId: string,
     eventId: string,
     decision: "approve" | "block",
     reason?: string,
-  ) =>
-    reason === undefined
-      ? answerPreToolUseMock(tabId, eventId, decision)
-      : answerPreToolUseMock(tabId, eventId, decision, reason),
+    environmentId?: string,
+  ) => answerPreToolUseMock(tabId, eventId, decision, reason, environmentId),
   listPreviousSessions: listPreviousSessionsMock,
 }));
 
@@ -720,6 +723,7 @@ describe("ClaudeTmuxChatTab", () => {
             }),
           }),
         }),
+        "env-1",
       );
     });
     expect(startSessionMock).not.toHaveBeenCalled();
@@ -781,6 +785,7 @@ describe("ClaudeTmuxChatTab", () => {
             }),
           }),
         }),
+        "env-1",
       );
     });
     expect(useClaudeTmuxStore.getState().getTab("tab-1").pendingPermissions).toEqual([]);
@@ -1261,6 +1266,7 @@ describe("ClaudeTmuxChatTab", () => {
       expect(submitMock).toHaveBeenCalledWith(
         "tab-1",
         "/model claude-opus-4-7",
+        "env-1",
       );
     });
     expect(screen.getByRole("button", { name: /Opus 4\.7/ })).toBeTruthy();
@@ -1343,6 +1349,7 @@ describe("ClaudeTmuxChatTab", () => {
       expect(submitMock).toHaveBeenCalledWith(
         "tab-1",
         "/model claude-opus-4-7",
+        "env-1",
       );
       expect(textarea.disabled).toBe(true);
       expect(
@@ -1471,7 +1478,7 @@ describe("ClaudeTmuxChatTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
 
-    expect(interruptSessionMock).toHaveBeenCalledWith("tab-1");
+    expect(interruptSessionMock).toHaveBeenCalledWith("tab-1", "env-1");
     expect(stopSessionMock).not.toHaveBeenCalled();
   });
 
@@ -1501,7 +1508,7 @@ describe("ClaudeTmuxChatTab", () => {
     fireEvent.click(screen.getByTitle("Interrupt current response"));
 
     await waitFor(() => {
-      expect(interruptSessionMock).toHaveBeenCalledWith("tab-1");
+      expect(interruptSessionMock).toHaveBeenCalledWith("tab-1", "env-1");
     });
     expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(false);
   });
@@ -1696,7 +1703,7 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Down", "Enter"], "env-1");
     });
   });
 
@@ -1785,7 +1792,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2"], "env-1");
     });
   });
 
@@ -1820,7 +1827,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1"], "env-1");
     });
   });
 
@@ -1937,7 +1944,7 @@ Enter to confirm · Esc to cancel
 
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenLastCalledWith("tab-1", ["2"]);
+      expect(sendKeysMock).toHaveBeenLastCalledWith("tab-1", ["2"], "env-1");
     });
   });
 
@@ -1974,7 +1981,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2"], "env-1");
     });
   });
 
@@ -2014,7 +2021,7 @@ Enter to confirm · ↑/↓ to navigate · Esc to cancel
         "Up",
         "Up",
         "Enter",
-      ]);
+      ], "env-1");
     });
   });
 
@@ -2164,7 +2171,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["2"], "env-1");
     });
     expect(await screen.findByText("Error: capture failed")).toBeTruthy();
   });
@@ -2198,7 +2205,7 @@ Enter to confirm · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1", "0"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["1", "0"], "env-1");
     });
   });
 
@@ -2235,7 +2242,7 @@ Enter to select · Esc to cancel
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
-      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Enter"]);
+      expect(sendKeysMock).toHaveBeenCalledWith("tab-1", ["Enter"], "env-1");
     });
   });
 
@@ -2359,6 +2366,7 @@ Enter to confirm · Esc to cancel
             }),
           }),
         }),
+        "env-1",
       );
     });
   });
@@ -2437,6 +2445,7 @@ Enter to confirm · Esc to cancel
             }),
           }),
         }),
+        "env-1",
       );
     });
   });
@@ -2544,6 +2553,7 @@ Enter to confirm · Esc to cancel
             permissionDecisionReason: "User declined to answer the question.",
           }),
         }),
+        "env-1",
       );
       expect(useClaudeTmuxStore.getState().getTab("tab-1").pendingQuestions).toEqual([]);
     });
@@ -2600,6 +2610,7 @@ Enter to confirm · Esc to cancel
             permissionDecisionReason: "Add edge cases",
           }),
         }),
+        "env-1",
       );
     });
 
@@ -2619,6 +2630,7 @@ Enter to confirm · Esc to cancel
             updatedInput: { plan: "Ship it" },
           }),
         }),
+        "env-1",
       );
     });
   });
@@ -2653,6 +2665,8 @@ Enter to confirm · Esc to cancel
         "tab-1",
         "approval-hook",
         "approve",
+        undefined,
+        "env-1",
       );
     });
   });
@@ -2697,6 +2711,7 @@ Enter to confirm · Esc to cancel
             }),
           }),
         }),
+        "env-1",
       );
     });
   });
@@ -2741,6 +2756,7 @@ Enter to confirm · Esc to cancel
             }),
           }),
         }),
+        "env-1",
       );
     });
   });
@@ -2793,6 +2809,7 @@ Enter to confirm · Esc to cancel
             content: { username: "alice" },
           },
         },
+        "env-1",
       );
     });
   });
@@ -2841,7 +2858,7 @@ Enter to confirm · Esc to cancel
           hookEventName: "Elicitation",
           action: "decline",
         },
-      });
+      }, "env-1");
     });
 
     await waitFor(() => {
@@ -2855,7 +2872,7 @@ Enter to confirm · Esc to cancel
           hookEventName: "Elicitation",
           action: "cancel",
         },
-      });
+      }, "env-1");
     });
   });
 });

@@ -273,7 +273,11 @@ function cleanupCodexNativeTab(envId: string, tabId: string) {
 }
 
 function cleanupClaudeTmuxTab(envId: string, tabId: string) {
-  useClaudeTmuxStore.getState().resetTab(createClaudeTmuxStateKey(envId, tabId));
+  const store = useClaudeTmuxStore.getState();
+  store.resetTab(createClaudeTmuxStateKey(envId, tabId));
+  // Also clear any legacy bare-key state that may exist from before the
+  // (envId, tabId) composite key migration.
+  store.resetTab(tabId);
   stopClaudeTmuxSession(tabId, envId).catch((err) => {
     console.debug("[PaneLayout] Error stopping Claude tmux session:", err);
   });

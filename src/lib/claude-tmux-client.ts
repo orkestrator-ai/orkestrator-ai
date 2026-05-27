@@ -155,63 +155,60 @@ export async function startSession(
   });
 }
 
-function tabArgs(tabId: string, environmentId?: string): { tabId: string; environmentId?: string } {
-  return environmentId === undefined ? { tabId } : { tabId, environmentId };
+export async function stopSession(tabId: string, environmentId: string): Promise<void> {
+  await invoke("claude_tmux_stop", { tabId, environmentId });
 }
 
-export async function stopSession(tabId: string, environmentId?: string): Promise<void> {
-  await invoke("claude_tmux_stop", tabArgs(tabId, environmentId));
+export async function interruptSession(tabId: string, environmentId: string): Promise<void> {
+  await invoke("claude_tmux_interrupt", { tabId, environmentId });
 }
 
-export async function interruptSession(tabId: string, environmentId?: string): Promise<void> {
-  await invoke("claude_tmux_interrupt", tabArgs(tabId, environmentId));
+export async function getStatus(tabId: string, environmentId: string): Promise<TmuxStatus | null> {
+  return invoke<TmuxStatus | null>("claude_tmux_status", { tabId, environmentId });
 }
 
-export async function getStatus(tabId: string, environmentId?: string): Promise<TmuxStatus | null> {
-  return invoke<TmuxStatus | null>("claude_tmux_status", tabArgs(tabId, environmentId));
+export async function getTranscript(tabId: string, environmentId: string): Promise<TranscriptLine[]> {
+  return invoke<TranscriptLine[]>("claude_tmux_transcript", { tabId, environmentId });
 }
 
-export async function getTranscript(tabId: string, environmentId?: string): Promise<TranscriptLine[]> {
-  return invoke<TranscriptLine[]>("claude_tmux_transcript", tabArgs(tabId, environmentId));
+export async function getPendingHooks(tabId: string, environmentId: string): Promise<TmuxPendingHook[]> {
+  return invoke<TmuxPendingHook[]>("claude_tmux_pending_hooks", { tabId, environmentId });
 }
 
-export async function getPendingHooks(tabId: string, environmentId?: string): Promise<TmuxPendingHook[]> {
-  return invoke<TmuxPendingHook[]>("claude_tmux_pending_hooks", tabArgs(tabId, environmentId));
+export async function submit(tabId: string, text: string, environmentId: string): Promise<void> {
+  await invoke("claude_tmux_submit", { tabId, environmentId, text });
 }
 
-export async function submit(tabId: string, text: string, environmentId?: string): Promise<void> {
-  await invoke("claude_tmux_submit", { ...tabArgs(tabId, environmentId), text });
+export async function sendText(tabId: string, text: string, environmentId: string): Promise<void> {
+  await invoke("claude_tmux_send_text", { tabId, environmentId, text });
 }
 
-export async function sendText(tabId: string, text: string, environmentId?: string): Promise<void> {
-  await invoke("claude_tmux_send_text", { ...tabArgs(tabId, environmentId), text });
+export async function sendKeys(tabId: string, keys: string[], environmentId: string): Promise<void> {
+  await invoke("claude_tmux_send_keys", { tabId, environmentId, keys });
 }
 
-export async function sendKeys(tabId: string, keys: string[], environmentId?: string): Promise<void> {
-  await invoke("claude_tmux_send_keys", { ...tabArgs(tabId, environmentId), keys });
-}
-
-export async function capturePane(tabId: string, environmentId?: string): Promise<string> {
-  return invoke<string>("claude_tmux_capture_pane", tabArgs(tabId, environmentId));
+export async function capturePane(tabId: string, environmentId: string): Promise<string> {
+  return invoke<string>("claude_tmux_capture_pane", { tabId, environmentId });
 }
 
 export async function resize(
   tabId: string,
   cols: number,
   rows: number,
-  environmentId?: string,
+  environmentId: string,
 ): Promise<void> {
-  await invoke("claude_tmux_resize", { ...tabArgs(tabId, environmentId), cols, rows });
+  await invoke("claude_tmux_resize", { tabId, environmentId, cols, rows });
 }
 
 export async function createInteractiveTerminal(
   tabId: string,
   cols: number,
   rows: number,
-  environmentId?: string,
+  environmentId: string,
 ): Promise<string> {
   return invoke<string>("claude_tmux_create_interactive_terminal", {
-    ...tabArgs(tabId, environmentId),
+    tabId,
+    environmentId,
     cols,
     rows,
   });
@@ -264,7 +261,8 @@ export async function answerPreToolUse(
   environmentId?: string,
 ): Promise<void> {
   await invoke("claude_tmux_answer_pre_tool_use", {
-    ...tabArgs(tabId, environmentId),
+    tabId,
+    environmentId,
     eventId,
     decision,
     reason,
@@ -280,7 +278,8 @@ export async function replyHook(
   environmentId?: string,
 ): Promise<void> {
   await invoke("claude_tmux_reply_hook", {
-    ...tabArgs(tabId, environmentId),
+    tabId,
+    environmentId,
     eventKind,
     eventId,
     response,

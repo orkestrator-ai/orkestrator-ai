@@ -42,11 +42,6 @@ impl TmuxSessionManager {
         map.insert(Self::key(environment_id, &tab_id), session);
     }
 
-    pub async fn get(&self, tab_id: &str) -> Option<Arc<TmuxSession>> {
-        let map = self.sessions.lock().await;
-        map.get(tab_id).cloned()
-    }
-
     pub async fn get_for_env(
         &self,
         environment_id: &str,
@@ -54,11 +49,6 @@ impl TmuxSessionManager {
     ) -> Option<Arc<TmuxSession>> {
         let map = self.sessions.lock().await;
         map.get(&Self::key(environment_id, tab_id)).cloned()
-    }
-
-    pub async fn remove(&self, tab_id: &str) -> Option<Arc<TmuxSession>> {
-        let mut map = self.sessions.lock().await;
-        map.remove(tab_id)
     }
 
     pub async fn remove_for_env(
@@ -108,12 +98,6 @@ impl TmuxSessionManager {
         map.entry(environment_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
-    }
-
-    pub async fn status(&self, tab_id: &str) -> Option<TmuxSessionStatus> {
-        let session = self.get(tab_id).await?;
-        let alive = session.tmux_alive().await.unwrap_or(false);
-        Some(session.status(alive))
     }
 
     pub async fn status_for_env(
