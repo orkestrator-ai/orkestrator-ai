@@ -1172,15 +1172,18 @@ mod tests {
     #[test]
     fn test_global_config_serializes_native_fast_mode_defaults() {
         let mut config = GlobalConfig::default();
+        config.claude_model = "default".to_string();
         config.claude_native_fast_mode_default = true;
         config.codex_native_fast_mode_default = true;
 
         let json = serde_json::to_string(&config).unwrap();
 
+        assert!(json.contains("\"claudeModel\":\"default\""));
         assert!(json.contains("\"claudeNativeFastModeDefault\":true"));
         assert!(json.contains("\"codexNativeFastModeDefault\":true"));
 
         let deserialized: GlobalConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.claude_model, "default");
         assert!(deserialized.claude_native_fast_mode_default);
         assert!(deserialized.codex_native_fast_mode_default);
     }

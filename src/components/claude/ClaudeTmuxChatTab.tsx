@@ -293,9 +293,15 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
 
       try {
         const updatedConfig = await updateGlobalConfig(nextGlobal);
-        setConfig(updatedConfig);
+        if (useConfigStore.getState().config.global.claudeModel === modelId) {
+          setConfig(updatedConfig);
+        }
       } catch (e) {
         console.error("[ClaudeTmuxChatTab] Failed to persist Claude model default:", e);
+        if (useConfigStore.getState().config.global.claudeModel === modelId) {
+          setConfig(currentConfig);
+          setError("Failed to save Claude model default");
+        }
       }
     },
     [setConfig],
@@ -737,6 +743,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const handleSelectModel = async (modelId: string) => {
     if (modelId === selectedModel || modelSwitching) return;
 
+    if (modelId === "default" && hasStarted && running) {
+      setError("Claude Code's default model can only be selected before launch.");
+      return;
+    }
+
     if (!hasStarted || !running) {
       setSelectedModel(modelId);
       void persistSelectedModel(modelId);
@@ -1029,6 +1040,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             modelDisabled={(hasStarted && !running) || sending || isThinking || modelSwitching}
             modelSwitching={modelSwitching}
             planLocked={hasStarted}
+            defaultModelDisabled={hasStarted && running}
           />
         </>
       )}
@@ -1690,6 +1702,7 @@ interface TmuxComposeBarProps {
   modelDisabled: boolean;
   modelSwitching: boolean;
   planLocked: boolean;
+  defaultModelDisabled: boolean;
 }
 
 function TmuxComposeBar({
@@ -1710,6 +1723,7 @@ function TmuxComposeBar({
   modelDisabled,
   modelSwitching,
   planLocked,
+  defaultModelDisabled,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevFileMentionMenuOpen = useRef(false);
@@ -1984,10 +1998,14 @@ function TmuxComposeBar({
           <DropdownMenuContent align="start" className="min-w-[240px]">
             {TMUX_MODELS.map((m) => {
               const selected = m.id === selectedModel;
+              const optionDisabled = defaultModelDisabled && m.id === "default";
               return (
                 <DropdownMenuItem
                   key={m.id}
-                  onClick={() => onSelectModel(m.id)}
+                  disabled={optionDisabled}
+                  onClick={() => {
+                    if (!optionDisabled) onSelectModel(m.id);
+                  }}
                   className="flex items-start gap-2 py-2"
                 >
                   <div className="w-4 h-4 flex-shrink-0 mt-0.5">

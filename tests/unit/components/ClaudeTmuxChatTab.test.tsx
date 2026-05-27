@@ -1276,6 +1276,38 @@ describe("ClaudeTmuxChatTab", () => {
     expect(screen.getByRole("button", { name: /Opus 4\.7/ })).toBeTruthy();
   });
 
+  test("does not send the launch-only Default model sentinel to a running tmux session", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet 4\.6/ }));
+    const defaultOption = (await screen.findByText("Default")).closest(
+      "[role='menuitem']",
+    );
+
+    expect(defaultOption).toBeTruthy();
+    expect(
+      defaultOption?.getAttribute("aria-disabled") === "true" ||
+        defaultOption?.hasAttribute("data-disabled"),
+    ).toBe(true);
+
+    fireEvent.click(defaultOption!);
+    expect(submitMock).not.toHaveBeenCalledWith("tab-1", "/model default");
+    expect(updateGlobalConfigMock).not.toHaveBeenCalled();
+  });
+
   test("uses the pre-launch model selection when starting fresh", async () => {
     seedPane();
 
@@ -1424,6 +1456,37 @@ describe("ClaudeTmuxChatTab", () => {
     );
 
     expect(await screen.findByRole("button", { name: /Haiku 4\.5/ })).toBeTruthy();
+  });
+
+  test("rolls back the persisted tmux model preference when saving fails", async () => {
+    seedPane();
+    updateGlobalConfigMock.mockImplementationOnce(async () => {
+      throw new Error("disk full");
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet 4\.6/ }));
+    const haikuOption = await screen.findByText("Haiku 4.5");
+    await act(async () => {
+      fireEvent.click(haikuOption);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(useConfigStore.getState().config.global.claudeModel).toBe(
+        "claude-sonnet-4-6",
+      );
+    });
+    expect(await screen.findByText("Failed to save Claude model default")).toBeTruthy();
   });
 
   test("locks compose and model controls while a model switch is in flight", async () => {

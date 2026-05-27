@@ -123,6 +123,14 @@ describe("configStore", () => {
     expect(useConfigStore.getState().config.global.codexMode).toBe("terminal");
   });
 
+  test("updateGlobalConfig updates claudeModel", () => {
+    useConfigStore.getState().updateGlobalConfig({
+      claudeModel: "default",
+    });
+
+    expect(useConfigStore.getState().config.global.claudeModel).toBe("default");
+  });
+
   test("updateGlobalConfig updates experimentalCodexRawEventLogging", () => {
     useConfigStore.getState().updateGlobalConfig({
       experimentalCodexRawEventLogging: false,
