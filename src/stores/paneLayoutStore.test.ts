@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 const closeLocalTerminalSession = mock(async (_sessionId: string) => {});
 const detachTerminal = mock(async (_sessionId: string) => {});
 const updateSessionStatus = mock(async (_sessionId: string, _status: string) => ({}));
-const stopTmuxSession = mock(async (_tabId: string) => {});
+const stopTmuxSession = mock(async (_tabId: string, _environmentId?: string) => {});
 const deleteClaudeSession = mock(async (_client: unknown, _sessionId: string) => true);
 const deleteCodexSession = mock(async (_client: unknown, _sessionId: string) => true);
 const deleteOpenCodeSession = mock(async (_client: unknown, _sessionId: string) => true);
@@ -178,7 +178,7 @@ describe("paneLayoutStore tab cleanup", () => {
 
     usePaneLayoutStore.getState().removeTab("default", "tab-tmux");
 
-    expect(stopTmuxSession).toHaveBeenCalledWith("tab-tmux");
+    expect(stopTmuxSession).toHaveBeenCalledWith("tab-tmux", "env-local");
   });
 
   test("closing native agent tabs deletes their backend sessions", () => {
@@ -278,7 +278,7 @@ describe("paneLayoutStore tab cleanup", () => {
     usePaneLayoutStore.getState().reset("env-reset");
 
     expect(closeLocalTerminalSession).toHaveBeenCalledWith("pty-reset");
-    expect(stopTmuxSession).toHaveBeenCalledWith("tmux-tab");
+    expect(stopTmuxSession).toHaveBeenCalledWith("tmux-tab", "env-reset");
     expect(deleteCodexSession).toHaveBeenCalledWith(expect.anything(), "codex-session");
     expect(usePaneLayoutStore.getState().getAllTabs("env-reset")).toEqual([]);
   });
