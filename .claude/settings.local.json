@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" Elicitation",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" Elicitation",
             "type": "command"
           }
         ]
@@ -14,7 +14,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" ElicitationResult",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" ElicitationResult",
             "type": "command"
           }
         ]
@@ -24,7 +24,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" Notification",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" Notification",
             "type": "command"
           }
         ]
@@ -34,7 +34,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" PermissionRequest",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" PermissionRequest",
             "type": "command"
           }
         ],
@@ -45,7 +45,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" PostToolUse",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" PostToolUse",
             "type": "command"
           }
         ],
@@ -56,7 +56,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" PreToolUse",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" PreToolUse",
             "type": "command"
           }
         ],
@@ -65,7 +65,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" PreToolUse",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" PreToolUse",
             "type": "command"
           }
         ],
@@ -76,7 +76,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" SessionStart",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" SessionStart",
             "type": "command"
           }
         ]
@@ -86,7 +86,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" Stop",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" Stop",
             "type": "command"
           }
         ]
@@ -96,7 +96,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" SubagentStop",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" SubagentStop",
             "type": "command"
           }
         ]
@@ -106,7 +106,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" UserPromptExpansion",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" UserPromptExpansion",
             "type": "command"
           }
         ]
@@ -116,7 +116,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"/tmp/orkestrator-claude-tmux/780c4e43-160c-4748-98bb-9f71297ea455/hook.sh\" UserPromptSubmit",
+            "command": "bash \"/tmp/orkestrator-claude-tmux/c6be319c-ba61-4231-81a7-ca93ba4f0f70/hook.sh\" UserPromptSubmit",
             "type": "command"
           }
         ]
