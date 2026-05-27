@@ -49,6 +49,13 @@ function readString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+function firstTodosArray(candidate: Record<string, unknown>): unknown[] | undefined {
+  if (Array.isArray(candidate.newTodos)) return candidate.newTodos;
+  if (Array.isArray(candidate.new_todos)) return candidate.new_todos;
+  if (Array.isArray(candidate.todos)) return candidate.todos;
+  return undefined;
+}
+
 function taskCandidatesFromPayload(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
 
@@ -56,9 +63,8 @@ function taskCandidatesFromPayload(value: unknown): unknown[] {
 
   const candidate = value as Record<string, unknown>;
 
-  if (Array.isArray(candidate.newTodos)) return candidate.newTodos;
-  if (Array.isArray(candidate.new_todos)) return candidate.new_todos;
-  if (Array.isArray(candidate.todos)) return candidate.todos;
+  const todosArray = firstTodosArray(candidate);
+  if (todosArray) return todosArray;
   if (Array.isArray(candidate.tasks)) return candidate.tasks;
   if (Array.isArray(candidate.items)) return candidate.items;
 
@@ -103,8 +109,9 @@ function taskContentFromRecord(record: Record<string, unknown>): string | undefi
     record.active_form,
   );
 
-  if (content && taskId && !content.includes(`#${taskId}`)) {
-    return `#${taskId} ${content}`;
+  const idPrefix = `#${taskId}`;
+  if (content && taskId && !content.startsWith(`${idPrefix} `) && content !== idPrefix) {
+    return `${idPrefix} ${content}`;
   }
   if (content) return content;
   if (taskId) return `Task #${taskId}`;
@@ -138,21 +145,11 @@ function parseTaskItemsFromPayload(
 }
 
 function extractTodos(value: unknown): unknown[] {
-  if (Array.isArray(value)) {
-    return value;
-  }
+  if (Array.isArray(value)) return value;
 
   if (typeof value === "object" && value !== null) {
-    const candidate = value as Record<string, unknown>;
-    if (Array.isArray(candidate.newTodos)) {
-      return candidate.newTodos;
-    }
-    if (Array.isArray(candidate.new_todos)) {
-      return candidate.new_todos;
-    }
-    if (Array.isArray(candidate.todos)) {
-      return candidate.todos;
-    }
+    const todosArray = firstTodosArray(value as Record<string, unknown>);
+    if (todosArray) return todosArray;
   }
 
   return [];
