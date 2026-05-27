@@ -1,5 +1,8 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { useClaudeTmuxStore } from "../../../src/stores/claudeTmuxStore";
+import {
+  createClaudeTmuxStateKey,
+  useClaudeTmuxStore,
+} from "../../../src/stores/claudeTmuxStore";
 
 describe("claudeTmuxStore", () => {
   beforeEach(() => {
@@ -80,6 +83,21 @@ describe("claudeTmuxStore", () => {
       expect(tab.busyStartedAt).toBeNull();
       expect(tab.running).toBe(false);
       expect(tab.messages).toEqual([]);
+    });
+
+    test("can keep the same tab id isolated across environments", () => {
+      const env1Key = createClaudeTmuxStateKey("env-1", "default");
+      const env2Key = createClaudeTmuxStateKey("env-2", "default");
+
+      useClaudeTmuxStore
+        .getState()
+        .setRunning(env1Key, true, { environmentId: "env-1", sessionId: "s-1" });
+      useClaudeTmuxStore
+        .getState()
+        .setRunning(env2Key, true, { environmentId: "env-2", sessionId: "s-2" });
+
+      expect(useClaudeTmuxStore.getState().getTab(env1Key).sessionId).toBe("s-1");
+      expect(useClaudeTmuxStore.getState().getTab(env2Key).sessionId).toBe("s-2");
     });
   });
 

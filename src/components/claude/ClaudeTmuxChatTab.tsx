@@ -66,6 +66,7 @@ import {
   payloadToPlan,
   payloadToQuestion,
   compactConsecutiveAssistantMessages,
+  createClaudeTmuxStateKey,
   useClaudeTmuxStore,
   type TmuxPendingApproval,
   type TmuxPendingElicitation,
@@ -155,11 +156,22 @@ const TMUX_BUILTIN_SLASH_COMMANDS: SlashCommand[] = parseSlashCommands([
 
 export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Props) {
   const { environmentId, containerId } = data;
+  const stateKey = useMemo(
+    () => createClaudeTmuxStateKey(environmentId, tabId),
+    [environmentId, tabId],
+  );
   const worktreePath = useEnvironmentStore(
     (state) => state.getEnvironmentById(environmentId)?.worktreePath,
   );
 
-  const tabState = useClaudeTmuxStore((s) => s.tabs.get(tabId));
+  const scopedTabState = useClaudeTmuxStore((s) => s.tabs.get(stateKey));
+  const legacyTabState = useClaudeTmuxStore((s) => s.tabs.get(tabId));
+  const shouldUseLegacyTabState =
+    !scopedTabState &&
+    legacyTabState &&
+    (!legacyTabState.environmentId || legacyTabState.environmentId === environmentId);
+  const tabState = scopedTabState ?? (shouldUseLegacyTabState ? legacyTabState : undefined);
+  const storeKey = scopedTabState ? stateKey : shouldUseLegacyTabState ? tabId : stateKey;
   const setRunning = useClaudeTmuxStore((s) => s.setRunning);
   const applyTranscriptLine = useClaudeTmuxStore((s) => s.applyTranscriptLine);
   const addPendingApproval = useClaudeTmuxStore((s) => s.addPendingApproval);
@@ -249,7 +261,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     scrollTrigger,
     mountTrigger: interactiveMode ? undefined : backendHydrated,
     isActive: isActive && !interactiveMode,
-    persistKey: `claude-tmux-${tabId}`,
+    persistKey: `claude-tmux-${stateKey}`,
   });
 
   // 0. Reconnect to any already-running backend session and replay the full
@@ -261,36 +273,36 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
 
     const hydrate = async () => {
       try {
-        const status = await getStatus(tabId);
+        const status = await getStatus(tabId, environmentId);
         if (cancelled) return;
 
-        if (status) {
+        if (status && status.environment_id === environmentId) {
           startedRef.current = Boolean(status.running);
-          setRunning(tabId, status.running, {
+          setRunning(storeKey, status.running, {
             environmentId: status.environment_id,
             sessionId: status.session_id,
             resumed: status.resumed,
           });
-          setTabBusy(tabId, status.busy);
+          setTabBusy(storeKey, status.busy);
 
           if (status.session_id) {
-            const lines = await getTranscript(tabId);
+            const lines = await getTranscript(tabId, environmentId);
             if (cancelled) return;
             for (const line of lines) {
-              applyTranscriptLine(tabId, line);
+              applyTranscriptLine(storeKey, line);
             }
-            const hooks = await getPendingHooks(tabId);
+            const hooks = await getPendingHooks(tabId, environmentId);
             if (cancelled) return;
             const hooksToRender = hooks.filter(
               (hook) => !shouldAutoAllowPermissionHook(hook),
             );
-            replacePendingHooks(tabId, pendingSnapshotFromHooks(hooksToRender));
+            replacePendingHooks(storeKey, pendingSnapshotFromHooks(hooksToRender));
             for (const hook of hooks) {
               if (shouldAutoAllowPermissionHook(hook)) {
-                void autoAllowPermissionHook(tabId, hook.id, hook.payload).catch((e) => {
+                void autoAllowPermissionHook(tabId, environmentId, hook.id, hook.payload).catch((e) => {
                   if (!cancelled) {
                     addPendingPermission(
-                      tabId,
+                      storeKey,
                       payloadToPermission(hook.id, hook.payload),
                     );
                     setError(String(e));
@@ -315,6 +327,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     };
   }, [
     tabId,
+    environmentId,
+    storeKey,
     setRunning,
     setTabBusy,
     applyTranscriptLine,
@@ -329,12 +343,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     subscribe((ev: TmuxEvent) => {
       // Every event the tmux backend emits is tab-scoped — ignore events for
       // other tabs even when they happen to live in the same workspace.
-      if (ev.kind !== "warning" && ev.tab_id !== tabId) return;
-      if (ev.kind === "warning" && ev.tab_id !== tabId) return;
+      if (ev.tab_id !== tabId || ev.environment_id !== environmentId) return;
 
       switch (ev.kind) {
         case "started":
-          setRunning(tabId, true, {
+          setRunning(storeKey, true, {
             environmentId: ev.environment_id,
             sessionId: ev.session_id,
             resumed: ev.resumed,
@@ -346,12 +359,12 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           }
           return;
         case "stopped":
-          setRunning(tabId, false, { sessionId: null });
+          setRunning(storeKey, false, { sessionId: null });
           // No claude process means no in-flight turn.
-          setTabBusy(tabId, false);
+          setTabBusy(storeKey, false);
           return;
         case "transcript-line":
-          applyTranscriptLine(tabId, ev.line);
+          applyTranscriptLine(storeKey, ev.line);
           break;
         case "hook":
           // Drive the "Claude is thinking…" indicator from the same hook
@@ -359,45 +372,45 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           // UserPromptSubmit/Stop here rather than transcript content so
           // tool-call turns (no final text) still clear the spinner.
           if (ev.event_kind === "UserPromptSubmit") {
-            setTabBusy(tabId, true);
+            setTabBusy(storeKey, true);
           } else if (ev.event_kind === "Stop") {
-            setTabBusy(tabId, false);
+            setTabBusy(storeKey, false);
           }
           if (ev.event_kind === "PreToolUse") {
             const toolName = hookToolName(ev.payload);
             if (toolName === "AskUserQuestion") {
-              addPendingQuestion(tabId, payloadToQuestion(ev.event_id, ev.payload));
+              addPendingQuestion(storeKey, payloadToQuestion(ev.event_id, ev.payload));
             } else if (toolName === "ExitPlanMode") {
-              addPendingPlan(tabId, payloadToPlan(ev.event_id, ev.payload));
+              addPendingPlan(storeKey, payloadToPlan(ev.event_id, ev.payload));
             } else {
-              addPendingApproval(tabId, payloadToApproval(ev.event_id, ev.payload));
+              addPendingApproval(storeKey, payloadToApproval(ev.event_id, ev.payload));
             }
           } else if (ev.event_kind === "PermissionRequest") {
             if (isQuestionPermissionPayload(ev.payload)) {
-              void autoAllowPermissionHook(tabId, ev.event_id, ev.payload).catch((e) => {
+              void autoAllowPermissionHook(tabId, environmentId, ev.event_id, ev.payload).catch((e) => {
                 addPendingPermission(
-                  tabId,
+                  storeKey,
                   payloadToPermission(ev.event_id, ev.payload),
                 );
                 setError(String(e));
               });
-              removePendingPermission(tabId, ev.event_id);
+              removePendingPermission(storeKey, ev.event_id);
             } else {
-              addPendingPermission(tabId, payloadToPermission(ev.event_id, ev.payload));
+              addPendingPermission(storeKey, payloadToPermission(ev.event_id, ev.payload));
             }
           } else if (ev.event_kind === "Elicitation") {
-            addPendingElicitation(tabId, payloadToElicitation(ev.event_id, ev.payload));
+            addPendingElicitation(storeKey, payloadToElicitation(ev.event_id, ev.payload));
           }
           break;
         case "hook-timed-out":
           if (ev.event_kind === "PreToolUse") {
-            removePendingApproval(tabId, ev.event_id);
-            removePendingQuestion(tabId, ev.event_id);
-            removePendingPlan(tabId, ev.event_id);
+            removePendingApproval(storeKey, ev.event_id);
+            removePendingQuestion(storeKey, ev.event_id);
+            removePendingPlan(storeKey, ev.event_id);
           } else if (ev.event_kind === "PermissionRequest") {
-            removePendingPermission(tabId, ev.event_id);
+            removePendingPermission(storeKey, ev.event_id);
           } else if (ev.event_kind === "Elicitation") {
-            removePendingElicitation(tabId, ev.event_id);
+            removePendingElicitation(storeKey, ev.event_id);
           }
           break;
         case "warning":
@@ -419,6 +432,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     };
   }, [
     tabId,
+    storeKey,
     setRunning,
     applyTranscriptLine,
     addPendingApproval,
@@ -485,7 +499,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     let cancelled = false;
     const tick = async () => {
       try {
-        const snap = await capturePane(tabId);
+        const snap = await capturePane(tabId, environmentId);
         if (!cancelled) setTuiSnapshot(snap);
       } catch (e) {
         if (!cancelled) setTuiSnapshot(`(capture failed: ${String(e)})`);
@@ -497,7 +511,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       cancelled = true;
       clearInterval(id);
     };
-  }, [showTui, running, tabId]);
+  }, [showTui, running, tabId, environmentId]);
 
   const handleSubmit = async () => {
     const text = draft.trim();
@@ -511,14 +525,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     // the user gets instant feedback; the UserPromptSubmit hook will confirm
     // it shortly after, and the Stop hook (handled in the subscription
     // above) clears it when the turn ends.
-    setTabBusy(tabId, true);
+    setTabBusy(storeKey, true);
     try {
-      await submitToTmux(tabId, text);
+      await submitToTmux(tabId, text, environmentId);
       setDraft("");
     } catch (e) {
       setError(String(e));
       // The submit failed before claude saw it — there's no Stop coming.
-      setTabBusy(tabId, false);
+      setTabBusy(storeKey, false);
     } finally {
       setSending(false);
     }
@@ -528,8 +542,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     if (!running) return;
     setError(null);
     try {
-      await interruptSession(tabId);
-      setTabBusy(tabId, false);
+      await interruptSession(tabId, environmentId);
+      setTabBusy(storeKey, false);
     } catch (e) {
       setError(String(e));
     }
@@ -540,11 +554,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     decision: "approve" | "block",
   ) => {
     try {
-      await answerPreToolUse(tabId, eventId, decision);
+      await answerPreToolUse(tabId, eventId, decision, undefined, environmentId);
     } catch (e) {
       setError(String(e));
     } finally {
-      removePendingApproval(tabId, eventId);
+      removePendingApproval(storeKey, eventId);
     }
   };
 
@@ -562,8 +576,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
           questions: question.questions,
           answers: questionAnswersToRecord(question.questions, answers),
         }),
+        environmentId,
       );
-      removePendingQuestion(tabId, question.eventId);
+      removePendingQuestion(storeKey, question.eventId);
       return true;
     } catch (e) {
       setError(String(e));
@@ -578,8 +593,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         "PreToolUse",
         question.eventId,
         preToolDeny("User declined to answer the question."),
+        environmentId,
       );
-      removePendingQuestion(tabId, question.eventId);
+      removePendingQuestion(storeKey, question.eventId);
     } catch (e) {
       setError(String(e));
     }
@@ -598,8 +614,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         approved
           ? preToolAllow({ ...plan.toolInput })
           : preToolDeny(feedback?.trim() || "User requested changes to the plan."),
+        environmentId,
       );
-      removePendingPlan(tabId, plan.eventId);
+      removePendingPlan(storeKey, plan.eventId);
     } catch (e) {
       setError(String(e));
     }
@@ -616,8 +633,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         "PermissionRequest",
         permission.eventId,
         permissionRequestResponse(permission, allow, updatedPermissions),
+        environmentId,
       );
-      removePendingPermission(tabId, permission.eventId);
+      removePendingPermission(storeKey, permission.eventId);
     } catch (e) {
       setError(String(e));
     }
@@ -634,8 +652,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         "Elicitation",
         elicitation.eventId,
         elicitationResponse(action, content),
+        environmentId,
       );
-      removePendingElicitation(tabId, elicitation.eventId);
+      removePendingElicitation(storeKey, elicitation.eventId);
     } catch (e) {
       setError(String(e));
     }
@@ -646,8 +665,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     setPromptControlBusy(true);
     setError(null);
     try {
-      await sendKeys(tabId, keys);
-      const snap = await capturePane(tabId);
+      await sendKeys(tabId, keys, environmentId);
+      const snap = await capturePane(tabId, environmentId);
       setTuiSnapshot(snap);
     } catch (e) {
       setError(String(e));
@@ -698,7 +717,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     setModelSwitching(true);
     setError(null);
     try {
-      await submitToTmux(tabId, `/model ${modelCommandArg(modelId)}`);
+      await submitToTmux(tabId, `/model ${modelCommandArg(modelId)}`, environmentId);
       setSelectedModel(modelId);
     } catch (e) {
       setError(String(e));
@@ -806,6 +825,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       {interactiveMode ? (
         <ClaudeTmuxInteractiveTerminal
           tabId={tabId}
+          environmentId={environmentId}
           isActive={isActive}
           className="flex-1"
         />
@@ -909,7 +929,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
               {visibleSelectionPrompt && (
                 <ClaudeQuestionCard
                   key={selectionPromptKey(visibleSelectionPrompt)}
-                  question={selectionPromptToQuestion(visibleSelectionPrompt, tabId)}
+                  question={selectionPromptToQuestion(visibleSelectionPrompt, storeKey)}
                   initialAnswers={[selectionPromptInitialAnswer(visibleSelectionPrompt)]}
                   allowCustomAnswer={false}
                   allowOptionDeselect={false}
@@ -1460,6 +1480,7 @@ function isQuestionPermissionPayload(payload: unknown): boolean {
 
 async function autoAllowPermissionHook(
   tabId: string,
+  environmentId: string,
   eventId: string,
   payload: unknown,
 ): Promise<void> {
@@ -1469,6 +1490,7 @@ async function autoAllowPermissionHook(
     "PermissionRequest",
     eventId,
     permissionRequestResponse(permission, true),
+    environmentId,
   );
 }
 

@@ -100,12 +100,25 @@ mock.module("@/lib/claude-tmux-client", () => ({
   getPendingHooks: getPendingHooksMock,
   subscribe: subscribeMock,
   stopSession: stopSessionMock,
-  interruptSession: interruptSessionMock,
-  capturePane: capturePaneMock,
-  sendKeys: sendKeysMock,
-  replyHook: replyHookMock,
-  submit: submitMock,
-  answerPreToolUse: answerPreToolUseMock,
+  interruptSession: (tabId: string) => interruptSessionMock(tabId),
+  capturePane: (tabId: string) => capturePaneMock(tabId),
+  sendKeys: (tabId: string, keys: string[]) => sendKeysMock(tabId, keys),
+  replyHook: (
+    tabId: string,
+    eventKind: realTmuxClient.HookEventKind,
+    eventId: string,
+    response: unknown,
+  ) => replyHookMock(tabId, eventKind, eventId, response),
+  submit: (tabId: string, text: string) => submitMock(tabId, text),
+  answerPreToolUse: (
+    tabId: string,
+    eventId: string,
+    decision: "approve" | "block",
+    reason?: string,
+  ) =>
+    reason === undefined
+      ? answerPreToolUseMock(tabId, eventId, decision)
+      : answerPreToolUseMock(tabId, eventId, decision, reason),
   listPreviousSessions: listPreviousSessionsMock,
 }));
 
@@ -211,6 +224,7 @@ describe("ClaudeTmuxChatTab", () => {
     ]);
     useClaudeTmuxStore.setState({ tabs: new Map() });
     clearPersistedScrollState("claude-tmux-tab-1");
+    clearPersistedScrollState("claude-tmux-env:env-1:tab:tab-1");
     useEnvironmentStore.setState({
       environments: [],
       isLoading: false,

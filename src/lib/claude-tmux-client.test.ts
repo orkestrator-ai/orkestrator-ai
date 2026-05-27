@@ -107,6 +107,18 @@ describe("claude-tmux-client invoke wrappers", () => {
     expect(calls[0]!.args).toEqual({ tabId: "tab-1" });
   });
 
+  test("scoped commands include environmentId when provided", async () => {
+    await getStatus("default", "env-2");
+    await capturePane("default", "env-2");
+    await submit("default", "go", "env-2");
+
+    expect(calls.map((call) => call.args)).toEqual([
+      { tabId: "default", environmentId: "env-2" },
+      { tabId: "default", environmentId: "env-2" },
+      { tabId: "default", environmentId: "env-2", text: "go" },
+    ]);
+  });
+
   test("getTranscript invokes the transcript command with tabId", async () => {
     await getTranscript("tab-1");
     expect(calls[0]!.cmd).toBe("claude_tmux_transcript");

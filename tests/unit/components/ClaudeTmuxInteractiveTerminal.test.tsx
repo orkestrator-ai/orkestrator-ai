@@ -158,7 +158,7 @@ describe("ClaudeTmuxInteractiveTerminal", () => {
 
     await waitFor(() => expect(startInteractiveTerminalMock).toHaveBeenCalledWith("pty-1"));
 
-    expect(createInteractiveTerminalMock).toHaveBeenCalledWith("tab-1", 120, 30);
+    expect(createInteractiveTerminalMock).toHaveBeenCalledWith("tab-1", 120, 30, undefined);
     expect(listenMock.mock.calls[0]?.[0]).toBe("terminal-output-pty-1");
     expect(resizeInteractiveTerminalMock).toHaveBeenCalledWith("pty-1", 120, 30);
 
