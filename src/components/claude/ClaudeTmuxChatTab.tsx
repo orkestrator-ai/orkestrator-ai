@@ -75,6 +75,8 @@ import {
 } from "@/stores/claudeTmuxStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
+import { useConfigStore } from "@/stores/configStore";
+import { updateGlobalConfig } from "@/lib/tauri";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
 import type { FileCandidate } from "@/types";
 
@@ -92,6 +94,11 @@ interface Props {
  */
 const TMUX_MODELS: Array<{ id: string; name: string; description?: string }> = [
   {
+    id: "default",
+    name: "Default",
+    description: "Use Claude Code's configured default model",
+  },
+  {
     id: "claude-opus-4-7",
     name: "Opus 4.7",
     description: "Most capable; slowest",
@@ -108,6 +115,16 @@ const TMUX_MODELS: Array<{ id: string; name: string; description?: string }> = [
   },
 ];
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+function resolveTmuxModelPreference(modelId: string | undefined): string {
+  return TMUX_MODELS.some((model) => model.id === modelId)
+    ? modelId!
+    : DEFAULT_MODEL;
+}
+
+function selectedModelForLaunch(modelId: string): string | undefined {
+  return modelId === "default" ? undefined : modelId;
+}
 
 interface TmuxSelectionPrompt {
   question: string | null;
@@ -175,6 +192,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const replacePendingHooks = useClaudeTmuxStore((s) => s.replacePendingHooks);
   const setTabBusy = useClaudeTmuxStore((s) => s.setBusy);
   const clearTabInitialPrompt = usePaneLayoutStore((s) => s.clearTabInitialPrompt);
+  const setConfig = useConfigStore((s) => s.setConfig);
+  const persistedClaudeModel = useConfigStore((s) => s.config.global.claudeModel);
 
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -182,7 +201,11 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const [showTui, setShowTui] = useState(false);
   const [interactiveMode, setInteractiveMode] = useState(false);
   const [tuiSnapshot, setTuiSnapshot] = useState<string>("");
-  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
+  const [selectedModel, setSelectedModel] = useState<string>(() =>
+    resolveTmuxModelPreference(
+      useConfigStore.getState().config.global.claudeModel,
+    ),
+  );
   const [modelSwitching, setModelSwitching] = useState(false);
   const [planMode, setPlanMode] = useState(false);
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
@@ -251,6 +274,32 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     isActive: isActive && !interactiveMode,
     persistKey: `claude-tmux-${tabId}`,
   });
+
+  useEffect(() => {
+    if (hasStarted) return;
+    setSelectedModel(resolveTmuxModelPreference(persistedClaudeModel));
+  }, [hasStarted, persistedClaudeModel]);
+
+  const persistSelectedModel = useCallback(
+    async (modelId: string) => {
+      const currentConfig = useConfigStore.getState().config;
+      if (currentConfig.global.claudeModel === modelId) return;
+
+      const nextGlobal = {
+        ...currentConfig.global,
+        claudeModel: modelId,
+      };
+      setConfig({ ...currentConfig, global: nextGlobal });
+
+      try {
+        const updatedConfig = await updateGlobalConfig(nextGlobal);
+        setConfig(updatedConfig);
+      } catch (e) {
+        console.error("[ClaudeTmuxChatTab] Failed to persist Claude model default:", e);
+      }
+    },
+    [setConfig],
+  );
 
   // 0. Reconnect to any already-running backend session and replay the full
   // transcript. Tauri events are only delivered to mounted listeners, so a
@@ -444,7 +493,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
       startedRef.current = true;
       startSession(tabId, environmentId, {
         initialPrompt,
-        model: selectedModel,
+        model: selectedModelForLaunch(selectedModel),
         planMode,
         resumeSessionId,
       })
@@ -690,6 +739,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
 
     if (!hasStarted || !running) {
       setSelectedModel(modelId);
+      void persistSelectedModel(modelId);
       return;
     }
 
@@ -700,6 +750,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     try {
       await submitToTmux(tabId, `/model ${modelCommandArg(modelId)}`);
       setSelectedModel(modelId);
+      void persistSelectedModel(modelId);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -831,7 +882,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
                   <StartScreen
                     onStartFresh={() => launchSession()}
                     onPickResume={() => setResumeDialogOpen(true)}
-                    selectedModel={modelObj(selectedModel).name}
+                    selectedModel={getTmuxModel(selectedModel).name}
                     planMode={planMode}
                   />
                 ) : (
@@ -1607,12 +1658,16 @@ function elicitationSchemaFields(schema: Record<string, unknown> | null): Array<
   });
 }
 
-function modelObj(id: string) {
-  return TMUX_MODELS.find((m) => m.id === id) ?? TMUX_MODELS[1]!;
+function getTmuxModel(id: string) {
+  return (
+    TMUX_MODELS.find((m) => m.id === id) ??
+    TMUX_MODELS.find((m) => m.id === DEFAULT_MODEL) ??
+    TMUX_MODELS[0]!
+  );
 }
 
 function modelCommandArg(id: string) {
-  return modelObj(id).id;
+  return getTmuxModel(id).id;
 }
 
 // ─── Compose bar ─────────────────────────────────────────────────────────────
@@ -1660,7 +1715,7 @@ function TmuxComposeBar({
   const prevFileMentionMenuOpen = useRef(false);
   const pendingCursorPositionRef = useRef<number | null>(null);
   const modelObj = useMemo(
-    () => TMUX_MODELS.find((m) => m.id === selectedModel) ?? TMUX_MODELS[1]!,
+    () => getTmuxModel(selectedModel),
     [selectedModel],
   );
 

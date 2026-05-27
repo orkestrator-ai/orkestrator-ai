@@ -15,6 +15,7 @@ describe("configStore", () => {
           },
           envFilePatterns: [".env.local", ".env"],
           experimentalCodexRawEventLogging: true,
+          claudeModel: "claude-sonnet-4-6",
           claudeNativeFastModeDefault: false,
           codexNativeFastModeDefault: false,
         },
@@ -32,6 +33,7 @@ describe("configStore", () => {
     expect(state.config.global.containerResources.memoryGb).toBe(4);
     expect(state.config.global.envFilePatterns).toEqual([".env.local", ".env"]);
     expect(state.config.global.experimentalCodexRawEventLogging).toBe(true);
+    expect(state.config.global.claudeModel).toBe("claude-sonnet-4-6");
     expect(state.config.global.claudeNativeFastModeDefault).toBe(false);
     expect(state.config.global.codexNativeFastModeDefault).toBe(false);
     expect(state.config.repositories).toEqual({});
