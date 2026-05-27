@@ -1,6 +1,6 @@
-//! Tauri commands for Claude tmux mode. All commands are keyed by `tab_id`
-//! (each tab is its own claude session); `environment_id` is only needed to
-//! resolve the backend the first time a tab is started.
+//! Tauri commands for Claude tmux mode. Session commands are scoped by
+//! `(environment_id, tab_id)` because separate environments can both have a
+//! first tab named `default`.
 
 use crate::claude_tmux::{
     backend::Backend,
@@ -69,7 +69,7 @@ async fn get_or_create(
     resume_session_id: Option<String>,
 ) -> Result<Arc<TmuxSession>, String> {
     let mgr = get_manager();
-    if let Some(s) = mgr.get(tab_id).await {
+    if let Some(s) = mgr.get_for_env(environment_id, tab_id).await {
         return Ok(s);
     }
     let backend = resolve_backend(environment_id)?;
@@ -81,7 +81,8 @@ async fn get_or_create(
         resume_session_id,
         claude_command,
     ));
-    mgr.insert(tab_id.to_string(), session.clone()).await;
+    mgr.insert(environment_id, tab_id.to_string(), session.clone())
+        .await;
     Ok(session)
 }
 
@@ -174,9 +175,9 @@ pub async fn claude_tmux_start(
     // this tab and force-kill the per-tab tmux session before launching, so
     // a stale tmux server (e.g. from a prior app run) can't leave claude
     // running with the previous model/plan flags. The tmux name is derived
-    // strictly from (env_id, tab_id) — never matches another tab or project.
+    // strictly from (env_id, tab_id), so it never matches another tab/project.
     if resume_session_id.is_none() {
-        if let Some(existing) = mgr.remove(&tab_id).await {
+        if let Some(existing) = mgr.remove_for_env(&environment_id, &tab_id).await {
             if let Err(e) = existing.stop().await {
                 tracing::warn!(tab = %tab_id, error = %e, "stop of prior tmux session failed");
             }
@@ -209,10 +210,13 @@ pub async fn claude_tmux_start(
 }
 
 #[tauri::command]
-pub async fn claude_tmux_stop(tab_id: String) -> Result<(), String> {
+pub async fn claude_tmux_stop(
+    tab_id: String,
+    environment_id: String,
+) -> Result<(), String> {
     info!(tab = %tab_id, "claude_tmux_stop");
     let mgr = get_manager();
-    let session = match mgr.remove(&tab_id).await {
+    let session = match mgr.remove_for_env(&environment_id, &tab_id).await {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -377,24 +381,33 @@ pub async fn shutdown_all_tmux_sessions() {
 }
 
 #[tauri::command]
-pub async fn claude_tmux_interrupt(tab_id: String) -> Result<(), String> {
+pub async fn claude_tmux_interrupt(
+    tab_id: String,
+    environment_id: String,
+) -> Result<(), String> {
     info!(tab = %tab_id, "claude_tmux_interrupt");
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.interrupt().await
 }
 
 #[tauri::command]
-pub async fn claude_tmux_status(tab_id: String) -> Result<Option<TmuxSessionStatus>, String> {
-    Ok(get_manager().status(&tab_id).await)
+pub async fn claude_tmux_status(
+    tab_id: String,
+    environment_id: String,
+) -> Result<Option<TmuxSessionStatus>, String> {
+    Ok(get_manager().status_for_env(&environment_id, &tab_id).await)
 }
 
 #[tauri::command]
-pub async fn claude_tmux_transcript(tab_id: String) -> Result<Vec<Value>, String> {
+pub async fn claude_tmux_transcript(
+    tab_id: String,
+    environment_id: String,
+) -> Result<Vec<Value>, String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.transcript_lines().await
@@ -403,9 +416,10 @@ pub async fn claude_tmux_transcript(tab_id: String) -> Result<Vec<Value>, String
 #[tauri::command]
 pub async fn claude_tmux_pending_hooks(
     tab_id: String,
+    environment_id: String,
 ) -> Result<Vec<hooks::PendingHookEvent>, String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.pending_hooks().await
@@ -414,11 +428,12 @@ pub async fn claude_tmux_pending_hooks(
 #[tauri::command]
 pub async fn claude_tmux_create_interactive_terminal(
     tab_id: String,
+    environment_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
 
@@ -576,18 +591,26 @@ pub async fn claude_tmux_detach_interactive_terminal(
 }
 
 #[tauri::command]
-pub async fn claude_tmux_send_text(tab_id: String, text: String) -> Result<(), String> {
+pub async fn claude_tmux_send_text(
+    tab_id: String,
+    text: String,
+    environment_id: String,
+) -> Result<(), String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.send_text(&text).await
 }
 
 #[tauri::command]
-pub async fn claude_tmux_send_keys(tab_id: String, keys: Vec<String>) -> Result<(), String> {
+pub async fn claude_tmux_send_keys(
+    tab_id: String,
+    keys: Vec<String>,
+    environment_id: String,
+) -> Result<(), String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     let refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
@@ -595,27 +618,39 @@ pub async fn claude_tmux_send_keys(tab_id: String, keys: Vec<String>) -> Result<
 }
 
 #[tauri::command]
-pub async fn claude_tmux_submit(tab_id: String, text: String) -> Result<(), String> {
+pub async fn claude_tmux_submit(
+    tab_id: String,
+    text: String,
+    environment_id: String,
+) -> Result<(), String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.submit(&text).await
 }
 
 #[tauri::command]
-pub async fn claude_tmux_capture_pane(tab_id: String) -> Result<String, String> {
+pub async fn claude_tmux_capture_pane(
+    tab_id: String,
+    environment_id: String,
+) -> Result<String, String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.capture_pane().await
 }
 
 #[tauri::command]
-pub async fn claude_tmux_resize(tab_id: String, cols: u16, rows: u16) -> Result<(), String> {
+pub async fn claude_tmux_resize(
+    tab_id: String,
+    cols: u16,
+    rows: u16,
+    environment_id: String,
+) -> Result<(), String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.resize(cols, rows).await
@@ -627,9 +662,10 @@ pub async fn claude_tmux_answer_pre_tool_use(
     event_id: String,
     decision: String,
     reason: Option<String>,
+    environment_id: String,
 ) -> Result<(), String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session
@@ -643,9 +679,10 @@ pub async fn claude_tmux_reply_hook(
     event_kind: String,
     event_id: String,
     response: Value,
+    environment_id: String,
 ) -> Result<(), String> {
     let session = get_manager()
-        .get(&tab_id)
+        .get_for_env(&environment_id, &tab_id)
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session
@@ -802,16 +839,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_command_is_no_op_for_missing_session() {
+        let tab_id = format!("missing-{}", Uuid::new_v4());
+        // Should return Ok(()) rather than an error when the session is absent.
+        claude_tmux_stop(tab_id, "env-missing".to_string())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn pending_hooks_command_returns_missing_session_error() {
         let tab_id = format!("missing-{}", Uuid::new_v4());
-        let err = claude_tmux_pending_hooks(tab_id).await.unwrap_err();
+        let err = claude_tmux_pending_hooks(tab_id, "env-missing".to_string())
+            .await
+            .unwrap_err();
         assert_eq!(err, "tmux session not running");
     }
 
     #[tokio::test]
     async fn interrupt_command_returns_missing_session_error() {
         let tab_id = format!("missing-{}", Uuid::new_v4());
-        let err = claude_tmux_interrupt(tab_id).await.unwrap_err();
+        let err = claude_tmux_interrupt(tab_id, "env-missing".to_string())
+            .await
+            .unwrap_err();
         assert_eq!(err, "tmux session not running");
     }
 
@@ -821,7 +871,7 @@ mod tests {
         crate::pty::init_terminal_manager();
 
         let tab_id = format!("missing-{}", Uuid::new_v4());
-        let err = claude_tmux_create_interactive_terminal(tab_id, 120, 30)
+        let err = claude_tmux_create_interactive_terminal(tab_id, "env-missing".to_string(), 120, 30)
             .await
             .unwrap_err();
         assert_eq!(err, "tmux session not running");
@@ -860,17 +910,23 @@ mod tests {
             None,
         ));
         let tmux_session = session.tmux_session.clone();
-        get_manager().insert(tab_id.clone(), session).await;
+        get_manager()
+            .insert("env-command-test", tab_id.clone(), session)
+            .await;
         let command_tab_id = tab_id.clone();
 
         with_fake_tmux(&tmp, |log_path| async move {
-            claude_tmux_interrupt(command_tab_id).await.unwrap();
+            claude_tmux_interrupt(command_tab_id, "env-command-test".to_string())
+                .await
+                .unwrap();
             let log = fs::read_to_string(log_path).await.unwrap();
             assert!(log.contains(&format!("send-keys -t {} -- Escape", tmux_session)));
         })
         .await;
 
-        get_manager().remove(&tab_id).await;
+        get_manager()
+            .remove_for_env("env-command-test", &tab_id)
+            .await;
     }
 
     #[tokio::test]
@@ -898,9 +954,15 @@ mod tests {
             .await
             .unwrap();
 
-        get_manager().insert(tab_id.clone(), session).await;
-        let hooks = claude_tmux_pending_hooks(tab_id.clone()).await.unwrap();
-        get_manager().remove(&tab_id).await;
+        get_manager()
+            .insert("env-command-test", tab_id.clone(), session)
+            .await;
+        let hooks = claude_tmux_pending_hooks(tab_id.clone(), "env-command-test".to_string())
+            .await
+            .unwrap();
+        get_manager()
+            .remove_for_env("env-command-test", &tab_id)
+            .await;
 
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0].id, "id-1");
@@ -998,14 +1060,19 @@ mod tests {
             None,
         ));
         let tmux_session = session.tmux_session.clone();
-        get_manager().insert(tab_id.clone(), session).await;
+        get_manager()
+            .insert(&environment_id, tab_id.clone(), session)
+            .await;
 
         with_fake_tmux(&tmp, |log_path| async move {
             stop_tmux_sessions_for_environment(&environment_id).await;
 
             let log = fs::read_to_string(log_path).await.unwrap();
             assert!(log.contains(&format!("kill-session -t {}", tmux_session)));
-            assert!(get_manager().get(&tab_id).await.is_none());
+            assert!(get_manager()
+                .get_for_env(&environment_id, &tab_id)
+                .await
+                .is_none());
             assert_eq!(get_manager().sessions_in_env(&environment_id).await, 0);
         })
         .await;

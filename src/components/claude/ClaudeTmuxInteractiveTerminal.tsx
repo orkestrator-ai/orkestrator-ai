@@ -20,12 +20,14 @@ import {
 
 interface ClaudeTmuxInteractiveTerminalProps {
   tabId: string;
+  environmentId?: string;
   isActive: boolean;
   className?: string;
 }
 
 export function ClaudeTmuxInteractiveTerminal({
   tabId,
+  environmentId,
   isActive,
   className,
 }: ClaudeTmuxInteractiveTerminalProps) {
@@ -141,6 +143,7 @@ export function ClaudeTmuxInteractiveTerminal({
           tabId,
           terminal.cols || 120,
           terminal.rows || 30,
+          environmentId,
         );
         createdSessionId = sessionId;
         if (cancelled) {
@@ -193,6 +196,7 @@ export function ClaudeTmuxInteractiveTerminal({
     };
   }, [
     tabId,
+    environmentId,
     terminalAppearance.fontFamily,
     terminalAppearance.fontSize,
     terminalBackgroundColor,

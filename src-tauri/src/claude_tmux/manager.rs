@@ -1,4 +1,5 @@
-//! Process-wide registry of running tmux Claude sessions, keyed by `tab_id`.
+//! Process-wide registry of running tmux Claude sessions, keyed by
+//! `(environment_id, tab_id)`.
 //!
 //! Each tab in the UI maps to its own `TmuxSession`. Multiple tabs can live
 //! inside the same workspace (env); the manager exposes a count of active
@@ -11,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 pub struct TmuxSessionManager {
-    /// Keyed by `tab_id`.
+    /// Keyed by `environment_id` + `tab_id`.
     sessions: Mutex<HashMap<String, Arc<TmuxSession>>>,
     /// Per-env mutex that serializes workspace-hook install/uninstall so
     /// two concurrent tab starts can't race on the settings backup.
@@ -27,19 +28,36 @@ impl TmuxSessionManager {
         }
     }
 
-    pub async fn insert(&self, tab_id: String, session: Arc<TmuxSession>) {
-        let mut map = self.sessions.lock().await;
-        map.insert(tab_id, session);
+    fn key(environment_id: &str, tab_id: &str) -> String {
+        format!("{}\u{1f}{}", environment_id, tab_id)
     }
 
-    pub async fn get(&self, tab_id: &str) -> Option<Arc<TmuxSession>> {
+    pub async fn insert(
+        &self,
+        environment_id: &str,
+        tab_id: String,
+        session: Arc<TmuxSession>,
+    ) {
+        let mut map = self.sessions.lock().await;
+        map.insert(Self::key(environment_id, &tab_id), session);
+    }
+
+    pub async fn get_for_env(
+        &self,
+        environment_id: &str,
+        tab_id: &str,
+    ) -> Option<Arc<TmuxSession>> {
         let map = self.sessions.lock().await;
-        map.get(tab_id).cloned()
+        map.get(&Self::key(environment_id, tab_id)).cloned()
     }
 
-    pub async fn remove(&self, tab_id: &str) -> Option<Arc<TmuxSession>> {
+    pub async fn remove_for_env(
+        &self,
+        environment_id: &str,
+        tab_id: &str,
+    ) -> Option<Arc<TmuxSession>> {
         let mut map = self.sessions.lock().await;
-        map.remove(tab_id)
+        map.remove(&Self::key(environment_id, tab_id))
     }
 
     pub async fn remove_by_env(&self, environment_id: &str) -> Vec<Arc<TmuxSession>> {
@@ -82,8 +100,12 @@ impl TmuxSessionManager {
             .clone()
     }
 
-    pub async fn status(&self, tab_id: &str) -> Option<TmuxSessionStatus> {
-        let session = self.get(tab_id).await?;
+    pub async fn status_for_env(
+        &self,
+        environment_id: &str,
+        tab_id: &str,
+    ) -> Option<TmuxSessionStatus> {
+        let session = self.get_for_env(environment_id, tab_id).await?;
         let alive = session.tmux_alive().await.unwrap_or(false);
         Some(session.status(alive))
     }
@@ -127,11 +149,11 @@ mod tests {
     async fn sessions_in_env_counts_only_matching_environment() {
         let tmp = TempDir::new().unwrap();
         let mgr = TmuxSessionManager::new();
-        mgr.insert("tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
+        mgr.insert("env-1", "tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
             .await;
-        mgr.insert("tab-b".to_string(), fake_session("env-1", "tab-b", &tmp))
+        mgr.insert("env-1", "tab-b".to_string(), fake_session("env-1", "tab-b", &tmp))
             .await;
-        mgr.insert("tab-c".to_string(), fake_session("env-2", "tab-c", &tmp))
+        mgr.insert("env-2", "tab-c".to_string(), fake_session("env-2", "tab-c", &tmp))
             .await;
 
         assert_eq!(mgr.sessions_in_env("env-1").await, 2);
@@ -140,20 +162,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn same_tab_id_is_scoped_by_environment() {
+        let tmp = TempDir::new().unwrap();
+        let mgr = TmuxSessionManager::new();
+        mgr.insert(
+            "env-1",
+            "default".to_string(),
+            fake_session("env-1", "default", &tmp),
+        )
+        .await;
+        mgr.insert(
+            "env-2",
+            "default".to_string(),
+            fake_session("env-2", "default", &tmp),
+        )
+        .await;
+
+        assert_eq!(
+            mgr.get_for_env("env-1", "default")
+                .await
+                .unwrap()
+                .environment_id,
+            "env-1",
+        );
+        assert_eq!(
+            mgr.get_for_env("env-2", "default")
+                .await
+                .unwrap()
+                .environment_id,
+            "env-2",
+        );
+
+        let removed = mgr.remove_for_env("env-1", "default").await.unwrap();
+        assert_eq!(removed.environment_id, "env-1");
+        assert!(mgr.get_for_env("env-1", "default").await.is_none());
+        assert!(mgr.get_for_env("env-2", "default").await.is_some());
+    }
+
+    #[tokio::test]
     async fn sessions_in_env_decrements_after_remove() {
         let tmp = TempDir::new().unwrap();
         let mgr = TmuxSessionManager::new();
-        mgr.insert("tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
+        mgr.insert("env-1", "tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
             .await;
-        mgr.insert("tab-b".to_string(), fake_session("env-1", "tab-b", &tmp))
+        mgr.insert("env-1", "tab-b".to_string(), fake_session("env-1", "tab-b", &tmp))
             .await;
         assert_eq!(mgr.sessions_in_env("env-1").await, 2);
 
-        let removed = mgr.remove("tab-a").await;
+        let removed = mgr.remove_for_env("env-1", "tab-a").await;
         assert!(removed.is_some());
         assert_eq!(mgr.sessions_in_env("env-1").await, 1);
 
-        mgr.remove("tab-b").await;
+        mgr.remove_for_env("env-1", "tab-b").await;
         // Last tab gone → the call site uses this to gate hook uninstall.
         assert_eq!(mgr.sessions_in_env("env-1").await, 0);
     }
@@ -162,11 +222,11 @@ mod tests {
     async fn remove_by_env_removes_only_matching_sessions() {
         let tmp = TempDir::new().unwrap();
         let mgr = TmuxSessionManager::new();
-        mgr.insert("tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
+        mgr.insert("env-1", "tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
             .await;
-        mgr.insert("tab-b".to_string(), fake_session("env-1", "tab-b", &tmp))
+        mgr.insert("env-1", "tab-b".to_string(), fake_session("env-1", "tab-b", &tmp))
             .await;
-        mgr.insert("tab-c".to_string(), fake_session("env-2", "tab-c", &tmp))
+        mgr.insert("env-2", "tab-c".to_string(), fake_session("env-2", "tab-c", &tmp))
             .await;
 
         let removed = mgr.remove_by_env("env-1").await;
@@ -174,17 +234,17 @@ mod tests {
         assert_eq!(removed.len(), 2);
         assert_eq!(mgr.sessions_in_env("env-1").await, 0);
         assert_eq!(mgr.sessions_in_env("env-2").await, 1);
-        assert!(mgr.get("tab-a").await.is_none());
-        assert!(mgr.get("tab-c").await.is_some());
+        assert!(mgr.get_for_env("env-1", "tab-a").await.is_none());
+        assert!(mgr.get_for_env("env-2", "tab-c").await.is_some());
     }
 
     #[tokio::test]
     async fn drain_removes_all_sessions() {
         let tmp = TempDir::new().unwrap();
         let mgr = TmuxSessionManager::new();
-        mgr.insert("tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
+        mgr.insert("env-1", "tab-a".to_string(), fake_session("env-1", "tab-a", &tmp))
             .await;
-        mgr.insert("tab-b".to_string(), fake_session("env-2", "tab-b", &tmp))
+        mgr.insert("env-2", "tab-b".to_string(), fake_session("env-2", "tab-b", &tmp))
             .await;
 
         let drained = mgr.drain().await;

@@ -4,9 +4,9 @@
 // mode) so the same `<ClaudeMessage>` renderer can be reused — that's what
 // gives tmux mode visual parity with the native Agent SDK tab.
 //
-// Keyed by tabId (each tab owns its own claude session); the underlying
-// environmentId is recorded on each tab's state so consumers don't need to
-// thread it through separately.
+// Keyed by an environment-scoped tab key (each tab owns its own claude
+// session); the underlying environmentId is recorded on each tab's state so
+// consumers don't need to thread it through separately.
 
 import { create } from "zustand";
 import type {
@@ -21,6 +21,24 @@ import {
   type QuestionInfo,
   type ToolDiffMetadata,
 } from "@/lib/claude-client";
+
+export function createClaudeTmuxStateKey(environmentId: string, tabId: string): string {
+  return `env:${environmentId}:tab:${tabId}`;
+}
+
+function findScopedTabState(
+  tabs: Map<string, TmuxTabState>,
+  tabId: string,
+): TmuxTabState | null {
+  const suffix = `:tab:${tabId}`;
+  let found: TmuxTabState | null = null;
+  for (const [key, value] of tabs) {
+    if (!key.endsWith(suffix)) continue;
+    if (found) return null;
+    found = value;
+  }
+  return found;
+}
 
 /** A blocking PreToolUse hook event awaiting the user's decision. */
 export interface TmuxPendingApproval {
@@ -332,7 +350,10 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
       }),
     ),
 
-  getTab: (tabId) => get().tabs.get(tabId) ?? emptyTabState(),
+  getTab: (tabId) =>
+    findScopedTabState(get().tabs, tabId) ??
+    get().tabs.get(tabId) ??
+    emptyTabState(),
 }));
 
 // ── helpers ──────────────────────────────────────────────────────────────────

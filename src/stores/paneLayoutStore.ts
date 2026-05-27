@@ -15,7 +15,7 @@ import { useSessionStore } from "./sessionStore";
 import { useTerminalPortalStore } from "./terminalPortalStore";
 import { useEnvironmentStore } from "./environmentStore";
 import { useClaudeStore, createClaudeSessionKey } from "./claudeStore";
-import { useClaudeTmuxStore } from "./claudeTmuxStore";
+import { createClaudeTmuxStateKey, useClaudeTmuxStore } from "./claudeTmuxStore";
 import { useCodexStore, createCodexSessionKey } from "./codexStore";
 import { useOpenCodeStore, createOpenCodeSessionKey } from "./openCodeStore";
 import * as tauri from "@/lib/tauri";
@@ -272,9 +272,13 @@ function cleanupCodexNativeTab(envId: string, tabId: string) {
   }
 }
 
-function cleanupClaudeTmuxTab(tabId: string) {
-  useClaudeTmuxStore.getState().resetTab(tabId);
-  stopClaudeTmuxSession(tabId).catch((err) => {
+function cleanupClaudeTmuxTab(envId: string, tabId: string) {
+  const store = useClaudeTmuxStore.getState();
+  store.resetTab(createClaudeTmuxStateKey(envId, tabId));
+  // Also clear any legacy bare-key state that may exist from before the
+  // (envId, tabId) composite key migration.
+  store.resetTab(tabId);
+  stopClaudeTmuxSession(tabId, envId).catch((err) => {
     console.debug("[PaneLayout] Error stopping Claude tmux session:", err);
   });
 }
@@ -301,7 +305,7 @@ function cleanupTabResources(envId: string, containerId: string | null, tab: Tab
   }
 
   if (tab.type === "claude-tmux") {
-    cleanupClaudeTmuxTab(tab.id);
+    cleanupClaudeTmuxTab(envId, tab.id);
   }
 }
 
