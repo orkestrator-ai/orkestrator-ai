@@ -491,6 +491,11 @@ pub async fn list_pending_blocking(
             continue;
         }
 
+        let response_path = format!("{}/{}", paths.response_dir, name);
+        if backend.read_file(&response_path).await?.is_some() {
+            continue;
+        }
+
         let full = format!("{}/{}", paths.pending_dir, name);
         let Some(content) = backend.read_file(&full).await? else {
             continue;
@@ -521,6 +526,11 @@ pub async fn reply_to_hook(
             &serde_json::to_string(response).unwrap_or_else(|_| "{}".into()),
         )
         .await?;
+    // The hook script only needs the response file from here. Removing the
+    // pending file makes answered hooks disappear from rehydration snapshots
+    // immediately instead of waiting for the script's next poll tick.
+    let pending_path = format!("{}/{}", paths.pending_dir, filename);
+    backend.remove_file(&pending_path).await.ok();
     Ok(())
 }
 
@@ -574,6 +584,7 @@ fn shell_dq(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parse_event_filename_splits_kind_and_id() {
@@ -717,6 +728,59 @@ mod tests {
         assert_eq!(s.pending_dir, "/tmp/run/sessions/abc-123/pending");
         assert_eq!(s.response_dir, "/tmp/run/sessions/abc-123/response");
         assert_eq!(s.timeout_dir, "/tmp/run/sessions/abc-123/timeout");
+    }
+
+    #[tokio::test]
+    async fn reply_to_hook_removes_matching_pending_file_after_writing_response() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let runtime = tmp.path().join("runtime");
+        let ws = WorkspaceHookPaths::new(runtime.to_str().unwrap(), "/work");
+        let paths = SessionHookPaths::new(&ws, "session-1");
+        ensure_session_dirs(&backend, &paths).await.unwrap();
+
+        let pending_path = format!("{}/PreToolUse-hook-1.json", paths.pending_dir);
+        tokio::fs::write(&pending_path, r#"{"tool_name":"AskUserQuestion"}"#)
+            .await
+            .unwrap();
+
+        reply_to_hook(
+            &backend,
+            &paths,
+            "PreToolUse",
+            "hook-1",
+            &json!({"hookSpecificOutput":{"hookEventName":"PreToolUse"}}),
+        )
+        .await
+        .unwrap();
+
+        let response_path = format!("{}/PreToolUse-hook-1.json", paths.response_dir);
+        assert!(backend.read_file(&response_path).await.unwrap().is_some());
+        assert!(backend.read_file(&pending_path).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_pending_blocking_ignores_hooks_that_already_have_response_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let runtime = tmp.path().join("runtime");
+        let ws = WorkspaceHookPaths::new(runtime.to_str().unwrap(), "/work");
+        let paths = SessionHookPaths::new(&ws, "session-1");
+        ensure_session_dirs(&backend, &paths).await.unwrap();
+
+        let pending_path = format!("{}/PreToolUse-hook-1.json", paths.pending_dir);
+        let response_path = format!("{}/PreToolUse-hook-1.json", paths.response_dir);
+        tokio::fs::write(&pending_path, r#"{"tool_name":"AskUserQuestion"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(&response_path, r#"{}"#).await.unwrap();
+
+        let pending = list_pending_blocking(&backend, &paths).await.unwrap();
+        assert!(pending.is_empty());
     }
 
     #[test]
