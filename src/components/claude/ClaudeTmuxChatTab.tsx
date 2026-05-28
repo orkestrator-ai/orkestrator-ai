@@ -74,6 +74,7 @@ import {
   type TmuxPendingPlan,
   type TmuxPendingQuestion,
 } from "@/stores/claudeTmuxStore";
+import { collapseTaskToolUpdates } from "@/lib/task-tool-snapshots";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useConfigStore } from "@/stores/configStore";
@@ -254,7 +255,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     0;
   const visibleSelectionPrompt = hasPendingHookCards ? null : selectionPrompt;
   const displayMessages = useMemo(
-    () => compactConsecutiveAssistantMessages(messages),
+    () => collapseTaskToolUpdates(compactConsecutiveAssistantMessages(messages)),
     [messages],
   );
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
