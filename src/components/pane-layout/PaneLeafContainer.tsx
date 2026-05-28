@@ -209,6 +209,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                   data={tab.openCodeNativeData}
                   isActive={isTabActive && isActive}
                   initialPrompt={tab.initialPrompt}
+                  isReviewTab={tab.isReviewTab}
                 />
               </div>
             );
@@ -229,6 +230,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                   data={tab.claudeNativeData}
                   isActive={isTabActive && isActive}
                   initialPrompt={tab.initialPrompt}
+                  isReviewTab={tab.isReviewTab}
                 />
               </div>
             );
@@ -249,6 +251,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                   data={tab.claudeTmuxData}
                   isActive={isTabActive && isActive}
                   initialPrompt={tab.initialPrompt}
+                  isReviewTab={tab.isReviewTab}
                 />
               </div>
             );
@@ -269,6 +272,7 @@ export const PaneLeafContainer = memo(function PaneLeafContainer({
                   data={tab.codexNativeData}
                   isActive={isTabActive && isActive}
                   initialPrompt={tab.initialPrompt}
+                  isReviewTab={tab.isReviewTab}
                 />
               </div>
             );

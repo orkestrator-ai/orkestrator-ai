@@ -223,6 +223,7 @@ export const TerminalPortalHost = memo(function TerminalPortalHost({
           isFirstTab={tabId === "default" && paneId === "default"}
           initialPrompt={tab.initialPrompt}
           initialCommands={tab.initialCommands}
+          isReviewTab={tab.isReviewTab}
           paneId={paneId}
           isSetupTab={tab.isSetupTab}
           onReady={handleWorkspaceReady}

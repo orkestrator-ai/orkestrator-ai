@@ -61,6 +61,7 @@ interface CodexChatTabProps {
   data: CodexNativeData;
   isActive: boolean;
   initialPrompt?: string;
+  isReviewTab?: boolean;
 }
 
 type ConnectionState = "connecting" | "connected" | "error";
@@ -77,6 +78,7 @@ export function CodexChatTab({
   data,
   isActive,
   initialPrompt,
+  isReviewTab = false,
 }: CodexChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
   // Initialize as "connected" if we already have a client and session from a previous init.
@@ -157,6 +159,12 @@ export function CodexChatTab({
   const session = useMemo(
     () => sessionsMap.get(sessionKey),
     [sessionsMap, sessionKey],
+  );
+  const showAddressAll = Boolean(
+    isReviewTab &&
+      session &&
+      !session.isLoading &&
+      session.messages.length > 0,
   );
   const selectedModel = useMemo(
     () => selectedModelMap.get(sessionKey) ?? DEFAULT_CODEX_MODEL,
@@ -1322,6 +1330,7 @@ export function CodexChatTab({
         onReasoningEffortChange={handleReasoningEffortChange}
         fastModeEnabled={fastModeEnabled}
         onFastModeChange={handleFastModeChange}
+        showAddressAll={showAddressAll}
       />
 
       {client ? (

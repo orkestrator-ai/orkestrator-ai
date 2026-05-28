@@ -53,6 +53,7 @@ interface ClaudeChatTabProps {
   data: ClaudeNativeData;
   isActive: boolean;
   initialPrompt?: string;
+  isReviewTab?: boolean;
 }
 
 type ConnectionState = "connecting" | "connected" | "error";
@@ -64,7 +65,13 @@ function resolvePreferredClaudeModel(models: Array<{ id: string }>): string | un
     : models[0]?.id;
 }
 
-export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeChatTabProps) {
+export function ClaudeChatTab({
+  tabId,
+  data,
+  isActive,
+  initialPrompt,
+  isReviewTab = false,
+}: ClaudeChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
   // Initialize as "connected" if we already have a client and session from a previous init.
   // This avoids even a single frame of spinner when switching back to an already-connected env.
@@ -141,6 +148,12 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
 
   const client = useMemo(() => clientsMap.get(environmentId), [clientsMap, environmentId]);
   const session = useMemo(() => sessionsMap.get(sessionKey), [sessionsMap, sessionKey]);
+  const showAddressAll = Boolean(
+    isReviewTab &&
+      session &&
+      !session.isLoading &&
+      session.messages.length > 0,
+  );
 
   // Virtuoso scroll state - auto-follow when user is at bottom, persist across tab switches
   const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
@@ -1408,6 +1421,7 @@ export function ClaudeChatTab({ tabId, data, isActive, initialPrompt }: ClaudeCh
         queueLength={queueLength}
         onStop={handleStop}
         onQueue={handleQueue}
+        showAddressAll={showAddressAll}
       />
 
       {client && (

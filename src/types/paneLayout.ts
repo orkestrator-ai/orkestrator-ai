@@ -115,6 +115,8 @@ export interface TabInfo {
   initialCommands?: string[];
   /** Optional tab chrome title; the tab number is appended by the tab bar. */
   displayTitle?: string;
+  /** True when the tab was launched from the review workflow. */
+  isReviewTab?: boolean;
   /** Whether this tab runs setup scripts (used to track completion) */
   isSetupTab?: boolean;
 }

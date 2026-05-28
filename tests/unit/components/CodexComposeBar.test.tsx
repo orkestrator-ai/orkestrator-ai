@@ -105,6 +105,7 @@ mock.module("@/lib/canvas-utils", () => ({
 import { CodexComposeBar } from "../../../src/components/codex/CodexComposeBar";
 import { useCodexStore } from "../../../src/stores/codexStore";
 import type { CodexModel } from "../../../src/lib/codex-client";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "../../../src/lib/review-actions";
 
 if (typeof globalThis.ImageData === "undefined") {
   (globalThis as Record<string, unknown>).ImageData = class ImageData {
@@ -290,6 +291,22 @@ describe("CodexComposeBar", () => {
   test("does not show queue indicator when queueLength is 0", () => {
     renderComposeBar({ queueLength: 0 });
     expect(screen.queryByText(/queued/)).toBeNull();
+  });
+
+  test("sends the shared review follow-up prompt from Address all", async () => {
+    const { onSend } = renderComposeBar({ showAddressAll: true });
+
+    fireEvent.click(screen.getByRole("button", { name: "Address all" }));
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith(ADDRESS_ALL_REVIEW_PROMPT, []);
+    });
+  });
+
+  test("hides Address all while Codex is loading", () => {
+    renderComposeBar({ showAddressAll: true, isLoading: true });
+
+    expect(screen.queryByRole("button", { name: "Address all" })).toBeNull();
   });
 
   test("input is disabled when disabled prop is true", () => {

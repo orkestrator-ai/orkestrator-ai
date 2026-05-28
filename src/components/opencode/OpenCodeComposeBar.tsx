@@ -35,12 +35,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useOpenCodeStore, createOpenCodeSessionKey, type OpenCodeAttachment, type OpenCodeQueuedMessage } from "@/stores/openCodeStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
 import { MentionableInput, type MentionableInputRef } from "@/components/chat/MentionableInput";
 import { useFileMentions, useFileSearch, useNativeComposeBarPaste } from "@/hooks";
@@ -73,6 +75,8 @@ interface OpenCodeComposeBarProps {
   onQueue?: (text: string, attachments: OpenCodeAttachment[]) => void;
   /** Callback to refresh/reload models */
   onRefreshModels?: () => void;
+  /** Show the review follow-up action for review workflow tabs. */
+  showAddressAll?: boolean;
 }
 
 const MAX_LINES = 12;
@@ -97,6 +101,7 @@ export function OpenCodeComposeBar({
   onStop,
   onQueue,
   onRefreshModels,
+  showAddressAll = false,
 }: OpenCodeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
@@ -339,6 +344,17 @@ export function OpenCodeComposeBar({
       setDraftText(sessionKey, "");
       setDraftMentions(sessionKey, []);
       clearAttachments(sessionKey);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleAddressAll = () => {
+    if (isSending || disabled || isLoading) return;
+
+    setIsSending(true);
+    try {
+      onSend(ADDRESS_ALL_REVIEW_PROMPT, []);
     } finally {
       setIsSending(false);
     }
@@ -759,6 +775,20 @@ export function OpenCodeComposeBar({
             >
               <Square className="w-4 h-4 fill-current" />
             </button>
+          )}
+
+          {showAddressAll && !isLoading && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={handleAddressAll}
+              disabled={disabled || isSending}
+              className="h-8 rounded-full px-3 text-xs"
+              title="Send the review follow-up prompt"
+            >
+              Address all
+            </Button>
           )}
 
           <button

@@ -91,14 +91,19 @@ mock.module("./CodexComposeBar", () => ({
     onFastModeChange,
     disabled,
     isLoading,
+    showAddressAll,
   }: {
     onSend: (text: string, attachments: typeof composeAttachments) => Promise<void>;
     onStop?: () => Promise<void>;
     onFastModeChange?: (enabled: boolean) => void;
     disabled?: boolean;
     isLoading?: boolean;
+    showAddressAll?: boolean;
   }) => (
     <>
+      <div data-testid="codex-address-all-state">
+        {showAddressAll ? "shown" : "hidden"}
+      </div>
       <button
         type="button"
         data-testid="codex-send"
@@ -384,6 +389,21 @@ describe("CodexChatTab", () => {
         { attachments: undefined },
       );
     });
+  });
+
+  test("enables the review follow-up action after a review session has messages", () => {
+    seedCodexStore([createMessage("message-1", "Review complete")]);
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+        isReviewTab
+      />,
+    );
+
+    expect(screen.getByTestId("codex-address-all-state").textContent).toBe("shown");
   });
 
   test("skips renaming when the environment already has a non-timestamp name", async () => {

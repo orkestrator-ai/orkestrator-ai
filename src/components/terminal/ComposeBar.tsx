@@ -24,6 +24,8 @@ interface ComposeBarProps {
   containerId: string | null;
   /** Worktree path for local environments (alternative to containerId) */
   worktreePath?: string | null;
+  showAddressAll?: boolean;
+  onAddressAll?: () => void;
 }
 
 const MAX_LINES = 10;
@@ -45,7 +47,16 @@ function generateImageFilename(): string {
   return `clipboard-${timestamp}-${random}.png`;
 }
 
-export function ComposeBar({ sessionKey, isOpen, onClose, onSend, containerId, worktreePath }: ComposeBarProps) {
+export function ComposeBar({
+  sessionKey,
+  isOpen,
+  onClose,
+  onSend,
+  containerId,
+  worktreePath,
+  showAddressAll = false,
+  onAddressAll,
+}: ComposeBarProps) {
   const text = useTerminalSessionStore((state) => state.composeDraftText.get(sessionKey) ?? "");
   const images = useTerminalSessionStore((state) => state.composeDraftImages.get(sessionKey) ?? EMPTY_IMAGES);
   const setComposeDraftText = useTerminalSessionStore((state) => state.setComposeDraftText);
@@ -273,6 +284,17 @@ export function ComposeBar({ sessionKey, isOpen, onClose, onSend, containerId, w
           }}
           disabled={isSending}
         />
+        {showAddressAll && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onAddressAll}
+            disabled={isSending}
+            className="shrink-0 h-7 rounded-full px-3 text-xs"
+          >
+            Address all
+          </Button>
+        )}
         <Button
           size="icon-sm"
           variant="default"

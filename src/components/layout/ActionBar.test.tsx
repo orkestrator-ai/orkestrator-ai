@@ -541,7 +541,10 @@ describe("ActionBar workflow tabs", () => {
 
     expect(createTabMock).toHaveBeenCalledWith(
       "codex",
-      expect.objectContaining({ displayTitle: "Review" }),
+      expect.objectContaining({
+        displayTitle: "Review",
+        isReviewTab: true,
+      }),
     );
   });
 

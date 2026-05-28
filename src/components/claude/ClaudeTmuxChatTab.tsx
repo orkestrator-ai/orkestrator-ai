@@ -80,6 +80,7 @@ import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useConfigStore } from "@/stores/configStore";
 import { renameEnvironmentFromPrompt, updateGlobalConfig } from "@/lib/tauri";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
 import type { FileCandidate } from "@/types";
 
@@ -88,6 +89,7 @@ interface Props {
   data: ClaudeTmuxData;
   isActive: boolean;
   initialPrompt?: string;
+  isReviewTab?: boolean;
 }
 
 /**
@@ -173,7 +175,13 @@ const TMUX_BUILTIN_SLASH_COMMANDS: SlashCommand[] = parseSlashCommands([
   "/fast - Toggle fast mode (Opus with faster output)",
 ]);
 
-export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Props) {
+export function ClaudeTmuxChatTab({
+  tabId,
+  data,
+  isActive,
+  initialPrompt,
+  isReviewTab = false,
+}: Props) {
   const { environmentId, containerId } = data;
   const stateKey = useMemo(
     () => createClaudeTmuxStateKey(environmentId, tabId),
@@ -258,6 +266,12 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
   const displayMessages = useMemo(
     () => collapseTaskToolUpdates(compactConsecutiveAssistantMessages(messages)),
     [messages],
+  );
+  const showAddressAll = Boolean(
+    isReviewTab &&
+      running &&
+      !isThinking &&
+      messages.length > 0,
   );
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
   const scrollTrigger = useMemo(
@@ -570,8 +584,7 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     };
   }, [showTui, running, tabId, environmentId]);
 
-  const handleSubmit = async () => {
-    const text = draft.trim();
+  const submitPrompt = async (text: string, clearDraftOnSuccess: boolean) => {
     // `isThinking` covers the post-HTTP window where Claude is still
     // processing but `sending` has already reset; without it a user could
     // submit a second message before the first turn finishes.
@@ -595,7 +608,9 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
         }
       }
       await submitToTmux(tabId, text, environmentId);
-      setDraft("");
+      if (clearDraftOnSuccess) {
+        setDraft("");
+      }
     } catch (e) {
       setError(String(e));
       // The submit failed before claude saw it — there's no Stop coming.
@@ -603,6 +618,14 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
     } finally {
       setSending(false);
     }
+  };
+
+  const handleSubmit = async () => {
+    await submitPrompt(draft.trim(), true);
+  };
+
+  const handleAddressAll = async () => {
+    await submitPrompt(ADDRESS_ALL_REVIEW_PROMPT, false);
   };
 
   const handleInterrupt = async () => {
@@ -1062,6 +1085,8 @@ export function ClaudeTmuxChatTab({ tabId, data, isActive, initialPrompt }: Prop
             submitting={sending || modelSwitching}
             autoFocus={isActive}
             onSubmit={handleSubmit}
+            showAddressAll={showAddressAll}
+            onAddressAll={handleAddressAll}
             onInterrupt={handleInterrupt}
             selectedModel={selectedModel}
             onSelectModel={(modelId) => {
@@ -1728,6 +1753,8 @@ interface TmuxComposeBarProps {
   submitting: boolean;
   autoFocus?: boolean;
   onSubmit: () => void;
+  showAddressAll?: boolean;
+  onAddressAll?: () => void;
   onInterrupt: () => void;
   selectedModel: string;
   onSelectModel: (id: string) => void;
@@ -1749,6 +1776,8 @@ function TmuxComposeBar({
   submitting,
   autoFocus,
   onSubmit,
+  showAddressAll = false,
+  onAddressAll,
   onInterrupt,
   selectedModel,
   onSelectModel,
@@ -2094,6 +2123,20 @@ function TmuxComposeBar({
         </DropdownMenu>
 
         <div className="flex-1" />
+
+        {showAddressAll && !busy && (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={() => onAddressAll?.()}
+            disabled={disabled || submitting}
+            className="h-7 rounded-full px-3 text-xs"
+            title="Send the review follow-up prompt"
+          >
+            Address all
+          </Button>
+        )}
 
         {/* Send / Stop button */}
         <Button

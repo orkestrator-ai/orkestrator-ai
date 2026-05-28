@@ -90,14 +90,19 @@ mock.module("./OpenCodeComposeBar", () => ({
     onRefreshModels,
     disabled,
     isLoading,
+    showAddressAll,
   }: {
     onSend: (text: string, attachments: typeof composeAttachments) => Promise<void>;
     onStop?: () => Promise<void>;
     onRefreshModels?: () => void | Promise<void>;
     disabled?: boolean;
     isLoading?: boolean;
+    showAddressAll?: boolean;
   }) => (
     <>
+      <div data-testid="opencode-address-all-state">
+        {showAddressAll ? "shown" : "hidden"}
+      </div>
       <button
         type="button"
         data-testid="opencode-send"
@@ -333,6 +338,37 @@ describe("OpenCodeChatTab", () => {
       const messages = useOpenCodeStore.getState().getSession(SESSION_KEY)?.messages ?? [];
       expect(messages.some((message) => message.content === "Naming environment...")).toBe(false);
     });
+  });
+
+  test("enables the review follow-up action after a review session has messages", () => {
+    useOpenCodeStore.setState((state) => {
+      const sessions = new Map(state.sessions);
+      sessions.set(SESSION_KEY, {
+        sessionId: "session-1",
+        messages: [
+          {
+            id: "message-1",
+            role: "assistant",
+            content: "Review complete",
+            parts: [{ type: "text", text: "Review complete" }],
+            createdAt: "2026-04-15T10:00:00.000Z",
+          } as any,
+        ],
+        isLoading: false,
+      });
+      return { sessions };
+    });
+
+    render(
+      <OpenCodeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+        isReviewTab
+      />,
+    );
+
+    expect(screen.getByTestId("opencode-address-all-state").textContent).toBe("shown");
   });
 
   test("removes the optimistic message and shows an error when sendPrompt fails", async () => {

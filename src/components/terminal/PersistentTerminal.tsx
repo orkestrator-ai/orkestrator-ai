@@ -6,6 +6,7 @@ import { useAgentState } from "@/hooks/useAgentState";
 import { useClipboardImagePaste } from "@/hooks/useClipboardImagePaste";
 import { escapePathForTerminalInput, handleTerminalPaste } from "@/lib/terminal-paste";
 import { useTerminalSessionStore, createSessionKey, useConfigStore, usePaneLayoutStore, useEnvironmentStore } from "@/stores";
+import { useAgentActivityStore } from "@/stores/agentActivityStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTerminalPortalStore, createTerminalKey, type PersistentTerminalData } from "@/stores/terminalPortalStore";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ import {
 } from "@/components/ui/context-menu";
 import { ComposeBar, type ImageAttachment } from "@/components/terminal/ComposeBar";
 import { CheckCircle2 } from "lucide-react";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 
 // Threshold for detecting intermediate/cleared buffer state during React mount cycles.
 // If new buffer is less than 50% of stored buffer size, it likely represents a cleared
@@ -61,6 +63,7 @@ interface PersistentTerminalProps {
   isFirstTab: boolean;
   initialPrompt?: string;
   initialCommands?: string[];
+  isReviewTab?: boolean;
   paneId: string;
   isSetupTab?: boolean;
   onReady?: (payload: { persistSetupComplete: boolean; workspaceReady?: boolean }) => void;
@@ -88,6 +91,7 @@ export function PersistentTerminal({
   isFirstTab,
   initialPrompt,
   initialCommands,
+  isReviewTab = false,
   paneId,
   isSetupTab,
   onReady,
@@ -131,6 +135,12 @@ export function PersistentTerminal({
   // Create a container-scoped session key
   // For local environments (containerId is null), use environmentId to ensure uniqueness
   const sessionKey = createSessionKey(containerId, tabId, environmentId);
+  const hasLaunchedCommand = useTerminalSessionStore(
+    (state) => state.sessions.get(sessionKey)?.hasLaunchedCommand ?? false,
+  );
+  const agentActivityState = useAgentActivityStore(
+    (state) => state.tabStates[tabId] ?? "idle",
+  );
 
   // Session persistence
   const existingSession = useTerminalSessionStore((state) => state.sessions.get(sessionKey));
@@ -272,6 +282,10 @@ export function PersistentTerminal({
     },
     [isLocalEnvironment, terminal]
   );
+
+  const handleAddressAll = useCallback(() => {
+    void handleComposeSend([], ADDRESS_ALL_REVIEW_PROMPT);
+  }, [handleComposeSend]);
 
   // Track mount lifecycle - reset restoration flag on mount
   useEffect(() => {
@@ -1240,6 +1254,8 @@ export function PersistentTerminal({
           onSend={handleComposeSend}
           containerId={containerId}
           worktreePath={worktreePath}
+          showAddressAll={isReviewTab && hasLaunchedCommand && agentActivityState !== "working"}
+          onAddressAll={handleAddressAll}
         />
       )}
     </>

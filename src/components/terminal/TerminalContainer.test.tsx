@@ -1285,7 +1285,10 @@ describe("TerminalContainer", () => {
             isContainerRunning
             isActive
           />
-          <CreateTabHarness type="plain" options={{ displayTitle: "Custom" }} />
+          <CreateTabHarness
+            type="plain"
+            options={{ displayTitle: "Custom", isReviewTab: true }}
+          />
         </TerminalProvider>
       );
 
@@ -1294,6 +1297,7 @@ describe("TerminalContainer", () => {
         if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
         const created = env.root.tabs.find((t) => t.type === "plain" && t.id !== "visible-tab");
         expect(created?.displayTitle).toBe("Custom");
+        expect(created?.isReviewTab).toBe(true);
       });
     });
 
@@ -1428,7 +1432,10 @@ describe("TerminalContainer", () => {
             isContainerRunning
             isActive
           />
-          <CreateTabHarness type="codex" options={{ displayTitle: "PR" }} />
+          <CreateTabHarness
+            type="codex"
+            options={{ displayTitle: "PR", isReviewTab: true }}
+          />
         </TerminalProvider>
       );
 
@@ -1437,6 +1444,7 @@ describe("TerminalContainer", () => {
         if (!env || env.root.kind !== "leaf") throw new Error("expected leaf");
         const created = env.root.tabs.find((t) => t.type === "codex-native");
         expect(created?.displayTitle).toBe("PR");
+        expect(created?.isReviewTab).toBe(true);
       });
     });
 
