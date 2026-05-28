@@ -518,7 +518,7 @@ pub async fn reply_to_hook(
     id: &str,
     response: &Value,
 ) -> Result<(), String> {
-    let filename = format!("{}-{}.json", kind, id);
+    let filename = response_filename(kind, id)?;
     let response_path = format!("{}/{}", paths.response_dir, filename);
     backend
         .write_file(
@@ -532,6 +532,21 @@ pub async fn reply_to_hook(
     let pending_path = format!("{}/{}", paths.pending_dir, filename);
     backend.remove_file(&pending_path).await.ok();
     Ok(())
+}
+
+fn response_filename(kind: &str, id: &str) -> Result<String, String> {
+    if HookEventKind::from_str(kind).is_none() {
+        return Err(format!("unsupported hook event kind: {kind}"));
+    }
+    if id.is_empty()
+        || id.contains("..")
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return Err("invalid hook event id".to_string());
+    }
+    Ok(format!("{}-{}.json", kind, id))
 }
 
 /// Convenience: build a PreToolUse JSON response. `decision` is one of
@@ -730,6 +745,23 @@ mod tests {
         assert_eq!(s.timeout_dir, "/tmp/run/sessions/abc-123/timeout");
     }
 
+    #[test]
+    fn response_filename_accepts_known_hook_kind_and_safe_id() {
+        assert_eq!(
+            response_filename("PreToolUse", "1731519430-1234_9876").unwrap(),
+            "PreToolUse-1731519430-1234_9876.json"
+        );
+    }
+
+    #[test]
+    fn response_filename_rejects_unknown_kind_and_path_shaped_ids() {
+        assert!(response_filename("../PreToolUse", "hook-1").is_err());
+        assert!(response_filename("PreToolUse", "").is_err());
+        assert!(response_filename("PreToolUse", "../hook-1").is_err());
+        assert!(response_filename("PreToolUse", "hook/../../outside").is_err());
+        assert!(response_filename("PreToolUse", r"hook\..\outside").is_err());
+    }
+
     #[tokio::test]
     async fn reply_to_hook_removes_matching_pending_file_after_writing_response() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -759,6 +791,45 @@ mod tests {
         let response_path = format!("{}/PreToolUse-hook-1.json", paths.response_dir);
         assert!(backend.read_file(&response_path).await.unwrap().is_some());
         assert!(backend.read_file(&pending_path).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn reply_to_hook_rejects_unsafe_filename_inputs_before_touching_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        let runtime = tmp.path().join("runtime");
+        let ws = WorkspaceHookPaths::new(runtime.to_str().unwrap(), "/work");
+        let paths = SessionHookPaths::new(&ws, "session-1");
+        ensure_session_dirs(&backend, &paths).await.unwrap();
+
+        let pending_path = format!("{}/PreToolUse-hook-1.json", paths.pending_dir);
+        tokio::fs::write(&pending_path, r#"{"tool_name":"AskUserQuestion"}"#)
+            .await
+            .unwrap();
+
+        let response = json!({"hookSpecificOutput":{"hookEventName":"PreToolUse"}});
+        assert!(
+            reply_to_hook(&backend, &paths, "../PreToolUse", "hook-1", &response)
+                .await
+                .is_err()
+        );
+        assert!(
+            reply_to_hook(
+                &backend,
+                &paths,
+                "PreToolUse",
+                "hook-1/../../outside",
+                &response,
+            )
+            .await
+            .is_err()
+        );
+
+        assert!(backend.read_file(&pending_path).await.unwrap().is_some());
+        let response_entries = backend.list_dir(&paths.response_dir).await.unwrap();
+        assert!(response_entries.is_empty());
     }
 
     #[tokio::test]
