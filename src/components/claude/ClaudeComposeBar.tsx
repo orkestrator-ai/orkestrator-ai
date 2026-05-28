@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -21,6 +22,7 @@ import { useClaudeStore, createClaudeSessionKey, type ClaudeAttachment, type Que
 import { useConfigStore } from "@/stores/configStore";
 import { ContextUsageWheel } from "@/components/chat/ContextUsageWheel";
 import { updateGlobalConfig as persistGlobalConfig } from "@/lib/tauri";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import type { ClaudeModel } from "@/lib/claude-client";
 import { SlashCommandMenu, parseSlashCommands } from "./SlashCommandMenu";
 import { FileMentionMenu } from "./FileMentionMenu";
@@ -62,6 +64,8 @@ interface ClaudeComposeBarProps {
   onStop?: () => void;
   /** Callback when a message should be added to the queue */
   onQueue?: (text: string, attachments: ClaudeAttachment[], effort: ClaudeEffortLevel, planModeEnabled: boolean, fastModeEnabled: boolean) => void;
+  /** Show the review follow-up action for review workflow tabs. */
+  showAddressAll?: boolean;
 }
 
 const MAX_LINES = 12;
@@ -78,6 +82,7 @@ export function ClaudeComposeBar({
   queueLength = 0,
   onStop,
   onQueue,
+  showAddressAll = false,
 }: ClaudeComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
@@ -466,6 +471,22 @@ export function ClaudeComposeBar({
     }
   };
 
+  const handleAddressAll = () => {
+    if (disabled || isSending || isLoading) return;
+    setIsSending(true);
+    try {
+      onSend(
+        ADDRESS_ALL_REVIEW_PROMPT,
+        [],
+        effort,
+        planModeEnabled,
+        fastModeEnabled,
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   // Defensively reset fast mode if the selected model doesn't support it
   // (e.g. model catalog loaded after a stale preference, or bundled defaults changed).
   useEffect(() => {
@@ -717,6 +738,20 @@ export function ClaudeComposeBar({
           >
             <span>+{queueLength} queued</span>
           </button>
+        )}
+
+        {showAddressAll && !isLoading && (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={handleAddressAll}
+            disabled={disabled || isSending}
+            className="h-8 rounded-full px-3 text-xs"
+            title="Send the review follow-up prompt"
+          >
+            Address all
+          </Button>
         )}
 
         {/* Send/Stop button - round grey style */}

@@ -232,6 +232,7 @@ function createClaudeNativeLikeTab({
   isLocal,
   initialPrompt,
   displayTitle,
+  isReviewTab,
 }: {
   id: string;
   nativeBackend: ClaudeNativeBackend;
@@ -240,6 +241,7 @@ function createClaudeNativeLikeTab({
   isLocal: boolean;
   initialPrompt?: string;
   displayTitle?: string;
+  isReviewTab?: boolean;
 }): TabInfo {
   if (nativeBackend === "tmux") {
     return {
@@ -252,6 +254,7 @@ function createClaudeNativeLikeTab({
       },
       initialPrompt,
       displayTitle,
+      isReviewTab,
     };
   }
 
@@ -265,6 +268,7 @@ function createClaudeNativeLikeTab({
     },
     initialPrompt,
     displayTitle,
+    isReviewTab,
   };
 }
 
@@ -889,6 +893,7 @@ export function TerminalContainer({
           },
           initialPrompt: options?.initialPrompt,
           displayTitle: options?.displayTitle,
+          isReviewTab: options?.isReviewTab,
         };
         console.debug("[TerminalContainer] Creating opencode-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
@@ -911,6 +916,7 @@ export function TerminalContainer({
           isLocal: isLocalEnvironment,
           initialPrompt: options?.initialPrompt,
           displayTitle: options?.displayTitle,
+          isReviewTab: options?.isReviewTab,
         });
         console.debug("[TerminalContainer] Creating", newTab.type, "tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
@@ -928,6 +934,7 @@ export function TerminalContainer({
           },
           initialPrompt: options?.initialPrompt,
           displayTitle: options?.displayTitle,
+          isReviewTab: options?.isReviewTab,
         };
         console.debug("[TerminalContainer] Creating codex-native tab:", newTabId, "for environment:", environmentId, "isLocal:", isLocalEnvironment, "initialPrompt:", !!options?.initialPrompt);
         addTab(activePaneId, newTab, environmentId);
@@ -940,6 +947,7 @@ export function TerminalContainer({
         initialPrompt: options?.initialPrompt,
         initialCommands: options?.initialCommands,
         displayTitle: options?.displayTitle,
+        isReviewTab: options?.isReviewTab,
       };
 
       console.debug("[TerminalContainer] Creating new tab:", newTabId, "type:", type, "for environment:", environmentId);

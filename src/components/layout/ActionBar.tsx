@@ -179,6 +179,7 @@ export function ActionBar() {
     createTab(agentOverride || defaultAgent, {
       initialPrompt: reviewPrompt,
       displayTitle: "Review",
+      isReviewTab: true,
     });
   }, [createTab, selectedProjectId, canCreateTab, config.repositories, defaultAgent]);
 

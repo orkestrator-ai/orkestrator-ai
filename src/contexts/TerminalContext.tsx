@@ -26,6 +26,8 @@ export interface CreateTabOptions {
   initialCommands?: string[];
   /** Optional tab chrome title; the tab number is appended by the tab bar. */
   displayTitle?: string;
+  /** True when the tab was launched from the review workflow. */
+  isReviewTab?: boolean;
   /** Optional one-shot agent launch mode that overrides repository/global defaults. */
   agentLaunchMode?: AgentLaunchModeOverride;
 }

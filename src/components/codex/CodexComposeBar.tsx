@@ -17,6 +17,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useCodexStore } from "@/stores";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
 import { MentionableInput, type MentionableInputRef } from "@/components/chat/MentionableInput";
 import { OpenCodeSlashCommandMenu } from "@/components/opencode/OpenCodeSlashCommandMenu";
@@ -76,6 +77,8 @@ interface CodexComposeBarProps {
   onModelChange: (modelId: string) => Promise<void> | void;
   onReasoningEffortChange: (effort: CodexReasoningEffort) => Promise<void> | void;
   onFastModeChange: (enabled: boolean) => void;
+  /** Show the review follow-up action for review workflow tabs. */
+  showAddressAll?: boolean;
 }
 
 export function CodexComposeBar({
@@ -99,6 +102,7 @@ export function CodexComposeBar({
   onModelChange,
   onReasoningEffortChange,
   onFastModeChange,
+  showAddressAll = false,
 }: CodexComposeBarProps) {
   const [isSending, setIsSending] = useState(false);
   const inputRef = useRef<MentionableInputRef>(null);
@@ -225,6 +229,19 @@ export function CodexComposeBar({
     text,
     serializeForLLM,
   ]);
+
+  const handleAddressAll = useCallback(async () => {
+    if (disabled || isSending || isLoading) {
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      await onSend(ADDRESS_ALL_REVIEW_PROMPT, []);
+    } finally {
+      setIsSending(false);
+    }
+  }, [disabled, isLoading, isSending, onSend]);
 
   const selectedModelObj = useMemo(
     () => models.find((model) => model.id === selectedModel),
@@ -680,6 +697,22 @@ export function CodexComposeBar({
           >
             <Square className="h-4 w-4 fill-current" />
           </button>
+        ) : null}
+
+        {showAddressAll && !isLoading ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              void handleAddressAll();
+            }}
+            disabled={disabled || isSending}
+            className="h-8 rounded-full px-3 text-xs"
+            title="Send the review follow-up prompt"
+          >
+            Address all
+          </Button>
         ) : null}
 
         <Button

@@ -74,6 +74,7 @@ interface OpenCodeChatTabProps {
   isActive: boolean;
   /** Initial prompt to send after session creation */
   initialPrompt?: string;
+  isReviewTab?: boolean;
 }
 
 type ConnectionState = "connecting" | "connected" | "error";
@@ -152,6 +153,7 @@ export function OpenCodeChatTab({
   data,
   isActive,
   initialPrompt,
+  isReviewTab = false,
 }: OpenCodeChatTabProps) {
   const { containerId, environmentId, isLocal } = data;
   // Initialize as "connected" if we already have a client and session from a previous init.
@@ -245,6 +247,12 @@ export function OpenCodeChatTab({
   );
 
   const sessionMessages = useMemo(() => session?.messages ?? [], [session?.messages]);
+  const showAddressAll = Boolean(
+    isReviewTab &&
+      session &&
+      !session.isLoading &&
+      session.messages.length > 0,
+  );
 
   // Virtuoso scroll state - auto-follow when user is at bottom, persist across tab switches
   const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
@@ -1585,6 +1593,7 @@ export function OpenCodeChatTab({
         onStop={handleStop}
         onQueue={handleQueue}
         onRefreshModels={refreshModels}
+        showAddressAll={showAddressAll}
       />
 
       {client && (
