@@ -11,7 +11,7 @@ import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
 import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
 import * as realInteractiveTerminal from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
-import type { FileCandidate } from "@/types";
+import type { Environment, FileCandidate } from "@/types";
 
 const realTmuxClientSnapshot = { ...realTmuxClient };
 const realTauriSnapshot = { ...realTauri };
@@ -20,6 +20,7 @@ const realInteractiveTerminalSnapshot = { ...realInteractiveTerminal };
 const realFileMentionMenuSnapshot = { ...realFileMentionMenu };
 const getFileTreeMock = mock(async () => []);
 const getLocalFileTreeMock = mock(async () => []);
+const renameEnvironmentFromPromptMock = mock(async () => {});
 const updateGlobalConfigMock = mock(async (global: any) => ({
   version: "1.0",
   global,
@@ -148,6 +149,7 @@ mock.module("@/components/claude/ClaudeTmuxInteractiveTerminal", () => ({
 mock.module("@/lib/tauri", () => ({
   getFileTree: getFileTreeMock,
   getLocalFileTree: getLocalFileTreeMock,
+  renameEnvironmentFromPrompt: renameEnvironmentFromPromptMock,
   updateGlobalConfig: updateGlobalConfigMock,
 }));
 
@@ -193,6 +195,29 @@ function seedPane(initialPrompt?: string) {
   });
 }
 
+function seedEnvironment(overrides: Partial<Environment> = {}) {
+  useEnvironmentStore.setState({
+    environments: [
+      {
+        id: "env-1",
+        projectId: "project-1",
+        name: "20260528-123456",
+        branch: "20260528-123456",
+        containerId: "container-1",
+        status: "running",
+        prUrl: null,
+        prState: null,
+        hasMergeConflicts: null,
+        createdAt: "2026-05-28T12:34:56.000Z",
+        networkAccessMode: "full",
+        order: 0,
+        environmentType: "containerized",
+        ...overrides,
+      },
+    ],
+  });
+}
+
 describe("ClaudeTmuxChatTab", () => {
   afterAll(() => {
     mock.module("@/lib/claude-tmux-client", () => realTmuxClientSnapshot);
@@ -208,6 +233,8 @@ describe("ClaudeTmuxChatTab", () => {
     getFileTreeMock.mockResolvedValue([]);
     getLocalFileTreeMock.mockReset();
     getLocalFileTreeMock.mockResolvedValue([]);
+    renameEnvironmentFromPromptMock.mockReset();
+    renameEnvironmentFromPromptMock.mockImplementation(async () => {});
     updateGlobalConfigMock.mockReset();
     updateGlobalConfigMock.mockImplementation(async (global: any) => ({
       version: "1.0",
@@ -1776,6 +1803,83 @@ describe("ClaudeTmuxChatTab", () => {
 
     expect(await screen.findByText("Error: tmux unavailable")).toBeTruthy();
     await waitFor(() => expect(textarea.disabled).toBe(false));
+  });
+
+  test("renames a timestamp-named environment before submitting the first tmux prompt", async () => {
+    const callOrder: string[] = [];
+    renameEnvironmentFromPromptMock.mockImplementationOnce(async () => {
+      callOrder.push("rename");
+    });
+    submitMock.mockImplementationOnce(async () => {
+      callOrder.push("submit");
+    });
+    seedEnvironment();
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = screen.getByPlaceholderText(
+      /Ask Claude anything/,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Implement the billing export" } });
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(renameEnvironmentFromPromptMock).toHaveBeenCalledWith(
+        "env-1",
+        "Implement the billing export",
+      );
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "Implement the billing export",
+        "env-1",
+      );
+    });
+    expect(callOrder).toEqual(["rename", "submit"]);
+  });
+
+  test("does not rename a custom-named environment before submitting a tmux prompt", async () => {
+    seedEnvironment({ name: "custom-env", branch: "custom-env" });
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = screen.getByPlaceholderText(
+      /Ask Claude anything/,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Keep this branch name" } });
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "Keep this branch name",
+        "env-1",
+      );
+    });
+    expect(renameEnvironmentFromPromptMock).not.toHaveBeenCalled();
   });
 
   test("renders compacted assistant messages and passes compacted previousMessage", async () => {
