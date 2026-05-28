@@ -79,7 +79,7 @@ import { collapseTaskToolUpdates } from "@/lib/task-tool-snapshots";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useConfigStore } from "@/stores/configStore";
-import { updateGlobalConfig } from "@/lib/tauri";
+import { renameEnvironmentFromPrompt, updateGlobalConfig } from "@/lib/tauri";
 import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
 import type { FileCandidate } from "@/types";
@@ -597,6 +597,16 @@ export function ClaudeTmuxChatTab({
     // above) clears it when the turn ends.
     setTabBusy(storeKey, true);
     try {
+      if (!resumedSession && messages.length === 0) {
+        const environment = useEnvironmentStore.getState().getEnvironmentById(environmentId);
+        if (environment && /^\d{8}-\d{6}$/.test(environment.name)) {
+          try {
+            await renameEnvironmentFromPrompt(environmentId, text);
+          } catch (e) {
+            console.warn("[ClaudeTmuxChatTab] Failed to rename environment from prompt:", e);
+          }
+        }
+      }
       await submitToTmux(tabId, text, environmentId);
       if (clearDraftOnSuccess) {
         setDraft("");
