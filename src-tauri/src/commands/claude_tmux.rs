@@ -631,6 +631,19 @@ pub async fn claude_tmux_submit(
 }
 
 #[tauri::command]
+pub async fn claude_tmux_switch_model(
+    tab_id: String,
+    model: String,
+    environment_id: String,
+) -> Result<(), String> {
+    let session = get_manager()
+        .get_for_env(&environment_id, &tab_id)
+        .await
+        .ok_or_else(|| "tmux session not running".to_string())?;
+    session.switch_model(&model).await
+}
+
+#[tauri::command]
 pub async fn claude_tmux_capture_pane(
     tab_id: String,
     environment_id: String,

@@ -27,6 +27,9 @@ use uuid::Uuid;
 /// All Tauri events emitted on behalf of a tmux session go through this
 /// single channel name. The payload's `kind` field disambiguates.
 pub const TAURI_EVENT: &str = "claude-tmux:event";
+const COMMAND_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+const COMMAND_NO_HOOK_SETTLE: std::time::Duration = std::time::Duration::from_millis(2_000);
+const COMMAND_AFTER_IDLE_SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -699,6 +702,53 @@ impl TmuxSession {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         self.send_enter().await
+    }
+
+    /// Send Claude Code's `/model` slash command and keep the caller blocked
+    /// until the command has settled. A plain `submit("/model ...")` returns
+    /// immediately after pressing Enter, but Claude Code may still be applying
+    /// the model change; sending the next user prompt during that window can
+    /// interrupt the internal command turn instead of submitting the prompt.
+    pub async fn switch_model(&self, model_arg: &str) -> Result<(), String> {
+        let trimmed = model_arg.trim();
+        if trimmed.is_empty() {
+            return Err("model id cannot be empty".to_string());
+        }
+
+        self.submit(&format!("/model {trimmed}")).await?;
+        self.wait_for_command_idle().await;
+        Ok(())
+    }
+
+    async fn wait_for_command_idle(&self) {
+        let started = tokio::time::Instant::now();
+        let deadline = started + COMMAND_IDLE_TIMEOUT;
+        let no_hook_deadline = started + COMMAND_NO_HOOK_SETTLE;
+        let mut saw_busy = self.busy.load(Ordering::SeqCst);
+
+        loop {
+            let now = tokio::time::Instant::now();
+            let busy = self.busy.load(Ordering::SeqCst);
+            if busy {
+                saw_busy = true;
+            } else if saw_busy {
+                tokio::time::sleep(COMMAND_AFTER_IDLE_SETTLE).await;
+                return;
+            } else if now >= no_hook_deadline {
+                return;
+            }
+
+            if now >= deadline {
+                warn!(
+                    tab = %self.tab_id,
+                    session = %self.tmux_session,
+                    "timed out waiting for Claude slash command to settle"
+                );
+                return;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
     pub async fn send_keys(&self, keys: &[&str]) -> Result<(), String> {
