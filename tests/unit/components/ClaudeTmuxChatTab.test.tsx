@@ -74,6 +74,8 @@ const claudeMessageRenderMock = mock(
       data-message-id={message.id}
       data-previous-id={previousMessage?.id ?? ""}
       data-part-types={message.parts.map((part) => part.type).join(",")}
+      data-tool-names={message.parts.map((part) => part.toolName ?? "").join(",")}
+      data-tool-args={JSON.stringify(message.parts.map((part) => part.toolArgs ?? null))}
     >
       {message.content}
     </div>
@@ -1822,6 +1824,82 @@ describe("ClaudeTmuxChatTab", () => {
     expect(renderedMessages[1]!.dataset.partTypes).toBe(
       "tool-invocation,tool-invocation,text",
     );
+  });
+
+  test("renders repeated task tools as one current TaskList snapshot", async () => {
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.applyTranscriptLine("tab-1", {
+      type: "assistant",
+      uuid: "task-create-1",
+      timestamp: "2026-01-01T00:00:01Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "task-create-1",
+            name: "TaskCreate",
+            input: { subject: "Inspect renderer" },
+          },
+        ],
+      },
+    });
+    store.applyTranscriptLine("tab-1", {
+      type: "assistant",
+      uuid: "task-create-2",
+      timestamp: "2026-01-01T00:00:02Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "task-create-2",
+            name: "TaskCreate",
+            input: { subject: "Add UI tests" },
+          },
+        ],
+      },
+    });
+    store.applyTranscriptLine("tab-1", {
+      type: "assistant",
+      uuid: "task-update-1",
+      timestamp: "2026-01-01T00:00:03Z",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "task-update-1",
+            name: "TaskUpdate",
+            input: { taskId: "1", status: "completed" },
+          },
+        ],
+      },
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const renderedMessages = screen.getAllByTestId("claude-message");
+    expect(renderedMessages).toHaveLength(1);
+    expect(renderedMessages[0]!.dataset.toolNames).toBe("TaskList");
+    expect(JSON.parse(renderedMessages[0]!.dataset.toolArgs ?? "[]")).toEqual([
+      {
+        todos: [
+          { content: "Inspect renderer", status: "completed" },
+          { content: "Add UI tests", status: "pending" },
+        ],
+      },
+    ]);
   });
 
   test("parses Claude Code in-TUI selection prompts from a tmux pane snapshot", () => {

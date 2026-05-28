@@ -191,14 +191,15 @@ class TaskSnapshotAccumulator {
   private replaceWith(parsedItems: ParsedTaskItem[]) {
     this.items.clear();
     this.order = [];
-    for (const parsed of parsedItems) {
-      this.upsert(parsed, false);
+    for (const [index, parsed] of parsedItems.entries()) {
+      this.upsert(parsed, false, String(index + 1));
     }
   }
 
-  private upsert(parsed: ParsedTaskItem, isCreate: boolean) {
-    const id = parsed.id ?? (isCreate ? String(this.nextImplicitId++) : undefined);
+  private upsert(parsed: ParsedTaskItem, isCreate: boolean, fallbackId?: string) {
+    const id = parsed.id ?? (isCreate ? String(this.nextImplicitId++) : fallbackId);
     if (!id) return;
+    this.reserveImplicitId(id);
 
     const existing = this.items.get(id);
     const content =
@@ -211,6 +212,13 @@ class TaskSnapshotAccumulator {
       this.order.push(id);
     }
     this.items.set(id, { id, content, status });
+  }
+
+  private reserveImplicitId(id: string) {
+    const numericId = Number(id);
+    if (Number.isInteger(numericId) && numericId >= this.nextImplicitId) {
+      this.nextImplicitId = numericId + 1;
+    }
   }
 
   private snapshot(): TaskSnapshotItem[] {

@@ -17,6 +17,7 @@ function taskTool(
   toolUseId: string,
   toolArgs: Record<string, unknown>,
   toolState: ClaudeMessagePart["toolState"] = "success",
+  toolOutput?: string,
 ): ClaudeMessagePart {
   return {
     type: "tool-invocation",
@@ -24,6 +25,7 @@ function taskTool(
     toolUseId,
     toolArgs,
     toolState,
+    toolOutput,
   };
 }
 
@@ -86,6 +88,118 @@ describe("collapseTaskToolUpdates", () => {
     expect(collapsed[0]!.parts[0]?.toolName).toBe("TaskList");
     expect(collapsed[0]!.parts[0]?.toolArgs).toEqual({
       todos: [{ content: "Inspect renderer", status: "completed" }],
+    });
+  });
+
+  test("replaces prior state from TaskList items without explicit ids", () => {
+    const collapsed = collapseTaskToolUpdates([
+      assistantMessage("create", [
+        taskTool("TaskCreate", "create-1", { subject: "Stale task" }),
+      ]),
+      assistantMessage("list", [
+        taskTool("TaskList", "list-1", {
+          todos: [
+            { content: "Inspect renderer", status: "completed" },
+            { content: "Add UI tests", status: "in_progress" },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]!.id).toBe("list");
+    expect(collapsed[0]!.parts[0]?.toolArgs).toEqual({
+      todos: [
+        { content: "Inspect renderer", status: "completed" },
+        { content: "Add UI tests", status: "in_progress" },
+      ],
+    });
+  });
+
+  test("continues implicit ids after a replacement TaskList snapshot", () => {
+    const collapsed = collapseTaskToolUpdates([
+      assistantMessage("list", [
+        taskTool("TaskList", "list-1", {
+          todos: [
+            { content: "Inspect renderer", status: "completed" },
+            { content: "Add UI tests", status: "pending" },
+          ],
+        }),
+      ]),
+      assistantMessage("create", [
+        taskTool("TaskCreate", "create-1", { subject: "Run typecheck" }),
+      ]),
+      assistantMessage("update", [
+        taskTool("TaskUpdate", "update-1", {
+          taskId: "3",
+          status: "in_progress",
+        }),
+      ]),
+    ]);
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]!.parts[0]?.toolArgs).toEqual({
+      todos: [
+        { content: "Inspect renderer", status: "completed" },
+        { content: "Add UI tests", status: "pending" },
+        { content: "Run typecheck", status: "in_progress" },
+      ],
+    });
+  });
+
+  test("falls back to JSON output when task args do not contain task details", () => {
+    const collapsed = collapseTaskToolUpdates([
+      assistantMessage("output-only", [
+        taskTool(
+          "TaskCreate",
+          "create-1",
+          {},
+          "success",
+          JSON.stringify({
+            tasks: [
+              { id: "7", title: "Use output payload", status: "done" },
+              { taskId: "8", content: "Keep pending work", status: "open" },
+            ],
+          }),
+        ),
+      ]),
+    ]);
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]!.parts[0]?.toolArgs).toEqual({
+      todos: [
+        { content: "Use output payload", status: "completed" },
+        { content: "Keep pending work", status: "pending" },
+      ],
+    });
+  });
+
+  test("keeps malformed task output visible instead of throwing", () => {
+    const messages = [
+      assistantMessage("bad-output", [
+        taskTool("TaskCreate", "create-1", {}, "success", "{not json"),
+      ]),
+    ];
+
+    const collapsed = collapseTaskToolUpdates(messages);
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]!.parts[0]?.toolName).toBe("TaskCreate");
+  });
+
+  test("renders unknown TaskUpdate ids as placeholder task rows", () => {
+    const collapsed = collapseTaskToolUpdates([
+      assistantMessage("unknown-update", [
+        taskTool("TaskUpdate", "update-1", {
+          taskId: "42",
+          status: "completed",
+        }),
+      ]),
+    ]);
+
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]!.parts[0]?.toolArgs).toEqual({
+      todos: [{ content: "Task #42", status: "completed" }],
     });
   });
 
