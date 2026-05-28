@@ -12,6 +12,7 @@ import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
 import * as realInteractiveTerminal from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
 import type { FileCandidate } from "@/types";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 
 const realTmuxClientSnapshot = { ...realTmuxClient };
 const realTauriSnapshot = { ...realTauri };
@@ -1776,6 +1777,52 @@ describe("ClaudeTmuxChatTab", () => {
 
     expect(await screen.findByText("Error: tmux unavailable")).toBeTruthy();
     await waitFor(() => expect(textarea.disabled).toBe(false));
+  });
+
+  test("review tabs submit the shared Address all follow-up prompt", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-review-complete",
+      role: "assistant" as const,
+      content: "Review complete",
+      parts: [{ type: "text" as const, content: "Review complete" }],
+      timestamp: "2026-03-07T12:00:00.000Z",
+    };
+    const store = useClaudeTmuxStore.getState();
+    const current = store.getTab("tab-1");
+    useClaudeTmuxStore.setState({
+      tabs: new Map([
+        [
+          "tab-1",
+          {
+            ...current,
+            environmentId: "env-1",
+            sessionId: "session-1",
+            running: true,
+            busy: false,
+            messages: [message],
+          },
+        ],
+      ]),
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+        isReviewTab
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Address all" }));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        ADDRESS_ALL_REVIEW_PROMPT,
+        "env-1",
+      );
+    });
   });
 
   test("renders compacted assistant messages and passes compacted previousMessage", async () => {

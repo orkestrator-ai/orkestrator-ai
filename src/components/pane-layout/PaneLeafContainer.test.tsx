@@ -3,9 +3,15 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
+import * as realClaudeChatTab from "@/components/claude/ClaudeChatTab";
 import * as realClaudeTmuxChatTab from "@/components/claude/ClaudeTmuxChatTab";
+import * as realCodexChatTab from "@/components/codex/CodexChatTab";
+import * as realOpenCodeChatTab from "@/components/opencode/OpenCodeChatTab";
 
+const realClaudeChatTabSnapshot = { ...realClaudeChatTab };
 const realClaudeTmuxChatTabSnapshot = { ...realClaudeTmuxChatTab };
+const realCodexChatTabSnapshot = { ...realCodexChatTab };
+const realOpenCodeChatTabSnapshot = { ...realOpenCodeChatTab };
 
 mock.module("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => children,
@@ -43,9 +49,59 @@ mock.module("./DropZoneOverlay", () => ({
 // Stub the chat tabs so PaneLeafContainer rendering doesn't pull in real
 // stores or Tauri invoke. These are *for this file only* — see CLAUDE.md
 // guidance on local mock.module usage.
+mock.module("@/components/claude/ClaudeChatTab", () => ({
+  ClaudeChatTab: ({
+    tabId,
+    isReviewTab,
+  }: {
+    tabId: string;
+    isReviewTab?: boolean;
+  }) => (
+    <div data-review-tab={String(Boolean(isReviewTab))} data-testid="claude-tab">
+      claude:{tabId}
+    </div>
+  ),
+}));
+
 mock.module("@/components/claude/ClaudeTmuxChatTab", () => ({
-  ClaudeTmuxChatTab: ({ tabId }: { tabId: string }) => (
-    <div data-testid="claude-tmux-tab">tmux:{tabId}</div>
+  ClaudeTmuxChatTab: ({
+    tabId,
+    isReviewTab,
+  }: {
+    tabId: string;
+    isReviewTab?: boolean;
+  }) => (
+    <div data-review-tab={String(Boolean(isReviewTab))} data-testid="claude-tmux-tab">
+      tmux:{tabId}
+    </div>
+  ),
+}));
+
+mock.module("@/components/codex/CodexChatTab", () => ({
+  CodexChatTab: ({
+    tabId,
+    isReviewTab,
+  }: {
+    tabId: string;
+    isReviewTab?: boolean;
+  }) => (
+    <div data-review-tab={String(Boolean(isReviewTab))} data-testid="codex-tab">
+      codex:{tabId}
+    </div>
+  ),
+}));
+
+mock.module("@/components/opencode/OpenCodeChatTab", () => ({
+  OpenCodeChatTab: ({
+    tabId,
+    isReviewTab,
+  }: {
+    tabId: string;
+    isReviewTab?: boolean;
+  }) => (
+    <div data-review-tab={String(Boolean(isReviewTab))} data-testid="opencode-tab">
+      opencode:{tabId}
+    </div>
   ),
 }));
 
@@ -68,8 +124,20 @@ const { PaneLeafContainer } = await import("./PaneLeafContainer");
 describe("PaneLeafContainer", () => {
   afterAll(() => {
     mock.module(
+      "@/components/claude/ClaudeChatTab",
+      () => realClaudeChatTabSnapshot,
+    );
+    mock.module(
       "@/components/claude/ClaudeTmuxChatTab",
       () => realClaudeTmuxChatTabSnapshot,
+    );
+    mock.module(
+      "@/components/codex/CodexChatTab",
+      () => realCodexChatTabSnapshot,
+    );
+    mock.module(
+      "@/components/opencode/OpenCodeChatTab",
+      () => realOpenCodeChatTabSnapshot,
     );
   });
 
@@ -214,5 +282,53 @@ describe("PaneLeafContainer", () => {
 
     expect(screen.getByTestId("claude-tmux-tab")).toBeDefined();
     expect(screen.getByText("tmux:tab-tmux")).toBeDefined();
+  });
+
+  test("forwards review-tab state to native chat tabs", () => {
+    const reviewPane = {
+      kind: "leaf" as const,
+      id: "pane-review",
+      tabs: [
+        {
+          id: "tab-claude",
+          type: "claude-native" as const,
+          isReviewTab: true,
+          claudeNativeData: { environmentId: "env-visible" },
+        },
+        {
+          id: "tab-tmux",
+          type: "claude-tmux" as const,
+          isReviewTab: true,
+          claudeTmuxData: { environmentId: "env-visible" },
+        },
+        {
+          id: "tab-codex",
+          type: "codex-native" as const,
+          isReviewTab: true,
+          codexNativeData: { environmentId: "env-visible" },
+        },
+        {
+          id: "tab-opencode",
+          type: "opencode-native" as const,
+          isReviewTab: true,
+          openCodeNativeData: { environmentId: "env-visible" },
+        },
+      ],
+      activeTabId: "tab-claude",
+    };
+
+    render(
+      <PaneLeafContainer
+        pane={reviewPane}
+        containerId="container-visible"
+        environmentId="env-visible"
+        isActive
+      />,
+    );
+
+    expect(screen.getByTestId("claude-tab").dataset.reviewTab).toBe("true");
+    expect(screen.getByTestId("claude-tmux-tab").dataset.reviewTab).toBe("true");
+    expect(screen.getByTestId("codex-tab").dataset.reviewTab).toBe("true");
+    expect(screen.getByTestId("opencode-tab").dataset.reviewTab).toBe("true");
   });
 });

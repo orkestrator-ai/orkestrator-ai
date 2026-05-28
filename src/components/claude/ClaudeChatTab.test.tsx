@@ -4,6 +4,7 @@ import { createClaudeSessionKey, useClaudeStore } from "@/stores/claudeStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 
 import * as realHooks from "@/hooks";
 import * as realVirtualizedMessageList from "@/components/chat/VirtualizedMessageList";
@@ -262,6 +263,44 @@ describe("ClaudeChatTab", () => {
       expect(mockCheckHealth).toHaveBeenCalledWith(MOCK_CLIENT);
     });
     expect(mockCreateSession).not.toHaveBeenCalled();
+  });
+
+  test("review tabs show Address all after messages exist and send the shared prompt", async () => {
+    const message: ClaudeMessageType = {
+      id: "msg-review-complete",
+      role: "assistant" as const,
+      content: "Review complete",
+      parts: [{ type: "text" as const, content: "Review complete" }],
+      timestamp: "2026-03-07T12:00:00.000Z",
+    };
+
+    act(() => {
+      useClaudeStore.getState().setSession(SESSION_KEY, {
+        sessionId: "session-1",
+        isLoading: false,
+        messages: [message],
+      });
+    });
+
+    render(
+      <ClaudeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+        isReviewTab
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Address all" }));
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        "session-1",
+        ADDRESS_ALL_REVIEW_PROMPT,
+        expect.objectContaining({ attachments: undefined }),
+      );
+    });
   });
 
   test("passes the container id to rendered message attachment previews", async () => {

@@ -20,6 +20,13 @@ let terminalBehavior:
       onSetupComplete?: (payload: { persistSetupComplete: boolean }) => void;
     }) => void)
   | undefined;
+let lastPersistentTerminalProps:
+  | {
+      isReviewTab?: boolean;
+      isSetupTab?: boolean;
+      initialCommands?: string[];
+    }
+  | undefined;
 
 mock.module("@/lib/setup-commands", () => ({
   shouldAutoResolveSetupCommands: () => false,
@@ -30,7 +37,11 @@ mock.module("./PersistentTerminal", () => ({
   PersistentTerminal: (props: {
     onReady?: (payload: { persistSetupComplete: boolean; workspaceReady?: boolean }) => void;
     onSetupComplete?: (payload: { persistSetupComplete: boolean }) => void;
+    isReviewTab?: boolean;
+    isSetupTab?: boolean;
+    initialCommands?: string[];
   }) => {
+    lastPersistentTerminalProps = props;
     useEffect(() => {
       terminalBehavior?.(props);
     }, [props]);
@@ -91,6 +102,7 @@ afterAll(() => {
 describe("TerminalPortalHost", () => {
   beforeEach(() => {
     terminalBehavior = undefined;
+    lastPersistentTerminalProps = undefined;
     markSetupScriptsCompleteMock.mockClear();
     createTerminalMock.mockClear();
     disposeTerminalMock.mockClear();
@@ -252,5 +264,35 @@ describe("TerminalPortalHost", () => {
     });
 
     expect(markSetupScriptsCompleteMock).toHaveBeenCalledWith("env-1");
+  });
+
+  test("forwards review-tab state to persistent terminals", async () => {
+    usePaneLayoutStore.setState((state) => {
+      const environments = new Map(state.environments);
+      const current = environments.get("env-1");
+      if (!current || current.root.kind !== "leaf") {
+        throw new Error("expected env-1 leaf");
+      }
+      environments.set("env-1", {
+        ...current,
+        root: {
+          ...current.root,
+          tabs: [
+            {
+              id: "default",
+              type: "plain",
+              isReviewTab: true,
+            },
+          ],
+        },
+      });
+      return { environments };
+    });
+
+    render(<TerminalPortalHost environmentId="env-1" containerId="container-1" />);
+
+    await waitFor(() => {
+      expect(lastPersistentTerminalProps?.isReviewTab).toBe(true);
+    });
   });
 });

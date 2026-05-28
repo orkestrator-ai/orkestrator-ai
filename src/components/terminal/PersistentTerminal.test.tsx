@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import * as realSessionStore from "@/stores/sessionStore";
 
 // Mock modules that require a real Tauri runtime or have side effects.
@@ -125,7 +125,18 @@ mock.module("@/components/ui/context-menu", () => ({
 }));
 
 mock.module("@/components/terminal/ComposeBar", () => ({
-  ComposeBar: () => null,
+  ComposeBar: ({
+    showAddressAll,
+    onAddressAll,
+  }: {
+    showAddressAll?: boolean;
+    onAddressAll?: () => void;
+  }) =>
+    showAddressAll ? (
+      <button type="button" onClick={onAddressAll}>
+        Address all
+      </button>
+    ) : null,
 }));
 
 // --- Real stores: import directly and control via setState in beforeEach ---
@@ -133,6 +144,7 @@ import { useTerminalSessionStore } from "@/stores/terminalSessionStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
+import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 
 const { PersistentTerminal } = await import("./PersistentTerminal");
 
@@ -1054,6 +1066,39 @@ describe("PersistentTerminal", () => {
       const sessions = useTerminalSessionStore.getState().sessions;
       const session = sessions.get("container-1:tab-1");
       expect(session?.hasLaunchedCommand).toBe(true);
+    });
+  });
+
+  it("shows Address all for launched review tabs and writes the shared prompt", async () => {
+    useTerminalSessionStore.setState({
+      sessions: new Map([
+        ["container-1:tab-1", { sessionId: "session-1", hasLaunchedCommand: true }],
+      ]),
+      composeDraftText: new Map(),
+      composeDraftImages: new Map(),
+    });
+
+    render(
+      <PersistentTerminal
+        terminalData={createTerminalData()}
+        tabId="tab-1"
+        tabType="claude"
+        containerId="container-1"
+        environmentId="env-1"
+        isEnvironmentVisible={true}
+        isActive={true}
+        isFocused={true}
+        isFirstTab={false}
+        isReviewTab
+        paneId="pane-1"
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Address all" }));
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledWith(ADDRESS_ALL_REVIEW_PROMPT);
+      expect(writeMock).toHaveBeenCalledWith("\r");
     });
   });
 
