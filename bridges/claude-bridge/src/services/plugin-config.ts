@@ -136,6 +136,22 @@ export async function loadCliInstalledPlugins(): Promise<PluginConfig[]> {
     return scanCliPluginsDirectory(pluginsDir);
   }
 
+  return remapInstalledPlugins(pluginsDir, installedPlugins);
+}
+
+/**
+ * Remap the install paths recorded in installed_plugins.json onto the local
+ * plugins directory.
+ *
+ * The recorded paths are host-absolute (e.g. /Users/alice/.claude/plugins/...),
+ * which won't exist inside a container. We detect the common `.claude/plugins/`
+ * segment and rebase the remainder onto `pluginsDir`. Entries whose rebased
+ * path escapes `pluginsDir` (path traversal) are dropped.
+ */
+export function remapInstalledPlugins(
+  pluginsDir: string,
+  installedPlugins: InstalledPluginsFile
+): PluginConfig[] {
   const plugins: PluginConfig[] = [];
   const CLAUDE_PLUGINS_MARKER = "/.claude/plugins/";
   const pluginsRoot = resolve(pluginsDir);

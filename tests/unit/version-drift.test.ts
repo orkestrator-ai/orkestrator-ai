@@ -80,6 +80,24 @@ describe("version drift between SDK pins and bundled/container CLIs", () => {
     expect(script).toContain('CODEX_FILENAME="codex-${CODEX_TARGET}"');
   });
 
+  test("Codex: Linux download target uses the musl triple, not gnu", () => {
+    // The Codex Rust releases only publish Linux binaries under the musl
+    // triple. Using the gnu triple makes the download 404 (curl -fsSL fails).
+    const script = read("scripts/download-codex.sh");
+
+    expect(script).toContain('CODEX_TARGET="${CODEX_ARCH}-unknown-linux-musl"');
+    expect(script).not.toContain("unknown-linux-gnu");
+  });
+
+  test("Codex: download script maps darwin and both CPU arches", () => {
+    const script = read("scripts/download-codex.sh");
+
+    // Darwin target and the arch normalisation the target string depends on.
+    expect(script).toContain('CODEX_TARGET="${CODEX_ARCH}-apple-darwin"');
+    expect(script).toContain('CODEX_ARCH="x86_64"');
+    expect(script).toContain('CODEX_ARCH="aarch64"');
+  });
+
   test("OpenCode: SDK pin, bundled binary, and Docker CLI all match", () => {
     const sdkPin = expectExactVersion("package.json", "@opencode-ai/sdk");
     const downloadScriptPin = getShellVar(

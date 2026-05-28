@@ -139,7 +139,7 @@ function isStdioConfig(
 /**
  * Convert a single MCP server config to SDK format
  */
-function configToSdkFormat(
+export function configToSdkFormat(
   config: McpServerConfig
 ): SdkMcpServerConfig | null {
   if (isHttpConfig(config)) {
