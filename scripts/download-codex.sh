@@ -8,7 +8,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BINARIES_DIR="$PROJECT_ROOT/binaries"
 
 # Codex CLI version to bundle — should match @openai/codex-sdk version in bridges/codex-bridge/package.json
-CODEX_VERSION="0.133.0"
+CODEX_VERSION="0.135.0"
 
 # Detect architecture
 ARCH=$(uname -m)
@@ -32,7 +32,8 @@ case "$OS" in
         CODEX_TARGET="${CODEX_ARCH}-apple-darwin"
         ;;
     Linux)
-        CODEX_TARGET="${CODEX_ARCH}-unknown-linux-gnu"
+        # Codex releases only publish Linux binaries under the musl triple.
+        CODEX_TARGET="${CODEX_ARCH}-unknown-linux-musl"
         ;;
     *)
         echo "Unsupported platform: $OS"
