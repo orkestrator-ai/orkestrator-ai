@@ -75,6 +75,15 @@ export function ClaudeTmuxInteractiveTerminal({
     });
   }, [containerId, worktreePath, writeToTerminal, focusTerminal]);
 
+  // Keep the latest paste handler in a ref so the terminal/tmux session
+  // lifecycle does not depend on the handler's identity. Without this, a
+  // change to containerId/worktreePath would tear down and recreate the
+  // session just to refresh the key-handler closure.
+  const handlePasteRef = useRef(handlePaste);
+  useEffect(() => {
+    handlePasteRef.current = handlePaste;
+  }, [handlePaste]);
+
   const handleImageSaved = useCallback(
     async (filePath: string) => {
       const terminalPath = containerId ? filePath : escapePathForTerminalInput(filePath);
@@ -168,7 +177,7 @@ export function ClaudeTmuxInteractiveTerminal({
       const isPasteShortcut = (event.metaKey || event.ctrlKey) && key === "v";
       if (isPasteShortcut && !event.altKey) {
         event.preventDefault();
-        void handlePaste();
+        void handlePasteRef.current();
         return false;
       }
 
@@ -262,7 +271,6 @@ export function ClaudeTmuxInteractiveTerminal({
   }, [
     tabId,
     environmentId,
-    handlePaste,
     terminalAppearance.fontFamily,
     terminalAppearance.fontSize,
     terminalBackgroundColor,
