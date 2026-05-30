@@ -4,13 +4,16 @@ import * as realXterm from "@xterm/xterm";
 import * as realFitAddon from "@xterm/addon-fit";
 import * as realTauriEvent from "@tauri-apps/api/event";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
+import * as realTerminalPaste from "@/lib/terminal-paste";
 
 const realXtermSnapshot = { ...realXterm };
 const realFitAddonSnapshot = { ...realFitAddon };
 const realTauriEventSnapshot = { ...realTauriEvent };
 const realTmuxClientSnapshot = { ...realTmuxClient };
+const realTerminalPasteSnapshot = { ...realTerminalPaste };
 
 type OutputHandler = (event: { payload: number[] }) => void;
+type KeyHandler = (event: KeyboardEvent) => boolean;
 
 const terminalInstances: MockTerminal[] = [];
 const fitInstances: MockFitAddon[] = [];
@@ -24,6 +27,7 @@ class MockTerminal {
   focused = false;
   disposed = false;
   dataHandlers: Array<(data: string) => void> = [];
+  keyHandler: KeyHandler | null = null;
 
   constructor() {
     terminalInstances.push(this);
@@ -42,8 +46,16 @@ class MockTerminal {
     };
   }
 
+  attachCustomKeyEventHandler(handler: KeyHandler) {
+    this.keyHandler = handler;
+  }
+
   emitData(data: string) {
     this.dataHandlers.forEach((handler) => handler(data));
+  }
+
+  emitKey(event: Partial<KeyboardEvent>) {
+    return this.keyHandler?.(event as KeyboardEvent);
   }
 
   write(data: Uint8Array) {
@@ -77,6 +89,7 @@ const startInteractiveTerminalMock = mock(async () => {});
 const writeInteractiveTerminalMock = mock(async () => {});
 const resizeInteractiveTerminalMock = mock(async () => {});
 const detachInteractiveTerminalMock = mock(async () => {});
+const handleTerminalPasteMock = mock(async () => {});
 
 mock.module("@xterm/xterm", () => ({
   Terminal: MockTerminal,
@@ -100,6 +113,11 @@ mock.module("@/lib/claude-tmux-client", () => ({
   detachInteractiveTerminal: detachInteractiveTerminalMock,
 }));
 
+mock.module("@/lib/terminal-paste", () => ({
+  ...realTerminalPasteSnapshot,
+  handleTerminalPaste: handleTerminalPasteMock,
+}));
+
 const { ClaudeTmuxInteractiveTerminal } = await import(
   "@/components/claude/ClaudeTmuxInteractiveTerminal"
 );
@@ -114,6 +132,7 @@ describe("ClaudeTmuxInteractiveTerminal", () => {
     mock.module("@xterm/addon-fit", () => realFitAddonSnapshot);
     mock.module("@tauri-apps/api/event", () => realTauriEventSnapshot);
     mock.module("@/lib/claude-tmux-client", () => realTmuxClientSnapshot);
+    mock.module("@/lib/terminal-paste", () => realTerminalPasteSnapshot);
     globalThis.ResizeObserver = originalResizeObserver;
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
   });
@@ -133,6 +152,8 @@ describe("ClaudeTmuxInteractiveTerminal", () => {
     writeInteractiveTerminalMock.mockClear();
     resizeInteractiveTerminalMock.mockClear();
     detachInteractiveTerminalMock.mockClear();
+    handleTerminalPasteMock.mockClear();
+    handleTerminalPasteMock.mockResolvedValue(undefined);
 
     globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
@@ -185,6 +206,51 @@ describe("ClaudeTmuxInteractiveTerminal", () => {
     expect(unlistenMock).toHaveBeenCalledTimes(1);
     expect(detachInteractiveTerminalMock).toHaveBeenCalledWith("pty-1");
     expect(terminalInstances[0]!.disposed).toBe(true);
+  });
+
+  test("handles keyboard paste through the shared terminal paste helper", async () => {
+    handleTerminalPasteMock.mockImplementationOnce(async (options) => {
+      await options.writeToTerminal("/workspace/.orkestrator/clipboard/image.png ");
+      options.focusTerminal();
+    });
+    const preventDefault = mock(() => {});
+
+    render(
+      <ClaudeTmuxInteractiveTerminal
+        tabId="tab-1"
+        environmentId={environmentId}
+        containerId="container-1"
+        isActive
+      />,
+    );
+
+    await waitFor(() => expect(startInteractiveTerminalMock).toHaveBeenCalledWith("pty-1"));
+
+    const handled = terminalInstances[0]!.emitKey({
+      type: "keydown",
+      key: "v",
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      preventDefault,
+    });
+
+    expect(handled).toBe(false);
+    expect(preventDefault).toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(handleTerminalPasteMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          containerId: "container-1",
+          componentName: "ClaudeTmuxInteractiveTerminal",
+        }),
+      );
+      expect(writeInteractiveTerminalMock).toHaveBeenCalledWith(
+        "pty-1",
+        "/workspace/.orkestrator/clipboard/image.png ",
+      );
+    });
+    expect(terminalInstances[0]!.focused).toBe(true);
   });
 
   test("cleans up the created session and listener when start fails", async () => {
