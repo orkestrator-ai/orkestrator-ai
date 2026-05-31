@@ -20,6 +20,7 @@ import {
   Sparkles,
   Square,
   Terminal as TerminalIcon,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScrollLock } from "@/hooks";
@@ -45,6 +46,10 @@ import { FileMentionMenu } from "@/components/chat/FileMentionMenu";
 import { useFileMentions } from "@/hooks/useFileMentions";
 import { useFileSearch } from "@/hooks/useFileSearch";
 import {
+  useNativeComposeBarPaste,
+  type PastedImageAttachment,
+} from "@/hooks/useNativeComposeBarPaste";
+import {
   answerPreToolUse,
   capturePane,
   getPendingHooks,
@@ -60,6 +65,7 @@ import {
   type TmuxPendingHook,
   type TmuxEvent,
 } from "@/lib/claude-tmux-client";
+import { escapePathForTerminalInput } from "@/lib/terminal-paste";
 import {
   payloadToApproval,
   payloadToElicitation,
@@ -82,7 +88,7 @@ import { useConfigStore } from "@/stores/configStore";
 import { renameEnvironmentFromPrompt, updateGlobalConfig } from "@/lib/tauri";
 import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import type { ClaudeTmuxData } from "@/types/paneLayout";
-import type { FileCandidate } from "@/types";
+import type { FileCandidate, FileMention } from "@/types";
 
 interface Props {
   tabId: string;
@@ -584,11 +590,17 @@ export function ClaudeTmuxChatTab({
     };
   }, [showTui, running, tabId, environmentId]);
 
-  const submitPrompt = async (text: string, clearDraftOnSuccess: boolean) => {
+  const submitPrompt = async (
+    text: string,
+    attachments: PastedImageAttachment[],
+    clearDraftOnSuccess: boolean,
+  ): Promise<boolean> => {
     // `isThinking` covers the post-HTTP window where Claude is still
     // processing but `sending` has already reset; without it a user could
     // submit a second message before the first turn finishes.
-    if (!text || sending || isThinking || modelSwitching) return;
+    if ((!text && attachments.length === 0) || sending || isThinking || modelSwitching) {
+      return false;
+    }
     setSending(true);
     setError(null);
     // Optimistically flip the "Claude is thinking…" indicator on submit so
@@ -597,7 +609,7 @@ export function ClaudeTmuxChatTab({
     // above) clears it when the turn ends.
     setTabBusy(storeKey, true);
     try {
-      if (!resumedSession && messages.length === 0) {
+      if (text && !resumedSession && messages.length === 0) {
         const environment = useEnvironmentStore.getState().getEnvironmentById(environmentId);
         if (environment && /^\d{8}-\d{6}$/.test(environment.name)) {
           try {
@@ -607,25 +619,38 @@ export function ClaudeTmuxChatTab({
           }
         }
       }
-      await submitToTmux(tabId, text, environmentId);
+      for (const attachment of attachments) {
+        const attachmentPath = containerId
+          ? attachment.path
+          : escapePathForTerminalInput(attachment.path);
+        await submitToTmux(tabId, attachmentPath, environmentId);
+      }
+      if (text) {
+        await submitToTmux(tabId, text, environmentId);
+      }
       if (clearDraftOnSuccess) {
         setDraft("");
       }
+      return true;
     } catch (e) {
       setError(String(e));
       // The submit failed before claude saw it — there's no Stop coming.
       setTabBusy(storeKey, false);
+      return false;
     } finally {
       setSending(false);
     }
   };
 
-  const handleSubmit = async () => {
-    await submitPrompt(draft.trim(), true);
+  const handleSubmit = async (
+    text: string,
+    attachments: PastedImageAttachment[] = [],
+  ) => {
+    return submitPrompt(text, attachments, true);
   };
 
   const handleAddressAll = async () => {
-    await submitPrompt(ADDRESS_ALL_REVIEW_PROMPT, false);
+    await submitPrompt(ADDRESS_ALL_REVIEW_PROMPT, [], false);
   };
 
   const handleInterrupt = async () => {
@@ -1743,6 +1768,69 @@ function modelCommandArg(id: string) {
   return getTmuxModel(id).id;
 }
 
+function tmuxFileMentionPath(
+  relativePath: string,
+  containerId?: string,
+  worktreePath?: string,
+): string | null {
+  if (relativePath.startsWith("/")) {
+    return escapePathForTerminalInput(relativePath);
+  }
+
+  const normalizedPath = relativePath.replace(/^\/+/, "");
+  if (!normalizedPath) return null;
+
+  const basePath = containerId
+    ? "/workspace"
+    : worktreePath?.replace(/\/+$/, "");
+  if (!basePath) return normalizedPath;
+
+  return escapePathForTerminalInput(`${basePath}/${normalizedPath}`);
+}
+
+function serializeTmuxFileMentions(
+  text: string,
+  mentions: FileMention[],
+  containerId?: string,
+  worktreePath?: string,
+): string {
+  if (!text.includes("@")) return text;
+
+  let result = text;
+  const selectedMentions = new Set(mentions.map((mention) => mention.relativePath));
+  const sortedMentions = [...mentions].sort(
+    (a, b) => b.relativePath.length - a.relativePath.length,
+  );
+
+  for (const mention of sortedMentions) {
+    const mentionPath = tmuxFileMentionPath(
+      mention.relativePath,
+      containerId,
+      worktreePath,
+    );
+    if (!mentionPath) continue;
+    result = result.replace(
+      new RegExp(`@${escapeRegExp(mention.relativePath)}(?=\\s|$)`, "g"),
+      mentionPath,
+    );
+  }
+
+  return result.replace(/(^|\s)@([^\s@]+)/g, (match, prefix: string, rawPath: string) => {
+    if (selectedMentions.has(rawPath)) return match;
+    if (!looksLikeFileMentionPath(rawPath)) return match;
+    const mentionPath = tmuxFileMentionPath(rawPath, containerId, worktreePath);
+    return mentionPath ? `${prefix}${mentionPath}` : match;
+  });
+}
+
+function looksLikeFileMentionPath(path: string): boolean {
+  return path.includes("/") || path.includes(".");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // ─── Compose bar ─────────────────────────────────────────────────────────────
 
 interface TmuxComposeBarProps {
@@ -1754,7 +1842,7 @@ interface TmuxComposeBarProps {
   busy: boolean;
   submitting: boolean;
   autoFocus?: boolean;
-  onSubmit: () => void;
+  onSubmit: (text: string, attachments: PastedImageAttachment[]) => Promise<boolean> | boolean | void;
   showAddressAll?: boolean;
   onAddressAll?: () => void;
   onInterrupt: () => void;
@@ -1791,8 +1879,11 @@ function TmuxComposeBar({
   defaultModelDisabled,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
   const prevFileMentionMenuOpen = useRef(false);
   const pendingCursorPositionRef = useRef<number | null>(null);
+  const [attachments, setAttachments] = useState<PastedImageAttachment[]>([]);
+  const [fileMentions, setFileMentions] = useState<FileMention[]>([]);
   const modelObj = useMemo(
     () => getTmuxModel(selectedModel),
     [selectedModel],
@@ -1905,12 +1996,82 @@ function TmuxComposeBar({
 
     pendingCursorPositionRef.current = atStart + insertedText.length;
     setValue(nextValue);
+    setFileMentions((current) => {
+      if (current.some((mention) => mention.relativePath === file.relativePath)) {
+        return current;
+      }
+      return [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          filename: file.filename,
+          relativePath: file.relativePath,
+        },
+      ];
+    });
     closeFileMentionMenu();
+  };
+
+  const addAttachment = useCallback((attachment: PastedImageAttachment) => {
+    setAttachments((current) => [...current, attachment]);
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }, []);
+
+  useNativeComposeBarPaste({
+    inputContainerRef,
+    containerId: containerId ?? null,
+    worktreePath,
+    onAttach: addAttachment,
+    logLabel: "ClaudeTmuxComposeBar",
+  });
+
+  const handleSubmit = async () => {
+    if (busy || submitting || disabled) return;
+    const serializedText = serializeTmuxFileMentions(
+      value.trim(),
+      fileMentions,
+      containerId,
+      worktreePath,
+    );
+    const result = await onSubmit(serializedText, attachments);
+    if (result !== false) {
+      setAttachments([]);
+      setFileMentions([]);
+    }
   };
 
   return (
     <div className="shrink-0 border-t border-border bg-background p-3">
-      <div className="relative">
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {attachments.map((attachment) => (
+            <div
+              key={attachment.id}
+              className="relative group flex items-center gap-1.5 px-2 py-1 rounded bg-muted/50 border border-border text-xs"
+            >
+              <img
+                src={attachment.previewUrl}
+                alt={attachment.name}
+                className="w-6 h-6 object-cover rounded"
+              />
+              <span className="max-w-[120px] truncate">{attachment.name}</span>
+              <button
+                type="button"
+                onClick={() => removeAttachment(attachment.id)}
+                className="ml-1 p-0.5 rounded-full hover:bg-muted"
+                title="Remove attachment"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="relative" ref={inputContainerRef}>
         {fileMentionMenuOpen && (
           <FileMentionMenu
             files={filteredFiles}
@@ -1934,6 +2095,9 @@ function TmuxComposeBar({
           onChange={(e) => {
             const nextValue = e.target.value;
             setValue(nextValue);
+            setFileMentions((current) =>
+              current.filter((mention) => nextValue.includes(`@${mention.relativePath}`)),
+            );
             updateFileMentionDetection(e.target.selectionStart, nextValue);
           }}
           onClick={(e) => {
@@ -2007,7 +2171,7 @@ function TmuxComposeBar({
               !e.ctrlKey
             ) {
               e.preventDefault();
-              onSubmit();
+              void handleSubmit();
             }
           }}
           placeholder={
@@ -2028,12 +2192,11 @@ function TmuxComposeBar({
       </div>
 
       <div className="flex items-center gap-1 pt-1">
-        {/* Attach (placeholder for parity — no-op for v1) */}
         <button
           type="button"
           disabled
           className="p-1.5 rounded text-muted-foreground/40 cursor-not-allowed"
-          title="Attachments not yet supported in tmux mode"
+          title="Paste an image into the input to attach it"
         >
           <Plus className="w-4 h-4" />
         </button>
@@ -2143,8 +2306,12 @@ function TmuxComposeBar({
         {/* Send / Stop button */}
         <Button
           size="sm"
-          onClick={busy ? onInterrupt : onSubmit}
-          disabled={disabled || submitting || (!busy && !value.trim())}
+          onClick={busy ? onInterrupt : handleSubmit}
+          disabled={
+            disabled ||
+            submitting ||
+            (!busy && !value.trim() && attachments.length === 0)
+          }
           className="h-7 w-7 p-0 rounded-full"
           title={busy ? "Interrupt current response" : "Send (↵)"}
         >

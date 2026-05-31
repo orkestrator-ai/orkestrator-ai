@@ -12,6 +12,7 @@ import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
 import * as realInteractiveTerminal from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
 import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
+import { mockReadImage } from "../../mocks/clipboard";
 import type { Environment, FileCandidate } from "@/types";
 
 const realTmuxClientSnapshot = { ...realTmuxClient };
@@ -21,6 +22,8 @@ const realInteractiveTerminalSnapshot = { ...realInteractiveTerminal };
 const realFileMentionMenuSnapshot = { ...realFileMentionMenu };
 const getFileTreeMock = mock(async () => []);
 const getLocalFileTreeMock = mock(async () => []);
+const writeContainerFileMock = mock(async () => {});
+const writeLocalFileMock = mock(async () => "/tmp/worktrees/env/.orkestrator/clipboard/test.png");
 const renameEnvironmentFromPromptMock = mock(async () => {});
 const updateGlobalConfigMock = mock(async (global: any) => ({
   version: "1.0",
@@ -156,6 +159,8 @@ mock.module("@/components/claude/ClaudeTmuxInteractiveTerminal", () => ({
 mock.module("@/lib/tauri", () => ({
   getFileTree: getFileTreeMock,
   getLocalFileTree: getLocalFileTreeMock,
+  writeContainerFile: writeContainerFileMock,
+  writeLocalFile: writeLocalFileMock,
   renameEnvironmentFromPrompt: renameEnvironmentFromPromptMock,
   updateGlobalConfig: updateGlobalConfigMock,
 }));
@@ -173,6 +178,35 @@ mock.module("@/components/chat/FileMentionMenu", () => ({
 const { ClaudeTmuxChatTab, parseTmuxSelectionPrompt } = await import(
   "@/components/claude/ClaudeTmuxChatTab"
 );
+
+if (typeof globalThis.ImageData === "undefined") {
+  (globalThis as Record<string, unknown>).ImageData = class ImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+
+    constructor(data: Uint8ClampedArray, width: number, height: number) {
+      this.data = data;
+      this.width = width;
+      this.height = height;
+    }
+  };
+}
+
+const originalGetContext = HTMLCanvasElement.prototype.getContext;
+const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+const originalActiveElementDescriptor = Object.getOwnPropertyDescriptor(
+  Document.prototype,
+  "activeElement",
+);
+const putImageDataMock = mock(() => {});
+
+function setActiveElement(element: Element) {
+  Object.defineProperty(document, "activeElement", {
+    configurable: true,
+    get: () => element,
+  });
+}
 
 function seedPane(initialPrompt?: string) {
   usePaneLayoutStore.setState({
@@ -232,6 +266,16 @@ describe("ClaudeTmuxChatTab", () => {
     mock.module("@/components/claude/ClaudeMessage", () => realClaudeMessageSnapshot);
     mock.module("@/components/claude/ClaudeTmuxInteractiveTerminal", () => realInteractiveTerminalSnapshot);
     mock.module("@/components/chat/FileMentionMenu", () => realFileMentionMenuSnapshot);
+    HTMLCanvasElement.prototype.getContext = originalGetContext;
+    HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
+    delete (document as { activeElement?: Element }).activeElement;
+    if (originalActiveElementDescriptor) {
+      Object.defineProperty(
+        Document.prototype,
+        "activeElement",
+        originalActiveElementDescriptor,
+      );
+    }
   });
 
   beforeEach(() => {
@@ -240,6 +284,31 @@ describe("ClaudeTmuxChatTab", () => {
     getFileTreeMock.mockResolvedValue([]);
     getLocalFileTreeMock.mockReset();
     getLocalFileTreeMock.mockResolvedValue([]);
+    delete (document as { activeElement?: Element }).activeElement;
+    if (originalActiveElementDescriptor) {
+      Object.defineProperty(
+        Document.prototype,
+        "activeElement",
+        originalActiveElementDescriptor,
+      );
+    }
+    writeContainerFileMock.mockReset();
+    writeContainerFileMock.mockImplementation(async () => {});
+    writeLocalFileMock.mockReset();
+    writeLocalFileMock.mockImplementation(
+      async () => "/tmp/worktrees/env/.orkestrator/clipboard/test.png",
+    );
+    mockReadImage.mockReset();
+    mockReadImage.mockImplementation(async () => ({
+      rgba: async () => new Uint8Array([255, 0, 0, 255]),
+      size: async () => ({ width: 1, height: 1 }),
+    }));
+    putImageDataMock.mockReset();
+    HTMLCanvasElement.prototype.getContext = (() => ({
+      putImageData: putImageDataMock,
+    })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.toDataURL = (() =>
+      "data:image/png;base64,QUJD") as typeof HTMLCanvasElement.prototype.toDataURL;
     renameEnvironmentFromPromptMock.mockReset();
     renameEnvironmentFromPromptMock.mockImplementation(async () => {});
     updateGlobalConfigMock.mockReset();
@@ -443,6 +512,59 @@ describe("ClaudeTmuxChatTab", () => {
     const terminal = screen.getByTestId("tmux-interactive-terminal");
     expect(terminal.getAttribute("data-worktree-path")).toBe("/tmp/local-repo");
     expect(terminal.getAttribute("data-container-id")).toBe("");
+  });
+
+  test("attaches pasted clipboard images in the tmux compose bar and submits their paths", async () => {
+    getStatusMock.mockImplementation(async () => ({
+      tab_id: "tab-1",
+      environment_id: "env-1",
+      session_id: "session-existing",
+      tmux_session: "orkestrator-env1-tab1",
+      running: true,
+      transcript_path: "/tmp/session-existing.jsonl",
+      resumed: false,
+      busy: false,
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const input = await screen.findByPlaceholderText(
+      "Ask Claude anything… (@ to mention, / for commands)",
+    );
+    setActiveElement(input);
+
+    document.dispatchEvent(
+      new Event("paste", { bubbles: true, cancelable: true }),
+    );
+
+    await waitFor(() => {
+      expect(writeContainerFileMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByAltText(/clipboard-/)).toBeTruthy();
+    });
+
+    fireEvent.change(input, { target: { value: "what is this?" } });
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledTimes(2);
+    });
+    expect(submitMock.mock.calls[0]).toEqual([
+      "tab-1",
+      expect.stringMatching(/^\/workspace\/\.orkestrator\/clipboard\/clipboard-.*\.png$/),
+      "env-1",
+    ]);
+    expect(submitMock.mock.calls[1]).toEqual([
+      "tab-1",
+      "what is this?",
+      "env-1",
+    ]);
+    expect(screen.queryByAltText(/clipboard-/)).toBeNull();
   });
 
   test("shows a scroll down button after the user scrolls up in native tmux transcript mode", async () => {
@@ -1265,6 +1387,41 @@ describe("ClaudeTmuxChatTab", () => {
       expect(textarea.value).toBe("Review @src/components/Button.tsx ");
     });
     expect(screen.queryByText("Button.tsx")).toBeNull();
+  });
+
+  test("serializes tmux @ file references to full environment paths before submit", async () => {
+    useClaudeTmuxStore.getState().setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: {
+        value: "Review @src/components/Button.tsx",
+        selectionStart: "Review @src/components/Button.tsx".length,
+        selectionEnd: "Review @src/components/Button.tsx".length,
+      },
+    });
+
+    submitMock.mockClear();
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "Review /workspace/src/components/Button.tsx",
+        "env-1",
+      );
+    });
   });
 
   test("loads @ file suggestions from a local worktree when no container is present", async () => {
