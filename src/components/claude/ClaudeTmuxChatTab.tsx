@@ -619,15 +619,8 @@ export function ClaudeTmuxChatTab({
           }
         }
       }
-      for (const attachment of attachments) {
-        const attachmentPath = containerId
-          ? attachment.path
-          : escapePathForTerminalInput(attachment.path);
-        await submitToTmux(tabId, attachmentPath, environmentId);
-      }
-      if (text) {
-        await submitToTmux(tabId, text, environmentId);
-      }
+      const prompt = buildTmuxPromptWithAttachments(text, attachments, containerId);
+      await submitToTmux(tabId, prompt, environmentId);
       if (clearDraftOnSuccess) {
         setDraft("");
       }
@@ -1794,10 +1787,9 @@ function serializeTmuxFileMentions(
   containerId?: string,
   worktreePath?: string,
 ): string {
-  if (!text.includes("@")) return text;
+  if (!text.includes("@") || mentions.length === 0) return text;
 
   let result = text;
-  const selectedMentions = new Set(mentions.map((mention) => mention.relativePath));
   const sortedMentions = [...mentions].sort(
     (a, b) => b.relativePath.length - a.relativePath.length,
   );
@@ -1815,16 +1807,28 @@ function serializeTmuxFileMentions(
     );
   }
 
-  return result.replace(/(^|\s)@([^\s@]+)/g, (match, prefix: string, rawPath: string) => {
-    if (selectedMentions.has(rawPath)) return match;
-    if (!looksLikeFileMentionPath(rawPath)) return match;
-    const mentionPath = tmuxFileMentionPath(rawPath, containerId, worktreePath);
-    return mentionPath ? `${prefix}${mentionPath}` : match;
-  });
+  return result;
 }
 
-function looksLikeFileMentionPath(path: string): boolean {
-  return path.includes("/") || path.includes(".");
+function buildTmuxPromptWithAttachments(
+  text: string,
+  attachments: PastedImageAttachment[],
+  containerId?: string,
+): string {
+  if (attachments.length === 0) return text;
+
+  const attachmentList = attachments
+    .map((attachment) => {
+      const attachmentPath = containerId
+        ? attachment.path
+        : escapePathForTerminalInput(attachment.path);
+      return `- ${attachment.name}: ${attachmentPath}`;
+    })
+    .join("\n");
+  const attachmentText =
+    `Attached images have been saved in the workspace. Use these image paths as task context:\n${attachmentList}`;
+
+  return text ? `${text}\n\n${attachmentText}` : attachmentText;
 }
 
 function escapeRegExp(value: string): string {

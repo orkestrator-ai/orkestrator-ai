@@ -208,6 +208,19 @@ function setActiveElement(element: Element) {
   });
 }
 
+function mockRunningTmuxStatus() {
+  getStatusMock.mockImplementation(async () => ({
+    tab_id: "tab-1",
+    environment_id: "env-1",
+    session_id: "session-existing",
+    tmux_session: "orkestrator-env1-tab1",
+    running: true,
+    transcript_path: "/tmp/session-existing.jsonl",
+    resumed: false,
+    busy: false,
+  }));
+}
+
 function seedPane(initialPrompt?: string) {
   usePaneLayoutStore.setState({
     environments: new Map([
@@ -515,16 +528,7 @@ describe("ClaudeTmuxChatTab", () => {
   });
 
   test("attaches pasted clipboard images in the tmux compose bar and submits their paths", async () => {
-    getStatusMock.mockImplementation(async () => ({
-      tab_id: "tab-1",
-      environment_id: "env-1",
-      session_id: "session-existing",
-      tmux_session: "orkestrator-env1-tab1",
-      running: true,
-      transcript_path: "/tmp/session-existing.jsonl",
-      resumed: false,
-      busy: false,
-    }));
+    mockRunningTmuxStatus();
 
     render(
       <ClaudeTmuxChatTab
@@ -552,19 +556,156 @@ describe("ClaudeTmuxChatTab", () => {
     fireEvent.click(screen.getByTitle("Send (↵)"));
 
     await waitFor(() => {
-      expect(submitMock).toHaveBeenCalledTimes(2);
+      expect(submitMock).toHaveBeenCalledTimes(1);
     });
     expect(submitMock.mock.calls[0]).toEqual([
       "tab-1",
-      expect.stringMatching(/^\/workspace\/\.orkestrator\/clipboard\/clipboard-.*\.png$/),
-      "env-1",
-    ]);
-    expect(submitMock.mock.calls[1]).toEqual([
-      "tab-1",
-      "what is this?",
+      expect.stringMatching(
+        /^what is this\?\n\nAttached images have been saved in the workspace\. Use these image paths as task context:\n- clipboard-.*\.png: \/workspace\/\.orkestrator\/clipboard\/clipboard-.*\.png$/,
+      ),
       "env-1",
     ]);
     expect(screen.queryByAltText(/clipboard-/)).toBeNull();
+  });
+
+  test("submits a pasted tmux image without text as a single prompt", async () => {
+    mockRunningTmuxStatus();
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const input = await screen.findByPlaceholderText(
+      "Ask Claude anything… (@ to mention, / for commands)",
+    );
+    setActiveElement(input);
+
+    document.dispatchEvent(
+      new Event("paste", { bubbles: true, cancelable: true }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByAltText(/clipboard-/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledTimes(1);
+    });
+    expect(submitMock.mock.calls[0]).toEqual([
+      "tab-1",
+      expect.stringMatching(
+        /^Attached images have been saved in the workspace\. Use these image paths as task context:\n- clipboard-.*\.png: \/workspace\/\.orkestrator\/clipboard\/clipboard-.*\.png$/,
+      ),
+      "env-1",
+    ]);
+  });
+
+  test("submits pasted local worktree images with escaped paths", async () => {
+    mockRunningTmuxStatus();
+    useEnvironmentStore.setState({
+      environments: [
+        {
+          id: "env-1",
+          projectId: "project-1",
+          name: "Local env",
+          branch: "main",
+          containerId: null,
+          status: "running",
+          prUrl: null,
+          prState: null,
+          hasMergeConflicts: null,
+          createdAt: new Date().toISOString(),
+          networkAccessMode: "restricted",
+          order: 0,
+          environmentType: "local",
+          worktreePath: "/tmp/local repo",
+        },
+      ],
+    });
+    writeLocalFileMock.mockImplementationOnce(
+      async () => "/tmp/local repo/.orkestrator/clipboard/test image.png",
+    );
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", isLocal: true }}
+        isActive
+      />,
+    );
+
+    const input = await screen.findByPlaceholderText(
+      "Ask Claude anything… (@ to mention, / for commands)",
+    );
+    setActiveElement(input);
+
+    document.dispatchEvent(
+      new Event("paste", { bubbles: true, cancelable: true }),
+    );
+
+    await waitFor(() => {
+      expect(writeLocalFileMock).toHaveBeenCalledWith(
+        "/tmp/local repo",
+        expect.stringMatching(/^\.orkestrator\/clipboard\/clipboard-.*\.png$/),
+        "QUJD",
+      );
+      expect(screen.getByAltText(/clipboard-/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledTimes(1);
+    });
+    expect(submitMock.mock.calls[0]).toEqual([
+      "tab-1",
+      expect.stringContaining(
+        "/tmp/local\\ repo/.orkestrator/clipboard/test\\ image.png",
+      ),
+      "env-1",
+    ]);
+  });
+
+  test("keeps pasted tmux attachments and draft text when submission fails", async () => {
+    mockRunningTmuxStatus();
+    submitMock.mockImplementationOnce(async () => {
+      throw new Error("tmux unavailable");
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const input = await screen.findByPlaceholderText(
+      "Ask Claude anything… (@ to mention, / for commands)",
+    );
+    setActiveElement(input);
+
+    document.dispatchEvent(
+      new Event("paste", { bubbles: true, cancelable: true }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByAltText(/clipboard-/)).toBeTruthy();
+    });
+
+    fireEvent.change(input, { target: { value: "what is this?" } });
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    expect(await screen.findByText("Error: tmux unavailable")).toBeTruthy();
+    expect(screen.getByAltText(/clipboard-/)).toBeTruthy();
+    expect((input as HTMLTextAreaElement).value).toBe("what is this?");
+    expect(submitMock).toHaveBeenCalledTimes(1);
   });
 
   test("shows a scroll down button after the user scrolls up in native tmux transcript mode", async () => {
@@ -1394,6 +1535,66 @@ describe("ClaudeTmuxChatTab", () => {
       environmentId: "env-1",
       sessionId: "session-1",
     });
+    getFileTreeMock.mockResolvedValue([
+      {
+        name: "src",
+        path: "src",
+        isDirectory: true,
+        children: [
+          {
+            name: "Button.tsx",
+            path: "src/components/Button.tsx",
+            isDirectory: false,
+            extension: ".tsx",
+          },
+        ],
+      },
+    ]);
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
+    const cursorPosition = "Review @".length;
+    fireEvent.change(textarea, {
+      target: {
+        value: "Review @",
+        selectionStart: cursorPosition,
+        selectionEnd: cursorPosition,
+      },
+    });
+    textarea.setSelectionRange(cursorPosition, cursorPosition);
+    fireEvent.click(textarea);
+
+    await screen.findByText("Button.tsx");
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(textarea.value).toBe("Review @src/components/Button.tsx ");
+    });
+
+    submitMock.mockClear();
+    fireEvent.click(screen.getByTitle("Send (↵)"));
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "Review /workspace/src/components/Button.tsx",
+        "env-1",
+      );
+    });
+  });
+
+  test("does not rewrite non-file @ references in tmux prompts", async () => {
+    useClaudeTmuxStore.getState().setRunning("tab-1", true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
 
     render(
       <ClaudeTmuxChatTab
@@ -1406,9 +1607,9 @@ describe("ClaudeTmuxChatTab", () => {
     const textarea = await screen.findByPlaceholderText(/@ to mention/) as HTMLTextAreaElement;
     fireEvent.change(textarea, {
       target: {
-        value: "Review @src/components/Button.tsx",
-        selectionStart: "Review @src/components/Button.tsx".length,
-        selectionEnd: "Review @src/components/Button.tsx".length,
+        value: "Install @opencode-ai/sdk and contact @example.com",
+        selectionStart: "Install @opencode-ai/sdk and contact @example.com".length,
+        selectionEnd: "Install @opencode-ai/sdk and contact @example.com".length,
       },
     });
 
@@ -1418,7 +1619,7 @@ describe("ClaudeTmuxChatTab", () => {
     await waitFor(() => {
       expect(submitMock).toHaveBeenCalledWith(
         "tab-1",
-        "Review /workspace/src/components/Button.tsx",
+        "Install @opencode-ai/sdk and contact @example.com",
         "env-1",
       );
     });
