@@ -481,7 +481,7 @@ describe("ClaudeChatTab", () => {
     });
   });
 
-  test("stop immediately clears loading and queued prompts while abort is in flight", async () => {
+  test("stop immediately clears loading and promotes the next queued prompt to draft", async () => {
     useClaudeStore.getState().setSessionLoading(SESSION_KEY, true);
     useClaudeStore.getState().addToQueue(SESSION_KEY, {
       id: "queue-1",
@@ -490,6 +490,14 @@ describe("ClaudeChatTab", () => {
       effort: "high",
       planModeEnabled: false,
       fastModeEnabled: false,
+    });
+    useClaudeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-2",
+      text: "Second queued Claude prompt",
+      attachments: [],
+      effort: "medium",
+      planModeEnabled: true,
+      fastModeEnabled: true,
     });
 
     let resolveAbort: ((value: boolean) => void) | undefined;
@@ -513,7 +521,13 @@ describe("ClaudeChatTab", () => {
     await waitFor(() => {
       const state = useClaudeStore.getState();
       expect(state.sessions.get(SESSION_KEY)?.isLoading).toBe(false);
-      expect(state.messageQueue.get(SESSION_KEY)).toEqual([]);
+      expect(state.draftText.get(SESSION_KEY)).toBe("Queued Claude prompt");
+      expect(state.messageQueue.get(SESSION_KEY)?.map((message) => message.text)).toEqual([
+        "Second queued Claude prompt",
+      ]);
+      expect(state.effort.get(SESSION_KEY)).toBe("high");
+      expect(state.planMode.get(SESSION_KEY)).toBe(false);
+      expect(state.fastMode.get(SESSION_KEY)).toBe(false);
     });
     expect(mockAbortSession).toHaveBeenCalledWith(MOCK_CLIENT, "session-1");
 

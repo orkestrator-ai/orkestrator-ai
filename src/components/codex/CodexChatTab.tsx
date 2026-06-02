@@ -126,7 +126,6 @@ export function CodexChatTab({
     setSelectedReasoningEffort,
     setFastMode,
     addToQueue,
-    clearQueue,
     removeFromQueue,
     clients: clientsMap,
     sessions: sessionsMap,
@@ -225,6 +224,14 @@ export function CodexChatTab({
   const queueLength = useCodexStore(
     useCallback(
       (state) => state.messageQueue.get(sessionKey)?.length ?? 0,
+      [sessionKey],
+    ),
+  );
+  const isQueueBlockedByDraft = useCodexStore(
+    useCallback(
+      (state) =>
+        (state.draftText.get(sessionKey)?.trim().length ?? 0) > 0 ||
+        (state.attachments.get(sessionKey)?.length ?? 0) > 0,
       [sessionKey],
     ),
   );
@@ -356,7 +363,15 @@ export function CodexChatTab({
     if (isProcessingQueueRef.current) return;
     if (connectionState !== "connected" || !client) return;
 
-    const latestSession = useCodexStore.getState().sessions.get(sessionKey);
+    const codexState = useCodexStore.getState();
+    if (
+      (codexState.draftText.get(sessionKey)?.trim().length ?? 0) > 0 ||
+      (codexState.attachments.get(sessionKey)?.length ?? 0) > 0
+    ) {
+      return;
+    }
+
+    const latestSession = codexState.sessions.get(sessionKey);
     if (!latestSession || latestSession.isLoading) return;
 
     const nextMessage = removeFromQueue(sessionKey);
@@ -396,10 +411,32 @@ export function CodexChatTab({
     setSessionLoading,
   ]);
 
+  const promoteNextQueuedPromptToDraft = useCallback(() => {
+    const store = useCodexStore.getState();
+    const hasCurrentDraft =
+      store.getDraftText(sessionKey).trim().length > 0 ||
+      store.getAttachments(sessionKey).length > 0;
+    if (hasCurrentDraft) return;
+
+    const nextMessage = store.removeFromQueue(sessionKey);
+    if (!nextMessage) return;
+
+    store.setDraftText(sessionKey, nextMessage.text);
+    store.setDraftMentions(sessionKey, []);
+    store.clearAttachments(sessionKey);
+    for (const attachment of nextMessage.attachments) {
+      store.addAttachment(sessionKey, attachment);
+    }
+    store.setSelectedModel(sessionKey, nextMessage.model);
+    store.setSelectedMode(sessionKey, nextMessage.mode);
+    store.setSelectedReasoningEffort(sessionKey, nextMessage.reasoningEffort);
+    store.setFastMode(sessionKey, nextMessage.fastMode);
+  }, [sessionKey]);
+
   const handleStop = useCallback(async () => {
     if (!client || !session?.sessionId) return;
 
-    clearQueue(sessionKey);
+    promoteNextQueuedPromptToDraft();
     setSessionLoading(sessionKey, false);
     setSessionError(sessionKey, undefined);
 
@@ -409,7 +446,7 @@ export function CodexChatTab({
     }
   }, [
     client,
-    clearQueue,
+    promoteNextQueuedPromptToDraft,
     session?.sessionId,
     sessionKey,
     setSessionError,
@@ -485,7 +522,7 @@ export function CodexChatTab({
   }, [config]);
 
   useEffect(() => {
-    if (!isActive && !initialPrompt?.trim()) return;
+    if (!isActive && !initialPrompt?.trim() && queueLength === 0) return;
 
     // Block initialization until setup scripts finish (local environments with orkestrator-ai.json)
     if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
@@ -710,6 +747,7 @@ export function CodexChatTab({
     isActive,
     isLocal,
     initAttempt,
+    queueLength,
     sessionKey,
     setClient,
     setModels,
@@ -1145,10 +1183,10 @@ export function CodexChatTab({
   ]);
 
   useEffect(() => {
-    if (queueLength > 0) {
+    if (queueLength > 0 && !isQueueBlockedByDraft) {
       processQueue();
     }
-  }, [processQueue, queueLength, session?.isLoading]);
+  }, [processQueue, queueLength, isQueueBlockedByDraft, session?.isLoading]);
 
   useEffect(() => {
     if (

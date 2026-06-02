@@ -210,7 +210,6 @@ export function OpenCodeChatTab({
     setContextUsage,
     addToQueue,
     removeFromQueue,
-    clearQueue,
     addPendingPermission,
     addPendingQuestion,
     removePendingPermission,
@@ -339,6 +338,14 @@ export function OpenCodeChatTab({
       [sessionKey],
     ),
   );
+  const isQueueBlockedByDraft = useOpenCodeStore(
+    useCallback(
+      (state) =>
+        (state.draftText.get(sessionKey)?.trim().length ?? 0) > 0 ||
+        (state.attachments.get(sessionKey)?.length ?? 0) > 0,
+      [sessionKey],
+    ),
+  );
 
   const slashCommands = useOpenCodeStore(
     useCallback(
@@ -434,7 +441,7 @@ export function OpenCodeChatTab({
   // initialPrompt is pending so background mounts can dispatch the prompt
   // before becoming visible.
   useEffect(() => {
-    if (!isActive && !initialPrompt?.trim()) {
+    if (!isActive && !initialPrompt?.trim() && queueLength === 0) {
       return;
     }
 
@@ -733,6 +740,7 @@ export function OpenCodeChatTab({
     isActive,
     initialPrompt,
     isLocal,
+    queueLength,
     syncPendingRequests,
     getSelectedModel,
     getSelectedVariant,
@@ -1194,6 +1202,14 @@ export function OpenCodeChatTab({
     if (isProcessingQueueRef.current) return;
     if (connectionState !== "connected" || !client) return;
 
+    const openCodeState = useOpenCodeStore.getState();
+    if (
+      (openCodeState.draftText.get(sessionKey)?.trim().length ?? 0) > 0 ||
+      (openCodeState.attachments.get(sessionKey)?.length ?? 0) > 0
+    ) {
+      return;
+    }
+
     const latestSession = getSession(sessionKey);
     if (!latestSession || latestSession.isLoading) return;
 
@@ -1250,10 +1266,10 @@ export function OpenCodeChatTab({
 
   // Process queued prompts whenever there is queued work and the session can accept input.
   useEffect(() => {
-    if (queueLength > 0) {
+    if (queueLength > 0 && !isQueueBlockedByDraft) {
       processQueue();
     }
-  }, [queueLength, session?.isLoading, processQueue]);
+  }, [queueLength, isQueueBlockedByDraft, session?.isLoading, processQueue]);
 
   // Send initial prompt after session is ready (for code review, PR creation, etc.)
   useEffect(() => {
@@ -1306,18 +1322,41 @@ export function OpenCodeChatTab({
     setServerStatus,
   ]);
 
+  const promoteNextQueuedPromptToDraft = useCallback(() => {
+    const store = useOpenCodeStore.getState();
+    const hasCurrentDraft =
+      store.getDraftText(sessionKey).trim().length > 0 ||
+      store.getAttachments(sessionKey).length > 0;
+    if (hasCurrentDraft) return;
+
+    const nextMessage = store.removeFromQueue(sessionKey);
+    if (!nextMessage) return;
+
+    store.setDraftText(sessionKey, nextMessage.text);
+    store.setDraftMentions(sessionKey, []);
+    store.clearAttachments(sessionKey);
+    for (const attachment of nextMessage.attachments) {
+      store.addAttachment(sessionKey, attachment);
+    }
+    if (nextMessage.model) {
+      store.setSelectedModel(environmentId, nextMessage.model);
+    }
+    store.setSelectedVariant(environmentId, nextMessage.variant);
+    store.setSelectedMode(sessionKey, nextMessage.mode);
+  }, [environmentId, sessionKey]);
+
   // Handle stopping the current query
   const handleStop = useCallback(async () => {
     if (!client || !session) return;
 
-    clearQueue(sessionKey);
+    promoteNextQueuedPromptToDraft();
     setSessionLoading(sessionKey, false);
 
     const success = await abortSession(client, session.sessionId);
     if (!success) {
       console.error("[OpenCodeChatTab] Failed to abort session");
     }
-  }, [client, session, sessionKey, clearQueue, setSessionLoading]);
+  }, [client, session, sessionKey, promoteNextQueuedPromptToDraft, setSessionLoading]);
 
   useEffect(() => {
     if (!isActive || !session?.isLoading) {

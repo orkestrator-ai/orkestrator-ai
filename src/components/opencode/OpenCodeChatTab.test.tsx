@@ -522,14 +522,22 @@ describe("OpenCodeChatTab", () => {
     });
   });
 
-  test("stop immediately clears loading and queued prompts while abort is in flight", async () => {
+  test("stop immediately clears loading and promotes the next queued prompt to draft", async () => {
     useOpenCodeStore.getState().setSessionLoading(SESSION_KEY, true);
     useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
       id: "queue-1",
       text: "Queued OpenCode prompt",
       attachments: [],
       model: "openai/gpt-5",
+      variant: "fast",
       mode: "build",
+    });
+    useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-2",
+      text: "Second queued OpenCode prompt",
+      attachments: [],
+      model: "anthropic/claude-sonnet-4.5",
+      mode: "plan",
     });
 
     let resolveAbort: ((value: boolean) => void) | undefined;
@@ -553,7 +561,13 @@ describe("OpenCodeChatTab", () => {
     await waitFor(() => {
       const state = useOpenCodeStore.getState();
       expect(state.sessions.get(SESSION_KEY)?.isLoading).toBe(false);
-      expect(state.messageQueue.get(SESSION_KEY)).toEqual([]);
+      expect(state.draftText.get(SESSION_KEY)).toBe("Queued OpenCode prompt");
+      expect(state.messageQueue.get(SESSION_KEY)?.map((message) => message.text)).toEqual([
+        "Second queued OpenCode prompt",
+      ]);
+      expect(state.selectedModel.get(ENVIRONMENT_ID)).toBe("openai/gpt-5");
+      expect(state.selectedVariant.get(ENVIRONMENT_ID)).toBe("fast");
+      expect(state.selectedMode.get(SESSION_KEY)).toBe("build");
     });
     expect(mockAbortSession).toHaveBeenCalledWith(MOCK_CLIENT, "session-1");
 
@@ -578,6 +592,38 @@ describe("OpenCodeChatTab", () => {
         MOCK_CLIENT,
         "session-1",
         initialPrompt,
+        expect.objectContaining({ model: "openai/gpt-5", mode: "build" }),
+      );
+    });
+  });
+
+  test("initializes and drains a queued prompt while the OpenCode tab is inactive", async () => {
+    useOpenCodeStore.setState((state) => ({
+      ...state,
+      clients: new Map(),
+      sessions: new Map(),
+    }));
+    useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Run the hidden queued OpenCode prompt",
+      attachments: [],
+      model: "openai/gpt-5",
+      mode: "build",
+    });
+
+    render(
+      <OpenCodeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        "session-1",
+        "Run the hidden queued OpenCode prompt",
         expect.objectContaining({ model: "openai/gpt-5", mode: "build" }),
       );
     });

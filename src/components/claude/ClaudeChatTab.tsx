@@ -120,7 +120,6 @@ export function ClaudeChatTab({
     getSessionKeyBySdkSessionId,
     addToQueue,
     removeFromQueue,
-    clearQueue,
     clients: clientsMap,
     sessions: sessionsMap,
     pendingQuestions: pendingQuestionsMap,
@@ -190,6 +189,14 @@ export function ClaudeChatTab({
   // Queue length for this session - use selector to only re-render when this specific queue changes
   const queueLength = useClaudeStore(
     useCallback((state) => state.messageQueue.get(sessionKey)?.length ?? 0, [sessionKey])
+  );
+  const isQueueBlockedByDraft = useClaudeStore(
+    useCallback(
+      (state) =>
+        (state.draftText.get(sessionKey)?.trim().length ?? 0) > 0 ||
+        (state.attachments.get(sessionKey)?.length ?? 0) > 0,
+      [sessionKey],
+    ),
   );
 
   // Elapsed timer: counts up while agent is working
@@ -1073,11 +1080,32 @@ export function ClaudeChatTab({
     [sessionKey, addToQueue]
   );
 
+  const promoteNextQueuedPromptToDraft = useCallback(() => {
+    const store = useClaudeStore.getState();
+    const hasCurrentDraft =
+      store.getDraftText(sessionKey).trim().length > 0 ||
+      store.getAttachments(sessionKey).length > 0;
+    if (hasCurrentDraft) return;
+
+    const nextMessage = store.removeFromQueue(sessionKey);
+    if (!nextMessage) return;
+
+    store.setDraftText(sessionKey, nextMessage.text);
+    store.setDraftMentions(sessionKey, []);
+    store.clearAttachments(sessionKey);
+    for (const attachment of nextMessage.attachments) {
+      store.addAttachment(sessionKey, attachment);
+    }
+    store.setEffort(sessionKey, nextMessage.effort);
+    store.setPlanMode(sessionKey, nextMessage.planModeEnabled);
+    store.setFastMode(sessionKey, nextMessage.fastModeEnabled);
+  }, [sessionKey]);
+
   // Handle stopping the current query
   const handleStop = useCallback(async () => {
     if (!client || !session) return;
 
-    clearQueue(sessionKey);
+    promoteNextQueuedPromptToDraft();
     setSessionLoading(sessionKey, false);
 
     const success = await abortSession(client, session.sessionId);
@@ -1094,7 +1122,7 @@ export function ClaudeChatTab({
     } else {
       console.error("[ClaudeChatTab] Failed to abort session");
     }
-  }, [client, session, sessionKey, clearQueue, setSessionLoading, addMessage]);
+  }, [client, session, sessionKey, promoteNextQueuedPromptToDraft, setSessionLoading, addMessage]);
 
   useEffect(() => {
     if (!isActive || !session?.isLoading) {
@@ -1166,6 +1194,7 @@ export function ClaudeChatTab({
       session &&
       !session.isLoading &&
       queueLength > 0 &&
+      !isQueueBlockedByDraft &&
       !isProcessingQueueRef.current
     ) {
       const nextMessage = removeFromQueue(sessionKey);
@@ -1209,7 +1238,7 @@ export function ClaudeChatTab({
         }
       }
     }
-  }, [connectionState, client, session, session?.isLoading, queueLength, sessionKey, removeFromQueue, addMessage, setSessionLoading]);
+  }, [connectionState, client, session, session?.isLoading, queueLength, isQueueBlockedByDraft, sessionKey, removeFromQueue, addMessage, setSessionLoading]);
 
   const handleRetry = useCallback(() => {
     setConnectionState("connecting");

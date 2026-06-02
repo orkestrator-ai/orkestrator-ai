@@ -572,6 +572,41 @@ describe("CodexChatTab", () => {
     });
   });
 
+  test("initializes and drains a queued prompt while the Codex tab is inactive", async () => {
+    useCodexStore.setState((state) => ({
+      ...state,
+      clients: new Map(),
+      sessions: new Map(),
+    }));
+    useCodexStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Run the hidden queued Codex prompt",
+      attachments: [],
+      model: MOCK_MODELS[0]!.id,
+      mode: "build",
+      reasoningEffort: "medium",
+      fastMode: false,
+    });
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalled();
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        SESSION_ID,
+        "Run the hidden queued Codex prompt",
+        { attachments: undefined },
+      );
+    });
+  });
+
   test("starts the SSE event subscription while the Codex tab is inactive but loading", async () => {
     seedCodexStore();
     useCodexStore.getState().setSessionLoading(SESSION_KEY, true);
@@ -810,7 +845,7 @@ describe("CodexChatTab", () => {
     });
   });
 
-  test("stop immediately clears loading and queued prompts while abort is in flight", async () => {
+  test("stop immediately clears loading and promotes the next queued prompt to draft", async () => {
     useCodexStore.getState().setSessionLoading(SESSION_KEY, true);
     useCodexStore.getState().addToQueue(SESSION_KEY, {
       id: "queue-1",
@@ -820,6 +855,15 @@ describe("CodexChatTab", () => {
       mode: "build",
       reasoningEffort: "medium",
       fastMode: false,
+    });
+    useCodexStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-2",
+      text: "Second queued prompt",
+      attachments: [],
+      model: MOCK_MODELS[1]?.id ?? MOCK_MODELS[0]!.id,
+      mode: "plan",
+      reasoningEffort: "high",
+      fastMode: true,
     });
 
     let resolveAbort: ((value: boolean) => void) | undefined;
@@ -843,7 +887,14 @@ describe("CodexChatTab", () => {
     await waitFor(() => {
       const state = useCodexStore.getState();
       expect(state.sessions.get(SESSION_KEY)?.isLoading).toBe(false);
-      expect(state.messageQueue.get(SESSION_KEY)).toEqual([]);
+      expect(state.draftText.get(SESSION_KEY)).toBe("Queued prompt");
+      expect(state.messageQueue.get(SESSION_KEY)?.map((message) => message.text)).toEqual([
+        "Second queued prompt",
+      ]);
+      expect(state.selectedModel.get(SESSION_KEY)).toBe(MOCK_MODELS[0]!.id);
+      expect(state.selectedMode.get(SESSION_KEY)).toBe("build");
+      expect(state.selectedReasoningEffort.get(SESSION_KEY)).toBe("medium");
+      expect(state.fastMode.get(SESSION_KEY)).toBe(false);
     });
     expect(mockAbortSession).toHaveBeenCalledWith(MOCK_CLIENT, SESSION_ID);
 

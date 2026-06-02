@@ -256,14 +256,17 @@ function resetStores({
 
   useClaudeStore.setState({
     sessions: new Map(),
+    messageQueue: new Map(),
   });
 
   useCodexStore.setState({
     sessions: new Map(),
+    messageQueue: new Map(),
   });
 
   useOpenCodeStore.setState({
     sessions: new Map(),
+    messageQueue: new Map(),
   });
 }
 
@@ -411,6 +414,44 @@ describe("App background processing mounts", () => {
       expect(screen.getByTestId("terminal-env-pending-prompt")).toBeTruthy();
     });
     expect(screen.getByTestId("terminal-env-pending-prompt").getAttribute("data-active")).toBe("false");
+  });
+
+  test("keeps off-screen environments with queued native prompts mounted", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-queued-codex", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    const sessionKey = createCodexSessionKey("env-queued-codex", "tab-1");
+    useCodexStore.setState({
+      messageQueue: new Map([
+        [
+          sessionKey,
+          [
+            {
+              id: "queue-1",
+              text: "Run queued work",
+              attachments: [],
+              model: "gpt-5",
+              mode: "build",
+              reasoningEffort: "medium",
+              fastMode: false,
+            },
+          ],
+        ],
+      ]),
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-queued-codex")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-queued-codex").getAttribute("data-active")).toBe("false");
   });
 
   test("keeps off-screen environments with a loading native session mounted until idle", async () => {
