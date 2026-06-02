@@ -522,6 +522,53 @@ describe("OpenCodeChatTab", () => {
     });
   });
 
+  test("removes a queued prompt and records an error when queued send fails", async () => {
+    const originalError = console.error;
+    const consoleError = mock(() => {});
+    console.error = consoleError as unknown as typeof console.error;
+    resetStores("review-table");
+    mockSendPrompt.mockImplementation(async () => ({
+      success: false,
+      error: "OpenCode unavailable",
+    }));
+    useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Queued OpenCode failure",
+      attachments: [],
+      model: "openai/gpt-5",
+      mode: "build",
+    });
+
+    try {
+      render(
+        <OpenCodeChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockSendPrompt).toHaveBeenCalledWith(
+          MOCK_CLIENT,
+          "session-1",
+          "Queued OpenCode failure",
+          expect.objectContaining({ model: "openai/gpt-5", mode: "build" }),
+        );
+      });
+
+      await waitFor(() => {
+        const state = useOpenCodeStore.getState();
+        const messages = state.sessions.get(SESSION_KEY)?.messages ?? [];
+        expect(state.sessions.get(SESSION_KEY)?.isLoading).toBe(false);
+        expect(state.messageQueue.get(SESSION_KEY)).toEqual([]);
+        expect(messages.some((message) => message.content === "OpenCode unavailable")).toBe(true);
+      });
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test("does not drain queued prompts while a draft exists", async () => {
     resetStores("review-table");
     useOpenCodeStore.getState().setDraftText(SESSION_KEY, "Keep this OpenCode draft");

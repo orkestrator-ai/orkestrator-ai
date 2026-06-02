@@ -450,6 +450,7 @@ describe("ClaudeChatTab", () => {
   });
 
   test("drains queued prompts when the session is idle", async () => {
+    mockSendPrompt.mockImplementation(async () => true as any);
     useClaudeStore.getState().addToQueue(SESSION_KEY, {
       id: "queue-1",
       text: "Run the queued review",
@@ -479,6 +480,96 @@ describe("ClaudeChatTab", () => {
         }),
       );
     });
+  });
+
+  test("waits for setup readiness before draining a queued prompt while inactive", async () => {
+    mockSendPrompt.mockImplementation(async () => true as any);
+    useEnvironmentStore.setState({
+      workspaceReadyEnvironments: new Set(),
+    });
+    useClaudeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Run after Claude setup",
+      attachments: [],
+      effort: "high",
+      planModeEnabled: false,
+      fastModeEnabled: false,
+    });
+
+    render(
+      <ClaudeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockSendPrompt).not.toHaveBeenCalled();
+
+    act(() => {
+      useEnvironmentStore.setState({
+        workspaceReadyEnvironments: new Set([ENVIRONMENT_ID]),
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        "session-1",
+        "Run after Claude setup",
+        expect.objectContaining({
+          attachments: undefined,
+          effort: "high",
+          permissionMode: "bypassPermissions",
+        }),
+      );
+    });
+  });
+
+  test("removes a queued prompt and clears loading when queued send fails", async () => {
+    const originalError = console.error;
+    const consoleError = mock(() => {});
+    console.error = consoleError as unknown as typeof console.error;
+    mockSendPrompt.mockImplementation(async () => false as any);
+    useClaudeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Queued Claude failure",
+      attachments: [],
+      effort: "high",
+      planModeEnabled: false,
+      fastModeEnabled: false,
+    });
+
+    try {
+      render(
+        <ClaudeChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockSendPrompt).toHaveBeenCalledWith(
+          MOCK_CLIENT,
+          "session-1",
+          "Queued Claude failure",
+          expect.any(Object),
+        );
+      });
+
+      await waitFor(() => {
+        const state = useClaudeStore.getState();
+        expect(state.sessions.get(SESSION_KEY)?.isLoading).toBe(false);
+        expect(state.messageQueue.get(SESSION_KEY)).toEqual([]);
+      });
+    } finally {
+      console.error = originalError;
+    }
   });
 
   test("does not drain queued prompts while a draft exists", async () => {

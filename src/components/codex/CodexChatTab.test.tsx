@@ -889,6 +889,56 @@ describe("CodexChatTab", () => {
     });
   });
 
+  test("removes a queued prompt and logs an error when queued send throws", async () => {
+    const originalError = console.error;
+    const consoleError = mock(() => {});
+    console.error = consoleError as unknown as typeof console.error;
+    seedEnvironment("review-table");
+    mockSendPrompt.mockImplementation(async () => {
+      throw new Error("bridge offline");
+    });
+    useCodexStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Queued Codex failure",
+      attachments: [],
+      model: MOCK_MODELS[0]!.id,
+      mode: "build",
+      reasoningEffort: "medium",
+      fastMode: false,
+    });
+
+    try {
+      render(
+        <CodexChatTab
+          tabId={TAB_ID}
+          data={createData()}
+          isActive={false}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockSendPrompt).toHaveBeenCalledWith(
+          MOCK_CLIENT,
+          SESSION_ID,
+          "Queued Codex failure",
+          { attachments: undefined },
+        );
+      });
+
+      await waitFor(() => {
+        const state = useCodexStore.getState();
+        expect(state.sessions.get(SESSION_KEY)?.isLoading).toBe(false);
+        expect(state.messageQueue.get(SESSION_KEY)).toEqual([]);
+        expect(consoleError).toHaveBeenCalledWith(
+          "[CodexChatTab] Failed to send queued prompt:",
+          expect.any(Error),
+        );
+      });
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test("does not drain queued prompts while a draft exists", async () => {
     seedEnvironment("review-table");
     useCodexStore.getState().setDraftText(SESSION_KEY, "Keep this Codex draft");
