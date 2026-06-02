@@ -325,6 +325,13 @@ export function OpenCodeChatTab({
   const workspaceReady = useEnvironmentStore(
     (state) => state.workspaceReadyEnvironments.has(environmentId)
   );
+  const setupPending = isSetupPending({
+    isLocal: !!isLocal,
+    setupCommandsResolved,
+    hasPendingSetupCommands,
+    setupScriptsRunning,
+    workspaceReady,
+  });
 
   const slashCommandDirectory = resolveSlashCommandDirectory(
     isLocal ?? false,
@@ -446,7 +453,7 @@ export function OpenCodeChatTab({
     }
 
     // Block initialization until setup scripts finish (local environments with orkestrator-ai.json)
-    if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
+    if (setupPending) {
       return;
     }
 
@@ -746,10 +753,7 @@ export function OpenCodeChatTab({
     getSelectedVariant,
     setSelectedModel,
     setSelectedVariant,
-    setupScriptsRunning,
-    setupCommandsResolved,
-    hasPendingSetupCommands,
-    workspaceReady,
+    setupPending,
   ]);
 
   useEffect(() => {
@@ -1200,6 +1204,7 @@ export function OpenCodeChatTab({
 
   const processQueue = useCallback(() => {
     if (isProcessingQueueRef.current) return;
+    if (setupPending) return;
     if (connectionState !== "connected" || !client) return;
 
     const openCodeState = useOpenCodeStore.getState();
@@ -1259,6 +1264,7 @@ export function OpenCodeChatTab({
     client,
     getSession,
     sessionKey,
+    setupPending,
     removeFromQueue,
     addMessage,
     setSessionLoading,
@@ -1266,10 +1272,10 @@ export function OpenCodeChatTab({
 
   // Process queued prompts whenever there is queued work and the session can accept input.
   useEffect(() => {
-    if (queueLength > 0 && !isQueueBlockedByDraft) {
+    if (queueLength > 0 && !isQueueBlockedByDraft && !setupPending) {
       processQueue();
     }
-  }, [queueLength, isQueueBlockedByDraft, session?.isLoading, processQueue]);
+  }, [queueLength, isQueueBlockedByDraft, setupPending, session?.isLoading, processQueue]);
 
   // Send initial prompt after session is ready (for code review, PR creation, etc.)
   useEffect(() => {
@@ -1280,6 +1286,7 @@ export function OpenCodeChatTab({
       client &&
       session &&
       initialPrompt &&
+      !setupPending &&
       !initialPromptSentRef.current &&
       !sessionHasMessages
     ) {
@@ -1295,6 +1302,7 @@ export function OpenCodeChatTab({
     client,
     session,
     initialPrompt,
+    setupPending,
     tabId,
     clearTabInitialPrompt,
     environmentId,
@@ -1458,7 +1466,7 @@ export function OpenCodeChatTab({
   ]);
 
   // Render loading state
-  if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
+  if (setupPending) {
     return (
       <SetupPendingOverlay
         environmentId={environmentId}

@@ -522,12 +522,90 @@ describe("OpenCodeChatTab", () => {
     });
   });
 
+  test("does not drain queued prompts while a draft exists", async () => {
+    resetStores("review-table");
+    useOpenCodeStore.getState().setDraftText(SESSION_KEY, "Keep this OpenCode draft");
+    useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Queued behind OpenCode draft",
+      attachments: [],
+      model: "openai/gpt-5",
+      mode: "build",
+    });
+
+    render(
+      <OpenCodeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const state = useOpenCodeStore.getState();
+    expect(mockSendPrompt).not.toHaveBeenCalled();
+    expect(state.draftText.get(SESSION_KEY)).toBe("Keep this OpenCode draft");
+    expect(state.messageQueue.get(SESSION_KEY)?.map((message) => message.text)).toEqual([
+      "Queued behind OpenCode draft",
+    ]);
+  });
+
+  test("does not drain queued prompts while an attachment is staged", async () => {
+    resetStores("review-table");
+    useOpenCodeStore.getState().addAttachment(SESSION_KEY, {
+      id: "staged-attachment",
+      type: "image" as const,
+      path: "/workspace/staged.png",
+      previewUrl: "data:image/png;base64,staged",
+      name: "staged.png",
+    });
+    useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Queued behind OpenCode attachment",
+      attachments: [],
+      model: "openai/gpt-5",
+      mode: "build",
+    });
+
+    render(
+      <OpenCodeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const state = useOpenCodeStore.getState();
+    expect(mockSendPrompt).not.toHaveBeenCalled();
+    expect(state.attachments.get(SESSION_KEY)?.map((attachment) => attachment.name)).toEqual([
+      "staged.png",
+    ]);
+    expect(state.messageQueue.get(SESSION_KEY)?.map((message) => message.text)).toEqual([
+      "Queued behind OpenCode attachment",
+    ]);
+  });
+
   test("stop immediately clears loading and promotes the next queued prompt to draft", async () => {
+    const queuedAttachment = {
+      id: "queued-attachment",
+      type: "image" as const,
+      path: "/workspace/queued.png",
+      previewUrl: "data:image/png;base64,queued",
+      name: "queued.png",
+    };
+
     useOpenCodeStore.getState().setSessionLoading(SESSION_KEY, true);
     useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
       id: "queue-1",
       text: "Queued OpenCode prompt",
-      attachments: [],
+      attachments: [queuedAttachment],
       model: "openai/gpt-5",
       variant: "fast",
       mode: "build",
@@ -565,6 +643,7 @@ describe("OpenCodeChatTab", () => {
       expect(state.messageQueue.get(SESSION_KEY)?.map((message) => message.text)).toEqual([
         "Second queued OpenCode prompt",
       ]);
+      expect(state.attachments.get(SESSION_KEY)).toEqual([queuedAttachment]);
       expect(state.selectedModel.get(ENVIRONMENT_ID)).toBe("openai/gpt-5");
       expect(state.selectedVariant.get(ENVIRONMENT_ID)).toBe("fast");
       expect(state.selectedMode.get(SESSION_KEY)).toBe("build");
@@ -624,6 +703,48 @@ describe("OpenCodeChatTab", () => {
         MOCK_CLIENT,
         "session-1",
         "Run the hidden queued OpenCode prompt",
+        expect.objectContaining({ model: "openai/gpt-5", mode: "build" }),
+      );
+    });
+  });
+
+  test("waits for setup readiness before draining a queued prompt while inactive", async () => {
+    useEnvironmentStore.setState({
+      workspaceReadyEnvironments: new Set(),
+    });
+    useOpenCodeStore.getState().addToQueue(SESSION_KEY, {
+      id: "queue-1",
+      text: "Run after OpenCode setup",
+      attachments: [],
+      model: "openai/gpt-5",
+      mode: "build",
+    });
+
+    render(
+      <OpenCodeChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockSendPrompt).not.toHaveBeenCalled();
+
+    act(() => {
+      useEnvironmentStore.setState({
+        workspaceReadyEnvironments: new Set([ENVIRONMENT_ID]),
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockSendPrompt).toHaveBeenCalledWith(
+        MOCK_CLIENT,
+        "session-1",
+        "Run after OpenCode setup",
         expect.objectContaining({ model: "openai/gpt-5", mode: "build" }),
       );
     });

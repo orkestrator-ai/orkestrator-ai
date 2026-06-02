@@ -154,6 +154,13 @@ export function CodexChatTab({
   const workspaceReady = useEnvironmentStore(
     (state) => state.workspaceReadyEnvironments.has(environmentId)
   );
+  const setupPending = isSetupPending({
+    isLocal: !!isLocal,
+    setupCommandsResolved,
+    hasPendingSetupCommands,
+    setupScriptsRunning,
+    workspaceReady,
+  });
 
   const session = useMemo(
     () => sessionsMap.get(sessionKey),
@@ -361,6 +368,7 @@ export function CodexChatTab({
 
   const processQueue = useCallback(() => {
     if (isProcessingQueueRef.current) return;
+    if (setupPending) return;
     if (connectionState !== "connected" || !client) return;
 
     const codexState = useCodexStore.getState();
@@ -407,6 +415,7 @@ export function CodexChatTab({
     connectionState,
     removeFromQueue,
     sessionKey,
+    setupPending,
     setSessionError,
     setSessionLoading,
   ]);
@@ -525,7 +534,7 @@ export function CodexChatTab({
     if (!isActive && !initialPrompt?.trim() && queueLength === 0) return;
 
     // Block initialization until setup scripts finish (local environments with orkestrator-ai.json)
-    if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
+    if (setupPending) {
       return;
     }
 
@@ -759,10 +768,7 @@ export function CodexChatTab({
     setServerStatus,
     setSession,
     seedInitialFastMode,
-    setupScriptsRunning,
-    setupCommandsResolved,
-    hasPendingSetupCommands,
-    workspaceReady,
+    setupPending,
   ]);
 
   const syncSessionConfig = useCallback(
@@ -1183,10 +1189,10 @@ export function CodexChatTab({
   ]);
 
   useEffect(() => {
-    if (queueLength > 0 && !isQueueBlockedByDraft) {
+    if (queueLength > 0 && !isQueueBlockedByDraft && !setupPending) {
       processQueue();
     }
-  }, [processQueue, queueLength, isQueueBlockedByDraft, session?.isLoading]);
+  }, [processQueue, queueLength, isQueueBlockedByDraft, setupPending, session?.isLoading]);
 
   useEffect(() => {
     if (
@@ -1194,6 +1200,7 @@ export function CodexChatTab({
       || !session?.sessionId
       || !initialPrompt
       || initialPromptSent
+      || setupPending
     ) {
       return;
     }
@@ -1209,11 +1216,12 @@ export function CodexChatTab({
     handleSend,
     initialPrompt,
     initialPromptSent,
+    setupPending,
     session?.sessionId,
     tabId,
   ]);
 
-  if (isSetupPending({ isLocal: !!isLocal, setupCommandsResolved, hasPendingSetupCommands, setupScriptsRunning, workspaceReady })) {
+  if (setupPending) {
     return (
       <SetupPendingOverlay
         environmentId={environmentId}
