@@ -1,16 +1,21 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { forwardRef, useEffect, useImperativeHandle, useRef as useReactRef } from "react";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
-import { useClaudeTmuxStore } from "@/stores/claudeTmuxStore";
+import {
+  createClaudeTmuxStateKey,
+  useClaudeTmuxStore,
+} from "@/stores/claudeTmuxStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useConfigStore } from "@/stores/configStore";
-import { clearPersistedScrollState } from "@/hooks/useScrollLock";
+import { clearPersistedVirtuosoState } from "@/hooks/useVirtuosoScrollState";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
 import * as realTauri from "@/lib/tauri";
 import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
 import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
 import * as realInteractiveTerminal from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
+import * as realReactVirtuoso from "react-virtuoso";
 import { ADDRESS_ALL_REVIEW_PROMPT } from "@/lib/review-actions";
 import { mockReadImage } from "../../mocks/clipboard";
 import type { Environment, FileCandidate } from "@/types";
@@ -20,6 +25,14 @@ const realTauriSnapshot = { ...realTauri };
 const realClaudeMessageSnapshot = { ...realClaudeMessage };
 const realInteractiveTerminalSnapshot = { ...realInteractiveTerminal };
 const realFileMentionMenuSnapshot = { ...realFileMentionMenu };
+const realReactVirtuosoSnapshot = { ...realReactVirtuoso };
+const VIRTUOSO_WINDOW_SIZE = 25;
+let lastVirtuosoProps: Record<string, any> | null = null;
+const virtuosoScrollToIndexMock = mock(() => {});
+const virtuosoScrollToMock = mock(() => {});
+const virtuosoGetStateMock = mock((callback: (snapshot: any) => void) => {
+  callback({ ranges: [], scrollTop: 0 });
+});
 const getFileTreeMock = mock(async () => []);
 const getLocalFileTreeMock = mock(async () => []);
 const writeContainerFileMock = mock(async () => {});
@@ -175,6 +188,54 @@ mock.module("@/components/chat/FileMentionMenu", () => ({
   ),
 }));
 
+mock.module("react-virtuoso", () => ({
+  ...realReactVirtuosoSnapshot,
+  Virtuoso: forwardRef<any, any>((props, ref) => {
+    lastVirtuosoProps = props;
+    const scrollerRef = useReactRef<HTMLDivElement>(null);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        scrollToIndex: virtuosoScrollToIndexMock,
+        scrollTo: virtuosoScrollToMock,
+        getState: virtuosoGetStateMock,
+      }),
+      [],
+    );
+
+    useEffect(() => {
+      props.scrollerRef?.(scrollerRef.current);
+      props.atBottomStateChange?.(true);
+      return () => props.scrollerRef?.(null);
+    }, [props.scrollerRef, props.atBottomStateChange]);
+
+    const data = props.data ?? [];
+    const offset = Math.max(0, data.length - VIRTUOSO_WINDOW_SIZE);
+    const visibleData = data.slice(offset);
+    const Footer = props.components?.Footer;
+    const EmptyPlaceholder = props.components?.EmptyPlaceholder;
+
+    return (
+      <div data-testid="virtuoso-mock" ref={scrollerRef}>
+        {data.length === 0 && EmptyPlaceholder ? (
+          <EmptyPlaceholder context={props.context} />
+        ) : (
+          visibleData.map((item: any, localIndex: number) => {
+            const index = offset + localIndex;
+            return (
+              <div key={props.computeItemKey?.(index, item) ?? index}>
+                {props.itemContent(index, item)}
+              </div>
+            );
+          })
+        )}
+        {Footer ? <Footer context={props.context} /> : null}
+      </div>
+    );
+  }),
+}));
+
 const { ClaudeTmuxChatTab, parseTmuxSelectionPrompt } = await import(
   "@/components/claude/ClaudeTmuxChatTab"
 );
@@ -279,6 +340,7 @@ describe("ClaudeTmuxChatTab", () => {
     mock.module("@/components/claude/ClaudeMessage", () => realClaudeMessageSnapshot);
     mock.module("@/components/claude/ClaudeTmuxInteractiveTerminal", () => realInteractiveTerminalSnapshot);
     mock.module("@/components/chat/FileMentionMenu", () => realFileMentionMenuSnapshot);
+    mock.module("react-virtuoso", () => realReactVirtuosoSnapshot);
     HTMLCanvasElement.prototype.getContext = originalGetContext;
     HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
     delete (document as { activeElement?: Element }).activeElement;
@@ -338,6 +400,13 @@ describe("ClaudeTmuxChatTab", () => {
     getPendingHooksMock.mockClear();
     getPendingHooksMock.mockImplementation(async () => []);
     subscribedHandler = null;
+    lastVirtuosoProps = null;
+    virtuosoScrollToIndexMock.mockClear();
+    virtuosoScrollToMock.mockClear();
+    virtuosoGetStateMock.mockClear();
+    virtuosoGetStateMock.mockImplementation((callback: (snapshot: any) => void) => {
+      callback({ ranges: [], scrollTop: 0 });
+    });
     subscribeMock.mockClear();
     stopSessionMock.mockClear();
     interruptSessionMock.mockClear();
@@ -361,7 +430,13 @@ describe("ClaudeTmuxChatTab", () => {
         message_count: 7,
       },
     ]);
-    useClaudeTmuxStore.setState({ tabs: new Map() });
+    useClaudeTmuxStore.setState({
+      tabs: new Map(),
+      attachments: new Map(),
+      draftText: new Map(),
+      draftMentions: new Map(),
+      messageQueue: new Map(),
+    });
     useConfigStore.setState((state) => ({
       ...state,
       config: {
@@ -373,8 +448,8 @@ describe("ClaudeTmuxChatTab", () => {
         repositories: {},
       },
     }));
-    clearPersistedScrollState("claude-tmux-tab-1");
-    clearPersistedScrollState("claude-tmux-env:env-1:tab:tab-1");
+    clearPersistedVirtuosoState("claude-tmux-tab-1");
+    clearPersistedVirtuosoState("claude-tmux-env:env-1:tab:tab-1");
     useEnvironmentStore.setState({
       environments: [],
       isLoading: false,
@@ -708,7 +783,7 @@ describe("ClaudeTmuxChatTab", () => {
     expect(submitMock).toHaveBeenCalledTimes(1);
   });
 
-  test("shows a scroll down button after the user scrolls up in native tmux transcript mode", async () => {
+  test("shows a scroll down button when Virtuoso reports the transcript is off-bottom", async () => {
     getStatusMock.mockImplementation(async () => ({
       tab_id: "tab-1",
       environment_id: "env-1",
@@ -728,45 +803,26 @@ describe("ClaudeTmuxChatTab", () => {
       />,
     );
 
-    const viewport = await waitFor(() => {
-      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
-      expect(element).toBeTruthy();
-      return element as HTMLElement;
+    await waitFor(() => {
+      expect(lastVirtuosoProps).toBeTruthy();
     });
 
-    let scrollTop = 100;
-    Object.defineProperty(viewport, "scrollTop", {
-      get: () => scrollTop,
-      set: (value: number) => {
-        scrollTop = value;
-      },
-      configurable: true,
+    act(() => {
+      lastVirtuosoProps?.atBottomStateChange(false);
     });
-    Object.defineProperty(viewport, "scrollHeight", {
-      get: () => 1000,
-      configurable: true,
-    });
-    Object.defineProperty(viewport, "clientHeight", {
-      get: () => 400,
-      configurable: true,
-    });
-
-    fireEvent.scroll(viewport);
 
     const scrollButton = await screen.findByRole("button", {
       name: /scroll to bottom of conversation/i,
     });
     expect(scrollButton).toBeTruthy();
 
-    viewport.scrollTo = mock(() => {});
     fireEvent.click(scrollButton);
 
     await waitFor(() => {
-      expect(
-        screen.queryByRole("button", {
-          name: /scroll to bottom of conversation/i,
-        }),
-      ).toBeNull();
+      expect(virtuosoScrollToIndexMock).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+      });
     });
   });
 
@@ -790,27 +846,16 @@ describe("ClaudeTmuxChatTab", () => {
       />,
     );
 
-    const viewport = await waitFor(() => {
-      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
-      expect(element).toBeTruthy();
-      return element as HTMLElement;
+    await waitFor(() => {
+      expect(lastVirtuosoProps).toBeTruthy();
     });
 
-    let scrollTop = 100;
-    Object.defineProperty(viewport, "scrollTop", {
-      get: () => scrollTop,
-      set: (value: number) => {
-        scrollTop = value;
-      },
-      configurable: true,
+    act(() => {
+      lastVirtuosoProps?.atBottomStateChange(false);
     });
-    Object.defineProperty(viewport, "scrollHeight", { get: () => 1000, configurable: true });
-    Object.defineProperty(viewport, "clientHeight", { get: () => 400, configurable: true });
-
-    fireEvent.scroll(viewport);
     await screen.findByRole("button", { name: /scroll to bottom of conversation/i });
 
-    // Switch into interactive terminal mode — the ScrollArea unmounts and the
+    // Switch into interactive terminal mode — the Virtuoso transcript unmounts and the
     // scroll-down affordance must disappear with it.
     fireEvent.click(await screen.findByRole("button", { name: /terminal/i }));
 
@@ -822,7 +867,7 @@ describe("ClaudeTmuxChatTab", () => {
     });
   });
 
-  test("auto-scrolls to bottom when new transcript content arrives while at the bottom", async () => {
+  test("passes transcript updates through the virtualized message window", async () => {
     getStatusMock.mockImplementation(async () => ({
       tab_id: "tab-1",
       environment_id: "env-1",
@@ -841,23 +886,6 @@ describe("ClaudeTmuxChatTab", () => {
         isActive
       />,
     );
-
-    const viewport = await waitFor(() => {
-      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
-      expect(element).toBeTruthy();
-      return element as HTMLElement;
-    });
-
-    let scrollTop = 0;
-    Object.defineProperty(viewport, "scrollTop", {
-      get: () => scrollTop,
-      set: (value: number) => {
-        scrollTop = value;
-      },
-      configurable: true,
-    });
-    Object.defineProperty(viewport, "scrollHeight", { get: () => 1200, configurable: true });
-    Object.defineProperty(viewport, "clientHeight", { get: () => 400, configurable: true });
 
     await waitFor(() => expect(subscribedHandler).not.toBeNull());
 
@@ -879,10 +907,15 @@ describe("ClaudeTmuxChatTab", () => {
       });
     });
 
-    await waitFor(() => expect(scrollTop).toBe(1200));
+    await waitFor(() => {
+      expect(lastVirtuosoProps?.data.map((message: any) => message.content)).toContain(
+        "Streaming chunk",
+      );
+    });
+    expect(lastVirtuosoProps?.followOutput(true)).toBe("smooth");
   });
 
-  test("restores scroll position after the tab is hidden and shown again", async () => {
+  test("windows large tmux transcripts through Virtuoso instead of rendering every message", async () => {
     getStatusMock.mockImplementation(async () => ({
       tab_id: "tab-1",
       environment_id: "env-1",
@@ -893,8 +926,19 @@ describe("ClaudeTmuxChatTab", () => {
       resumed: false,
       busy: false,
     }));
+    getTranscriptMock.mockImplementation(async () =>
+      Array.from({ length: 100 }, (_, index) => ({
+        type: index % 2 === 0 ? "user" : "assistant",
+        uuid: `msg-${index}`,
+        timestamp: `2026-05-15T12:${String(index).padStart(2, "0")}:00.000Z`,
+        message: {
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `Message ${index}`,
+        },
+      })),
+    );
 
-    const { rerender } = render(
+    render(
       <ClaudeTmuxChatTab
         tabId="tab-1"
         data={{ environmentId: "env-1", containerId: "container-1" }}
@@ -902,51 +946,12 @@ describe("ClaudeTmuxChatTab", () => {
       />,
     );
 
-    const viewport = await waitFor(() => {
-      const element = document.querySelector('[data-slot="scroll-area-viewport"]');
-      expect(element).toBeTruthy();
-      return element as HTMLElement;
+    await waitFor(() => {
+      expect(lastVirtuosoProps?.data).toHaveLength(100);
     });
-
-    let scrollTop = 250;
-    Object.defineProperty(viewport, "scrollTop", {
-      get: () => scrollTop,
-      set: (value: number) => {
-        scrollTop = value;
-      },
-      configurable: true,
-    });
-    Object.defineProperty(viewport, "scrollHeight", { get: () => 1000, configurable: true });
-    Object.defineProperty(viewport, "clientHeight", { get: () => 400, configurable: true });
-
-    // Scroll up so the persisted state should remember a non-bottom position.
-    fireEvent.scroll(viewport);
-    await screen.findByRole("button", { name: /scroll to bottom of conversation/i });
-
-    // Deactivate the tab (e.g., user switched panes); hook persists state.
-    rerender(
-      <ClaudeTmuxChatTab
-        tabId="tab-1"
-        data={{ environmentId: "env-1", containerId: "container-1" }}
-        isActive={false}
-      />,
-    );
-
-    // Simulate the viewport scrolling away while inactive (other tab work),
-    // then reactivate and assert the persisted scrollTop is restored.
-    scrollTop = 0;
-    rerender(
-      <ClaudeTmuxChatTab
-        tabId="tab-1"
-        data={{ environmentId: "env-1", containerId: "container-1" }}
-        isActive
-      />,
-    );
-
-    await waitFor(() => expect(scrollTop).toBe(250));
-    expect(
-      screen.queryByRole("button", { name: /scroll to bottom of conversation/i }),
-    ).not.toBeNull();
+    expect(screen.getAllByTestId("claude-message")).toHaveLength(VIRTUOSO_WINDOW_SIZE);
+    expect(screen.queryByText("Message 0")).toBeNull();
+    expect(screen.getByText("Message 99")).toBeTruthy();
   });
 
   test("keeps interactive terminal mode disabled until a tmux session is running", async () => {
@@ -2140,14 +2145,13 @@ describe("ClaudeTmuxChatTab", () => {
     expect(stopSessionMock).not.toHaveBeenCalled();
   });
 
-  test("shows an enabled interrupt button in the compose bar while busy and keeps draft editable", async () => {
-    useClaudeTmuxStore
-      .getState()
-      .setRunning("tab-1", true, {
-        environmentId: "env-1",
-        sessionId: "session-1",
-      });
-    useClaudeTmuxStore.getState().setBusy("tab-1", true);
+  test("queues a compose draft while busy and drains it after the tmux Stop hook", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    useClaudeTmuxStore.getState().setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    useClaudeTmuxStore.getState().setBusy(stateKey, true);
 
     render(
       <ClaudeTmuxChatTab
@@ -2163,12 +2167,80 @@ describe("ClaudeTmuxChatTab", () => {
     fireEvent.change(textarea, { target: { value: "continue with this" } });
     expect(textarea.value).toBe("continue with this");
 
-    fireEvent.click(screen.getByTitle("Interrupt current response"));
+    fireEvent.click(screen.getByTitle("Add to queue"));
 
     await waitFor(() => {
-      expect(interruptSessionMock).toHaveBeenCalledWith("tab-1", "env-1");
+      expect(useClaudeTmuxStore.getState().messageQueue.get(stateKey)?.map((m) => m.text)).toEqual([
+        "continue with this",
+      ]);
+      expect(textarea.value).toBe("");
     });
-    expect(useClaudeTmuxStore.getState().getTab("tab-1").busy).toBe(false);
+    expect(submitMock).not.toHaveBeenCalled();
+    expect(screen.getByText("+1 queued")).toBeTruthy();
+
+    await waitFor(() => expect(subscribedHandler).not.toBeNull());
+
+    act(() => {
+      subscribedHandler?.({
+        kind: "hook",
+        tab_id: "tab-1",
+        environment_id: "env-1",
+        session_id: "session-1",
+        event_id: "stop",
+        event_kind: "Stop",
+        payload: {},
+      });
+    });
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "continue with this",
+        "env-1",
+      );
+      expect(useClaudeTmuxStore.getState().messageQueue.get(stateKey)).toEqual([]);
+    });
+  });
+
+  test("does not drain queued tmux prompts while a draft exists", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.addToQueue(stateKey, {
+      id: "queue-1",
+      text: "queued behind draft",
+      attachments: [],
+    });
+    store.setDraftText(stateKey, "draft in progress");
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(
+      (screen.getByPlaceholderText(/Ask Claude anything/) as HTMLTextAreaElement).value,
+    ).toBe("draft in progress");
+    await Promise.resolve();
+    expect(submitMock).not.toHaveBeenCalled();
+
+    act(() => {
+      useClaudeTmuxStore.getState().setDraftText(stateKey, "");
+    });
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "queued behind draft",
+        "env-1",
+      );
+    });
   });
 
   test("shows interrupt errors without clearing busy state", async () => {

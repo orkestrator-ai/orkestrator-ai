@@ -6,7 +6,13 @@ import {
 
 describe("claudeTmuxStore", () => {
   beforeEach(() => {
-    useClaudeTmuxStore.setState({ tabs: new Map() });
+    useClaudeTmuxStore.setState({
+      tabs: new Map(),
+      attachments: new Map(),
+      draftText: new Map(),
+      draftMentions: new Map(),
+      messageQueue: new Map(),
+    });
   });
 
   describe("setBusy", () => {

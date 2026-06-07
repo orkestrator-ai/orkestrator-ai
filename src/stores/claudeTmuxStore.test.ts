@@ -9,7 +9,13 @@ import {
 } from "./claudeTmuxStore";
 
 function reset() {
-  useClaudeTmuxStore.setState({ tabs: new Map() });
+  useClaudeTmuxStore.setState({
+    tabs: new Map(),
+    attachments: new Map(),
+    draftText: new Map(),
+    draftMentions: new Map(),
+    messageQueue: new Map(),
+  });
 }
 
 beforeEach(() => {
@@ -637,18 +643,34 @@ describe("session lifecycle", () => {
   });
 
   test("resetTab clears state", () => {
-    useClaudeTmuxStore
-      .getState()
-      .setRunning("e", true, { sessionId: "sess-1" });
-    useClaudeTmuxStore.getState().applyTranscriptLine("e", {
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning("e", true, { sessionId: "sess-1" });
+    store.applyTranscriptLine("e", {
       type: "user",
       uuid: "u",
       message: { role: "user", content: "hi" },
     });
-    useClaudeTmuxStore.getState().resetTab("e");
+    store.setDraftText("e", "queued draft");
+    store.addAttachment("e", {
+      id: "att-1",
+      type: "image",
+      path: "/workspace/att.png",
+      previewUrl: "data:image/png;base64,att",
+      name: "att.png",
+    });
+    store.addToQueue("e", {
+      id: "queue-1",
+      text: "queued prompt",
+      attachments: [],
+    });
+
+    store.resetTab("e");
     const tab = useClaudeTmuxStore.getState().getTab("e");
     expect(tab.running).toBe(false);
     expect(tab.sessionId).toBeNull();
     expect(tab.messages).toHaveLength(0);
+    expect(useClaudeTmuxStore.getState().getDraftText("e")).toBe("");
+    expect(useClaudeTmuxStore.getState().getAttachments("e")).toEqual([]);
+    expect(useClaudeTmuxStore.getState().getQueuedMessages("e")).toEqual([]);
   });
 });

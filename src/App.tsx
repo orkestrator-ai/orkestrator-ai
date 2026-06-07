@@ -17,6 +17,10 @@ import {
 } from "@/stores";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useClaudeStore } from "@/stores/claudeStore";
+import {
+  getEnvironmentIdFromClaudeTmuxStateKey,
+  useClaudeTmuxStore,
+} from "@/stores/claudeTmuxStore";
 import { useCodexStore } from "@/stores/codexStore";
 import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { getBackgroundProcessingEnvironments } from "@/lib/background-pipelines";
@@ -82,13 +86,14 @@ function App() {
     return environmentIds;
   }, [paneLayoutEnvironments]);
 
-  // Loading or queued native sessions across Claude/Codex/OpenCode keep their
+  // Loading or queued agent sessions across Claude/Codex/OpenCode/tmux keep their
   // environment mounted so SSE subscriptions, watchdog polls, and queue drains
   // can advance even when the user has navigated elsewhere.
   const claudeSessions = useClaudeStore((state) => state.sessions);
   const codexSessions = useCodexStore((state) => state.sessions);
   const openCodeSessions = useOpenCodeStore((state) => state.sessions);
   const claudeMessageQueue = useClaudeStore((state) => state.messageQueue);
+  const claudeTmuxMessageQueue = useClaudeTmuxStore((state) => state.messageQueue);
   const codexMessageQueue = useCodexStore((state) => state.messageQueue);
   const openCodeMessageQueue = useOpenCodeStore((state) => state.messageQueue);
   const loadingNativeSessionEnvironmentIds = useMemo(() => {
@@ -105,7 +110,7 @@ function App() {
     }
     return Array.from(environmentIds);
   }, [claudeSessions, codexSessions, openCodeSessions]);
-  const queuedNativePromptEnvironmentIds = useMemo(() => {
+  const queuedAgentPromptEnvironmentIds = useMemo(() => {
     const environmentIds = new Set<string>();
     const queueMaps = [claudeMessageQueue, codexMessageQueue, openCodeMessageQueue];
     for (const queueMap of queueMaps) {
@@ -117,12 +122,24 @@ function App() {
         }
       }
     }
+    for (const [stateKey, queue] of claudeTmuxMessageQueue) {
+      if (queue.length === 0) continue;
+      const environmentId = getEnvironmentIdFromClaudeTmuxStateKey(stateKey);
+      if (environmentId) {
+        environmentIds.add(environmentId);
+      }
+    }
     return Array.from(environmentIds);
-  }, [claudeMessageQueue, codexMessageQueue, openCodeMessageQueue]);
+  }, [
+    claudeMessageQueue,
+    claudeTmuxMessageQueue,
+    codexMessageQueue,
+    openCodeMessageQueue,
+  ]);
 
   // Environments with active background processing that aren't currently visible
   // in the main content. These must stay mounted so setup completion detection,
-  // native initial prompts, in-flight or queued native sessions, terminal
+  // native initial prompts, in-flight or queued agent sessions, terminal
   // listeners, SSE subscriptions, and pipeline advancement effects continue
   // running even when the user navigates away.
   const pipelines = useBuildPipelineStore((state) => state.pipelines);
@@ -136,7 +153,7 @@ function App() {
       Object.keys(pendingNativeLaunches),
       pendingInitialPromptEnvironmentIds,
       loadingNativeSessionEnvironmentIds,
-      queuedNativePromptEnvironmentIds,
+      queuedAgentPromptEnvironmentIds,
     ),
     [
       pipelines,
@@ -147,7 +164,7 @@ function App() {
       pendingNativeLaunches,
       pendingInitialPromptEnvironmentIds,
       loadingNativeSessionEnvironmentIds,
-      queuedNativePromptEnvironmentIds,
+      queuedAgentPromptEnvironmentIds,
     ],
   );
 

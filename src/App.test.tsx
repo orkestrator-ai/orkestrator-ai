@@ -3,6 +3,10 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
+import {
+  createClaudeTmuxStateKey,
+  useClaudeTmuxStore,
+} from "@/stores/claudeTmuxStore";
 import { useCodexStore, createCodexSessionKey } from "@/stores/codexStore";
 import { useOpenCodeStore, createOpenCodeSessionKey } from "@/stores/openCodeStore";
 import { useConfigStore } from "@/stores/configStore";
@@ -259,6 +263,14 @@ function resetStores({
     messageQueue: new Map(),
   });
 
+  useClaudeTmuxStore.setState({
+    tabs: new Map(),
+    attachments: new Map(),
+    draftText: new Map(),
+    draftMentions: new Map(),
+    messageQueue: new Map(),
+  });
+
   useCodexStore.setState({
     sessions: new Map(),
     messageQueue: new Map(),
@@ -416,11 +428,12 @@ describe("App background processing mounts", () => {
     expect(screen.getByTestId("terminal-env-pending-prompt").getAttribute("data-active")).toBe("false");
   });
 
-  test("keeps off-screen environments with queued native prompts mounted across agents until queues drain", async () => {
+  test("keeps off-screen environments with queued prompts mounted across agents until queues drain", async () => {
     resetStores({
       environments: [
         makeEnvironment("env-visible", "project-1"),
         makeEnvironment("env-queued-claude", "project-2"),
+        makeEnvironment("env-queued-tmux", "project-2"),
         makeEnvironment("env-queued-codex", "project-2"),
         makeEnvironment("env-queued-opencode", "project-2"),
       ],
@@ -429,6 +442,7 @@ describe("App background processing mounts", () => {
     });
 
     const claudeSessionKey = createClaudeSessionKey("env-queued-claude", "tab-1");
+    const tmuxStateKey = createClaudeTmuxStateKey("env-queued-tmux", "tab-1");
     const codexSessionKey = createCodexSessionKey("env-queued-codex", "tab-1");
     const openCodeSessionKey = createOpenCodeSessionKey("env-queued-opencode", "tab-1");
     useClaudeStore.setState({
@@ -443,6 +457,20 @@ describe("App background processing mounts", () => {
               effort: "medium",
               planModeEnabled: false,
               fastModeEnabled: false,
+            },
+          ],
+        ],
+      ]),
+    });
+    useClaudeTmuxStore.setState({
+      messageQueue: new Map([
+        [
+          tmuxStateKey,
+          [
+            {
+              id: "queue-tmux",
+              text: "Run queued tmux work",
+              attachments: [],
             },
           ],
         ],
@@ -487,21 +515,25 @@ describe("App background processing mounts", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("terminal-env-queued-claude")).toBeTruthy();
+      expect(screen.getByTestId("terminal-env-queued-tmux")).toBeTruthy();
       expect(screen.getByTestId("terminal-env-queued-codex")).toBeTruthy();
       expect(screen.getByTestId("terminal-env-queued-opencode")).toBeTruthy();
     });
     expect(screen.getByTestId("terminal-env-queued-claude").getAttribute("data-active")).toBe("false");
+    expect(screen.getByTestId("terminal-env-queued-tmux").getAttribute("data-active")).toBe("false");
     expect(screen.getByTestId("terminal-env-queued-codex").getAttribute("data-active")).toBe("false");
     expect(screen.getByTestId("terminal-env-queued-opencode").getAttribute("data-active")).toBe("false");
 
     act(() => {
       useClaudeStore.getState().clearQueue(claudeSessionKey);
+      useClaudeTmuxStore.getState().clearQueue(tmuxStateKey);
       useCodexStore.getState().clearQueue(codexSessionKey);
       useOpenCodeStore.getState().clearQueue(openCodeSessionKey);
     });
 
     await waitFor(() => {
       expect(screen.queryByTestId("terminal-env-queued-claude")).toBeNull();
+      expect(screen.queryByTestId("terminal-env-queued-tmux")).toBeNull();
       expect(screen.queryByTestId("terminal-env-queued-codex")).toBeNull();
       expect(screen.queryByTestId("terminal-env-queued-opencode")).toBeNull();
     });

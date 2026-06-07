@@ -14,6 +14,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronUp,
   History,
   Loader2,
   Plus,
@@ -23,9 +24,17 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useScrollLock } from "@/hooks";
+import { useVirtuosoScrollState } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -80,6 +89,8 @@ import {
   type TmuxPendingPermission,
   type TmuxPendingPlan,
   type TmuxPendingQuestion,
+  type TmuxAttachment,
+  type TmuxQueuedMessage,
 } from "@/stores/claudeTmuxStore";
 import { collapseTaskToolUpdates } from "@/lib/task-tool-snapshots";
 import { usePaneLayoutStore } from "@/stores/paneLayoutStore";
@@ -219,11 +230,12 @@ export function ClaudeTmuxChatTab({
   const removePendingElicitation = useClaudeTmuxStore((s) => s.removePendingElicitation);
   const replacePendingHooks = useClaudeTmuxStore((s) => s.replacePendingHooks);
   const setTabBusy = useClaudeTmuxStore((s) => s.setBusy);
+  const addToQueue = useClaudeTmuxStore((s) => s.addToQueue);
+  const removeFromQueue = useClaudeTmuxStore((s) => s.removeFromQueue);
   const clearTabInitialPrompt = usePaneLayoutStore((s) => s.clearTabInitialPrompt);
   const setConfig = useConfigStore((s) => s.setConfig);
   const persistedClaudeModel = useConfigStore((s) => s.config.global.claudeModel);
 
-  const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showTui, setShowTui] = useState(false);
@@ -239,8 +251,15 @@ export function ClaudeTmuxChatTab({
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
   const [promptControlBusy, setPromptControlBusy] = useState(false);
   const [backendHydrated, setBackendHydrated] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
+  const isProcessingQueueRef = useRef(false);
+  const submitPromptRef = useRef<
+    ((
+      text: string,
+      attachments: TmuxAttachment[],
+      clearDraftOnSuccess: boolean,
+    ) => Promise<boolean>) | null
+  >(null);
 
   // Auto-start unless the user is presented with a choice (no initial prompt
   // and there are prior sessions to resume — they should pick first).
@@ -280,34 +299,24 @@ export function ClaudeTmuxChatTab({
       messages.length > 0,
   );
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
-  const scrollTrigger = useMemo(
-    () => ({
-      messages,
-      pendingApprovals: pendingApprovals.length,
-      pendingQuestions: pendingQuestions.length,
-      pendingPlans: pendingPlans.length,
-      pendingPermissions: pendingPermissions.length,
-      pendingElicitations: pendingElicitations.length,
-      isThinking,
-      selectionPrompt: visibleSelectionPrompt ? selectionPromptKey(visibleSelectionPrompt) : null,
-    }),
-    [
-      messages,
-      pendingApprovals.length,
-      pendingQuestions.length,
-      pendingPlans.length,
-      pendingPermissions.length,
-      pendingElicitations.length,
-      isThinking,
-      visibleSelectionPrompt,
-    ],
-  );
-  const { isAtBottom, scrollToBottom } = useScrollLock(scrollRef, {
-    scrollTrigger,
-    mountTrigger: interactiveMode ? undefined : backendHydrated,
+  const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
     isActive: isActive && !interactiveMode,
     persistKey: `claude-tmux-${stateKey}`,
   });
+  const queueLength = useClaudeTmuxStore(
+    useCallback(
+      (state) => state.messageQueue.get(storeKey)?.length ?? 0,
+      [storeKey],
+    ),
+  );
+  const isQueueBlockedByDraft = useClaudeTmuxStore(
+    useCallback(
+      (state) =>
+        (state.draftText.get(storeKey)?.trim().length ?? 0) > 0 ||
+        (state.attachments.get(storeKey)?.length ?? 0) > 0,
+      [storeKey],
+    ),
+  );
 
   useEffect(() => {
     if (hasStarted) return;
@@ -592,7 +601,7 @@ export function ClaudeTmuxChatTab({
 
   const submitPrompt = async (
     text: string,
-    attachments: PastedImageAttachment[],
+    attachments: TmuxAttachment[],
     clearDraftOnSuccess: boolean,
   ): Promise<boolean> => {
     // `isThinking` covers the post-HTTP window where Claude is still
@@ -622,7 +631,7 @@ export function ClaudeTmuxChatTab({
       const prompt = buildTmuxPromptWithAttachments(text, attachments, containerId);
       await submitToTmux(tabId, prompt, environmentId);
       if (clearDraftOnSuccess) {
-        setDraft("");
+        useClaudeTmuxStore.getState().setDraftText(storeKey, "");
       }
       return true;
     } catch (e) {
@@ -637,10 +646,102 @@ export function ClaudeTmuxChatTab({
 
   const handleSubmit = async (
     text: string,
-    attachments: PastedImageAttachment[] = [],
+    attachments: TmuxAttachment[] = [],
   ) => {
     return submitPrompt(text, attachments, true);
   };
+
+  submitPromptRef.current = submitPrompt;
+
+  const handleQueue = useCallback(
+    (text: string, attachments: TmuxAttachment[]) => {
+      addToQueue(storeKey, {
+        id: crypto.randomUUID(),
+        text,
+        attachments,
+      });
+    },
+    [addToQueue, storeKey],
+  );
+
+  const processQueue = useCallback(() => {
+    if (isProcessingQueueRef.current) return;
+    if (!backendHydrated || !running || sending || isThinking || modelSwitching) return;
+
+    const tmuxState = useClaudeTmuxStore.getState();
+    if (
+      tmuxState.getDraftText(storeKey).trim().length > 0 ||
+      tmuxState.getAttachments(storeKey).length > 0
+    ) {
+      return;
+    }
+
+    const nextMessage = removeFromQueue(storeKey);
+    if (!nextMessage) return;
+
+    isProcessingQueueRef.current = true;
+    const sendPromise = submitPromptRef.current?.(
+      nextMessage.text,
+      nextMessage.attachments,
+      false,
+    );
+
+    if (!sendPromise) {
+      isProcessingQueueRef.current = false;
+      return;
+    }
+
+    sendPromise
+      .then((sent) => {
+        if (!sent) {
+          setError((current) => current ?? "Failed to send queued prompt");
+        }
+      })
+      .catch((e) => {
+        setError(
+          `Failed to send queued prompt: ${
+            e instanceof Error ? e.message : "Unknown error"
+          }`,
+        );
+        setTabBusy(storeKey, false);
+      })
+      .finally(() => {
+        isProcessingQueueRef.current = false;
+      });
+  }, [
+    backendHydrated,
+    isThinking,
+    modelSwitching,
+    removeFromQueue,
+    running,
+    sending,
+    setTabBusy,
+    storeKey,
+  ]);
+
+  useEffect(() => {
+    if (queueLength > 0 && !isQueueBlockedByDraft) {
+      processQueue();
+    }
+  }, [isQueueBlockedByDraft, processQueue, queueLength, isThinking]);
+
+  const promoteNextQueuedPromptToDraft = useCallback(() => {
+    const store = useClaudeTmuxStore.getState();
+    const hasCurrentDraft =
+      store.getDraftText(storeKey).trim().length > 0 ||
+      store.getAttachments(storeKey).length > 0;
+    if (hasCurrentDraft) return;
+
+    const nextMessage = store.removeFromQueue(storeKey);
+    if (!nextMessage) return;
+
+    store.setDraftText(storeKey, nextMessage.text);
+    store.setDraftMentions(storeKey, []);
+    store.clearAttachments(storeKey);
+    for (const attachment of nextMessage.attachments) {
+      store.addAttachment(storeKey, attachment);
+    }
+  }, [storeKey]);
 
   const handleAddressAll = async () => {
     await submitPrompt(ADDRESS_ALL_REVIEW_PROMPT, [], false);
@@ -651,6 +752,7 @@ export function ClaudeTmuxChatTab({
     setError(null);
     try {
       await interruptSession(tabId, environmentId);
+      promoteNextQueuedPromptToDraft();
       setTabBusy(storeKey, false);
     } catch (e) {
       setError(String(e));
@@ -961,9 +1063,19 @@ export function ClaudeTmuxChatTab({
           )}
 
           {/* Messages */}
-          <ScrollArea ref={scrollRef} className="flex-1 min-h-0">
-            <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
-              {messages.length === 0 && !hasPendingHookCards && (
+          <VirtualizedMessageList
+            messages={displayMessages}
+            computeItemKey={(_index, message) => message.id}
+            renderMessage={(_index, message, previousMessage) => (
+              <ClaudeMessage
+                message={message}
+                previousMessage={previousMessage}
+                isStreaming={running}
+                containerId={containerId}
+              />
+            )}
+            emptyState={
+              !hasPendingHookCards ? (
                 showStartScreen ? (
                   <StartScreen
                     onStartFresh={() => launchSession()}
@@ -978,105 +1090,98 @@ export function ClaudeTmuxChatTab({
                       : "Starting Claude under tmux..."}
                   </div>
                 )
-              )}
+              ) : undefined
+            }
+            footer={
+              <div className="max-w-3xl mx-auto min-w-0 px-2 @sm:px-4 py-3">
+                {pendingApprovals.map((a) => (
+                  <ApprovalCard
+                    key={a.eventId}
+                    approval={a}
+                    onApprove={() => handleApproval(a.eventId, "approve")}
+                    onDeny={() => handleApproval(a.eventId, "block")}
+                  />
+                ))}
 
-              {displayMessages.map((m, idx) => (
-                <ClaudeMessage
-                  key={m.id}
-                  message={m}
-                  previousMessage={displayMessages[idx - 1] ?? null}
-                  isStreaming={running}
-                  containerId={containerId}
-                />
-              ))}
+                {pendingQuestions.map((q) => (
+                  <ClaudeQuestionCard
+                    key={q.eventId}
+                    question={{
+                      id: q.eventId,
+                      sessionId: tabState?.sessionId ?? tabId,
+                      questions: q.questions,
+                      toolUseId: q.eventId,
+                    }}
+                    onSubmitAnswers={(answers) => handleQuestionAnswer(q, answers)}
+                    onDismiss={() => handleQuestionReject(q)}
+                  />
+                ))}
 
-              {pendingApprovals.map((a) => (
-                <ApprovalCard
-                  key={a.eventId}
-                  approval={a}
-                  onApprove={() => handleApproval(a.eventId, "approve")}
-                  onDeny={() => handleApproval(a.eventId, "block")}
-                />
-              ))}
+                {pendingPlans.map((p) => (
+                  <TmuxPlanCard
+                    key={p.eventId}
+                    plan={p}
+                    onRespond={(approved, feedback) =>
+                      handlePlanResponse(p, approved, feedback)
+                    }
+                  />
+                ))}
 
-              {pendingQuestions.map((q) => (
-                <ClaudeQuestionCard
-                  key={q.eventId}
-                  question={{
-                    id: q.eventId,
-                    sessionId: tabState?.sessionId ?? tabId,
-                    questions: q.questions,
-                    toolUseId: q.eventId,
-                  }}
-                  onSubmitAnswers={(answers) => handleQuestionAnswer(q, answers)}
-                  onDismiss={() => handleQuestionReject(q)}
-                />
-              ))}
+                {pendingPermissions.map((p) => (
+                  <TmuxPermissionCard
+                    key={p.eventId}
+                    permission={p}
+                    onRespond={(allow, updatedPermissions) =>
+                      handlePermissionResponse(p, allow, updatedPermissions)
+                    }
+                  />
+                ))}
 
-              {pendingPlans.map((p) => (
-                <TmuxPlanCard
-                  key={p.eventId}
-                  plan={p}
-                  onRespond={(approved, feedback) =>
-                    handlePlanResponse(p, approved, feedback)
-                  }
-                />
-              ))}
+                {pendingElicitations.map((e) => (
+                  <TmuxElicitationCard
+                    key={e.eventId}
+                    elicitation={e}
+                    onRespond={(action, content) =>
+                      handleElicitationResponse(e, action, content)
+                    }
+                  />
+                ))}
 
-              {pendingPermissions.map((p) => (
-                <TmuxPermissionCard
-                  key={p.eventId}
-                  permission={p}
-                  onRespond={(allow, updatedPermissions) =>
-                    handlePermissionResponse(p, allow, updatedPermissions)
-                  }
-                />
-              ))}
+                {visibleSelectionPrompt && (
+                  <ClaudeQuestionCard
+                    key={selectionPromptKey(visibleSelectionPrompt)}
+                    question={selectionPromptToQuestion(visibleSelectionPrompt, storeKey)}
+                    initialAnswers={[selectionPromptInitialAnswer(visibleSelectionPrompt)]}
+                    allowCustomAnswer={false}
+                    allowOptionDeselect={false}
+                    hideDismiss
+                    onSubmitAnswers={(answers) =>
+                      handleSelectionPromptAnswers(visibleSelectionPrompt, answers)
+                    }
+                  />
+                )}
 
-              {pendingElicitations.map((e) => (
-                <TmuxElicitationCard
-                  key={e.eventId}
-                  elicitation={e}
-                  onRespond={(action, content) =>
-                    handleElicitationResponse(e, action, content)
-                  }
-                />
-              ))}
-
-              {visibleSelectionPrompt && (
-                <ClaudeQuestionCard
-                  key={selectionPromptKey(visibleSelectionPrompt)}
-                  question={selectionPromptToQuestion(visibleSelectionPrompt, storeKey)}
-                  initialAnswers={[selectionPromptInitialAnswer(visibleSelectionPrompt)]}
-                  allowCustomAnswer={false}
-                  allowOptionDeselect={false}
-                  hideDismiss
-                  onSubmitAnswers={(answers) =>
-                    handleSelectionPromptAnswers(visibleSelectionPrompt, answers)
-                  }
-                />
-              )}
-            </div>
-          </ScrollArea>
-
-          {/* "Claude is thinking…" indicator — matches the native tab so the UI
-              looks the same between modes. Shown only while running so a freshly
-              mounted tab without a session doesn't flash a misleading spinner. */}
-          {isThinking && running && (
-            <div className="shrink-0 px-2 @sm:px-4 py-2 border-t border-border/40">
-              <div className="max-w-3xl mx-auto min-w-0">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-xs">Claude is thinking...</span>
-                  {elapsedSeconds !== null && elapsedSeconds > 0 && (
-                    <span className="text-xs text-muted-foreground/50">
-                      {formatElapsed(elapsedSeconds)}
-                    </span>
-                  )}
-                </div>
+                {/* "Claude is thinking…" indicator — matches the native tab so the UI
+                    looks the same between modes. Shown only while running so a freshly
+                    mounted tab without a session doesn't flash a misleading spinner. */}
+                {isThinking && running && (
+                  <div className="py-2">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-xs">Claude is thinking...</span>
+                      {elapsedSeconds !== null && elapsedSeconds > 0 && (
+                        <span className="text-xs text-muted-foreground/50">
+                          {formatElapsed(elapsedSeconds)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            }
+            scrollProps={scrollProps}
+            virtuosoRef={virtuosoRef}
+          />
 
           {!isAtBottom && (
             <div className="flex justify-end px-4 py-1">
@@ -1096,8 +1201,7 @@ export function ClaudeTmuxChatTab({
               processing) so a user can't queue a second message before the
               previous one finishes. Mirrors the spinner condition above. */}
           <TmuxComposeBar
-            value={draft}
-            setValue={setDraft}
+            sessionKey={storeKey}
             containerId={containerId}
             worktreePath={worktreePath}
             disabled={!running}
@@ -1105,6 +1209,8 @@ export function ClaudeTmuxChatTab({
             submitting={sending || modelSwitching}
             autoFocus={isActive}
             onSubmit={handleSubmit}
+            onQueue={handleQueue}
+            queueLength={queueLength}
             showAddressAll={showAddressAll}
             onAddressAll={handleAddressAll}
             onInterrupt={handleInterrupt}
@@ -1812,7 +1918,7 @@ function serializeTmuxFileMentions(
 
 function buildTmuxPromptWithAttachments(
   text: string,
-  attachments: PastedImageAttachment[],
+  attachments: TmuxAttachment[],
   containerId?: string,
 ): string {
   if (attachments.length === 0) return text;
@@ -1837,16 +1943,21 @@ function escapeRegExp(value: string): string {
 
 // ─── Compose bar ─────────────────────────────────────────────────────────────
 
+const EMPTY_TMUX_ATTACHMENTS: TmuxAttachment[] = [];
+const EMPTY_TMUX_MENTIONS: FileMention[] = [];
+const EMPTY_TMUX_QUEUE: TmuxQueuedMessage[] = [];
+
 interface TmuxComposeBarProps {
-  value: string;
-  setValue: (v: string) => void;
+  sessionKey: string;
   containerId?: string;
   worktreePath?: string;
   disabled: boolean;
   busy: boolean;
   submitting: boolean;
   autoFocus?: boolean;
-  onSubmit: (text: string, attachments: PastedImageAttachment[]) => Promise<boolean> | boolean | void;
+  onSubmit: (text: string, attachments: TmuxAttachment[]) => Promise<boolean> | boolean | void;
+  onQueue?: (text: string, attachments: TmuxAttachment[]) => void;
+  queueLength?: number;
   showAddressAll?: boolean;
   onAddressAll?: () => void;
   onInterrupt: () => void;
@@ -1861,8 +1972,7 @@ interface TmuxComposeBarProps {
 }
 
 function TmuxComposeBar({
-  value,
-  setValue,
+  sessionKey,
   containerId,
   worktreePath,
   disabled,
@@ -1870,6 +1980,8 @@ function TmuxComposeBar({
   submitting,
   autoFocus,
   onSubmit,
+  onQueue,
+  queueLength = 0,
   showAddressAll = false,
   onAddressAll,
   onInterrupt,
@@ -1886,8 +1998,33 @@ function TmuxComposeBar({
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const prevFileMentionMenuOpen = useRef(false);
   const pendingCursorPositionRef = useRef<number | null>(null);
-  const [attachments, setAttachments] = useState<PastedImageAttachment[]>([]);
-  const [fileMentions, setFileMentions] = useState<FileMention[]>([]);
+  const [queueDialogOpen, setQueueDialogOpen] = useState(false);
+  const value = useClaudeTmuxStore((state) => state.draftText.get(sessionKey) ?? "");
+  const fileMentions = useClaudeTmuxStore(
+    useCallback(
+      (state) => state.draftMentions.get(sessionKey) ?? EMPTY_TMUX_MENTIONS,
+      [sessionKey],
+    ),
+  );
+  const attachments = useClaudeTmuxStore(
+    useCallback(
+      (state) => state.attachments.get(sessionKey) ?? EMPTY_TMUX_ATTACHMENTS,
+      [sessionKey],
+    ),
+  );
+  const queuedMessages = useClaudeTmuxStore(
+    useCallback(
+      (state) => state.messageQueue.get(sessionKey) ?? EMPTY_TMUX_QUEUE,
+      [sessionKey],
+    ),
+  );
+  const setValue = useClaudeTmuxStore((state) => state.setDraftText);
+  const setFileMentions = useClaudeTmuxStore((state) => state.setDraftMentions);
+  const addAttachmentToStore = useClaudeTmuxStore((state) => state.addAttachment);
+  const removeAttachmentFromStore = useClaudeTmuxStore((state) => state.removeAttachment);
+  const clearAttachments = useClaudeTmuxStore((state) => state.clearAttachments);
+  const removeQueueItem = useClaudeTmuxStore((state) => state.removeQueueItem);
+  const moveQueueItem = useClaudeTmuxStore((state) => state.moveQueueItem);
   const modelObj = useMemo(
     () => getTmuxModel(selectedModel),
     [selectedModel],
@@ -1979,7 +2116,7 @@ function TmuxComposeBar({
   const selectSlashCommand = (command: SlashCommand) => {
     // Drop the user back in the input after the command + a space so they
     // can type any arguments (e.g. `/model opus`) before pressing Enter.
-    setValue(command.name + " ");
+    setValue(sessionKey, command.name + " ");
     setSlashMenuOpen(false);
     textareaRef.current?.focus();
   };
@@ -1999,8 +2136,9 @@ function TmuxComposeBar({
       value.slice(0, atStart) + insertedText + value.slice(cursorPosition);
 
     pendingCursorPositionRef.current = atStart + insertedText.length;
-    setValue(nextValue);
-    setFileMentions((current) => {
+    setValue(sessionKey, nextValue);
+    const nextMentions = (() => {
+      const current = useClaudeTmuxStore.getState().getDraftMentions(sessionKey);
       if (current.some((mention) => mention.relativePath === file.relativePath)) {
         return current;
       }
@@ -2012,17 +2150,18 @@ function TmuxComposeBar({
           relativePath: file.relativePath,
         },
       ];
-    });
+    })();
+    setFileMentions(sessionKey, nextMentions);
     closeFileMentionMenu();
   };
 
   const addAttachment = useCallback((attachment: PastedImageAttachment) => {
-    setAttachments((current) => [...current, attachment]);
-  }, []);
+    addAttachmentToStore(sessionKey, attachment);
+  }, [addAttachmentToStore, sessionKey]);
 
   const removeAttachment = useCallback((id: string) => {
-    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
-  }, []);
+    removeAttachmentFromStore(sessionKey, id);
+  }, [removeAttachmentFromStore, sessionKey]);
 
   useNativeComposeBarPaste({
     inputContainerRef,
@@ -2033,19 +2172,68 @@ function TmuxComposeBar({
   });
 
   const handleSubmit = async () => {
-    if (busy || submitting || disabled) return;
+    if (submitting || disabled) return;
     const serializedText = serializeTmuxFileMentions(
       value.trim(),
       fileMentions,
       containerId,
       worktreePath,
     );
+    if (!serializedText && attachments.length === 0) return;
+
+    if (busy) {
+      onQueue?.(serializedText, attachments);
+      setValue(sessionKey, "");
+      setFileMentions(sessionKey, []);
+      clearAttachments(sessionKey);
+      return;
+    }
+
     const result = await onSubmit(serializedText, attachments);
     if (result !== false) {
-      setAttachments([]);
-      setFileMentions([]);
+      setValue(sessionKey, "");
+      setFileMentions(sessionKey, []);
+      clearAttachments(sessionKey);
     }
   };
+
+  const handleQueuedMessageClick = useCallback(
+    (message: TmuxQueuedMessage) => {
+      if (value.trim() || attachments.length > 0) return;
+      removeQueueItem(sessionKey, message.id);
+      setValue(sessionKey, message.text);
+      setFileMentions(sessionKey, []);
+      clearAttachments(sessionKey);
+      for (const attachment of message.attachments) {
+        addAttachmentToStore(sessionKey, attachment);
+      }
+      setQueueDialogOpen(false);
+    },
+    [
+      addAttachmentToStore,
+      attachments.length,
+      clearAttachments,
+      removeQueueItem,
+      sessionKey,
+      setFileMentions,
+      setValue,
+      value,
+    ],
+  );
+
+  const handleMoveQueuedMessage = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      moveQueueItem(sessionKey, fromIndex, toIndex);
+    },
+    [moveQueueItem, sessionKey],
+  );
+
+  const handleRemoveQueuedMessage = useCallback(
+    (messageId: string) => {
+      removeQueueItem(sessionKey, messageId);
+    },
+    [removeQueueItem, sessionKey],
+  );
 
   return (
     <div className="shrink-0 border-t border-border bg-background p-3">
@@ -2098,9 +2286,15 @@ function TmuxComposeBar({
           value={value}
           onChange={(e) => {
             const nextValue = e.target.value;
-            setValue(nextValue);
-            setFileMentions((current) =>
-              current.filter((mention) => nextValue.includes(`@${mention.relativePath}`)),
+            setValue(sessionKey, nextValue);
+            const currentMentions = useClaudeTmuxStore
+              .getState()
+              .getDraftMentions(sessionKey);
+            setFileMentions(
+              sessionKey,
+              currentMentions.filter((mention) =>
+                nextValue.includes(`@${mention.relativePath}`),
+              ),
             );
             updateFileMentionDetection(e.target.selectionStart, nextValue);
           }}
@@ -2168,7 +2362,6 @@ function TmuxComposeBar({
             // Enter submits; Shift+Enter (and Cmd/Ctrl+Enter, for muscle
             // memory) inserts a newline.
             if (
-              !busy &&
               e.key === "Enter" &&
               !e.shiftKey &&
               !e.metaKey &&
@@ -2307,25 +2500,121 @@ function TmuxComposeBar({
           </Button>
         )}
 
+        {queueLength > 0 && (
+          <button
+            type="button"
+            onClick={() => setQueueDialogOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground bg-muted/50 hover:bg-muted transition-colors"
+            title="View queued prompts"
+          >
+            <span>+{queueLength} queued</span>
+          </button>
+        )}
+
         {/* Send / Stop button */}
         <Button
           size="sm"
-          onClick={busy ? onInterrupt : handleSubmit}
+          onClick={busy && !value.trim() && attachments.length === 0 ? onInterrupt : handleSubmit}
           disabled={
             disabled ||
             submitting ||
             (!busy && !value.trim() && attachments.length === 0)
           }
           className="h-7 w-7 p-0 rounded-full"
-          title={busy ? "Interrupt current response" : "Send (↵)"}
+          title={
+            busy
+              ? value.trim() || attachments.length > 0
+                ? "Add to queue"
+                : "Interrupt current response"
+              : "Send (↵)"
+          }
         >
-          {busy ? (
+          {busy && !value.trim() && attachments.length === 0 ? (
             <Square className="w-3.5 h-3.5" />
           ) : (
             <ArrowUp className="w-4 h-4" />
           )}
         </Button>
       </div>
+
+      <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Queued Prompts</DialogTitle>
+            <DialogDescription>
+              Review pending prompts. Click one to edit it, or reorder and remove items.
+            </DialogDescription>
+          </DialogHeader>
+
+          {queuedMessages.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Queue is empty.
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[380px] pr-3">
+              <div className="space-y-2">
+                {queuedMessages.map((message, index) => (
+                  <div
+                    key={message.id}
+                    className="rounded-md border border-border bg-muted/20 p-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 shrink-0 text-xs font-medium text-muted-foreground">
+                        #{index + 1}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="-mx-1 cursor-pointer rounded px-1 text-sm whitespace-pre-wrap break-words line-clamp-4 transition-colors hover:bg-muted/50"
+                          onClick={() => handleQueuedMessageClick(message)}
+                          title="Click to edit this message"
+                        >
+                          {message.text}
+                        </p>
+                        {message.attachments.length > 0 && (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {message.attachments.length} attachment
+                            {message.attachments.length === 1 ? "" : "s"}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveQueuedMessage(index, index - 1)}
+                          disabled={index === 0}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Move up"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveQueuedMessage(index, index + 1)}
+                          disabled={index === queuedMessages.length - 1}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Move down"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveQueuedMessage(message.id)}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                          title="Remove queued prompt"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

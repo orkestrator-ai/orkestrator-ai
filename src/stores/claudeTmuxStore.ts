@@ -21,9 +21,15 @@ import {
   type QuestionInfo,
   type ToolDiffMetadata,
 } from "@/lib/claude-client";
+import type { FileMention } from "@/types";
 
 export function createClaudeTmuxStateKey(environmentId: string, tabId: string): string {
   return `env:${environmentId}:tab:${tabId}`;
+}
+
+export function getEnvironmentIdFromClaudeTmuxStateKey(stateKey: string): string | null {
+  const match = stateKey.match(/^env:([^:]+):tab:/);
+  return match?.[1] ?? null;
 }
 
 function findScopedTabState(
@@ -99,6 +105,20 @@ export interface TmuxInfoEvent {
   receivedAt: string;
 }
 
+export interface TmuxAttachment {
+  id: string;
+  type: "image";
+  path: string;
+  previewUrl: string;
+  name: string;
+}
+
+export interface TmuxQueuedMessage {
+  id: string;
+  text: string;
+  attachments: TmuxAttachment[];
+}
+
 interface TmuxTabState {
   /** Workspace this tab belongs to. */
   environmentId: string | null;
@@ -145,6 +165,10 @@ const emptyTabState = (): TmuxTabState => ({
 
 interface ClaudeTmuxState {
   tabs: Map<string, TmuxTabState>;
+  attachments: Map<string, TmuxAttachment[]>;
+  draftText: Map<string, string>;
+  draftMentions: Map<string, FileMention[]>;
+  messageQueue: Map<string, TmuxQueuedMessage[]>;
 
   setRunning: (
     tabId: string,
@@ -181,8 +205,30 @@ interface ClaudeTmuxState {
   dismissInfoEvent: (tabId: string, id: string) => void;
   setBusy: (tabId: string, busy: boolean) => void;
 
+  addAttachment: (tabId: string, attachment: TmuxAttachment) => void;
+  removeAttachment: (tabId: string, attachmentId: string) => void;
+  clearAttachments: (tabId: string) => void;
+  getAttachments: (tabId: string) => TmuxAttachment[];
+
+  setDraftText: (tabId: string, text: string) => void;
+  getDraftText: (tabId: string) => string;
+  setDraftMentions: (tabId: string, mentions: FileMention[]) => void;
+  getDraftMentions: (tabId: string) => FileMention[];
+
+  addToQueue: (tabId: string, message: TmuxQueuedMessage) => void;
+  removeFromQueue: (tabId: string) => TmuxQueuedMessage | undefined;
+  removeQueueItem: (tabId: string, messageId: string) => void;
+  moveQueueItem: (tabId: string, fromIndex: number, toIndex: number) => void;
+  clearQueue: (tabId: string) => void;
+  getQueueLength: (tabId: string) => number;
+  getQueuedMessages: (tabId: string) => TmuxQueuedMessage[];
+
   getTab: (tabId: string) => TmuxTabState;
 }
+
+const EMPTY_ATTACHMENTS: TmuxAttachment[] = [];
+const EMPTY_MENTIONS: FileMention[] = [];
+const EMPTY_QUEUE: TmuxQueuedMessage[] = [];
 
 function patchTab(
   state: ClaudeTmuxState,
@@ -197,6 +243,10 @@ function patchTab(
 
 export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
   tabs: new Map(),
+  attachments: new Map(),
+  draftText: new Map(),
+  draftMentions: new Map(),
+  messageQueue: new Map(),
 
   setRunning: (tabId, running, info) =>
     set((state) =>
@@ -211,7 +261,23 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
     ),
 
   resetTab: (tabId) =>
-    set((state) => patchTab(state, tabId, () => emptyTabState())),
+    set((state) => {
+      const attachments = new Map(state.attachments);
+      const draftText = new Map(state.draftText);
+      const draftMentions = new Map(state.draftMentions);
+      const messageQueue = new Map(state.messageQueue);
+      attachments.delete(tabId);
+      draftText.delete(tabId);
+      draftMentions.delete(tabId);
+      messageQueue.delete(tabId);
+      return {
+        ...patchTab(state, tabId, () => emptyTabState()),
+        attachments,
+        draftText,
+        draftMentions,
+        messageQueue,
+      };
+    }),
 
   applyTranscriptLine: (tabId, line) =>
     set((state) =>
@@ -349,6 +415,125 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
         };
       }),
     ),
+
+  addAttachment: (tabId, attachment) =>
+    set((state) => {
+      const current = state.attachments.get(tabId) ?? [];
+      const next = new Map(state.attachments);
+      next.set(tabId, [...current, attachment]);
+      return { attachments: next };
+    }),
+
+  removeAttachment: (tabId, attachmentId) =>
+    set((state) => {
+      const current = state.attachments.get(tabId) ?? [];
+      const filtered = current.filter((a) => a.id !== attachmentId);
+      if (filtered.length === current.length) return state;
+      const next = new Map(state.attachments);
+      next.set(tabId, filtered);
+      return { attachments: next };
+    }),
+
+  clearAttachments: (tabId) =>
+    set((state) => {
+      const next = new Map(state.attachments);
+      next.set(tabId, []);
+      return { attachments: next };
+    }),
+
+  getAttachments: (tabId) => get().attachments.get(tabId) ?? EMPTY_ATTACHMENTS,
+
+  setDraftText: (tabId, text) =>
+    set((state) => {
+      const next = new Map(state.draftText);
+      if (text.length > 0) {
+        next.set(tabId, text);
+      } else {
+        next.delete(tabId);
+      }
+      return { draftText: next };
+    }),
+
+  getDraftText: (tabId) => get().draftText.get(tabId) ?? "",
+
+  setDraftMentions: (tabId, mentions) =>
+    set((state) => {
+      const next = new Map(state.draftMentions);
+      if (mentions.length > 0) {
+        next.set(tabId, mentions);
+      } else {
+        next.delete(tabId);
+      }
+      return { draftMentions: next };
+    }),
+
+  getDraftMentions: (tabId) =>
+    get().draftMentions.get(tabId) ?? EMPTY_MENTIONS,
+
+  addToQueue: (tabId, message) =>
+    set((state) => {
+      const current = state.messageQueue.get(tabId) ?? [];
+      const next = new Map(state.messageQueue);
+      next.set(tabId, [...current, message]);
+      return { messageQueue: next };
+    }),
+
+  removeFromQueue: (tabId) => {
+    let removed: TmuxQueuedMessage | undefined;
+    set((state) => {
+      const current = state.messageQueue.get(tabId) ?? [];
+      if (current.length === 0) return state;
+      const [first, ...rest] = current;
+      removed = first;
+      const next = new Map(state.messageQueue);
+      next.set(tabId, rest);
+      return { messageQueue: next };
+    });
+    return removed;
+  },
+
+  removeQueueItem: (tabId, messageId) =>
+    set((state) => {
+      const current = state.messageQueue.get(tabId) ?? [];
+      const filtered = current.filter((m) => m.id !== messageId);
+      if (filtered.length === current.length) return state;
+      const next = new Map(state.messageQueue);
+      next.set(tabId, filtered);
+      return { messageQueue: next };
+    }),
+
+  moveQueueItem: (tabId, fromIndex, toIndex) =>
+    set((state) => {
+      const current = state.messageQueue.get(tabId) ?? [];
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= current.length ||
+        toIndex >= current.length ||
+        fromIndex === toIndex
+      ) {
+        return state;
+      }
+      const reordered = [...current];
+      const [moved] = reordered.splice(fromIndex, 1);
+      if (!moved) return state;
+      reordered.splice(toIndex, 0, moved);
+      const next = new Map(state.messageQueue);
+      next.set(tabId, reordered);
+      return { messageQueue: next };
+    }),
+
+  clearQueue: (tabId) =>
+    set((state) => {
+      const next = new Map(state.messageQueue);
+      next.set(tabId, []);
+      return { messageQueue: next };
+    }),
+
+  getQueueLength: (tabId) => get().messageQueue.get(tabId)?.length ?? 0,
+
+  getQueuedMessages: (tabId) =>
+    get().messageQueue.get(tabId) ?? EMPTY_QUEUE,
 
   getTab: (tabId) =>
     findScopedTabState(get().tabs, tabId) ??
