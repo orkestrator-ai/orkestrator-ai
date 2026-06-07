@@ -88,6 +88,7 @@ export interface CodexMessage {
   content: string;
   parts: NativeMessagePart[];
   createdAt: string;
+  planReview?: boolean;
 }
 
 

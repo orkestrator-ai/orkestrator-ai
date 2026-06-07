@@ -388,6 +388,60 @@ describe("codex bridge abort handling", () => {
     expect(session.status).toBe("idle");
   });
 
+  test("marks generated plan-mode assistant responses as plan reviews", async () => {
+    const session = createSession({
+      conversationMode: "plan",
+      thread: {
+        runStreamed: async () => ({
+          events: (async function* () {
+            yield {
+              type: "item.completed",
+              item: {
+                id: "plan-answer",
+                type: "agent_message",
+                text: "Plan:\n1. Inspect the current flow.",
+              },
+            };
+          })(),
+        }),
+      },
+    });
+
+    await __testing.runPrompt(session, "Plan the fix");
+
+    const assistantMessage = session.messages.find(
+      (message: { role: string }) => message.role === "assistant",
+    );
+    expect(assistantMessage?.planReview).toBe(true);
+  });
+
+  test("does not mark Codex-native slash command responses as plan reviews", async () => {
+    const session = createSession({
+      conversationMode: "plan",
+      thread: {
+        runStreamed: async () => ({
+          events: (async function* () {
+            yield {
+              type: "item.completed",
+              item: {
+                id: "goal-answer",
+                type: "agent_message",
+                text: "Goal set.",
+              },
+            };
+          })(),
+        }),
+      },
+    });
+
+    await __testing.runPrompt(session, "/goal finish the release notes");
+
+    const assistantMessage = session.messages.find(
+      (message: { role: string }) => message.role === "assistant",
+    );
+    expect(assistantMessage?.planReview).toBeUndefined();
+  });
+
   test("missing rollout resume errors recover on a fresh thread with transcript context", async () => {
     let recoveryInput = "";
     const session = createSession({

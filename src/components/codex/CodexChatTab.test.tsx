@@ -34,6 +34,7 @@ type TestCodexMessage = {
   content: string;
   parts: Array<{ type: "text"; content: string }>;
   createdAt: string;
+  planReview?: boolean;
 };
 
 const mockRenameEnvironmentFromPrompt = mock(async () => {});
@@ -145,7 +146,7 @@ mock.module("./CodexComposeBar", () => ({
 }));
 
 mock.module("./CodexPlanModeCard", () => ({
-  CodexPlanModeCard: () => null,
+  CodexPlanModeCard: () => <div data-testid="codex-plan-mode-card" />,
 }));
 
 mock.module("./CodexResumeSessionDialog", () => ({
@@ -181,13 +182,18 @@ let intervalCallbacks: Array<() => void> = [];
 let intervalCallback: (() => void) | null = null;
 let clearIntervalCalls = 0;
 
-function createMessage(id: string, content: string): TestCodexMessage {
+function createMessage(
+  id: string,
+  content: string,
+  options: Pick<TestCodexMessage, "planReview"> = {},
+): TestCodexMessage {
   return {
     id,
     role: "assistant" as const,
     content,
     parts: [{ type: "text" as const, content }],
     createdAt: "2026-04-15T00:00:00.000Z",
+    ...options,
   };
 }
 
@@ -404,6 +410,44 @@ describe("CodexChatTab", () => {
     );
 
     expect(screen.getByTestId("codex-address-all-state").textContent).toBe("shown");
+  });
+
+  test("does not show plan approval for a non-plan assistant message after entering plan mode", () => {
+    seedCodexStore([createMessage("build-message", "Implementation finished")]);
+    useCodexStore.setState((state) => ({
+      selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("codex-plan-mode-card")).toBeNull();
+  });
+
+  test("shows plan approval after a completed plan-review assistant message", () => {
+    seedCodexStore([
+      createMessage("plan-message", "Plan:\n1. Inspect the current flow", {
+        planReview: true,
+      }),
+    ]);
+    useCodexStore.setState((state) => ({
+      selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.getByTestId("codex-plan-mode-card")).toBeTruthy();
   });
 
   test("skips renaming when the environment already has a non-timestamp name", async () => {
