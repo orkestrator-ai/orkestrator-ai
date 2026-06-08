@@ -34,6 +34,7 @@ type TestCodexMessage = {
   content: string;
   parts: Array<{ type: "text"; content: string }>;
   createdAt: string;
+  planReview?: boolean;
 };
 
 const mockRenameEnvironmentFromPrompt = mock(async () => {});
@@ -88,6 +89,7 @@ mock.module("./CodexComposeBar", () => ({
   CodexComposeBar: ({
     onSend,
     onStop,
+    onModeChange,
     onFastModeChange,
     disabled,
     isLoading,
@@ -95,6 +97,7 @@ mock.module("./CodexComposeBar", () => ({
   }: {
     onSend: (text: string, attachments: typeof composeAttachments) => Promise<void>;
     onStop?: () => Promise<void>;
+    onModeChange?: (mode: "build" | "plan") => Promise<void>;
     onFastModeChange?: (enabled: boolean) => void;
     disabled?: boolean;
     isLoading?: boolean;
@@ -140,12 +143,66 @@ mock.module("./CodexComposeBar", () => ({
       >
         Fast off
       </button>
+      <button
+        type="button"
+        data-testid="codex-mode-build"
+        onClick={() => {
+          void onModeChange?.("build");
+        }}
+      >
+        Build mode
+      </button>
+      <button
+        type="button"
+        data-testid="codex-mode-plan"
+        onClick={() => {
+          void onModeChange?.("plan");
+        }}
+      >
+        Plan mode
+      </button>
     </>
   ),
 }));
 
 mock.module("./CodexPlanModeCard", () => ({
-  CodexPlanModeCard: () => null,
+  CodexPlanModeCard: ({
+    onDismiss,
+    onSwitchToBuild,
+    onApproveAndBuild,
+  }: {
+    onDismiss?: () => void;
+    onSwitchToBuild?: () => Promise<void>;
+    onApproveAndBuild?: () => Promise<void>;
+  }) => (
+    <div data-testid="codex-plan-mode-card">
+      <button
+        type="button"
+        data-testid="codex-plan-dismiss"
+        onClick={() => onDismiss?.()}
+      >
+        Dismiss
+      </button>
+      <button
+        type="button"
+        data-testid="codex-plan-switch-build"
+        onClick={() => {
+          void onSwitchToBuild?.();
+        }}
+      >
+        Switch to build
+      </button>
+      <button
+        type="button"
+        data-testid="codex-plan-approve"
+        onClick={() => {
+          void onApproveAndBuild?.();
+        }}
+      >
+        Approve
+      </button>
+    </div>
+  ),
 }));
 
 mock.module("./CodexResumeSessionDialog", () => ({
@@ -181,13 +238,18 @@ let intervalCallbacks: Array<() => void> = [];
 let intervalCallback: (() => void) | null = null;
 let clearIntervalCalls = 0;
 
-function createMessage(id: string, content: string): TestCodexMessage {
+function createMessage(
+  id: string,
+  content: string,
+  options: Pick<TestCodexMessage, "planReview"> = {},
+): TestCodexMessage {
   return {
     id,
     role: "assistant" as const,
     content,
     parts: [{ type: "text" as const, content }],
     createdAt: "2026-04-15T00:00:00.000Z",
+    ...options,
   };
 }
 
@@ -404,6 +466,127 @@ describe("CodexChatTab", () => {
     );
 
     expect(screen.getByTestId("codex-address-all-state").textContent).toBe("shown");
+  });
+
+  test("does not show plan approval for a non-plan assistant message after entering plan mode", () => {
+    seedCodexStore([createMessage("build-message", "Implementation finished")]);
+    useCodexStore.setState((state) => ({
+      selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("codex-plan-mode-card")).toBeNull();
+  });
+
+  test("shows plan approval after a completed plan-review assistant message", () => {
+    seedCodexStore([
+      createMessage("plan-message", "Plan:\n1. Inspect the current flow", {
+        planReview: true,
+      }),
+    ]);
+    useCodexStore.setState((state) => ({
+      selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.getByTestId("codex-plan-mode-card")).toBeTruthy();
+  });
+
+  test("does not show plan approval for an empty plan-review assistant message", () => {
+    seedCodexStore([
+      createMessage("empty-plan-message", "", {
+        planReview: true,
+      }),
+    ]);
+    useCodexStore.setState((state) => ({
+      selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("codex-plan-mode-card")).toBeNull();
+  });
+
+  test("does not show plan approval while the session has an error", () => {
+    seedCodexStore([
+      createMessage("plan-message", "Plan:\n1. Inspect the current flow", {
+        planReview: true,
+      }),
+    ]);
+    useCodexStore.setState((state) => {
+      const session = state.sessions.get(SESSION_KEY)!;
+      return {
+        selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+        sessions: new Map(state.sessions).set(SESSION_KEY, {
+          ...session,
+          error: "Codex session failed",
+        }),
+      };
+    });
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("codex-plan-mode-card")).toBeNull();
+  });
+
+  test("keeps a plan review dismissed after manually switching to build and back to plan", async () => {
+    seedCodexStore([
+      createMessage("plan-message", "Plan:\n1. Inspect the current flow", {
+        planReview: true,
+      }),
+    ]);
+    useCodexStore.setState((state) => ({
+      selectedMode: new Map(state.selectedMode).set(SESSION_KEY, "plan"),
+    }));
+
+    render(
+      <CodexChatTab
+        tabId={TAB_ID}
+        data={createData()}
+        isActive={false}
+      />,
+    );
+
+    expect(screen.getByTestId("codex-plan-mode-card")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("codex-mode-build"));
+
+    await waitFor(() => {
+      expect(useCodexStore.getState().selectedMode.get(SESSION_KEY)).toBe("build");
+    });
+
+    fireEvent.click(screen.getByTestId("codex-mode-plan"));
+
+    await waitFor(() => {
+      expect(useCodexStore.getState().selectedMode.get(SESSION_KEY)).toBe("plan");
+    });
+    expect(screen.queryByTestId("codex-plan-mode-card")).toBeNull();
   });
 
   test("skips renaming when the environment already has a non-timestamp name", async () => {

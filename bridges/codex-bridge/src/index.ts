@@ -64,6 +64,7 @@ interface NormalizedMessage {
   content: string;
   parts: NormalizedPart[];
   createdAt: string;
+  planReview?: boolean;
 }
 
 interface SessionState {
@@ -670,13 +671,14 @@ function createUserMessage(
   };
 }
 
-function createAssistantMessage(): NormalizedMessage {
+function createAssistantMessage(options: { planReview?: boolean } = {}): NormalizedMessage {
   return {
     id: createMessageId(),
     role: "assistant",
     content: "",
     parts: [],
     createdAt: new Date().toISOString(),
+    ...(options.planReview ? { planReview: true } : {}),
   };
 }
 
@@ -1945,16 +1947,18 @@ async function runPrompt(
     resolvedSlashCommand?.kind === "prompt"
       ? resolvedSlashCommand.expandedPrompt
       : prompt;
+  const turnConversationMode = session.conversationMode;
   const parsedExecutionSlashCommand = parseSlashCommandPrompt(executionPrompt);
   const shouldBypassModeWrapper =
     !!parsedExecutionSlashCommand
     && isCodexCliNativeSlashCommand(parsedExecutionSlashCommand.name);
+  const isPlanReviewTurn = turnConversationMode === "plan" && !shouldBypassModeWrapper;
   const attachments = session.pendingAttachments ?? [];
   session.pendingAttachments = [];
   const executionInput = buildPromptInput(
     shouldBypassModeWrapper
       ? executionPrompt
-      : wrapPromptForConversationMode(executionPrompt, session.conversationMode),
+      : wrapPromptForConversationMode(executionPrompt, turnConversationMode),
     attachments,
   );
   const turnId = acceptedTurnId ?? crypto.randomUUID();
@@ -1973,7 +1977,7 @@ async function runPrompt(
   const userMessage = createUserMessage(prompt, attachments);
   session.messages.push(userMessage);
   session.pendingAttachments = [];
-  const assistantMessage = createAssistantMessage();
+  const assistantMessage = createAssistantMessage({ planReview: isPlanReviewTurn });
   session.currentAssistantMessageId = assistantMessage.id;
   session.messages.push(assistantMessage);
 
@@ -2019,7 +2023,7 @@ async function runPrompt(
             ),
             executionPrompt,
           ),
-          session.conversationMode,
+          turnConversationMode,
         ),
         attachments,
       );

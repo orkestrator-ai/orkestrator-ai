@@ -224,6 +224,13 @@ export function CodexChatTab({
     }
     return undefined;
   }, [sessionMessages]);
+  const latestAssistantHasReviewContent = useMemo(() => {
+    if (!latestAssistantMessage) return false;
+    if (latestAssistantMessage.content.trim().length > 0) return true;
+    return latestAssistantMessage.parts.some((part) => (
+      part.type === "text" && part.content.trim().length > 0
+    ));
+  }, [latestAssistantMessage]);
   const slashCommands = useMemo(
     () => slashCommandsMap.get(environmentId) ?? [],
     [environmentId, slashCommandsMap],
@@ -276,12 +283,6 @@ export function CodexChatTab({
     refreshControllerRef.current = createCodexSessionRefreshController();
     refreshControllerRef.current.markActivity();
   }, [sessionKey, session?.sessionId]);
-
-  useEffect(() => {
-    if (selectedMode !== "plan") {
-      setDismissedPlanReviewMessageId(null);
-    }
-  }, [selectedMode]);
 
   const handleSend = useCallback(
     async (text: string, attachments: CodexAttachment[]) => {
@@ -871,9 +872,12 @@ export function CodexChatTab({
 
   const handleModeChange = useCallback(
     async (mode: CodexConversationMode) => {
-      await applyModeChange(mode);
+      const changed = await applyModeChange(mode);
+      if (changed && mode === "build" && latestAssistantMessage?.planReview === true) {
+        setDismissedPlanReviewMessageId(latestAssistantMessage.id);
+      }
     },
-    [applyModeChange],
+    [applyModeChange, latestAssistantMessage?.id, latestAssistantMessage?.planReview],
   );
 
   const handleReasoningEffortChange = useCallback(
@@ -959,7 +963,10 @@ export function CodexChatTab({
 
   const showPlanModeCard = selectedMode === "plan"
     && !session?.isLoading
+    && !session?.error
     && !!latestAssistantMessage
+    && latestAssistantMessage.planReview === true
+    && latestAssistantHasReviewContent
     && latestAssistantMessage.id !== dismissedPlanReviewMessageId;
 
   const reconcileSessionState = useCallback(async (options?: { forceRefreshMessages?: boolean }) => {
