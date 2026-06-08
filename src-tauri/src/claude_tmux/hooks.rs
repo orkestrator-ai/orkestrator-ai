@@ -21,6 +21,7 @@ use super::backend::Backend;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use tracing::{debug, warn};
 
 /// Default for how long the PreToolUse hook will wait for the UI to respond
 /// before falling back to Claude Code's normal permission prompt.
@@ -29,6 +30,7 @@ pub const HOOK_TIMEOUT_SECS: u32 = 600; // 10 min
 /// Sentinel value stored in the settings-backup file when there was no
 /// original `.claude/settings.local.json` at install time.
 const BACKUP_SENTINEL_NO_ORIGINAL: &str = "__orkestrator_no_original__";
+const CLAUDE_SETTINGS_LOCAL_GIT_EXCLUDE_PATTERN: &str = ".claude/settings.local.json";
 
 #[derive(Debug, Clone, Copy)]
 pub enum HookEventKind {
@@ -307,6 +309,7 @@ pub async fn install_workspace_hooks(
 ) -> Result<(), String> {
     backend.ensure_dir(&paths.root).await?;
     backend.ensure_dir(&paths.sessions_dir).await?;
+    ensure_claude_settings_git_ignored(backend).await;
 
     let script = hook_script(paths, HOOK_TIMEOUT_SECS);
     backend.write_file(&paths.script, &script).await?;
@@ -338,6 +341,77 @@ pub async fn install_workspace_hooks(
     backend.write_file(&paths.claude_settings, &merged).await?;
 
     Ok(())
+}
+
+async fn ensure_claude_settings_git_ignored(backend: &Backend) {
+    let script = git_exclude_setup_script(CLAUDE_SETTINGS_LOCAL_GIT_EXCLUDE_PATTERN);
+    let out = match backend.exec(&["bash", "-lc", &script]).await {
+        Ok(out) => out,
+        Err(e) => {
+            warn!(error = %e, "Failed to run Claude settings Git exclude setup");
+            return;
+        }
+    };
+
+    if out.success() {
+        debug!("Ensured Claude workspace settings are ignored by Git");
+    } else {
+        warn!(
+            status = out.status,
+            stderr = %out.stderr,
+            "Claude settings Git exclude setup exited unsuccessfully"
+        );
+    }
+}
+
+fn git_exclude_setup_script(pattern: &str) -> String {
+    format!(
+        r#"set -e
+pattern={pattern_q}
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  exit 0
+fi
+
+git_dir_raw="$(git rev-parse --git-dir)"
+common_dir_raw="$(git rev-parse --git-common-dir 2>/dev/null || printf '%s' "$git_dir_raw")"
+
+git_dir="$(cd "$git_dir_raw" 2>/dev/null && pwd -P || printf '%s' "$git_dir_raw")"
+common_dir="$(cd "$common_dir_raw" 2>/dev/null && pwd -P || printf '%s' "$common_dir_raw")"
+
+if [ "$git_dir" != "$common_dir" ]; then
+  git config extensions.worktreeConfig true
+  exclude_file="$(git config --worktree --get core.excludesFile 2>/dev/null || true)"
+  if [ -z "$exclude_file" ]; then
+    exclude_file="$git_dir/info/exclude"
+    git config --worktree core.excludesFile "$exclude_file"
+  fi
+else
+  exclude_file="$git_dir/info/exclude"
+fi
+
+case "$exclude_file" in
+  "~/"*) exclude_file="$HOME/${{exclude_file#~/}}" ;;
+esac
+
+mkdir -p "$(dirname "$exclude_file")"
+touch "$exclude_file"
+
+append_exclude_pattern() {{
+  exclude_file="$1"
+  pattern="$2"
+  if [ -s "$exclude_file" ] && [ "$(tail -c 1 "$exclude_file" 2>/dev/null)" != "" ]; then
+    printf '\n' >> "$exclude_file"
+  fi
+  printf '%s\n' "$pattern" >> "$exclude_file"
+}}
+
+if ! grep -qxF "$pattern" "$exclude_file"; then
+  append_exclude_pattern "$exclude_file" "$pattern"
+fi
+"#,
+        pattern_q = shell_dq(pattern)
+    )
 }
 
 /// Restore the user's original `.claude/settings.local.json` and remove the
@@ -600,6 +674,55 @@ fn shell_dq(s: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::{Path, PathBuf};
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout: {}\nstderr: {}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_stdout(dir: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout: {}\nstderr: {}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn resolve_repo_path(repo: &Path, path: String) -> PathBuf {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            path
+        } else {
+            repo.join(path)
+        }
+    }
 
     #[test]
     fn parse_event_filename_splits_kind_and_id() {
@@ -726,6 +849,204 @@ mod tests {
     }
 
     #[test]
+    fn git_exclude_setup_script_uses_worktree_specific_config() {
+        let script = git_exclude_setup_script(".claude/settings.local.json");
+        assert!(script.contains(".claude/settings.local.json"));
+        assert!(script.contains("git config extensions.worktreeConfig true"));
+        assert!(script.contains("git config --worktree core.excludesFile"));
+        assert!(script.contains("$git_dir/info/exclude"));
+        assert!(script.contains("append_exclude_pattern"));
+        assert!(script.contains("tail -c 1"));
+    }
+
+    #[tokio::test]
+    async fn ensure_claude_settings_git_ignored_adds_regular_repo_exclude() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        run_git(tmp.path(), &["init"]);
+
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        ensure_claude_settings_git_ignored(&backend).await;
+
+        let exclude = std::fs::read_to_string(tmp.path().join(".git/info/exclude")).unwrap();
+        assert!(exclude.contains(".claude/settings.local.json"));
+    }
+
+    #[tokio::test]
+    async fn ensure_claude_settings_git_ignored_is_newline_safe_and_idempotent() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        run_git(tmp.path(), &["init"]);
+        let exclude_path = tmp.path().join(".git/info/exclude");
+        std::fs::write(&exclude_path, "existing-pattern").unwrap();
+
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+        ensure_claude_settings_git_ignored(&backend).await;
+        ensure_claude_settings_git_ignored(&backend).await;
+
+        let exclude = std::fs::read_to_string(&exclude_path).unwrap();
+        assert_eq!(exclude, "existing-pattern\n.claude/settings.local.json\n");
+
+        std::fs::create_dir_all(tmp.path().join(".claude")).unwrap();
+        std::fs::write(tmp.path().join(".claude/settings.local.json"), "{}\n").unwrap();
+        let check_ignore = git_stdout(
+            tmp.path(),
+            &[
+                "-c",
+                "core.excludesFile=/dev/null",
+                "check-ignore",
+                "-v",
+                ".claude/settings.local.json",
+            ],
+        );
+        assert!(check_ignore.contains(".git/info/exclude"));
+    }
+
+    #[tokio::test]
+    async fn ensure_claude_settings_git_ignored_noops_outside_git_repo() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = Backend::Local {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        };
+
+        ensure_claude_settings_git_ignored(&backend).await;
+
+        assert!(!tmp.path().join(".git").exists());
+    }
+
+    #[tokio::test]
+    async fn ensure_claude_settings_git_ignored_tolerates_exec_failure() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let missing = tmp.path().join("missing");
+        let backend = Backend::Local {
+            cwd: missing.to_string_lossy().into_owned(),
+        };
+
+        ensure_claude_settings_git_ignored(&backend).await;
+
+        assert!(!missing.exists());
+    }
+
+    #[tokio::test]
+    async fn ensure_claude_settings_git_ignored_uses_worktree_specific_exclude() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source");
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir_all(&source).unwrap();
+        run_git(&source, &["init"]);
+        run_git(&source, &["config", "user.email", "test@example.com"]);
+        run_git(&source, &["config", "user.name", "Test User"]);
+        std::fs::write(source.join("README.md"), "test\n").unwrap();
+        run_git(&source, &["add", "README.md"]);
+        run_git(&source, &["commit", "-m", "init"]);
+        run_git(
+            &source,
+            &["worktree", "add", "-b", "env", worktree.to_str().unwrap()],
+        );
+
+        let backend = Backend::Local {
+            cwd: worktree.to_string_lossy().into_owned(),
+        };
+        ensure_claude_settings_git_ignored(&backend).await;
+
+        let git_dir = resolve_repo_path(
+            &worktree,
+            git_stdout(&worktree, &["rev-parse", "--git-dir"]),
+        );
+        let common_dir = resolve_repo_path(
+            &worktree,
+            git_stdout(&worktree, &["rev-parse", "--git-common-dir"]),
+        );
+        let worktree_exclude = std::fs::read_to_string(git_dir.join("info/exclude")).unwrap();
+        assert!(worktree_exclude.contains(".claude/settings.local.json"));
+
+        let common_exclude_path = common_dir.join("info/exclude");
+        let common_exclude = std::fs::read_to_string(common_exclude_path).unwrap_or_default();
+        assert!(!common_exclude.contains(".claude/settings.local.json"));
+
+        std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+        std::fs::write(worktree.join(".claude/settings.local.json"), "{}\n").unwrap();
+        let check_ignore = git_stdout(
+            &worktree,
+            &["check-ignore", "-v", ".claude/settings.local.json"],
+        );
+        assert!(check_ignore.contains(&git_dir.join("info/exclude").to_string_lossy().to_string()));
+    }
+
+    #[tokio::test]
+    async fn ensure_claude_settings_git_ignored_respects_existing_worktree_excludes_file() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source");
+        let worktree = tmp.path().join("worktree");
+        let custom_exclude = tmp.path().join("custom-exclude");
+        std::fs::create_dir_all(&source).unwrap();
+        run_git(&source, &["init"]);
+        run_git(&source, &["config", "user.email", "test@example.com"]);
+        run_git(&source, &["config", "user.name", "Test User"]);
+        std::fs::write(source.join("README.md"), "test\n").unwrap();
+        run_git(&source, &["add", "README.md"]);
+        run_git(&source, &["commit", "-m", "init"]);
+        run_git(
+            &source,
+            &["worktree", "add", "-b", "env", worktree.to_str().unwrap()],
+        );
+        run_git(&source, &["config", "extensions.worktreeConfig", "true"]);
+        run_git(
+            &worktree,
+            &[
+                "config",
+                "--worktree",
+                "core.excludesFile",
+                custom_exclude.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(&custom_exclude, "existing-pattern\n").unwrap();
+
+        let backend = Backend::Local {
+            cwd: worktree.to_string_lossy().into_owned(),
+        };
+        ensure_claude_settings_git_ignored(&backend).await;
+
+        let exclude = std::fs::read_to_string(&custom_exclude).unwrap();
+        assert!(exclude.contains(".claude/settings.local.json"));
+
+        std::fs::create_dir_all(worktree.join(".claude")).unwrap();
+        std::fs::write(worktree.join(".claude/settings.local.json"), "{}\n").unwrap();
+        let check_ignore = git_stdout(
+            &worktree,
+            &["check-ignore", "-v", ".claude/settings.local.json"],
+        );
+        assert!(check_ignore.contains(&custom_exclude.to_string_lossy().to_string()));
+    }
+
+    #[test]
     fn workspace_hook_paths_layout() {
         let p = WorkspaceHookPaths::new("/tmp/run", "/work");
         assert_eq!(p.root, "/tmp/run");
@@ -815,17 +1136,15 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(
-            reply_to_hook(
-                &backend,
-                &paths,
-                "PreToolUse",
-                "hook-1/../../outside",
-                &response,
-            )
-            .await
-            .is_err()
-        );
+        assert!(reply_to_hook(
+            &backend,
+            &paths,
+            "PreToolUse",
+            "hook-1/../../outside",
+            &response,
+        )
+        .await
+        .is_err());
 
         assert!(backend.read_file(&pending_path).await.unwrap().is_some());
         let response_entries = backend.list_dir(&paths.response_dir).await.unwrap();
