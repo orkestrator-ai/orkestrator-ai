@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { TranscriptLine } from "@/lib/claude-tmux-client";
 import { ERROR_MESSAGE_PREFIX, type ClaudeMessage } from "@/lib/claude-client";
 import {
+  createClaudeTmuxStateKey,
+  getEnvironmentIdFromClaudeTmuxStateKey,
   compactConsecutiveAssistantMessages,
   payloadToApproval,
   payloadToInfoEvent,
@@ -9,11 +11,29 @@ import {
 } from "./claudeTmuxStore";
 
 function reset() {
-  useClaudeTmuxStore.setState({ tabs: new Map() });
+  useClaudeTmuxStore.setState({
+    tabs: new Map(),
+    attachments: new Map(),
+    draftText: new Map(),
+    draftMentions: new Map(),
+    messageQueue: new Map(),
+  });
 }
 
 beforeEach(() => {
   reset();
+});
+
+describe("state keys", () => {
+  test("creates and parses environment-scoped tmux state keys", () => {
+    const key = createClaudeTmuxStateKey("env-1", "tab-a");
+
+    expect(key).toBe("env:env-1:tab:tab-a");
+    expect(getEnvironmentIdFromClaudeTmuxStateKey(key)).toBe("env-1");
+    expect(getEnvironmentIdFromClaudeTmuxStateKey("tab-a")).toBeNull();
+    expect(getEnvironmentIdFromClaudeTmuxStateKey("env::tab:tab-a")).toBeNull();
+    expect(getEnvironmentIdFromClaudeTmuxStateKey("env:env-1")).toBeNull();
+  });
 });
 
 describe("applyTranscriptLine", () => {
@@ -603,6 +623,128 @@ describe("infoEvents", () => {
   });
 });
 
+describe("drafts, attachments, and queue helpers", () => {
+  test("stores draft text and mentions per scoped tab and deletes empty values", () => {
+    const keyA = createClaudeTmuxStateKey("env-a", "tab-1");
+    const keyB = createClaudeTmuxStateKey("env-b", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+
+    store.setDraftText(keyA, "hello @src/App.tsx");
+    store.setDraftMentions(keyA, [
+      {
+        id: "mention-1",
+        filename: "App.tsx",
+        relativePath: "src/App.tsx",
+      },
+    ]);
+    store.setDraftText(keyB, "other draft");
+
+    expect(store.getDraftText(keyA)).toBe("hello @src/App.tsx");
+    expect(store.getDraftMentions(keyA)).toEqual([
+      {
+        id: "mention-1",
+        filename: "App.tsx",
+        relativePath: "src/App.tsx",
+      },
+    ]);
+    expect(store.getDraftText(keyB)).toBe("other draft");
+
+    store.setDraftText(keyA, "");
+    store.setDraftMentions(keyA, []);
+
+    expect(useClaudeTmuxStore.getState().getDraftText(keyA)).toBe("");
+    expect(useClaudeTmuxStore.getState().getDraftMentions(keyA)).toEqual([]);
+    expect(useClaudeTmuxStore.getState().getDraftText(keyB)).toBe("other draft");
+  });
+
+  test("adds, removes, and clears attachments per scoped tab", () => {
+    const keyA = createClaudeTmuxStateKey("env-a", "tab-1");
+    const keyB = createClaudeTmuxStateKey("env-b", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+
+    store.addAttachment(keyA, {
+      id: "att-1",
+      type: "image",
+      path: "/workspace/one.png",
+      previewUrl: "data:image/png;base64,one",
+      name: "one.png",
+    });
+    store.addAttachment(keyA, {
+      id: "att-2",
+      type: "image",
+      path: "/workspace/two.png",
+      previewUrl: "data:image/png;base64,two",
+      name: "two.png",
+    });
+    store.addAttachment(keyB, {
+      id: "att-b",
+      type: "image",
+      path: "/workspace/b.png",
+      previewUrl: "data:image/png;base64,b",
+      name: "b.png",
+    });
+
+    expect(store.getAttachments(keyA).map((attachment) => attachment.id)).toEqual([
+      "att-1",
+      "att-2",
+    ]);
+
+    store.removeAttachment(keyA, "att-1");
+    expect(useClaudeTmuxStore.getState().getAttachments(keyA).map((a) => a.id)).toEqual([
+      "att-2",
+    ]);
+    expect(useClaudeTmuxStore.getState().getAttachments(keyB).map((a) => a.id)).toEqual([
+      "att-b",
+    ]);
+
+    useClaudeTmuxStore.getState().clearAttachments(keyA);
+    expect(useClaudeTmuxStore.getState().getAttachments(keyA)).toEqual([]);
+    expect(useClaudeTmuxStore.getState().getAttachments(keyB).map((a) => a.id)).toEqual([
+      "att-b",
+    ]);
+  });
+
+  test("queues, reorders, removes, drains, and clears messages per scoped tab", () => {
+    const keyA = createClaudeTmuxStateKey("env-a", "tab-1");
+    const keyB = createClaudeTmuxStateKey("env-b", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+
+    store.addToQueue(keyA, { id: "q-1", text: "first", attachments: [] });
+    store.addToQueue(keyA, { id: "q-2", text: "second", attachments: [] });
+    store.addToQueue(keyA, { id: "q-3", text: "third", attachments: [] });
+    store.addToQueue(keyB, { id: "q-b", text: "other", attachments: [] });
+
+    expect(store.getQueueLength(keyA)).toBe(3);
+    expect(store.getQueuedMessages(keyA).map((message) => message.id)).toEqual([
+      "q-1",
+      "q-2",
+      "q-3",
+    ]);
+
+    store.moveQueueItem(keyA, 2, 0);
+    expect(useClaudeTmuxStore.getState().getQueuedMessages(keyA).map((m) => m.id)).toEqual([
+      "q-3",
+      "q-1",
+      "q-2",
+    ]);
+
+    useClaudeTmuxStore.getState().removeQueueItem(keyA, "q-1");
+    expect(useClaudeTmuxStore.getState().getQueuedMessages(keyA).map((m) => m.id)).toEqual([
+      "q-3",
+      "q-2",
+    ]);
+    expect(useClaudeTmuxStore.getState().removeFromQueue(keyA)?.id).toBe("q-3");
+    expect(useClaudeTmuxStore.getState().removeFromQueue(keyA)?.id).toBe("q-2");
+    expect(useClaudeTmuxStore.getState().removeFromQueue(keyA)).toBeUndefined();
+
+    expect(useClaudeTmuxStore.getState().getQueuedMessages(keyB).map((m) => m.id)).toEqual([
+      "q-b",
+    ]);
+    useClaudeTmuxStore.getState().clearQueue(keyB);
+    expect(useClaudeTmuxStore.getState().getQueueLength(keyB)).toBe(0);
+  });
+});
+
 describe("session lifecycle", () => {
   test("setRunning preserves prior sessionId when called without sessionId", () => {
     useClaudeTmuxStore
@@ -637,18 +779,34 @@ describe("session lifecycle", () => {
   });
 
   test("resetTab clears state", () => {
-    useClaudeTmuxStore
-      .getState()
-      .setRunning("e", true, { sessionId: "sess-1" });
-    useClaudeTmuxStore.getState().applyTranscriptLine("e", {
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning("e", true, { sessionId: "sess-1" });
+    store.applyTranscriptLine("e", {
       type: "user",
       uuid: "u",
       message: { role: "user", content: "hi" },
     });
-    useClaudeTmuxStore.getState().resetTab("e");
+    store.setDraftText("e", "queued draft");
+    store.addAttachment("e", {
+      id: "att-1",
+      type: "image",
+      path: "/workspace/att.png",
+      previewUrl: "data:image/png;base64,att",
+      name: "att.png",
+    });
+    store.addToQueue("e", {
+      id: "queue-1",
+      text: "queued prompt",
+      attachments: [],
+    });
+
+    store.resetTab("e");
     const tab = useClaudeTmuxStore.getState().getTab("e");
     expect(tab.running).toBe(false);
     expect(tab.sessionId).toBeNull();
     expect(tab.messages).toHaveLength(0);
+    expect(useClaudeTmuxStore.getState().getDraftText("e")).toBe("");
+    expect(useClaudeTmuxStore.getState().getAttachments("e")).toEqual([]);
+    expect(useClaudeTmuxStore.getState().getQueuedMessages("e")).toEqual([]);
   });
 });

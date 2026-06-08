@@ -7,10 +7,10 @@ import type { Environment } from "@/types";
  *
  * This includes active pipelines, environments whose setup scripts are still
  * running, native agent tabs that have not yet dispatched their initial prompt,
- * native agent sessions that are still loading, and native tabs with queued
+ * native agent sessions that are still loading, and agent tabs with queued
  * prompts waiting to drain. These must stay mounted so terminal listeners,
- * xterm parser handlers, SSE subscriptions, and pending native prompt effects
- * continue running.
+ * xterm parser handlers, SSE subscriptions, and pending prompt effects continue
+ * running.
  */
 export function getBackgroundProcessingEnvironments(
   pipelines: Map<string, BuildPipeline>,
@@ -21,7 +21,7 @@ export function getBackgroundProcessingEnvironments(
   pendingNativeLaunchEnvironmentIds: Iterable<string> = [],
   pendingInitialPromptEnvironmentIds: Iterable<string> = [],
   loadingNativeSessionEnvironmentIds: Iterable<string> = [],
-  queuedNativePromptEnvironmentIds: Iterable<string> = [],
+  queuedAgentPromptEnvironmentIds: Iterable<string> = [],
 ): Environment[] {
   const backgroundEnvIds = new Set<string>(setupRunningEnvironmentIds);
   for (const environmentId of pendingNativeLaunchEnvironmentIds) {
@@ -39,7 +39,7 @@ export function getBackgroundProcessingEnvironments(
       backgroundEnvIds.add(environmentId);
     }
   }
-  for (const environmentId of queuedNativePromptEnvironmentIds) {
+  for (const environmentId of queuedAgentPromptEnvironmentIds) {
     if (environmentId) {
       backgroundEnvIds.add(environmentId);
     }
