@@ -23,6 +23,32 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
+function gitAvailable(): boolean {
+  return spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0;
+}
+
+function runGit(dir: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  expect(result.status).toBe(0);
+}
+
+function runGitExcludeHarness(workspace: string): { code: number | null; stdout: string; stderr: string } {
+  const harness = `
+set -e
+GREEN=""; NC=""
+WORKSPACE_DIR="$2"
+export WORKSPACE_DIR
+
+eval "$(sed -n '/^ensure_git_exclude_trailing_newline() {/,/^}$/p; /^append_git_exclude_pattern() {/,/^}$/p; /^add_workspace_artifacts_to_git_exclude() {/,/^}$/p' "$1")"
+
+add_workspace_artifacts_to_git_exclude
+`;
+  const result = spawnSync("bash", ["-c", harness, "--", setupScript, workspace], {
+    encoding: "utf8",
+  });
+  return { code: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
 describe("workspace setup attachment preservation (structure)", () => {
   test("preserve/restore wrap workspace cleanup, in correct order", () => {
     const setup = read("docker/workspace-setup.sh");
@@ -52,8 +78,11 @@ describe("workspace setup attachment preservation (structure)", () => {
     const setup = read("docker/workspace-setup.sh");
 
     expect(setup).toContain("add_workspace_artifacts_to_git_exclude() {");
+    expect(setup).toContain("ensure_git_exclude_trailing_newline() {");
+    expect(setup).toContain('local workspace="${WORKSPACE_DIR:-/workspace}"');
     expect(setup).toContain('for pattern in ".orkestrator" ".claude/settings.local.json"; do');
-    expect(setup).toContain('grep -qxF "$pattern" /workspace/.git/info/exclude');
+    expect(setup).toContain('grep -qxF "$pattern" "$exclude_file"');
+    expect(setup).toContain('append_git_exclude_pattern "$exclude_file" "$pattern"');
     expect(setup.match(/add_workspace_artifacts_to_git_exclude/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });
@@ -276,5 +305,46 @@ describe("workspace setup preserve/restore (functional)", () => {
     expect(result.stdout).toContain("Skipping symlinked .orkestrator workspace state");
     expect(lstatSync(join(workspace, ".orkestrator")).isSymbolicLink()).toBe(true);
     expect(readFileSync(join(workspace, "external-state", "secret.txt"), "utf8")).toBe("outside");
+  });
+
+  test("git exclude helper adds runtime artifacts with newline-safe idempotent patterns", () => {
+    if (!gitAvailable()) {
+      return;
+    }
+
+    runGit(workspace, ["init"]);
+    writeFileSync(join(workspace, ".git", "info", "exclude"), "existing-pattern");
+
+    const first = runGitExcludeHarness(workspace);
+    const second = runGitExcludeHarness(workspace);
+
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    const exclude = readFileSync(join(workspace, ".git", "info", "exclude"), "utf8");
+    expect(exclude).toBe("existing-pattern\n.orkestrator\n.claude/settings.local.json\n");
+    expect(exclude.match(/^\.orkestrator$/gm)?.length).toBe(1);
+    expect(exclude.match(/^\.claude\/settings\.local\.json$/gm)?.length).toBe(1);
+
+    mkdirSync(join(workspace, ".orkestrator"), { recursive: true });
+    mkdirSync(join(workspace, ".claude"), { recursive: true });
+    writeFileSync(join(workspace, ".claude", "settings.local.json"), "{}\n");
+
+    const ignored = spawnSync(
+      "git",
+      [
+        "-C",
+        workspace,
+        "-c",
+        "core.excludesFile=/dev/null",
+        "check-ignore",
+        "-v",
+        ".orkestrator",
+        ".claude/settings.local.json",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(ignored.status).toBe(0);
+    expect(ignored.stdout).toContain(".orkestrator");
+    expect(ignored.stdout).toContain(".claude/settings.local.json");
   });
 });
