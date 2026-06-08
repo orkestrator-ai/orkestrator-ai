@@ -273,9 +273,10 @@ fn spawn_interactive_output_forwarder<R: Runtime>(
 }
 
 async fn kill_tmux_sessions_for_env(backend: &Backend, environment_id: &str) {
+    let tmux = resolve_tmux_command(backend).await;
     let prefix = format!("orkestrator-{}-", short_id(environment_id));
     let out = match backend
-        .exec(&["tmux", "list-sessions", "-F", "#{session_name}"])
+        .exec(&[tmux.as_str(), "list-sessions", "-F", "#{session_name}"])
         .await
     {
         Ok(out) => out,
@@ -295,7 +296,10 @@ async fn kill_tmux_sessions_for_env(backend: &Backend, environment_id: &str) {
         .map(str::trim)
         .filter(|name| !name.is_empty() && name.starts_with(&prefix))
     {
-        if let Err(e) = backend.exec(&["tmux", "kill-session", "-t", name]).await {
+        if let Err(e) = backend
+            .exec(&[tmux.as_str(), "kill-session", "-t", name])
+            .await
+        {
             tracing::warn!(
                 env = %environment_id,
                 tmux_session = %name,
@@ -303,6 +307,20 @@ async fn kill_tmux_sessions_for_env(backend: &Backend, environment_id: &str) {
                 "failed to kill orphan Claude tmux session"
             );
         }
+    }
+}
+
+async fn resolve_tmux_command(backend: &Backend) -> String {
+    match backend.exec(&["which", "tmux"]).await {
+        Ok(out) if out.success() => out
+            .stdout
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .unwrap_or("tmux")
+            .to_string(),
+        _ => "tmux".to_string(),
     }
 }
 

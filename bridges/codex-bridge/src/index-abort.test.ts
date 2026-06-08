@@ -442,6 +442,48 @@ describe("codex bridge abort handling", () => {
     expect(assistantMessage?.planReview).toBeUndefined();
   });
 
+  test("message route preserves plan-review metadata from a completed plan turn", async () => {
+    const session = createSession({
+      id: "plan-route-session",
+      conversationMode: "plan",
+      thread: {
+        runStreamed: async () => ({
+          events: (async function* () {
+            yield {
+              type: "item.completed",
+              item: {
+                id: "plan-route-answer",
+                type: "agent_message",
+                text: "Plan:\n1. Inspect the current flow.",
+              },
+            };
+          })(),
+        }),
+      },
+    });
+    __testing.sessions.set(session.id, session);
+
+    const promptResponse = await app.request("/session/plan-route-session/prompt", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Plan the fix" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(promptResponse.status).toBe(202);
+    await waitUntil(() => session.status === "idle");
+
+    const messagesResponse = await app.request("/session/plan-route-session/messages");
+    expect(messagesResponse.status).toBe(200);
+    const body = await messagesResponse.json();
+    const assistantMessage = body.messages.find(
+      (message: { role: string }) => message.role === "assistant",
+    );
+    expect(assistantMessage).toMatchObject({
+      content: "Plan:\n1. Inspect the current flow.",
+      planReview: true,
+    });
+  });
+
   test("missing rollout resume errors recover on a fresh thread with transcript context", async () => {
     let recoveryInput = "";
     const session = createSession({
@@ -866,6 +908,10 @@ describe("codex bridge abort handling", () => {
       expect(resumeBody.messages.map((message: { content: string }) => message.content)).toEqual([
         "Saved prompt",
         "Saved answer",
+      ]);
+      expect(resumeBody.messages.map((message: { planReview?: boolean }) => message.planReview)).toEqual([
+        undefined,
+        undefined,
       ]);
       expect(__testing.sessions.get(resumeBody.sessionId)?.conversationMode).toBe("plan");
     });
