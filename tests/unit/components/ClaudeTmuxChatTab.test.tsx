@@ -2243,6 +2243,50 @@ describe("ClaudeTmuxChatTab", () => {
     });
   });
 
+  test("does not drain queued tmux prompts while an attachment is staged", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.addToQueue(stateKey, {
+      id: "queue-1",
+      text: "queued behind attachment",
+      attachments: [],
+    });
+    store.addAttachment(stateKey, {
+      id: "att-staged",
+      type: "image",
+      path: "/workspace/blocking.png",
+      previewUrl: "data:image/png;base64,blocking",
+      name: "blocking.png",
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await screen.findByAltText("blocking.png");
+    expect(submitMock).not.toHaveBeenCalled();
+
+    act(() => {
+      useClaudeTmuxStore.getState().clearAttachments(stateKey);
+    });
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        "queued behind attachment",
+        "env-1",
+      );
+    });
+  });
+
   test("reorders and removes queued tmux prompts from the queue dialog", async () => {
     const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
     const store = useClaudeTmuxStore.getState();
@@ -2367,6 +2411,77 @@ describe("ClaudeTmuxChatTab", () => {
       );
       expect(useClaudeTmuxStore.getState().getQueuedMessages(stateKey)).toEqual([]);
     });
+  });
+
+  test("removes a failed queued tmux prompt and reports the send error", async () => {
+    submitMock.mockImplementationOnce(async () => {
+      throw new Error("tmux unavailable");
+    });
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.addToQueue(stateKey, {
+      id: "queue-fail",
+      text: "will fail",
+      attachments: [],
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByText("Error: tmux unavailable")).toBeTruthy();
+    expect(useClaudeTmuxStore.getState().getQueuedMessages(stateKey)).toEqual([]);
+    expect(useClaudeTmuxStore.getState().getTab(stateKey).busy).toBe(false);
+  });
+
+  test("interrupt promotes the next queued tmux prompt to the draft", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.setBusy(stateKey, true);
+    store.addToQueue(stateKey, {
+      id: "queue-first",
+      text: "edit after interrupt",
+      attachments: [],
+    });
+    store.addToQueue(stateKey, {
+      id: "queue-second",
+      text: "stay queued",
+      attachments: [],
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("Interrupt current response"));
+
+    await waitFor(() => {
+      expect(
+        (screen.getByPlaceholderText(/Ask Claude anything/) as HTMLTextAreaElement).value,
+      ).toBe("edit after interrupt");
+      expect(useClaudeTmuxStore.getState().getQueuedMessages(stateKey).map((m) => m.text)).toEqual([
+        "stay queued",
+      ]);
+      expect(useClaudeTmuxStore.getState().getTab(stateKey).busy).toBe(false);
+    });
+    expect(interruptSessionMock).toHaveBeenCalledWith("tab-1", "env-1");
+    expect(submitMock).not.toHaveBeenCalled();
   });
 
   test("shows interrupt errors without clearing busy state", async () => {
