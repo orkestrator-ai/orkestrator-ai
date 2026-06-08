@@ -163,14 +163,16 @@ fi
 
 echo -e "${BLUE}=== Workspace Setup ===${NC}"
 
-# Function to add .orkestrator to .git/info/exclude
-add_orkestrator_to_git_exclude() {
+# Function to add Orkestrator workspace artifacts to .git/info/exclude
+add_workspace_artifacts_to_git_exclude() {
     if [ -d "/workspace/.git" ]; then
         mkdir -p /workspace/.git/info
-        if ! grep -q "^\.orkestrator$" /workspace/.git/info/exclude 2>/dev/null; then
-            echo ".orkestrator" >> /workspace/.git/info/exclude
-            echo -e "  ${GREEN}Added .orkestrator to git exclude${NC}"
-        fi
+        for pattern in ".orkestrator" ".claude/settings.local.json"; do
+            if ! grep -qxF "$pattern" /workspace/.git/info/exclude 2>/dev/null; then
+                echo "$pattern" >> /workspace/.git/info/exclude
+                echo -e "  ${GREEN}Added $pattern to git exclude${NC}"
+            fi
+        done
     fi
 }
 
@@ -379,8 +381,8 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
             fi
         fi
 
-        # Add .orkestrator to .git/info/exclude so it's ignored locally
-        add_orkestrator_to_git_exclude
+        # Add Orkestrator workspace artifacts to .git/info/exclude so they're ignored locally
+        add_workspace_artifacts_to_git_exclude
 
         echo ""
         echo -e "${GREEN}Repository ready:${NC}"
@@ -406,8 +408,8 @@ if [ -n "$GIT_URL" ] && [ ! -d "/workspace/.git" ]; then
             if [ -d "/workspace/.git" ]; then
                 echo -e "${GREEN}Fallback succeeded!${NC}"
                 cd /workspace
-                # Add .orkestrator to .git/info/exclude so it's ignored locally
-                add_orkestrator_to_git_exclude
+                # Add Orkestrator workspace artifacts to .git/info/exclude so they're ignored locally
+                add_workspace_artifacts_to_git_exclude
             else
                 echo -e "${RED}Fallback failed - no .git directory${NC}"
             fi

@@ -47,6 +47,15 @@ describe("workspace setup attachment preservation (structure)", () => {
     expect(restoreCall).toBeGreaterThan(workspaceCleanup);
     expect(restoreCall).toBeLessThan(envSetup);
   });
+
+  test("git excludes include runtime workspace artifacts", () => {
+    const setup = read("docker/workspace-setup.sh");
+
+    expect(setup).toContain("add_workspace_artifacts_to_git_exclude() {");
+    expect(setup).toContain('for pattern in ".orkestrator" ".claude/settings.local.json"; do');
+    expect(setup).toContain('grep -qxF "$pattern" /workspace/.git/info/exclude');
+    expect(setup.match(/add_workspace_artifacts_to_git_exclude/g)?.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 function runHarness(scenario: string, workspace: string): { code: number | null; stdout: string; stderr: string } {
