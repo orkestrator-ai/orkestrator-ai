@@ -161,15 +161,44 @@ pub fn fix_path_env() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_fix_path_env_does_not_panic() {
+    struct PathGuard {
+        original_path: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.original_path.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fix_path_env_does_not_panic() {
+        let _guard = crate::claude_tmux::TEST_PATH_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _path_guard = PathGuard {
+            original_path: std::env::var_os("PATH"),
+        };
+
         // Just ensure the function doesn't panic
         fix_path_env();
     }
 
-    #[test]
     #[cfg(target_os = "macos")]
-    fn test_path_contains_common_directories() {
+    #[tokio::test]
+    async fn test_path_contains_common_directories() {
+        let _guard = crate::claude_tmux::TEST_PATH_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _path_guard = PathGuard {
+            original_path: std::env::var_os("PATH"),
+        };
+
         fix_path_env();
         let path = std::env::var("PATH").unwrap_or_default();
         // After fixing, PATH should contain common directories

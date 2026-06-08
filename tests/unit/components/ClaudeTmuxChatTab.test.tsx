@@ -2243,6 +2243,132 @@ describe("ClaudeTmuxChatTab", () => {
     });
   });
 
+  test("reorders and removes queued tmux prompts from the queue dialog", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.setBusy(stateKey, true);
+    store.addToQueue(stateKey, { id: "queue-1", text: "first queued", attachments: [] });
+    store.addToQueue(stateKey, { id: "queue-2", text: "second queued", attachments: [] });
+    store.addToQueue(stateKey, { id: "queue-3", text: "third queued", attachments: [] });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByText("+3 queued"));
+    await screen.findByText("first queued");
+
+    fireEvent.click(screen.getAllByTitle("Move down")[0]!);
+    await waitFor(() => {
+      expect(
+        useClaudeTmuxStore
+          .getState()
+          .getQueuedMessages(stateKey)
+          .map((message) => message.text),
+      ).toEqual(["second queued", "first queued", "third queued"]);
+    });
+
+    fireEvent.click(screen.getAllByTitle("Remove queued prompt")[1]!);
+    await waitFor(() => {
+      expect(
+        useClaudeTmuxStore
+          .getState()
+          .getQueuedMessages(stateKey)
+          .map((message) => message.text),
+      ).toEqual(["second queued", "third queued"]);
+    });
+    expect(screen.queryByText("first queued")).toBeNull();
+  });
+
+  test("clicking a queued tmux prompt restores its text and attachments for editing", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.setBusy(stateKey, true);
+    store.addToQueue(stateKey, {
+      id: "queue-image",
+      text: "edit queued with image",
+      attachments: [
+        {
+          id: "att-1",
+          type: "image",
+          path: "/workspace/diagram.png",
+          previewUrl: "data:image/png;base64,diagram",
+          name: "diagram.png",
+        },
+      ],
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.click(screen.getByText("+1 queued"));
+    fireEvent.click(await screen.findByText("edit queued with image"));
+
+    await waitFor(() => {
+      expect(
+        (screen.getByPlaceholderText(/Ask Claude anything/) as HTMLTextAreaElement).value,
+      ).toBe("edit queued with image");
+      expect(screen.getByAltText("diagram.png")).toBeTruthy();
+      expect(useClaudeTmuxStore.getState().getQueuedMessages(stateKey)).toEqual([]);
+    });
+  });
+
+  test("drains queued tmux prompts with saved image attachment paths", async () => {
+    const stateKey = createClaudeTmuxStateKey("env-1", "tab-1");
+    const store = useClaudeTmuxStore.getState();
+    store.setRunning(stateKey, true, {
+      environmentId: "env-1",
+      sessionId: "session-1",
+    });
+    store.addToQueue(stateKey, {
+      id: "queue-image",
+      text: "use this screenshot",
+      attachments: [
+        {
+          id: "att-1",
+          type: "image",
+          path: "/workspace/diagram.png",
+          previewUrl: "data:image/png;base64,diagram",
+          name: "diagram.png",
+        },
+      ],
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => {
+      expect(submitMock).toHaveBeenCalledWith(
+        "tab-1",
+        expect.stringContaining("/workspace/diagram.png"),
+        "env-1",
+      );
+      expect(useClaudeTmuxStore.getState().getQueuedMessages(stateKey)).toEqual([]);
+    });
+  });
+
   test("shows interrupt errors without clearing busy state", async () => {
     interruptSessionMock.mockImplementationOnce(async () => {
       throw new Error("interrupt failed");
