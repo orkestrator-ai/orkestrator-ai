@@ -218,6 +218,16 @@ function supportedEffortLevels(model: ClaudeModel): ClaudeEffortLevel[] {
 }
 
 /**
+ * The level to fall back to when the stored preference isn't supported by the
+ * selected model. Usually `DEFAULT_EFFORT`, but the SDK owns each model's
+ * level list, so don't assume "high" is always present. Callers must ensure
+ * `options` is non-empty.
+ */
+function fallbackEffort(options: ClaudeEffortLevel[]): ClaudeEffortLevel {
+  return options.includes(DEFAULT_EFFORT) ? DEFAULT_EFFORT : options[0]!;
+}
+
+/**
  * Prefer the live model list the Claude bridge fetched from the Agent SDK
  * (shared via the claude store) over the static fallback. The launch-only
  * "default" sentinel is guaranteed to be present either way.
@@ -422,7 +432,7 @@ export function ClaudeTmuxChatTab({
   // UI when e.g. an "xhigh" preference meets a model without xhigh support.
   const effectiveEffort =
     effortOptions.length > 0 && !effortOptions.includes(selectedEffort)
-      ? DEFAULT_EFFORT
+      ? fallbackEffort(effortOptions)
       : selectedEffort;
 
   useEffect(() => {
@@ -1051,7 +1061,7 @@ export function ClaudeTmuxChatTab({
       const current =
         useClaudeTmuxStore.getState().effortLevels.get(storeKey) ?? DEFAULT_EFFORT;
       if (levels.length > 0 && !levels.includes(current)) {
-        setEffortLevel(storeKey, DEFAULT_EFFORT);
+        setEffortLevel(storeKey, fallbackEffort(levels));
       }
     },
     [availableModels, storeKey, setEffortLevel],

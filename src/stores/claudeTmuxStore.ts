@@ -219,8 +219,9 @@ interface ClaudeTmuxState {
   setDraftMentions: (tabId: string, mentions: FileMention[]) => void;
   getDraftMentions: (tabId: string) => FileMention[];
 
+  // Read via `effortLevels` directly; the "high" default lives with the
+  // component's DEFAULT_EFFORT so there is a single source for it.
   setEffortLevel: (tabId: string, effort: ClaudeEffortLevel) => void;
-  getEffortLevel: (tabId: string) => ClaudeEffortLevel;
 
   addToQueue: (tabId: string, message: TmuxQueuedMessage) => void;
   removeFromQueue: (tabId: string) => TmuxQueuedMessage | undefined;
@@ -481,9 +482,6 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
       next.set(tabId, effort);
       return { effortLevels: next };
     }),
-
-  // Claude Code's default effort is "high"; mirror that when unset.
-  getEffortLevel: (tabId) => get().effortLevels.get(tabId) ?? "high",
 
   getDraftMentions: (tabId) =>
     get().draftMentions.get(tabId) ?? EMPTY_MENTIONS,

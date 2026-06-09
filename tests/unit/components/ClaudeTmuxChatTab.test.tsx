@@ -8,10 +8,14 @@ import {
 } from "@/stores/claudeTmuxStore";
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useConfigStore } from "@/stores/configStore";
+import { useClaudeStore } from "@/stores/claudeStore";
 import { clearPersistedVirtuosoState } from "@/hooks/useVirtuosoScrollState";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
 import * as realTauri from "@/lib/tauri";
-import type { ClaudeMessage as ClaudeMessageType } from "@/lib/claude-client";
+import type {
+  ClaudeMessage as ClaudeMessageType,
+  ClaudeModel,
+} from "@/lib/claude-client";
 import * as realClaudeMessage from "@/components/claude/ClaudeMessage";
 import * as realInteractiveTerminal from "@/components/claude/ClaudeTmuxInteractiveTerminal";
 import * as realFileMentionMenu from "@/components/chat/FileMentionMenu";
@@ -443,6 +447,9 @@ describe("ClaudeTmuxChatTab", () => {
       messageQueue: new Map(),
       effortLevels: new Map(),
     });
+    // The tmux tab prefers the live SDK model list shared via the claude
+    // store; keep it empty by default so tests exercise the fallback list.
+    useClaudeStore.setState({ models: [] });
     useConfigStore.setState((state) => ({
       ...state,
       config: {
@@ -2278,6 +2285,120 @@ describe("ClaudeTmuxChatTab", () => {
     });
 
     expect(screen.getByRole("button", { name: "High" })).toBeTruthy();
+  });
+
+  test("prefers the live SDK model list and prepends the Default sentinel when missing", async () => {
+    seedPane();
+    const sdkModels: ClaudeModel[] = [
+      {
+        id: "claude-newer-opus",
+        name: "Newer Opus",
+        description: "from the SDK",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high"],
+      },
+      { id: "claude-newer-haiku", name: "Newer Haiku", description: "from the SDK" },
+    ];
+    useClaudeStore.setState({ models: sdkModels });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+    // The persisted "claude-sonnet-4-6" preference resolves to "sonnet",
+    // which the SDK list doesn't know, so the selection snaps to the
+    // prepended Default sentinel.
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Default/ }));
+
+    expect(await screen.findByText("Newer Opus")).toBeTruthy();
+    expect(screen.getByText("Newer Haiku")).toBeTruthy();
+    // Fallback-only entries are replaced by the live list.
+    expect(screen.queryByText("Sonnet (1M context)")).toBeNull();
+    expect(screen.queryByText("Fable")).toBeNull();
+  });
+
+  test("uses the SDK list as-is when it already includes the Default sentinel", async () => {
+    seedPane();
+    useClaudeStore.setState({
+      models: [
+        {
+          id: "default",
+          name: "Default (SDK)",
+          description: "from the SDK",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+        },
+        { id: "claude-newer-haiku", name: "Newer Haiku" },
+      ] as ClaudeModel[],
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+    // The SDK's own default entry wins over the fallback sentinel.
+    expect(screen.getByRole("button", { name: /Default \(SDK\)/ })).toBeTruthy();
+  });
+
+  test("falls back to the first supported level when a model's levels exclude the default", async () => {
+    seedPane();
+    useClaudeStore.setState({
+      models: [
+        {
+          id: "default",
+          name: "Default (recommended)",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        },
+        {
+          id: "claude-mini",
+          name: "Mini",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium"],
+        },
+      ] as ClaudeModel[],
+    });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Default/ }));
+    const miniOption = await screen.findByText("Mini");
+    await act(async () => {
+      fireEvent.click(miniOption);
+    });
+
+    // "high" isn't in Mini's level list, so the stored preference snaps to
+    // the first supported level instead of an unsupported default.
+    expect(screen.getByRole("button", { name: "Low" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "High" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start fresh" }));
+
+    await waitFor(() => {
+      expect(startSessionMock).toHaveBeenCalledWith(
+        "tab-1",
+        "env-1",
+        expect.objectContaining({ model: "claude-mini", effort: "low" }),
+      );
+    });
   });
 
   test("keeps plan mode launch-only once the session is running", async () => {
