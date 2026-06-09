@@ -156,6 +156,7 @@ pub async fn claude_tmux_start(
     environment_id: String,
     initial_prompt: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     plan_mode: Option<bool>,
     resume_session_id: Option<String>,
 ) -> Result<TmuxSessionStatus, String> {
@@ -203,7 +204,7 @@ pub async fn claude_tmux_start(
     hooks::install_workspace_hooks(&session.backend, &session.workspace_hook_paths).await?;
     session
         .clone()
-        .start_after_hooks_installed(app, initial_prompt, model, plan_mode.unwrap_or(false))
+        .start_after_hooks_installed(app, initial_prompt, model, effort, plan_mode.unwrap_or(false))
         .await?;
     let alive = session.tmux_alive().await.unwrap_or(false);
     Ok(session.status(alive))
@@ -659,6 +660,19 @@ pub async fn claude_tmux_switch_model(
         .await
         .ok_or_else(|| "tmux session not running".to_string())?;
     session.switch_model(&model).await
+}
+
+#[tauri::command]
+pub async fn claude_tmux_switch_effort(
+    tab_id: String,
+    effort: String,
+    environment_id: String,
+) -> Result<(), String> {
+    let session = get_manager()
+        .get_for_env(&environment_id, &tab_id)
+        .await
+        .ok_or_else(|| "tmux session not running".to_string())?;
+    session.switch_effort(&effort).await
 }
 
 #[tauri::command]

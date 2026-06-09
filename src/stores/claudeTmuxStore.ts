@@ -16,6 +16,7 @@ import type {
 } from "@/lib/claude-tmux-client";
 import {
   ERROR_MESSAGE_PREFIX,
+  type ClaudeEffortLevel,
   type ClaudeMessage,
   type ClaudeMessagePart,
   type QuestionInfo,
@@ -169,6 +170,9 @@ interface ClaudeTmuxState {
   draftText: Map<string, string>;
   draftMentions: Map<string, FileMention[]>;
   messageQueue: Map<string, TmuxQueuedMessage[]>;
+  // Effort is a per-tab *preference* (like the model default), so it
+  // intentionally survives resetTab and seeds the next launch in that tab.
+  effortLevels: Map<string, ClaudeEffortLevel>;
 
   setRunning: (
     tabId: string,
@@ -215,6 +219,9 @@ interface ClaudeTmuxState {
   setDraftMentions: (tabId: string, mentions: FileMention[]) => void;
   getDraftMentions: (tabId: string) => FileMention[];
 
+  setEffortLevel: (tabId: string, effort: ClaudeEffortLevel) => void;
+  getEffortLevel: (tabId: string) => ClaudeEffortLevel;
+
   addToQueue: (tabId: string, message: TmuxQueuedMessage) => void;
   removeFromQueue: (tabId: string) => TmuxQueuedMessage | undefined;
   removeQueueItem: (tabId: string, messageId: string) => void;
@@ -247,6 +254,7 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
   draftText: new Map(),
   draftMentions: new Map(),
   messageQueue: new Map(),
+  effortLevels: new Map(),
 
   setRunning: (tabId, running, info) =>
     set((state) =>
@@ -466,6 +474,16 @@ export const useClaudeTmuxStore = create<ClaudeTmuxState>()((set, get) => ({
       }
       return { draftMentions: next };
     }),
+
+  setEffortLevel: (tabId, effort) =>
+    set((state) => {
+      const next = new Map(state.effortLevels);
+      next.set(tabId, effort);
+      return { effortLevels: next };
+    }),
+
+  // Claude Code's default effort is "high"; mirror that when unset.
+  getEffortLevel: (tabId) => get().effortLevels.get(tabId) ?? "high",
 
   getDraftMentions: (tabId) =>
     get().draftMentions.get(tabId) ?? EMPTY_MENTIONS,

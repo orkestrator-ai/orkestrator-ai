@@ -279,6 +279,7 @@ impl TmuxSession {
         app: AppHandle,
         initial_prompt: Option<String>,
         model: Option<String>,
+        effort: Option<String>,
         plan_mode: bool,
     ) -> Result<(), String> {
         // Ensure this session's pending/response/timeout subdirs exist BEFORE
@@ -327,6 +328,22 @@ impl TmuxSession {
             if let Some(m) = model {
                 if !m.is_empty() {
                     claude_cmd.push_str(&format!(" --model {}", shell_arg(&m)));
+                }
+            }
+            if let Some(e) = effort {
+                if !e.is_empty() {
+                    // Older CLIs don't know --effort; skip the flag rather than
+                    // fail the launch, since effort is a tuning knob, not a
+                    // prerequisite.
+                    if help_text.contains("--effort") {
+                        claude_cmd.push_str(&format!(" --effort {}", shell_arg(&e)));
+                    } else {
+                        warn!(
+                            tab = %self.tab_id,
+                            effort = %e,
+                            "claude CLI does not support --effort; launching without it"
+                        );
+                    }
                 }
             }
             if plan_mode {
@@ -730,6 +747,19 @@ impl TmuxSession {
         }
 
         self.submit(&format!("/model {trimmed}")).await?;
+        self.wait_for_command_idle().await;
+        Ok(())
+    }
+
+    /// Send Claude Code's `/effort` slash command and block until it settles,
+    /// for the same reason as [`Self::switch_model`].
+    pub async fn switch_effort(&self, effort_arg: &str) -> Result<(), String> {
+        let trimmed = effort_arg.trim();
+        if trimmed.is_empty() {
+            return Err("effort level cannot be empty".to_string());
+        }
+
+        self.submit(&format!("/effort {trimmed}")).await?;
         self.wait_for_command_idle().await;
         Ok(())
     }
@@ -1264,6 +1294,33 @@ mod tests {
             let log = fs::read_to_string(log_path).await.unwrap();
             assert!(log.contains("stdin:/model claude-haiku-4-5"));
             assert!(!s.status(true).busy);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn switch_effort_rejects_empty_effort_level() {
+        let tmp = TempDir::new().unwrap();
+        let s = build(&tmp, "env-1", "tab-1", None);
+
+        let err = s.switch_effort("   ").await.unwrap_err();
+
+        assert_eq!(err, "effort level cannot be empty");
+    }
+
+    #[tokio::test]
+    async fn switch_effort_submits_effort_command_and_settles_without_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path().to_string_lossy().into_owned();
+
+        with_fake_tmux(&tmp, 0, |log_path, tmux_path| async move {
+            let s = build_with_tmux_cwd(cwd, "env-1", "tab-1", None, Some(tmux_path));
+
+            s.switch_effort("  xhigh  ").await.unwrap();
+
+            let log = fs::read_to_string(log_path).await.unwrap();
+            assert!(log.contains("stdin:/effort xhigh"));
+            assert!(log.contains(&format!("send-keys -t {} -- Enter", s.tmux_session)));
         })
         .await;
     }

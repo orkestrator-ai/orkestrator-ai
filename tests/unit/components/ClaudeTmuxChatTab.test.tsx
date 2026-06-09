@@ -71,6 +71,7 @@ const sendKeysMock = mock(async () => {});
 const replyHookMock = mock(async () => {});
 const submitMock = mock(async () => {});
 const switchModelMock = mock(async () => {});
+const switchEffortMock = mock(async () => {});
 const answerPreToolUseMock = mock(async () => {});
 const listPreviousSessionsMock = mock(async () => [
   {
@@ -141,6 +142,8 @@ mock.module("@/lib/claude-tmux-client", () => ({
     sendKeysMock(tabId, keys, environmentId),
   switchModel: (tabId: string, model: string, environmentId?: string) =>
     switchModelMock(tabId, model, environmentId),
+  switchEffort: (tabId: string, effort: string, environmentId?: string) =>
+    switchEffortMock(tabId, effort, environmentId),
   replyHook: (
     tabId: string,
     eventKind: realTmuxClient.HookEventKind,
@@ -415,6 +418,7 @@ describe("ClaudeTmuxChatTab", () => {
     replyHookMock.mockClear();
     submitMock.mockClear();
     switchModelMock.mockClear();
+    switchEffortMock.mockClear();
     answerPreToolUseMock.mockClear();
     listPreviousSessionsMock.mockClear();
     claudeMessageRenderMock.mockClear();
@@ -422,6 +426,7 @@ describe("ClaudeTmuxChatTab", () => {
     capturePaneMock.mockImplementation(async () => "");
     submitMock.mockImplementation(async () => {});
     switchModelMock.mockImplementation(async () => {});
+    switchEffortMock.mockImplementation(async () => {});
     listPreviousSessionsMock.mockImplementation(async () => [
       {
         session_id: "resume-1",
@@ -436,6 +441,7 @@ describe("ClaudeTmuxChatTab", () => {
       draftText: new Map(),
       draftMentions: new Map(),
       messageQueue: new Map(),
+      effortLevels: new Map(),
     });
     useConfigStore.setState((state) => ({
       ...state,
@@ -480,7 +486,8 @@ describe("ClaudeTmuxChatTab", () => {
       "env-1",
       {
         initialPrompt: "Run the audit",
-        model: "claude-sonnet-4-6",
+        model: "sonnet",
+        effort: "high",
         planMode: false,
         resumeSessionId: undefined,
       },
@@ -1735,25 +1742,25 @@ describe("ClaudeTmuxChatTab", () => {
     );
 
     const modelButton = screen.getByRole("button", {
-      name: /Sonnet 4\.6/,
+      name: /Sonnet/,
     }) as HTMLButtonElement;
     expect(modelButton.disabled).toBe(false);
 
     fireEvent.pointerDown(modelButton);
-    const opusOption = await screen.findByText("Opus 4.7");
+    const fableOption = await screen.findByText("Fable");
     await act(async () => {
-      fireEvent.click(opusOption);
+      fireEvent.click(fableOption);
       await Promise.resolve();
     });
 
     await waitFor(() => {
       expect(switchModelMock).toHaveBeenCalledWith(
         "tab-1",
-        "claude-opus-4-7",
+        "claude-fable-5[1m]",
         "env-1",
       );
     });
-    expect(screen.getByRole("button", { name: /Opus 4\.7/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Fable/ })).toBeTruthy();
   });
 
   test("does not send the launch-only Default model sentinel to a running tmux session", async () => {
@@ -1772,8 +1779,8 @@ describe("ClaudeTmuxChatTab", () => {
       />,
     );
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet 4\.6/ }));
-    const defaultOption = (await screen.findByText("Default")).closest(
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet/ }));
+    const defaultOption = (await screen.findByText("Default (recommended)")).closest(
       "[role='menuitem']",
     );
 
@@ -1802,12 +1809,12 @@ describe("ClaudeTmuxChatTab", () => {
     expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
 
     const modelButton = screen.getByRole("button", {
-      name: /Sonnet 4\.6/,
+      name: /Sonnet/,
     }) as HTMLButtonElement;
     expect(modelButton.disabled).toBe(false);
 
     fireEvent.pointerDown(modelButton);
-    const haikuOption = await screen.findByText("Haiku 4.5");
+    const haikuOption = await screen.findByText("Haiku");
     await act(async () => {
       fireEvent.click(haikuOption);
     });
@@ -1816,7 +1823,8 @@ describe("ClaudeTmuxChatTab", () => {
     await waitFor(() => {
       expect(startSessionMock).toHaveBeenCalledWith("tab-1", "env-1", {
         initialPrompt: undefined,
-        model: "claude-haiku-4-5",
+        model: "haiku",
+        effort: undefined,
         planMode: false,
         resumeSessionId: undefined,
       });
@@ -1824,6 +1832,43 @@ describe("ClaudeTmuxChatTab", () => {
   });
 
   test("seeds fresh tmux sessions from the persisted Claude model default", async () => {
+    seedPane();
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          claudeModel: "haiku",
+        },
+      },
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Haiku/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start fresh" }));
+
+    await waitFor(() => {
+      expect(startSessionMock).toHaveBeenCalledWith("tab-1", "env-1", {
+        initialPrompt: undefined,
+        model: "haiku",
+        effort: undefined,
+        planMode: false,
+        resumeSessionId: undefined,
+      });
+    });
+  });
+
+  test("maps a legacy persisted opus model id onto the Default sentinel", async () => {
     seedPane();
     useConfigStore.setState((state) => ({
       ...state,
@@ -1845,17 +1890,16 @@ describe("ClaudeTmuxChatTab", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Opus 4\.7/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Default/ })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Start fresh" }));
 
     await waitFor(() => {
-      expect(startSessionMock).toHaveBeenCalledWith("tab-1", "env-1", {
-        initialPrompt: undefined,
-        model: "claude-opus-4-7",
-        planMode: false,
-        resumeSessionId: undefined,
-      });
+      expect(startSessionMock).toHaveBeenCalledWith(
+        "tab-1",
+        "env-1",
+        expect.objectContaining({ model: undefined }),
+      );
     });
   });
 
@@ -1889,6 +1933,7 @@ describe("ClaudeTmuxChatTab", () => {
       expect(startSessionMock).toHaveBeenCalledWith("tab-1", "env-1", {
         initialPrompt: undefined,
         model: undefined,
+        effort: "high",
         planMode: false,
         resumeSessionId: undefined,
       });
@@ -1908,8 +1953,8 @@ describe("ClaudeTmuxChatTab", () => {
 
     expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet 4\.6/ }));
-    const haikuOption = await screen.findByText("Haiku 4.5");
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet/ }));
+    const haikuOption = await screen.findByText("Haiku");
     await act(async () => {
       fireEvent.click(haikuOption);
       await Promise.resolve();
@@ -1917,10 +1962,10 @@ describe("ClaudeTmuxChatTab", () => {
 
     await waitFor(() => {
       expect(updateGlobalConfigMock).toHaveBeenCalledWith(
-        expect.objectContaining({ claudeModel: "claude-haiku-4-5" }),
+        expect.objectContaining({ claudeModel: "haiku" }),
       );
       expect(useConfigStore.getState().config.global.claudeModel).toBe(
-        "claude-haiku-4-5",
+        "haiku",
       );
     });
 
@@ -1935,7 +1980,7 @@ describe("ClaudeTmuxChatTab", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: /Haiku 4\.5/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Haiku/ })).toBeTruthy();
   });
 
   test("rolls back the persisted tmux model preference when saving fails", async () => {
@@ -1954,8 +1999,8 @@ describe("ClaudeTmuxChatTab", () => {
 
     expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet 4\.6/ }));
-    const haikuOption = await screen.findByText("Haiku 4.5");
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet/ }));
+    const haikuOption = await screen.findByText("Haiku");
     await act(async () => {
       fireEvent.click(haikuOption);
       await Promise.resolve();
@@ -1998,24 +2043,24 @@ describe("ClaudeTmuxChatTab", () => {
     fireEvent.change(textarea, { target: { value: "hello after switch" } });
 
     const modelButton = screen.getByRole("button", {
-      name: /Sonnet 4\.6/,
+      name: /Sonnet/,
     }) as HTMLButtonElement;
     fireEvent.pointerDown(modelButton);
-    const opusOption = await screen.findByText("Opus 4.7");
+    const fableOption = await screen.findByText("Fable");
     await act(async () => {
-      fireEvent.click(opusOption);
+      fireEvent.click(fableOption);
       await Promise.resolve();
     });
 
     await waitFor(() => {
       expect(switchModelMock).toHaveBeenCalledWith(
         "tab-1",
-        "claude-opus-4-7",
+        "claude-fable-5[1m]",
         "env-1",
       );
       expect(textarea.disabled).toBe(true);
       expect(
-        screen.getByRole("button", { name: /Sonnet 4\.6/ }),
+        screen.getByRole("button", { name: /Sonnet/ }),
       ).toHaveProperty("disabled", true);
     });
 
@@ -2029,7 +2074,7 @@ describe("ClaudeTmuxChatTab", () => {
 
     await waitFor(() => {
       expect(textarea.disabled).toBe(false);
-      expect(screen.getByRole("button", { name: /Opus 4\.7/ })).toHaveProperty(
+      expect(screen.getByRole("button", { name: /Fable/ })).toHaveProperty(
         "disabled",
         false,
       );
@@ -2056,23 +2101,183 @@ describe("ClaudeTmuxChatTab", () => {
     );
 
     const modelButton = screen.getByRole("button", {
-      name: /Sonnet 4\.6/,
+      name: /Sonnet/,
     }) as HTMLButtonElement;
     fireEvent.pointerDown(modelButton);
-    const opusOption = await screen.findByText("Opus 4.7");
+    const fableOption = await screen.findByText("Fable");
     await act(async () => {
-      fireEvent.click(opusOption);
+      fireEvent.click(fableOption);
       await Promise.resolve();
     });
 
     expect(await screen.findByText("Error: tmux unavailable")).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Sonnet 4\.6/ })).toHaveProperty(
+      expect(screen.getByRole("button", { name: /Sonnet/ })).toHaveProperty(
         "disabled",
         false,
       );
     });
-    expect(screen.queryByRole("button", { name: /Opus 4\.7/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Fable/ })).toBeNull();
+  });
+
+  test("passes the selected reasoning effort to the tmux launch", async () => {
+    seedPane();
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "High" }));
+    const maxOption = await screen.findByText("Max");
+    await act(async () => {
+      fireEvent.click(maxOption);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start fresh" }));
+
+    await waitFor(() => {
+      expect(startSessionMock).toHaveBeenCalledWith("tab-1", "env-1", {
+        initialPrompt: undefined,
+        model: "sonnet",
+        effort: "max",
+        planMode: false,
+        resumeSessionId: undefined,
+      });
+    });
+  });
+
+  test("switches the running session effort through Claude's /effort command", async () => {
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const effortButton = screen.getByRole("button", {
+      name: "High",
+    }) as HTMLButtonElement;
+    expect(effortButton.disabled).toBe(false);
+
+    fireEvent.pointerDown(effortButton);
+    const lowOption = await screen.findByText("Low");
+    await act(async () => {
+      fireEvent.click(lowOption);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(switchEffortMock).toHaveBeenCalledWith("tab-1", "low", "env-1");
+    });
+    expect(screen.getByRole("button", { name: "Low" })).toBeTruthy();
+  });
+
+  test("keeps the previous effort and shows an error when effort switching fails", async () => {
+    switchEffortMock.mockImplementationOnce(async () => {
+      throw new Error("tmux unavailable");
+    });
+    useClaudeTmuxStore
+      .getState()
+      .setRunning("tab-1", true, {
+        environmentId: "env-1",
+        sessionId: "session-1",
+      });
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "High" }));
+    const lowOption = await screen.findByText("Low");
+    await act(async () => {
+      fireEvent.click(lowOption);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Error: tmux unavailable")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "High" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Low" })).toBeNull();
+  });
+
+  test("hides the effort control for models without effort support", async () => {
+    seedPane();
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "High" })).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Sonnet/ }));
+    const haikuOption = await screen.findByText("Haiku");
+    await act(async () => {
+      fireEvent.click(haikuOption);
+    });
+
+    expect(screen.queryByRole("button", { name: "High" })).toBeNull();
+  });
+
+  test("resets effort to the default when the new model doesn't support the chosen level", async () => {
+    seedPane();
+    useConfigStore.setState((state) => ({
+      ...state,
+      config: {
+        ...state.config,
+        global: {
+          ...state.config.global,
+          claudeModel: "default",
+        },
+      },
+    }));
+
+    render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "High" }));
+    const xhighOption = await screen.findByText("Extra High");
+    await act(async () => {
+      fireEvent.click(xhighOption);
+    });
+    expect(screen.getByRole("button", { name: "Extra High" })).toBeTruthy();
+
+    // Sonnet has no xhigh level, so the preference snaps back to the default.
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Default/ }));
+    const sonnetOption = await screen.findByText("Sonnet");
+    await act(async () => {
+      fireEvent.click(sonnetOption);
+    });
+
+    expect(screen.getByRole("button", { name: "High" })).toBeTruthy();
   });
 
   test("keeps plan mode launch-only once the session is running", async () => {
@@ -2116,7 +2321,8 @@ describe("ClaudeTmuxChatTab", () => {
     await waitFor(() => {
       expect(startSessionMock).toHaveBeenCalledWith("tab-1", "env-1", {
         initialPrompt: undefined,
-        model: "claude-sonnet-4-6",
+        model: "sonnet",
+        effort: "high",
         planMode: false,
         resumeSessionId: "resume-1",
       });
