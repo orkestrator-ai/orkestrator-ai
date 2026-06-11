@@ -1695,9 +1695,14 @@ mod tests {
     }
 
     #[test]
-    fn test_shared_opencode_data_dir_defaults_to_home() {
-        let home = get_home_dir().expect("expected home directory for test");
-        let expected = home.join(".local").join("share").join("opencode");
+    fn test_shared_opencode_data_dir_uses_xdg_or_home() {
+        let expected = std::env::var("XDG_DATA_HOME")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| get_home_dir().map(|h| h.join(".local").join("share")))
+            .expect("expected XDG data or home directory for test")
+            .join("opencode");
 
         assert_eq!(shared_opencode_data_dir(), Some(expected));
     }
