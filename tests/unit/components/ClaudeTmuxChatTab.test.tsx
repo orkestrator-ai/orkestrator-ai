@@ -1770,7 +1770,7 @@ describe("ClaudeTmuxChatTab", () => {
     expect(screen.getByRole("button", { name: /Fable/ })).toBeTruthy();
   });
 
-  test("does not send the launch-only Default model sentinel to a running tmux session", async () => {
+  test("persists the launch-only Default model sentinel without switching a running tmux session", async () => {
     useClaudeTmuxStore
       .getState()
       .setRunning("tab-1", true, {
@@ -1795,11 +1795,21 @@ describe("ClaudeTmuxChatTab", () => {
     expect(
       defaultOption?.getAttribute("aria-disabled") === "true" ||
         defaultOption?.hasAttribute("data-disabled"),
-    ).toBe(true);
+    ).toBe(false);
 
-    fireEvent.click(defaultOption!);
-    expect(switchModelMock).not.toHaveBeenCalledWith("tab-1", "default");
-    expect(updateGlobalConfigMock).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(defaultOption!);
+      await Promise.resolve();
+    });
+
+    expect(switchModelMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(updateGlobalConfigMock).toHaveBeenCalledWith(
+        expect.objectContaining({ claudeModel: "default" }),
+      );
+      expect(useConfigStore.getState().config.global.claudeModel).toBe("default");
+    });
+    expect(screen.getByRole("button", { name: /Default/ })).toBeTruthy();
   });
 
   test("uses the pre-launch model selection when starting fresh", async () => {
