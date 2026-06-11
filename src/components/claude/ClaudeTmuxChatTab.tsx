@@ -397,6 +397,7 @@ export function ClaudeTmuxChatTab({
   const { isAtBottom, scrollToBottom, virtuosoRef, scrollProps } = useVirtuosoScrollState({
     isActive: isActive && !interactiveMode,
     persistKey: `claude-tmux-${stateKey}`,
+    environmentId,
   });
   const queueLength = useClaudeTmuxStore(
     useCallback(
