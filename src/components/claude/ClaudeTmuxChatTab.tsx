@@ -1071,12 +1071,9 @@ export function ClaudeTmuxChatTab({
   const handleSelectModel = async (modelId: string) => {
     if (modelId === selectedModel || modelSwitching || effortSwitching) return;
 
-    if (modelId === "default" && hasStarted && running) {
-      setError("Claude Code's default model can only be selected before launch.");
-      return;
-    }
-
-    if (!hasStarted || !running) {
+    // "default" means no explicit --model flag; can't send /model default to a
+    // running session, so just update the stored preference for the next launch.
+    if (modelId === "default" || !hasStarted || !running) {
       setSelectedModel(modelId);
       clampEffortToModel(modelId);
       void persistSelectedModel(modelId);
@@ -1419,7 +1416,6 @@ export function ClaudeTmuxChatTab({
             modelSwitching={modelSwitching}
             effortSwitching={effortSwitching}
             planLocked={hasStarted}
-            defaultModelDisabled={hasStarted && running}
           />
         </>
       )}
@@ -2160,7 +2156,6 @@ interface TmuxComposeBarProps {
   modelSwitching: boolean;
   effortSwitching: boolean;
   planLocked: boolean;
-  defaultModelDisabled: boolean;
 }
 
 function TmuxComposeBar({
@@ -2189,7 +2184,6 @@ function TmuxComposeBar({
   modelSwitching,
   effortSwitching,
   planLocked,
-  defaultModelDisabled,
 }: TmuxComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
@@ -2620,13 +2614,11 @@ function TmuxComposeBar({
           <DropdownMenuContent align="start" className="max-h-[400px] overflow-y-auto min-w-[240px]">
             {models.map((m) => {
               const selected = m.id === selectedModel;
-              const optionDisabled = defaultModelDisabled && m.id === "default";
               return (
                 <DropdownMenuItem
                   key={m.id}
-                  disabled={optionDisabled}
                   onClick={() => {
-                    if (!optionDisabled) onSelectModel(m.id);
+                    onSelectModel(m.id);
                   }}
                   className="flex items-start gap-2 py-2"
                 >
