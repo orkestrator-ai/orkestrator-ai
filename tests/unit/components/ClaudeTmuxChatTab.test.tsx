@@ -9,6 +9,7 @@ import {
 import { useEnvironmentStore } from "@/stores/environmentStore";
 import { useConfigStore } from "@/stores/configStore";
 import { useClaudeStore } from "@/stores/claudeStore";
+import { useUIStore } from "@/stores/uiStore";
 import { clearPersistedVirtuosoState } from "@/hooks/useVirtuosoScrollState";
 import * as realTmuxClient from "@/lib/claude-tmux-client";
 import * as realTauri from "@/lib/tauri";
@@ -474,7 +475,54 @@ describe("ClaudeTmuxChatTab", () => {
       setupScriptsRunning: new Set(),
       sessionActivated: new Set(),
     });
+    useUIStore.setState({ selectedEnvironmentId: "env-1" });
     seedPane("Run the audit");
+  });
+
+  test("jumps to the bottom when reactivated after an environment switch", async () => {
+    const { rerender } = render(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    const scroller = await screen.findByTestId("virtuoso-mock");
+    act(() => {
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -20 }));
+    });
+
+    const callsBeforeSwitch = virtuosoScrollToIndexMock.mock.calls.length;
+    act(() => {
+      useUIStore.setState({ selectedEnvironmentId: "env-2" });
+    });
+    rerender(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive={false}
+      />,
+    );
+    act(() => {
+      useUIStore.setState({ selectedEnvironmentId: "env-1" });
+    });
+    rerender(
+      <ClaudeTmuxChatTab
+        tabId="tab-1"
+        data={{ environmentId: "env-1", containerId: "container-1" }}
+        isActive
+      />,
+    );
+
+    await waitFor(() => {
+      expect(virtuosoScrollToIndexMock.mock.calls.length).toBeGreaterThan(
+        callsBeforeSwitch,
+      );
+    });
+    expect(virtuosoScrollToMock.mock.calls.at(-1)).toEqual([
+      { top: 10_000_000, behavior: "auto" },
+    ]);
   });
 
   test("starts once with tabId+envId and clears the tab initialPrompt after the backend sends it", async () => {
