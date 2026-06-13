@@ -98,7 +98,7 @@ export function FileMentionMenu({
               className={cn(
                 "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors",
                 isSelected
-                  ? "bg-accent text-accent-foreground"
+                  ? "bg-primary text-primary-foreground"
                   : "hover:bg-accent/50 hover:text-accent-foreground"
               )}
             >
@@ -109,7 +109,12 @@ export function FileMentionMenu({
               )}
               <span className="truncate font-medium">{file.filename}</span>
               {directory && (
-                <span className="ml-auto max-w-[160px] truncate text-xs text-muted-foreground">
+                <span
+                  className={cn(
+                    "ml-auto max-w-[160px] truncate text-xs",
+                    isSelected ? "text-primary-foreground/80" : "text-muted-foreground",
+                  )}
+                >
                   {directory}
                 </span>
               )}

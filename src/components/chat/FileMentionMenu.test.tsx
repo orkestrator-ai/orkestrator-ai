@@ -32,6 +32,16 @@ describe("FileMentionMenu", () => {
     expect(onSelect).toHaveBeenCalledWith(files[0]);
   });
 
+  test("ignores non-left mouse down (e.g. right click)", () => {
+    const onSelect = mock(() => {});
+
+    render(<FileMentionMenu files={files} selectedIndex={0} onSelect={onSelect} onClose={() => {}} />);
+
+    fireEvent.mouseDown(screen.getByRole("option", { name: /Button.tsx/ }), { button: 2 });
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   test("supports keyboard-originated button activation", () => {
     const onSelect = mock(() => {});
 
@@ -40,6 +50,17 @@ describe("FileMentionMenu", () => {
     fireEvent.click(screen.getByRole("option", { name: /hooks/ }), { detail: 0 });
 
     expect(onSelect).toHaveBeenCalledWith(files[1]);
+  });
+
+  test("highlights the selected option with the primary blue treatment", () => {
+    render(<FileMentionMenu files={files} selectedIndex={0} onSelect={() => {}} onClose={() => {}} />);
+
+    const selectedOption = screen.getByRole("option", { name: /Button.tsx/ });
+    const unselectedOption = screen.getByRole("option", { name: /hooks/ });
+
+    expect(selectedOption.className).toContain("bg-primary");
+    expect(selectedOption.className).toContain("text-primary-foreground");
+    expect(unselectedOption.className).not.toContain("bg-primary");
   });
 
   test("closes when clicking outside the menu", () => {
