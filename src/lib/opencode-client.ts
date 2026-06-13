@@ -117,6 +117,10 @@ export interface ToolDiffMetadata {
 export interface OpenCodeMessagePart {
   type: "text" | "thinking" | "tool-invocation" | "tool-result" | "file" | "subagent";
   content: string;
+  /** Internal source part id for incremental streaming updates */
+  sourcePartId?: string;
+  /** Internal source message id for incremental streaming updates */
+  sourceMessageId?: string;
   /** For file parts - original URL from SDK (may be data URL or file:// URL) */
   fileUrl?: string;
   /** For tool invocations - the tool name */
@@ -417,6 +421,214 @@ interface FileDiffMetadata {
   file?: string;
   before?: string;
   after?: string;
+}
+
+function stringifyToolPayload(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseOpenCodeCreatedAt(value: unknown): string {
+  if (typeof value === "number") {
+    return new Date(value).toISOString();
+  }
+
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+
+  return new Date().toISOString();
+}
+
+export function normalizeOpenCodePart(part: unknown): OpenCodeMessagePart | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = part as any;
+  if (!p || typeof p !== "object") return null;
+
+  const sourcePartId = typeof p.id === "string" ? p.id : undefined;
+  const sourceMessageId = typeof p.messageID === "string" ? p.messageID : undefined;
+  const partType = p.type;
+
+  if (partType === "reasoning") {
+    const reasoningContent = typeof p.text === "string" ? p.text : "";
+    if (!reasoningContent) return null;
+    return {
+      type: "thinking",
+      content: reasoningContent,
+      sourcePartId,
+      sourceMessageId,
+    };
+  }
+
+  if (partType === "text" && typeof p.text === "string") {
+    return {
+      type: "text",
+      content: p.text,
+      sourcePartId,
+      sourceMessageId,
+    };
+  }
+
+  if (partType === "tool") {
+    const toolName = typeof p.tool === "string" ? p.tool : "Unknown tool";
+    const toolStatus = p.state?.status;
+
+    let mappedState: "success" | "failure" | "pending" | undefined;
+    if (toolStatus === "completed") mappedState = "success";
+    else if (toolStatus === "error") mappedState = "failure";
+    else if (toolStatus === "pending" || toolStatus === "running") mappedState = "pending";
+
+    const toolTitle = p.state?.title as string | undefined;
+    const toolOutput = stringifyToolPayload(p.state?.output);
+    const toolError = stringifyToolPayload(p.state?.error);
+
+    let toolDiff: ToolDiffMetadata | undefined;
+    if (isEditTool(toolName)) {
+      const input = p.state?.input || {};
+      const meta = p.state?.metadata || {};
+      const filediff = meta.filediff as FileDiffMetadata | undefined;
+
+      const filePath = (input.filePath || input.file_path || input.path || input.file ||
+        meta.file || meta.filePath || meta.path || filediff?.file) as string | undefined;
+
+      const oldString = typeof input.oldString === "string" ? input.oldString :
+        typeof input.old_string === "string" ? input.old_string : undefined;
+      const newString = typeof input.newString === "string" ? input.newString :
+        typeof input.new_string === "string" ? input.new_string :
+        typeof input.content === "string" ? input.content : undefined;
+      const metaBefore = typeof filediff?.before === "string" ? filediff.before :
+        typeof meta.before === "string" ? meta.before : undefined;
+      const metaAfter = typeof filediff?.after === "string" ? filediff.after :
+        typeof meta.after === "string" ? meta.after : undefined;
+
+      const unifiedDiff = typeof meta.diff === "string" ? meta.diff :
+        typeof input.patch === "string" ? input.patch :
+        typeof input.diff === "string" ? input.diff : undefined;
+
+      const beforeValue = oldString ?? metaBefore;
+      const afterValue = newString ?? metaAfter;
+
+      let additions: number | undefined;
+      let deletions: number | undefined;
+
+      if (typeof meta.additions === "number" && typeof meta.deletions === "number") {
+        additions = meta.additions as number;
+        deletions = meta.deletions as number;
+      } else if (unifiedDiff) {
+        let addCount = 0;
+        let delCount = 0;
+        const lines = unifiedDiff.split("\n");
+        for (const line of lines) {
+          if (line.startsWith("+") && !line.startsWith("+++")) addCount++;
+          else if (line.startsWith("-") && !line.startsWith("---")) delCount++;
+        }
+        additions = addCount;
+        deletions = delCount;
+      } else if (toolOutput && toolOutput.includes("@@") && (toolOutput.includes("\n+") || toolOutput.includes("\n-"))) {
+        let addCount = 0;
+        let delCount = 0;
+        const lines = toolOutput.split("\n");
+        for (const line of lines) {
+          if (line.startsWith("+") && !line.startsWith("+++")) addCount++;
+          else if (line.startsWith("-") && !line.startsWith("---")) delCount++;
+        }
+        if (addCount > 0 || delCount > 0) {
+          additions = addCount;
+          deletions = delCount;
+        }
+      } else if (beforeValue !== undefined || afterValue !== undefined) {
+        const oldLines = beforeValue ? beforeValue.split("\n").length : 0;
+        const newLines = afterValue ? afterValue.split("\n").length : 0;
+        if (beforeValue && afterValue) {
+          deletions = oldLines;
+          additions = newLines;
+        } else if (afterValue) {
+          additions = newLines;
+          deletions = 0;
+        } else if (beforeValue) {
+          additions = 0;
+          deletions = oldLines;
+        }
+      }
+
+      toolDiff = {
+        filePath,
+        additions,
+        deletions,
+        before: beforeValue,
+        after: afterValue,
+        diff: unifiedDiff,
+      };
+    }
+
+    return {
+      type: "tool-invocation",
+      content: toolName,
+      sourcePartId,
+      sourceMessageId,
+      toolName,
+      toolArgs: p.state?.input,
+      toolState: mappedState,
+      toolDiff,
+      toolTitle,
+      toolOutput,
+      toolError,
+    };
+  }
+
+  if (partType === "file") {
+    const filePath = p.filename || p.url || "";
+    return {
+      type: "file",
+      content: filePath,
+      sourcePartId,
+      sourceMessageId,
+      fileUrl: typeof p.url === "string" ? p.url : undefined,
+    };
+  }
+
+  return null;
+}
+
+export function normalizeOpenCodeMessage(rawMessage: unknown): OpenCodeMessage | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const msg = rawMessage as any;
+  if (!msg || typeof msg !== "object") return null;
+
+  const info = msg.info;
+  const createdAt = parseOpenCodeCreatedAt(info?.time?.created);
+  const parsedParts: OpenCodeMessagePart[] = [];
+  let textContent = "";
+
+  if (Array.isArray(msg.parts)) {
+    for (const part of msg.parts) {
+      const parsedPart = normalizeOpenCodePart(part);
+      if (!parsedPart) continue;
+      parsedParts.push(parsedPart);
+      if (parsedPart.type === "text") {
+        textContent += parsedPart.content;
+      }
+    }
+  }
+
+  return {
+    id: info?.id || crypto.randomUUID(),
+    role: (info?.role as "user" | "assistant") || "assistant",
+    content: textContent,
+    parts: parsedParts,
+    createdAt,
+  };
 }
 
 /**
@@ -757,224 +969,9 @@ export async function getSessionMessages(
 
     if (!response.data) return [];
 
-    const messages = response.data.map((msg) => {
-      const info = msg.info;
-      const createdTime = info?.time?.created;
-      const createdAt = typeof createdTime === "number"
-        ? new Date(createdTime).toISOString()
-        : createdTime || new Date().toISOString();
-
-      // Parse parts with type information
-      // SDK part types: text, file, reasoning, compaction, subtask, tool, step-start, step-finish, snapshot, patch, agent, retry
-      const parsedParts: OpenCodeMessagePart[] = [];
-      let textContent = "";
-
-      if (msg.parts) {
-        for (const part of msg.parts) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const p = part as any;
-          const partType = p.type;
-
-          // REASONING: type === "reasoning" (from SDK ReasoningPart)
-          // These have: id, sessionID, messageID, type, text, time: { start, end? }
-          if (partType === "reasoning") {
-            const reasoningContent = p.text || "";
-            if (reasoningContent) {
-              parsedParts.push({
-                type: "thinking",
-                content: reasoningContent,
-              });
-            }
-          }
-          // TEXT: type === "text" (from SDK TextPart)
-          // These have: id, sessionID, messageID, type, text, time? (optional)
-          else if (partType === "text" && typeof p.text === "string") {
-            parsedParts.push({
-              type: "text",
-              content: p.text,
-            });
-            textContent += p.text;
-          }
-          // TOOL: type === "tool" (from SDK ToolPart)
-          // These have: id, sessionID, messageID, type, callID, tool (string!), state: { status, input, title?, output?, error?, ... }
-          else if (partType === "tool") {
-            const toolName = typeof p.tool === "string" ? p.tool : "Unknown tool";
-            const toolStatus = p.state?.status;
-
-            // Map SDK status to our state type
-            let mappedState: "success" | "failure" | "pending" | undefined;
-            if (toolStatus === "completed") mappedState = "success";
-            else if (toolStatus === "error") mappedState = "failure";
-            else if (toolStatus === "pending" || toolStatus === "running") mappedState = "pending";
-
-            // Extract additional fields from ToolState
-            // title: available in ToolStateRunning and ToolStateCompleted
-            // output: available in ToolStateCompleted
-            // error: available in ToolStateError
-            const toolTitle = p.state?.title as string | undefined;
-            // Get output - try direct access always since status might vary
-            // According to SDK types, output is in ToolStateCompleted when status === "completed"
-            // But let's also try direct access as fallback
-            let toolOutput: string | undefined;
-            if (typeof p.state?.output === "string") {
-              toolOutput = p.state.output;
-            } else if (p.state?.output !== undefined) {
-              try {
-                toolOutput = JSON.stringify(p.state.output, null, 2);
-              } catch {
-                toolOutput = String(p.state.output);
-              }
-            }
-
-            let toolError: string | undefined;
-            if (typeof p.state?.error === "string") {
-              toolError = p.state.error;
-            } else if (p.state?.error !== undefined) {
-              try {
-                toolError = JSON.stringify(p.state.error, null, 2);
-              } catch {
-                toolError = String(p.state.error);
-              }
-            }
-
-            // Extract diff metadata for edit/write/patch tools
-            // The metadata may contain file info and diff stats
-            let toolDiff: import("./opencode-client").ToolDiffMetadata | undefined;
-            if (isEditTool(toolName)) {
-              const input = p.state?.input || {};
-              const meta = p.state?.metadata || {};
-
-              // The SDK uses camelCase property names: filePath, oldString, newString
-              // Get filediff metadata if available
-              const filediff = meta.filediff as FileDiffMetadata | undefined;
-
-              // Get file path - check multiple possible field names across different tools
-              const filePath = (input.filePath || input.file_path || input.path || input.file ||
-                meta.file || meta.filePath || meta.path || filediff?.file) as string | undefined;
-
-              // Get old/new content from input - different tools use different field names:
-              // Edit: oldString/old_string, newString/new_string
-              // Write/create_file: content (new content only)
-              // apply_patch/patch: patch/diff (unified diff format)
-              const oldString = typeof input.oldString === "string" ? input.oldString :
-                typeof input.old_string === "string" ? input.old_string : undefined;
-              // For write/create_file tools, input.content is the new file content (no oldString)
-              const newString = typeof input.newString === "string" ? input.newString :
-                typeof input.new_string === "string" ? input.new_string :
-                typeof input.content === "string" ? input.content : undefined;
-              const metaBefore = typeof filediff?.before === "string" ? filediff.before :
-                typeof meta.before === "string" ? meta.before : undefined;
-              const metaAfter = typeof filediff?.after === "string" ? filediff.after :
-                typeof meta.after === "string" ? meta.after : undefined;
-
-              // The metadata.diff contains the full unified diff string
-              // Also check input.patch/input.diff for apply_patch/patch tools
-              const unifiedDiff = typeof meta.diff === "string" ? meta.diff :
-                typeof input.patch === "string" ? input.patch :
-                typeof input.diff === "string" ? input.diff : undefined;
-
-              // Use oldString/newString first, fall back to filediff before/after
-              const beforeValue = oldString ?? metaBefore;
-              const afterValue = newString ?? metaAfter;
-
-              // Calculate additions/deletions
-              let additions: number | undefined;
-              let deletions: number | undefined;
-
-              // Check for pre-calculated stats in metadata (SDK FileDiff type has these)
-              if (typeof meta.additions === "number" && typeof meta.deletions === "number") {
-                additions = meta.additions as number;
-                deletions = meta.deletions as number;
-              }
-              // Try to count from unified diff (most accurate after pre-calculated)
-              else if (unifiedDiff) {
-                let addCount = 0;
-                let delCount = 0;
-                const lines = unifiedDiff.split("\n");
-                for (const line of lines) {
-                  if (line.startsWith("+") && !line.startsWith("+++")) addCount++;
-                  else if (line.startsWith("-") && !line.startsWith("---")) delCount++;
-                }
-                additions = addCount;
-                deletions = delCount;
-              }
-              // Try to count from the tool output if it looks like a unified diff
-              // Require @@ hunk headers to avoid false positives from non-diff output
-              else if (toolOutput && toolOutput.includes("@@") && (toolOutput.includes("\n+") || toolOutput.includes("\n-"))) {
-                let addCount = 0;
-                let delCount = 0;
-                const lines = toolOutput.split("\n");
-                for (const line of lines) {
-                  if (line.startsWith("+") && !line.startsWith("+++")) addCount++;
-                  else if (line.startsWith("-") && !line.startsWith("---")) delCount++;
-                }
-                if (addCount > 0 || delCount > 0) {
-                  additions = addCount;
-                  deletions = delCount;
-                }
-              }
-              // Fall back to counting from before/after
-              else if (beforeValue !== undefined || afterValue !== undefined) {
-                const oldLines = beforeValue ? beforeValue.split("\n").length : 0;
-                const newLines = afterValue ? afterValue.split("\n").length : 0;
-                if (beforeValue && afterValue) {
-                  deletions = oldLines;
-                  additions = newLines;
-                } else if (afterValue) {
-                  additions = newLines;
-                  deletions = 0;
-                } else if (beforeValue) {
-                  additions = 0;
-                  deletions = oldLines;
-                }
-              }
-
-              toolDiff = {
-                filePath,
-                additions,
-                deletions,
-                before: beforeValue,
-                after: afterValue,
-                diff: unifiedDiff,
-              };
-            }
-
-            parsedParts.push({
-              type: "tool-invocation",
-              content: toolName,
-              toolName: toolName,
-              toolArgs: p.state?.input,
-              toolState: mappedState,
-              toolDiff,
-              toolTitle,
-              toolOutput,
-              toolError,
-            });
-          }
-          // FILE: type === "file" (from SDK FilePart)
-          // These have: id, sessionID, messageID, type, mime, filename?, url, source?
-          else if (partType === "file") {
-            const filePath = p.filename || p.url || "";
-            parsedParts.push({
-              type: "file",
-              content: filePath,
-              fileUrl: typeof p.url === "string" ? p.url : undefined,
-            });
-          }
-          // SKIP: Internal/control parts that we don't need to display
-          // Includes: step-start, step-finish, compaction, snapshot, patch, agent, retry, subtask
-          // Any unrecognized part types are also silently ignored
-        }
-      }
-
-      return {
-        id: info?.id || crypto.randomUUID(),
-        role: (info?.role as "user" | "assistant") || "assistant",
-        content: textContent,
-        parts: parsedParts,
-        createdAt,
-      };
-    });
+    const messages = response.data
+      .map((msg) => normalizeOpenCodeMessage(msg))
+      .filter((message): message is OpenCodeMessage => message !== null);
 
     return messages;
   } catch (error) {

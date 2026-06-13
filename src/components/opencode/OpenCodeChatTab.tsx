@@ -34,11 +34,14 @@ import {
   formatOpenCodeError,
   abortSession,
   subscribeToEvents,
+  normalizeOpenCodePart,
   ERROR_MESSAGE_PREFIX,
   SYSTEM_MESSAGE_PREFIX,
   type PermissionRequest,
   type QuestionRequest,
   type OpenCodeConversationMode,
+  type OpenCodeMessage,
+  type OpenCodeMessagePart,
   type OpenCodeSlashCommand,
   type OpenCodeModel,
   type OpenCodeModelDefaults,
@@ -147,6 +150,57 @@ function resolveModelSelection(input: {
   return { model, variant };
 }
 
+function getOpenCodePartKey(part: OpenCodeMessagePart): string | null {
+  if (part.sourcePartId) return part.sourcePartId;
+  if (part.sourceMessageId) {
+    return [
+      part.sourceMessageId,
+      part.type,
+      part.toolName,
+      part.fileUrl,
+      part.content,
+    ].filter(Boolean).join(":");
+  }
+  return null;
+}
+
+function buildOpenCodeMessageFromPart(
+  existing: OpenCodeMessage | undefined,
+  messageId: string,
+  part: OpenCodeMessagePart,
+  delta?: string,
+): OpenCodeMessage {
+  const nextParts = [...(existing?.parts ?? [])];
+  const incomingKey = getOpenCodePartKey(part);
+  const existingIndex = incomingKey
+    ? nextParts.findIndex((existingPart) => getOpenCodePartKey(existingPart) === incomingKey)
+    : -1;
+  const existingPart = existingIndex >= 0 ? nextParts[existingIndex] : undefined;
+  const nextPart =
+    part.content === "" && delta && existingPart?.type === part.type
+      ? { ...part, content: `${existingPart.content}${delta}` }
+      : part;
+
+  if (existingIndex >= 0) {
+    nextParts[existingIndex] = nextPart;
+  } else {
+    nextParts.push(nextPart);
+  }
+
+  const content = nextParts
+    .filter((candidate) => candidate.type === "text")
+    .map((candidate) => candidate.content)
+    .join("");
+
+  return {
+    id: messageId,
+    role: existing?.role ?? "assistant",
+    content,
+    parts: nextParts,
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+  };
+}
+
 
 export function OpenCodeChatTab({
   tabId,
@@ -199,6 +253,7 @@ export function OpenCodeChatTab({
     addMessage,
     removeMessage,
     setMessages,
+    upsertMessage,
     setSessionLoading,
     setServerStatus,
     setSelectedModel,
@@ -867,6 +922,32 @@ export function OpenCodeChatTab({
           }
         };
 
+        const applyPartUpdate = (
+          sessionTabId: string,
+          rawPart: unknown,
+          delta?: string,
+        ): boolean => {
+          const part = normalizeOpenCodePart(rawPart);
+          if (!part?.sourceMessageId) {
+            return false;
+          }
+
+          const sessionState = useOpenCodeStore.getState().sessions.get(sessionTabId);
+          const existingMessage = sessionState?.messages.find(
+            (message) => message.id === part.sourceMessageId,
+          );
+          upsertMessage(
+            sessionTabId,
+            buildOpenCodeMessageFromPart(
+              existingMessage,
+              part.sourceMessageId,
+              part,
+              delta,
+            ),
+          );
+          return true;
+        };
+
         for await (const event of eventStream) {
           // Reset reconnect backoff on first successful event
           sseReconnectAttemptsRef.current = 0;
@@ -924,9 +1005,20 @@ export function OpenCodeChatTab({
               (eventType === "session.status" &&
                 props?.status?.type === "idle");
 
-            // Events that should trigger message refresh
-            if (
-              eventType === "message.part.updated" ||
+            if (eventType === "message.part.updated") {
+              const applied = applyPartUpdate(
+                sessionTabId,
+                props?.part,
+                typeof props?.delta === "string" ? props.delta : undefined,
+              );
+              if (!applied) {
+                fetchMessagesDebounced(
+                  eventSessionId,
+                  sessionTabId,
+                  false,
+                );
+              }
+            } else if (
               eventType === "message.updated" ||
               eventType === "session.updated" ||
               isFinalEvent
@@ -1073,6 +1165,7 @@ export function OpenCodeChatTab({
       getOrCreateEventSubscription,
       setEventStream,
       setMessages,
+      upsertMessage,
       setSessionLoading,
       setContextUsage,
       addMessage,

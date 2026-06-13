@@ -68,6 +68,7 @@ export interface NativeChatStoreSlice<TClient, TMessage, TAttachment, TQueued> {
   ) => void;
   getSession: (sessionKey: string) => NativeSessionState<TMessage> | undefined;
   addMessage: (sessionKey: string, message: TMessage) => void;
+  upsertMessage: (sessionKey: string, message: TMessage) => void;
   removeMessage: (sessionKey: string, messageId: string) => void;
   setMessages: (sessionKey: string, messages: TMessage[]) => void;
   setSessionLoading: (sessionKey: string, isLoading: boolean) => void;
@@ -197,6 +198,25 @@ export function createNativeChatStoreSlice<
         next.set(sessionKey, {
           ...session,
           messages: [...session.messages, message],
+        });
+        return { sessions: next };
+      }),
+
+    upsertMessage: (sessionKey, message) =>
+      set((state) => {
+        const session = state.sessions.get(sessionKey);
+        if (!session) return state;
+        const existingIndex = session.messages.findIndex((m) => m.id === message.id);
+        const messages =
+          existingIndex === -1
+            ? [...session.messages, message]
+            : session.messages.map((existing, index) =>
+                index === existingIndex ? message : existing
+              );
+        const next = new Map(state.sessions);
+        next.set(sessionKey, {
+          ...session,
+          messages,
         });
         return { sessions: next };
       }),

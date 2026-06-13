@@ -100,6 +100,7 @@ export function ClaudeChatTab({
     addMessage,
     removeMessage,
     setMessages,
+    upsertMessage,
     setSessionLoading,
     setServerStatus,
     getSelectedModel,
@@ -782,8 +783,15 @@ export function ClaudeChatTab({
 
             const isFinalEvent = eventType === "session.idle";
 
-            if (eventType === "message.updated" || eventType === "session.updated" || isFinalEvent) {
-              fetchMessagesDebounced(eventSessionId, sessionTabId, isFinalEvent);
+            if (eventType === "message.updated") {
+              const message = (event.data as { message?: ClaudeMessageType } | undefined)?.message;
+              if (message?.id && message.role === "assistant") {
+                upsertMessage(sessionTabId, message);
+              } else if (!message) {
+                fetchMessagesDebounced(eventSessionId, sessionTabId);
+              }
+            } else if (isFinalEvent) {
+              fetchMessagesDebounced(eventSessionId, sessionTabId, true);
             }
 
             if (usageFromEvent) {
@@ -995,7 +1003,7 @@ export function ClaudeChatTab({
         }
       }
     },
-    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, setSessionLoading, setSessionTitle, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
+    [environmentId, hasActiveEventSubscription, getOrCreateEventSubscription, setEventStream, setMessages, upsertMessage, setSessionLoading, setSessionTitle, setContextUsage, addMessage, addPendingQuestion, removePendingQuestion, addPendingPlanApproval, removePendingPlanApproval, setPlanMode, getSessionKeyBySdkSessionId]
   );
   startSharedEventSubscriptionRef.current = startSharedEventSubscription;
 

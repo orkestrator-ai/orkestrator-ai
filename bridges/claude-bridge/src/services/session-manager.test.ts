@@ -295,6 +295,7 @@ describe("sendPrompt", () => {
     try {
       const promptPromise = sendPrompt(session.id, "Hello Claude");
       const call = await nextQueryCall();
+      expect(call.options.includePartialMessages).toBe(true);
 
       // System init - sdkSessionId should be captured
       call.push({
@@ -337,6 +338,68 @@ describe("sendPrompt", () => {
       expect(eventTypes).toContain("session.init");
       expect(eventTypes).toContain("message.updated");
       expect(eventTypes).toContain("session.idle");
+    } finally {
+      stop();
+    }
+  });
+
+  test("streams partial assistant text before the final assistant message arrives", async () => {
+    const session = createSession("streaming");
+    track(session.id);
+
+    const { events, stop } = captureEvents();
+    try {
+      const promptPromise = sendPrompt(session.id, "Stream please");
+      const call = await nextQueryCall();
+
+      call.push({
+        type: "stream_event",
+        uuid: "partial-asst-1",
+        session_id: "sdk-session-stream",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        },
+      });
+      call.push({
+        type: "stream_event",
+        uuid: "partial-asst-1",
+        session_id: "sdk-session-stream",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Hello" },
+        },
+      });
+
+      await waitFor(() => {
+        const assistant = getSessionMessages(session.id).find((m) => m.role === "assistant");
+        return assistant?.content === "Hello";
+      });
+
+      const streamedEvent = events.find((event) => {
+        const message = (event.data as { message?: { content?: string } } | undefined)?.message;
+        return event.type === "message.updated" && message?.content === "Hello";
+      });
+      expect(streamedEvent).toBeDefined();
+
+      call.push({
+        type: "assistant",
+        uuid: "partial-asst-1",
+        message: {
+          content: [{ type: "text", text: "Hello final" }],
+        },
+      });
+      call.push({ type: "result", subtype: "success" });
+      call.finish();
+
+      await promptPromise;
+
+      const assistant = getSessionMessages(session.id).find((m) => m.role === "assistant");
+      expect(assistant?.content).toBe("Hello final");
     } finally {
       stop();
     }

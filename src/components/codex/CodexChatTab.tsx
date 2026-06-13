@@ -12,6 +12,7 @@ import {
 import { formatElapsed } from "@/lib/format-elapsed";
 import {
   type CodexConversationMode,
+  type CodexMessage,
   type CodexPromptAttachment,
   type CodexReasoningEffort,
   DEFAULT_CODEX_MODEL,
@@ -118,6 +119,7 @@ export function CodexChatTab({
     addMessage,
     removeMessage,
     setMessages,
+    upsertMessage,
     setSessionLoading,
     setSessionError,
     setSessionTitle,
@@ -1074,7 +1076,12 @@ export function CodexChatTab({
             refreshControllerRef.current.markActivity();
 
             if (event.type === "message.updated") {
-              await refreshMessages(client, session.sessionId);
+              const message = event.data?.message as CodexMessage | undefined;
+              if (message?.id) {
+                upsertMessage(sessionKey, message);
+              } else {
+                await refreshMessages(client, session.sessionId);
+              }
               continue;
             }
 
@@ -1146,6 +1153,7 @@ export function CodexChatTab({
     setSessionError,
     setSessionLoading,
     setSessionTitle,
+    upsertMessage,
   ]);
 
   // Watchdog poll for stalled turns. Mirrors the SSE gate above so it also

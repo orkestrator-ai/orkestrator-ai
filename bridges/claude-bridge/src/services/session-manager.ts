@@ -742,6 +742,13 @@ function buildMessageParts(
   return result;
 }
 
+function getMessageTextFromParts(parts: NormalizedPart[]): string {
+  return parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.content || "")
+    .join("");
+}
+
 /**
  * Detect image media type from file extension.
  */
@@ -980,6 +987,7 @@ Plan mode is read-only: do not write or edit files until the user approves your 
         // Opus 4.7 defaults adaptive thinking display to "omitted" (signature only,
         // redacted text). Opt back into "summarized" so thinking content renders in the UI.
         thinking: { type: "adaptive", display: "summarized" },
+        includePartialMessages: true,
         allowedTools: [
           "Read",
           "Edit",
@@ -1210,6 +1218,7 @@ Plan mode is read-only: do not write or edit files until the user approves your 
     // Parts are tracked per message UUID to preserve content from previous messages
     // when a new assistant message starts streaming (prevents loss during think→tool→think sequences)
     let accumulatedOrderedParts: OrderedPartEntry[] = [];
+    const partialOrderedPartsByMessage = new Map<string, Map<number, OrderedPartEntry>>();
 
     // Track active (pending) Task tool IDs for parent tracking
     // This allows us to associate child tools with their parent Task
@@ -1255,6 +1264,107 @@ Plan mode is read-only: do not write or edit files until the user approves your 
     // ---------------------------------------------------------------------
     let planApprovedThisTurn = false;
     let pendingPlanApprovalContinuation: string | null = null;
+
+    const emitCurrentAssistantMessage = () => {
+      if (!currentAssistantMessage) return;
+      eventEmitter.emit({
+        type: "message.updated",
+        sessionId,
+        data: { message: currentAssistantMessage },
+      });
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyPartialAssistantMessage = (partialMessage: any): boolean => {
+      const messageUuid = typeof partialMessage.uuid === "string"
+        ? partialMessage.uuid
+        : undefined;
+      const streamEvent = partialMessage.event;
+      const blockIndex = typeof streamEvent?.index === "number"
+        ? streamEvent.index
+        : undefined;
+
+      if (!messageUuid || blockIndex === undefined) {
+        return false;
+      }
+
+      let entriesForMessage = partialOrderedPartsByMessage.get(messageUuid);
+      if (!entriesForMessage) {
+        entriesForMessage = new Map<number, OrderedPartEntry>();
+        partialOrderedPartsByMessage.set(messageUuid, entriesForMessage);
+      }
+
+      let entry = entriesForMessage.get(blockIndex);
+
+      if (streamEvent.type === "content_block_start") {
+        const contentBlock = streamEvent.content_block;
+        if (contentBlock?.type === "text") {
+          entry = {
+            type: "text",
+            value: typeof contentBlock.text === "string" ? contentBlock.text : "",
+            messageUuid,
+          };
+        } else if (contentBlock?.type === "thinking") {
+          entry = {
+            type: "thinking",
+            value: typeof contentBlock.thinking === "string" ? contentBlock.thinking : "",
+            messageUuid,
+          };
+        } else {
+          return false;
+        }
+      } else if (streamEvent.type === "content_block_delta") {
+        const delta = streamEvent.delta;
+        if (delta?.type === "text_delta") {
+          entry = {
+            type: "text",
+            value: `${entry?.value ?? ""}${typeof delta.text === "string" ? delta.text : ""}`,
+            messageUuid,
+          };
+        } else if (delta?.type === "thinking_delta") {
+          entry = {
+            type: "thinking",
+            value: `${entry?.value ?? ""}${typeof delta.thinking === "string" ? delta.thinking : ""}`,
+            messageUuid,
+          };
+        } else {
+          return false;
+        }
+      } else {
+        return false;
+      }
+
+      entriesForMessage.set(blockIndex, entry);
+      const partialEntries = Array.from(entriesForMessage.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([, part]) => part);
+
+      accumulatedOrderedParts = [
+        ...accumulatedOrderedParts.filter((part) => part.messageUuid !== messageUuid),
+        ...partialEntries,
+      ];
+      lastAssistantMessageUuid = messageUuid;
+
+      const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker);
+      const content = getMessageTextFromParts(finalParts);
+
+      if (!currentAssistantMessage) {
+        currentAssistantMessage = {
+          id: messageUuid,
+          role: "assistant",
+          content,
+          parts: finalParts,
+          timestamp: new Date().toISOString(),
+        };
+        session.messages.push(currentAssistantMessage);
+      } else {
+        currentAssistantMessage.content = content;
+        currentAssistantMessage.parts = finalParts;
+      }
+
+      emitCurrentAssistantMessage();
+      return true;
+    };
 
     // Process the async generator
     for await (const message of queryIterator) {
@@ -1456,11 +1566,7 @@ Plan mode is read-only: do not write or edit files until the user approves your 
           });
         }
 
-        eventEmitter.emit({
-          type: "message.updated",
-          sessionId,
-          data: { message: currentAssistantMessage },
-        });
+        emitCurrentAssistantMessage();
       } else if (message.type === "user") {
         // User message with tool results - parse to update tool tracker
         const { completedTaskIds } = parseMessageContent(
@@ -1511,11 +1617,7 @@ Plan mode is read-only: do not write or edit files until the user approves your 
           const finalParts = buildMessageParts(accumulatedOrderedParts, toolTracker);
           currentAssistantMessage.parts = finalParts;
 
-          eventEmitter.emit({
-            type: "message.updated",
-            sessionId,
-            data: { message: currentAssistantMessage },
-          });
+          emitCurrentAssistantMessage();
         }
         // Skip adding user message replay as we already added it
       } else if (isSdkResultMessage(message as SdkMessageBase)) {
@@ -1549,8 +1651,7 @@ Plan mode is read-only: do not write or edit files until the user approves your 
           }
         }
       } else if (message.type === "stream_event") {
-        // Streaming partial message - could handle for real-time updates
-        // For now, we rely on full assistant messages
+        applyPartialAssistantMessage(message);
       }
       // Note: AskUserQuestion tool handling is done in the canUseTool callback above
     }

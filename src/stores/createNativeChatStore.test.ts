@@ -110,6 +110,29 @@ describe("createNativeChatStoreSlice", () => {
       { id: "incoming", content: "incoming" },
     ]);
   });
+
+  test("upserts messages by id without applying the setMessages merge strategy", () => {
+    const store = useMergedStore.getState();
+    const sessionKey = "env-env-1:tab-1";
+
+    store.setSession(sessionKey, {
+      sessionId: "session-1",
+      messages: [
+        { id: "user", content: "Hello" },
+        { id: "assistant", content: "" },
+      ],
+      isLoading: true,
+    });
+
+    store.upsertMessage(sessionKey, { id: "assistant", content: "Streaming" });
+    store.upsertMessage(sessionKey, { id: "tool", content: "Done" });
+
+    expect(store.getSession(sessionKey)?.messages).toEqual([
+      { id: "user", content: "Hello" },
+      { id: "assistant", content: "Streaming" },
+      { id: "tool", content: "Done" },
+    ]);
+  });
 });
 
 describe("pruneSessionKeyedMap", () => {

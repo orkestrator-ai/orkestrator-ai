@@ -1271,7 +1271,8 @@ function emitLocalAssistantResponse(
   session.currentAssistantMessageId = undefined;
 
   session.messages.push(createUserMessage(prompt));
-  session.messages.push(createAssistantTextMessage(response));
+  const assistantMessage = createAssistantTextMessage(response);
+  session.messages.push(assistantMessage);
 
   if (!session.title) {
     session.title = buildSessionTitle(prompt);
@@ -1282,7 +1283,7 @@ function emitLocalAssistantResponse(
     });
   }
 
-  emit({ type: "message.updated", sessionId: session.id });
+  emit({ type: "message.updated", sessionId: session.id, data: { message: assistantMessage } });
   emit({ type: "session.updated", sessionId: session.id });
   emit({
     type: "session.idle",
@@ -1649,11 +1650,11 @@ async function buildTranscriptSubagentParts(
   }));
 }
 
-async function rebuildAssistantMessage(session: SessionState): Promise<void> {
+async function rebuildAssistantMessage(session: SessionState): Promise<NormalizedMessage | null> {
   const messageId = session.currentAssistantMessageId;
-  if (!messageId) return;
+  if (!messageId) return null;
   const message = session.messages.find((entry) => entry.id === messageId);
-  if (!message) return;
+  if (!message) return null;
   const cwd = getWorkingDirectory(session.threadOptions.workingDirectory);
 
   const items = session.currentItemOrder
@@ -1673,6 +1674,7 @@ async function rebuildAssistantMessage(session: SessionState): Promise<void> {
 
   message.parts = mergeSubagentPartsIntoMessageParts(parts, subagentParts);
   message.content = finalResponse || parts.find((part) => part.type === "text")?.content || "";
+  return message;
 }
 
 async function buildSlashHelpText(cwd: string): Promise<string> {
@@ -1875,8 +1877,10 @@ async function processCodexStream(
         session.currentItemOrder.push(event.item.id);
       }
       session.currentItems.set(event.item.id, event.item);
-      await rebuildAssistantMessage(session);
-      emit({ type: "message.updated", sessionId: session.id });
+      const message = await rebuildAssistantMessage(session);
+      emit(message
+        ? { type: "message.updated", sessionId: session.id, data: { message } }
+        : { type: "message.updated", sessionId: session.id });
       continue;
     }
 
@@ -1910,9 +1914,11 @@ async function processCodexStream(
     return;
   }
 
-  await rebuildAssistantMessage(session);
+  const message = await rebuildAssistantMessage(session);
   session.status = "idle";
-  emit({ type: "message.updated", sessionId: session.id });
+  emit(message
+    ? { type: "message.updated", sessionId: session.id, data: { message } }
+    : { type: "message.updated", sessionId: session.id });
   emit({
     type: "session.idle",
     sessionId: session.id,
@@ -1990,7 +1996,7 @@ async function runPrompt(
     });
   }
 
-  emit({ type: "message.updated", sessionId: session.id });
+  emit({ type: "message.updated", sessionId: session.id, data: { message: assistantMessage } });
   emit({ type: "session.updated", sessionId: session.id });
 
   try {

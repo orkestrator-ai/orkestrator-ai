@@ -5,6 +5,7 @@ import {
   getModelsWithDefaults,
   getSessionMessages,
   listSessions,
+  normalizeOpenCodePart,
   sendPrompt,
   type OpencodeClient,
 } from "./opencode-client";
@@ -622,6 +623,25 @@ describe("opencode-client sendPrompt", () => {
     expect(result.error).toContain("Status: 429");
     expect(result.error).toContain("Request ID: req_123");
     expect(result.error).toContain("Raw error:");
+  });
+});
+
+describe("opencode-client streaming part normalization", () => {
+  test("normalizes text parts with source identity for incremental updates", () => {
+    const part = normalizeOpenCodePart({
+      id: "part-1",
+      sessionID: "session-1",
+      messageID: "message-1",
+      type: "text",
+      text: "Streaming text",
+    });
+
+    expect(part).toEqual({
+      type: "text",
+      content: "Streaming text",
+      sourcePartId: "part-1",
+      sourceMessageId: "message-1",
+    });
   });
 });
 
