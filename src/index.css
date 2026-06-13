@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* FiraCode Nerd Font for terminal */
 @font-face {
   font-family: "FiraCode Nerd Font";
