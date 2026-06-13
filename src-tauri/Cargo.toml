@@ -1,6 +1,6 @@
 [package]
 name = "orkestrator-ai"
-version = "0.5.13"
+version = "0.5.14"
 description = "Agentic orchestration platform"
 authors = ["Arkaydeus"]
 edition = "2021"
