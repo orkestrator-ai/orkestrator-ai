@@ -149,6 +149,21 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function findMentionTokenRange(text: string, cursorPosition: number): { start: number; end: number } | null {
+  const cursor = Math.max(0, Math.min(cursorPosition, text.length));
+  const atStart = text.lastIndexOf("@", cursor);
+  if (atStart === -1) return null;
+
+  const tokenBeforeCursor = text.slice(atStart + 1, cursor);
+  if (/\s|@/.test(tokenBeforeCursor)) return null;
+
+  const tokenAfterCursor = text.slice(cursor).match(/^[^\s@]*/)?.[0] ?? "";
+  return {
+    start: atStart,
+    end: cursor + tokenAfterCursor.length,
+  };
+}
+
 function areMentionsEqual(a: FileMention[], b: FileMention[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((mention, index) => mention.id === b[index]?.id);
@@ -193,18 +208,16 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
             ? getCursorOffset(inputRef.current)
             : lastCursorPositionRef.current;
         const currentText = extractText(inputRef.current);
-        const textBefore = currentText.slice(0, cursorPos);
-        const atMatch = textBefore.match(/@([^\s@]*)$/);
+        const tokenRange = findMentionTokenRange(currentText, cursorPos);
 
-        if (atMatch) {
-          const atStart = textBefore.length - atMatch[0].length;
+        if (tokenRange) {
           const newText =
-            currentText.slice(0, atStart) +
+            currentText.slice(0, tokenRange.start) +
             `@${mention.filename} ` +
-            currentText.slice(cursorPos);
+            currentText.slice(tokenRange.end);
           const newMentions = [...mentions, mention];
 
-          pendingCursorRef.current = atStart + mention.filename.length + 2;
+          pendingCursorRef.current = tokenRange.start + mention.filename.length + 2;
           lastCursorPositionRef.current = pendingCursorRef.current;
           onChange(newText, newMentions);
         }

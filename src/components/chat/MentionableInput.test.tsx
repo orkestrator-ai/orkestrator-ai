@@ -106,6 +106,38 @@ describe("MentionableInput", () => {
     );
   });
 
+  test("replaces the full active mention token when the cursor is inside the query", () => {
+    const onChange = mock(() => {});
+    const inputRef = createRef<MentionableInputRef>();
+    const { container } = render(
+      <MentionableInput
+        ref={inputRef}
+        value="Review @ut"
+        mentions={[]}
+        onChange={onChange}
+      />,
+    );
+
+    const input = container.querySelector("[contenteditable]")!;
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.setStart(input.firstChild!, "Review @".length);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    inputRef.current!.insertMention({
+      id: "mention-1",
+      filename: "utils.ts",
+      relativePath: "src/utils.ts",
+    });
+
+    expect(onChange).toHaveBeenCalledWith(
+      "Review @utils.ts ",
+      [{ id: "mention-1", filename: "utils.ts", relativePath: "src/utils.ts" }],
+    );
+  });
+
   test("pastes plain text at the current selection", () => {
     const onChange = mock(() => {});
     const { container } = render(
