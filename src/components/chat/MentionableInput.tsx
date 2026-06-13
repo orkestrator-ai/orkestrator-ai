@@ -151,7 +151,9 @@ function escapeRegExp(text: string): string {
 
 function findMentionTokenRange(text: string, cursorPosition: number): { start: number; end: number } | null {
   const cursor = Math.max(0, Math.min(cursorPosition, text.length));
-  const atStart = text.lastIndexOf("@", cursor);
+  if (cursor === 0) return null;
+
+  const atStart = text.lastIndexOf("@", cursor - 1);
   if (atStart === -1) return null;
 
   const tokenBeforeCursor = text.slice(atStart + 1, cursor);
@@ -211,10 +213,12 @@ export const MentionableInput = forwardRef<MentionableInputRef, MentionableInput
         const tokenRange = findMentionTokenRange(currentText, cursorPos);
 
         if (tokenRange) {
+          const trailingText = currentText.slice(tokenRange.end);
+          const separator = trailingText.length > 0 && /^\s/.test(trailingText) ? "" : " ";
           const newText =
             currentText.slice(0, tokenRange.start) +
-            `@${mention.filename} ` +
-            currentText.slice(tokenRange.end);
+            `@${mention.filename}${separator}` +
+            trailingText;
           const newMentions = [...mentions, mention];
 
           pendingCursorRef.current = tokenRange.start + mention.filename.length + 2;
