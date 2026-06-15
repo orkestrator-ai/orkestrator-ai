@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AppConfig, GlobalConfig, RepositoryConfig } from "@/types";
+import type { AppConfig, EnvironmentType, GlobalConfig, RepositoryConfig } from "@/types";
 import { DEFAULT_TERMINAL_SCROLLBACK, TERMINAL_BACKGROUND_COLOR } from "@/constants/terminal";
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -92,6 +92,7 @@ interface ConfigState {
   setConfig: (config: AppConfig) => void;
   updateGlobalConfig: (updates: Partial<GlobalConfig>) => void;
   setRepositoryConfig: (repoId: string, config: RepositoryConfig) => void;
+  setRepositoryLastEnvironmentType: (repoId: string, environmentType: EnvironmentType) => void;
   removeRepositoryConfig: (repoId: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
@@ -127,6 +128,27 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
         },
       },
     })),
+
+  setRepositoryLastEnvironmentType: (repoId, environmentType) =>
+    set((state) => {
+      const existing = state.config.repositories[repoId] ?? {
+        defaultBranch: "main",
+        prBaseBranch: "main",
+      };
+
+      return {
+        config: {
+          ...state.config,
+          repositories: {
+            ...state.config.repositories,
+            [repoId]: {
+              ...existing,
+              lastEnvironmentType: environmentType,
+            },
+          },
+        },
+      };
+    }),
 
   removeRepositoryConfig: (repoId) =>
     set((state) => {

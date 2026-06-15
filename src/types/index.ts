@@ -245,6 +245,8 @@ export interface GlobalConfig {
 export interface RepositoryConfig {
   defaultBranch: string;
   prBaseBranch: string;
+  /** Last environment type successfully created in this repository */
+  lastEnvironmentType?: EnvironmentType;
   /** Default port mappings for new environments in this repository */
   defaultPortMappings?: PortMapping[];
   /** Additional files to copy from local project path to environments (relative paths) */

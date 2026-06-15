@@ -2289,6 +2289,7 @@ mod tests {
             crate::models::RepositoryConfig {
                 default_branch: "develop".to_string(),
                 pr_base_branch: "main".to_string(),
+                last_environment_type: None,
                 default_port_mappings: None,
                 files_to_copy: None,
                 default_model: None,

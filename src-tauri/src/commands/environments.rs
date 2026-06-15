@@ -10,9 +10,9 @@ use crate::docker::{
     ContainerConfig, DockerError,
 };
 use crate::local::{
-    allocate_ports, configure_local_git_artifacts, copy_env_files, copy_project_files,
-    create_worktree, delete_worktree, get_setup_local_commands, isolated_opencode_data_home,
-    close_local_terminal_sessions_for_environment, stop_all_local_servers,
+    allocate_ports, close_local_terminal_sessions_for_environment, configure_local_git_artifacts,
+    copy_env_files, copy_project_files, create_worktree, delete_worktree, get_setup_local_commands,
+    isolated_opencode_data_home, stop_all_local_servers,
 };
 use crate::models::{
     sanitize_branch_name, sanitize_environment_name, ClaudeMode, ClaudeNativeBackend, CodexMode,
@@ -507,6 +507,29 @@ pub async fn create_environment(
     let created_environment = storage
         .add_environment(environment)
         .map_err(storage_error_to_string)?;
+
+    match storage.load_config() {
+        Ok(mut config) => {
+            let repo_config = config.repositories.entry(project_id.clone()).or_default();
+            repo_config.last_environment_type = Some(created_environment.environment_type.clone());
+            if let Err(e) = storage.save_config(&config) {
+                warn!(
+                    project_id = %project_id,
+                    environment_type = ?created_environment.environment_type,
+                    error = %e,
+                    "Failed to persist last environment type"
+                );
+            }
+        }
+        Err(e) => {
+            warn!(
+                project_id = %project_id,
+                environment_type = ?created_environment.environment_type,
+                error = %e,
+                "Failed to load config while persisting last environment type"
+            );
+        }
+    }
 
     Ok(created_environment)
 }

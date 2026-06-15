@@ -535,6 +535,28 @@ describe("RepositorySettings", () => {
       expect(savedConfig.defaultBranch).toBe("develop");
       expect(savedConfig.prBaseBranch).toBe("release");
     });
+
+    test("preserves the last environment type when saving repository settings", async () => {
+      renderSettings({
+        section: "branches",
+        config: {
+          repositories: {
+            "project-1": {
+              defaultBranch: "main",
+              prBaseBranch: "main",
+              lastEnvironmentType: "local",
+            },
+          },
+        },
+      });
+
+      fireEvent.change(screen.getByLabelText("Default Branch"), { target: { value: "develop" } });
+      fireEvent.click(getSaveButton());
+
+      await waitFor(() => expect(mockUpdateRepositoryConfig).toHaveBeenCalledTimes(1));
+
+      expect(getSavedConfig().lastEnvironmentType).toBe("local");
+    });
   });
 
   describe("ports section", () => {
