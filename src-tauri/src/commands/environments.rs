@@ -347,6 +347,20 @@ fn normalize_initial_prompt(initial_prompt: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn persist_last_environment_type(
+    storage: &Storage,
+    project_id: &str,
+    environment_type: EnvironmentType,
+) -> Result<(), StorageError> {
+    let mut config = storage.load_config()?;
+    let repo_config = config
+        .repositories
+        .entry(project_id.to_string())
+        .or_default();
+    repo_config.last_environment_type = Some(environment_type);
+    storage.save_config(&config)
+}
+
 async fn generate_initial_environment_name(prompt: &str) -> Option<String> {
     let prompt = prompt.to_string();
     match tokio::task::spawn_blocking(move || {
@@ -508,27 +522,17 @@ pub async fn create_environment(
         .add_environment(environment)
         .map_err(storage_error_to_string)?;
 
-    match storage.load_config() {
-        Ok(mut config) => {
-            let repo_config = config.repositories.entry(project_id.clone()).or_default();
-            repo_config.last_environment_type = Some(created_environment.environment_type.clone());
-            if let Err(e) = storage.save_config(&config) {
-                warn!(
-                    project_id = %project_id,
-                    environment_type = ?created_environment.environment_type,
-                    error = %e,
-                    "Failed to persist last environment type"
-                );
-            }
-        }
-        Err(e) => {
-            warn!(
-                project_id = %project_id,
-                environment_type = ?created_environment.environment_type,
-                error = %e,
-                "Failed to load config while persisting last environment type"
-            );
-        }
+    if let Err(e) = persist_last_environment_type(
+        storage,
+        &project_id,
+        created_environment.environment_type.clone(),
+    ) {
+        warn!(
+            project_id = %project_id,
+            environment_type = ?created_environment.environment_type,
+            error = %e,
+            "Failed to persist last environment type"
+        );
     }
 
     Ok(created_environment)
@@ -2343,6 +2347,12 @@ mod tests {
     use super::*;
     use crate::models::{AppConfig, RepositoryConfig};
     use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    fn create_test_storage() -> Storage {
+        let temp_dir = tempdir().unwrap();
+        Storage::new_for_tests(temp_dir.keep())
+    }
 
     #[test]
     fn test_valid_statuses() {
@@ -2383,6 +2393,61 @@ mod tests {
             resolve_base_branch_override(&config, "missing-project"),
             None
         );
+    }
+
+    #[test]
+    fn test_persist_last_environment_type_updates_existing_repository_config() {
+        let storage = create_test_storage();
+        let mut config = AppConfig::default();
+        config.repositories.insert(
+            "project-123".to_string(),
+            RepositoryConfig {
+                default_branch: "develop".to_string(),
+                pr_base_branch: "release".to_string(),
+                ..RepositoryConfig::default()
+            },
+        );
+        storage.save_config(&config).unwrap();
+
+        persist_last_environment_type(&storage, "project-123", EnvironmentType::Local).unwrap();
+
+        let updated = storage.load_config().unwrap();
+        let repo_config = updated.repositories.get("project-123").unwrap();
+        assert_eq!(repo_config.default_branch, "develop");
+        assert_eq!(repo_config.pr_base_branch, "release");
+        assert_eq!(
+            repo_config.last_environment_type,
+            Some(EnvironmentType::Local)
+        );
+    }
+
+    #[test]
+    fn test_persist_last_environment_type_creates_default_repository_config() {
+        let storage = create_test_storage();
+
+        persist_last_environment_type(&storage, "project-123", EnvironmentType::Containerized)
+            .unwrap();
+
+        let updated = storage.load_config().unwrap();
+        let repo_config = updated.repositories.get("project-123").unwrap();
+        assert_eq!(repo_config.default_branch, "main");
+        assert_eq!(repo_config.pr_base_branch, "main");
+        assert_eq!(
+            repo_config.last_environment_type,
+            Some(EnvironmentType::Containerized)
+        );
+    }
+
+    #[test]
+    fn test_persist_last_environment_type_surfaces_save_errors() {
+        let temp_dir = tempdir().unwrap();
+        let data_dir_file = temp_dir.path().join("not-a-directory");
+        std::fs::write(&data_dir_file, "not a directory").unwrap();
+        let storage = Storage::new_for_tests(data_dir_file);
+
+        let result = persist_last_environment_type(&storage, "project-123", EnvironmentType::Local);
+
+        assert!(matches!(result, Err(StorageError::Io(_))));
     }
 
     #[test]

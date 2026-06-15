@@ -249,6 +249,80 @@ describe("resolveAgentDefaults", () => {
     });
   });
 
+  test("resets environment type to the saved project default when reopened", async () => {
+    useConfigStore.setState({
+      config: {
+        version: "1.0",
+        global: {
+          containerResources: { cpuCores: 2, memoryGb: 4 },
+          envFilePatterns: [],
+          allowedDomains: [],
+          defaultAgent: "claude",
+          opencodeModel: "opencode/grok-code",
+          codexModel: "gpt-5.3-codex",
+          codexReasoningEffort: "medium",
+          opencodeMode: "terminal",
+          claudeMode: "terminal",
+          codexMode: "native",
+          terminalAppearance: {
+            fontFamily: "Fira Code",
+            fontSize: 14,
+            backgroundColor: "#000000",
+          },
+          terminalScrollback: 5000,
+        },
+        repositories: {
+          "project-1": {
+            defaultBranch: "main",
+            prBaseBranch: "main",
+            lastEnvironmentType: "local",
+          },
+        },
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    const onCreate = mock(async () => {});
+    const props = {
+      onOpenChange: () => {},
+      onCreate,
+      projectId: "project-1",
+    };
+
+    const { rerender } = render(
+      <CreateEnvironmentDialog
+        open={true}
+        {...props}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Containerized/ }));
+
+    rerender(
+      <CreateEnvironmentDialog
+        open={false}
+        {...props}
+      />
+    );
+    rerender(
+      <CreateEnvironmentDialog
+        open={true}
+        {...props}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Environment" }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environmentType: "local",
+        })
+      );
+    });
+  });
+
   test("shows pasted initial prompt image and submits it as an attachment", async () => {
     mockReadImage.mockImplementation(async () => ({
       rgba: async () => new Uint8Array([255, 0, 0, 255]),

@@ -1685,7 +1685,7 @@ pub fn get_config() -> Result<AppConfig, StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{EnvironmentStatus, Session, SessionStatus, SessionType};
+    use crate::models::{EnvironmentStatus, EnvironmentType, Session, SessionStatus, SessionType};
     use filetime::{set_file_mtime, FileTime};
     use tempfile::tempdir;
 
@@ -2289,7 +2289,7 @@ mod tests {
             crate::models::RepositoryConfig {
                 default_branch: "develop".to_string(),
                 pr_base_branch: "main".to_string(),
-                last_environment_type: None,
+                last_environment_type: Some(EnvironmentType::Local),
                 default_port_mappings: None,
                 files_to_copy: None,
                 default_model: None,
@@ -2309,6 +2309,14 @@ mod tests {
         assert_eq!(
             loaded.repositories.get("repo-1").unwrap().default_branch,
             "develop"
+        );
+        assert_eq!(
+            loaded
+                .repositories
+                .get("repo-1")
+                .unwrap()
+                .last_environment_type,
+            Some(EnvironmentType::Local)
         );
     }
 
