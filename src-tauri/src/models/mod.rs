@@ -976,6 +976,10 @@ impl Default for GlobalConfig {
 pub struct RepositoryConfig {
     pub default_branch: String,
     pub pr_base_branch: String,
+    /// Last environment type successfully created for this repository.
+    /// Used as the default selection for the next new environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_environment_type: Option<EnvironmentType>,
     /// Default port mappings for new environments in this repository
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_port_mappings: Option<Vec<PortMapping>>,
@@ -1009,6 +1013,7 @@ impl Default for RepositoryConfig {
         Self {
             default_branch: "main".to_string(),
             pr_base_branch: "main".to_string(),
+            last_environment_type: None,
             default_port_mappings: None,
             files_to_copy: None,
             default_model: None,
@@ -1268,6 +1273,7 @@ mod tests {
             RepositoryConfig {
                 default_branch: "develop".to_string(),
                 pr_base_branch: "main".to_string(),
+                last_environment_type: None,
                 default_port_mappings: None,
                 files_to_copy: None,
                 default_model: None,
@@ -1475,6 +1481,7 @@ mod tests {
         let config = RepositoryConfig {
             default_branch: "main".to_string(),
             pr_base_branch: "main".to_string(),
+            last_environment_type: None,
             default_port_mappings: None,
             files_to_copy: None,
             default_model: None,
@@ -1505,6 +1512,24 @@ mod tests {
         let deserialized: RepositoryConfig = serde_json::from_str(&json).unwrap();
         assert!(deserialized.default_agent.is_none());
         assert!(deserialized.agent_style.is_none());
+    }
+
+    #[test]
+    fn test_repository_last_environment_type_serialization_round_trip() {
+        let mut config = RepositoryConfig::default();
+        config.last_environment_type = Some(EnvironmentType::Local);
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"lastEnvironmentType\":\"local\""));
+
+        let deserialized: RepositoryConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.last_environment_type,
+            Some(EnvironmentType::Local)
+        );
+
+        let default_json = serde_json::to_string(&RepositoryConfig::default()).unwrap();
+        assert!(!default_json.contains("lastEnvironmentType"));
     }
 
     #[test]

@@ -119,8 +119,9 @@ export function CreateEnvironmentDialog({
   const configClaudeMode = resolved.claudeMode as ClaudeMode;
   const configOpencodeMode = resolved.opencodeMode as OpenCodeMode;
   const configCodexMode = resolved.codexMode as CodexMode;
+  const configEnvironmentType: EnvironmentType = repoConfig?.lastEnvironmentType ?? "containerized";
 
-  const [environmentType, setEnvironmentType] = useState<EnvironmentType>("containerized");
+  const [environmentType, setEnvironmentType] = useState<EnvironmentType>(configEnvironmentType);
   const [environmentName, setEnvironmentName] = useState("");
   const [launchAgent, setLaunchAgent] = useState(true);
   const [agentType, setAgentType] = useState<AgentType>(configDefaultAgent);
@@ -155,7 +156,7 @@ export function CreateEnvironmentDialog({
   }, [open, launchAgent, projectId]);
 
   const resetForm = useCallback(() => {
-    setEnvironmentType("containerized");
+    setEnvironmentType(configEnvironmentType);
     setEnvironmentName("");
     setLaunchAgent(true);
     setAgentType(configDefaultAgent);
@@ -167,7 +168,7 @@ export function CreateEnvironmentDialog({
     setNetworkAccessMode("full");
     setPortMappings(defaultPortMappings);
     setShowPortConfig(defaultPortMappings.length > 0);
-  }, [defaultPortMappings, configDefaultAgent, configClaudeMode, configOpencodeMode, configCodexMode]);
+  }, [defaultPortMappings, configDefaultAgent, configClaudeMode, configOpencodeMode, configCodexMode, configEnvironmentType]);
 
   const handlePromptPaste = useCallback(async (event: ClipboardEvent) => {
     if (!open || !launchAgent || document.activeElement !== promptRef.current) return;
@@ -240,6 +241,7 @@ export function CreateEnvironmentDialog({
     if (open) {
       setPortMappings(defaultPortMappings);
       setShowPortConfig(defaultPortMappings.length > 0);
+      setEnvironmentType(configEnvironmentType);
       setAgentType(configDefaultAgent);
       setClaudeMode(configClaudeMode);
       setOpencodeMode(configOpencodeMode);

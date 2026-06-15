@@ -327,9 +327,11 @@ export function RepositorySettings({
       // Update repository config - filter out empty file paths
       const cleanedFilesToCopy = filesToCopy.filter((f) => f.trim() !== "");
       const parsedEntryPort = entryPort.trim() ? parseInt(entryPort.trim(), 10) : undefined;
+      const currentRepoConfig = getRepositoryConfig(project.id);
       const repoConfig: RepositoryConfig = {
         defaultBranch,
         prBaseBranch,
+        lastEnvironmentType: currentRepoConfig?.lastEnvironmentType,
         defaultPortMappings: portMappings.length > 0 ? portMappings : undefined,
         filesToCopy: cleanedFilesToCopy.length > 0 ? cleanedFilesToCopy : undefined,
         defaultModel: defaultModel || undefined,

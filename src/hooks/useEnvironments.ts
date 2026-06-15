@@ -2,7 +2,7 @@
 import { useCallback, useEffect } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { useEnvironmentStore, useErrorDialogStore } from "@/stores";
+import { useConfigStore, useEnvironmentStore, useErrorDialogStore } from "@/stores";
 import { useSessionStore } from "@/stores/sessionStore";
 import * as tauri from "@/lib/tauri";
 import type { EnvironmentType, NetworkAccessMode, PortMapping, PrState } from "@/types";
@@ -151,6 +151,7 @@ export function useEnvironments(
       try {
         const environment = await tauri.createEnvironment(pid, name, networkAccessMode, initialPrompt, portMappings, environmentType);
         addEnvironmentToStore(environment);
+        useConfigStore.getState().setRepositoryLastEnvironmentType(pid, environment.environmentType);
         toast.success("Environment created");
         return environment;
       } catch (err) {

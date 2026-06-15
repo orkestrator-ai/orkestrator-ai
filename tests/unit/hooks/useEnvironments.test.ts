@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import { useConfigStore } from "../../../src/stores/configStore";
 import { useEnvironmentStore } from "../../../src/stores/environmentStore";
 import type { Environment } from "../../../src/types";
 import { createMockEnvironment } from "../utils/testFactories";
@@ -41,6 +42,18 @@ describe("useEnvironments", () => {
     // Reset store between tests
     useEnvironmentStore.setState({
       environments: [],
+      isLoading: false,
+      error: null,
+    });
+    useConfigStore.setState({
+      config: {
+        version: "1.0",
+        global: {
+          containerResources: { cpuCores: 2, memoryGb: 4 },
+          envFilePatterns: [".env.local", ".env"],
+        },
+        repositories: {},
+      },
       isLoading: false,
       error: null,
     });
@@ -112,6 +125,7 @@ describe("useEnvironments", () => {
     expect(createdEnv?.id).toBe("new-env-id");
     expect(result.current.allEnvironments).toHaveLength(1);
     expect(result.current.error).toBeNull();
+    expect(useConfigStore.getState().config.repositories["project-1"]?.lastEnvironmentType).toBe("containerized");
   });
 
   test("createEnvironment sets error on failure", async () => {

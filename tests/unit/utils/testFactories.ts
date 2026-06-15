@@ -27,6 +27,7 @@ export function createMockEnvironment(overrides: Partial<Environment> = {}): Env
     status: "stopped" as EnvironmentStatus,
     prUrl: null,
     createdAt: new Date().toISOString(),
+    environmentType: "containerized",
     ...overrides,
   };
 }
