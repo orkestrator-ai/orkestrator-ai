@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { listen } from "@tauri-apps/api/event";
 import { useBuildPipelineStore } from "@/stores/buildPipelineStore";
 import { useClaudeOptionsStore } from "@/stores/claudeOptionsStore";
 import { useClaudeStore, createClaudeSessionKey } from "@/stores/claudeStore";
@@ -51,6 +52,10 @@ const realProcessSnapshot = { ...realProcess };
 
 const mockStartEnvironment = mock(async () => {});
 const mockExit = mock(async () => {});
+const mockListen = listen as ReturnType<typeof mock>;
+type AppEventCallback = (event: { payload: any }) => void;
+let appEventCallbacks = new Map<string, AppEventCallback>();
+const mockAppUnlisten = mock(() => {});
 
 const mockConfig: AppConfig = {
   version: "1.0",
@@ -92,15 +97,40 @@ mock.module("@/components/terminal", () => ({
   TerminalContainer: ({
     environmentId,
     isActive,
+    onStartContainer,
+    onCreateScript,
   }: {
     environmentId: string;
     isActive: boolean;
+    onStartContainer?: (initialPrompt?: string) => void;
+    onCreateScript?: (initialPrompt: string) => void;
   }) => (
     <div
       data-testid={`terminal-${environmentId}`}
       data-active={String(isActive)}
     >
       {environmentId}
+      <button
+        type="button"
+        data-testid={`start-${environmentId}`}
+        onClick={() => onStartContainer?.()}
+      >
+        start {environmentId}
+      </button>
+      <button
+        type="button"
+        data-testid={`start-prompt-${environmentId}`}
+        onClick={() => onStartContainer?.("Prompt from terminal")}
+      >
+        start prompt {environmentId}
+      </button>
+      <button
+        type="button"
+        data-testid={`create-script-${environmentId}`}
+        onClick={() => onCreateScript?.("Create setup script")}
+      >
+        create script {environmentId}
+      </button>
     </div>
   ),
 }));
@@ -156,22 +186,31 @@ mock.module("@/hooks", () => ({
 
 const mockCheckDocker = mock(async () => true);
 const mockSyncAllEnvironmentsWithDocker = mock(async () => [] as string[]);
+const mockCheckClaudeCli = mock(async () => true);
+const mockCheckClaudeConfig = mock(async () => true);
+const mockCheckOpencodeCli = mock(async () => true);
+const mockCheckCodexCli = mock(async () => true);
+const mockCheckGithubCli = mock(async () => true);
+const mockGetAvailableAiCli = mock<() => Promise<string | null>>(async () => "claude");
+const mockGetConfig = mock(async () => mockConfig);
 
 mock.module("@/lib/tauri", () => ({
   checkDocker: mockCheckDocker,
-  checkClaudeCli: mock(async () => true),
-  checkClaudeConfig: mock(async () => true),
-  checkCodexCli: mock(async () => true),
-  checkOpencodeCli: mock(async () => true),
-  checkGithubCli: mock(async () => true),
-  getAvailableAiCli: mock(async () => "claude"),
-  getConfig: mock(async () => mockConfig),
+  checkClaudeCli: mockCheckClaudeCli,
+  checkClaudeConfig: mockCheckClaudeConfig,
+  checkCodexCli: mockCheckCodexCli,
+  checkOpencodeCli: mockCheckOpencodeCli,
+  checkGithubCli: mockCheckGithubCli,
+  getAvailableAiCli: mockGetAvailableAiCli,
+  getConfig: mockGetConfig,
   syncAllEnvironmentsWithDocker: mockSyncAllEnvironmentsWithDocker,
 }));
 
+const mockToastError = mock(() => {});
+
 mock.module("sonner", () => ({
   toast: {
-    error: mock(() => {}),
+    error: mockToastError,
   },
 }));
 
@@ -282,6 +321,39 @@ function resetStores({
   });
 }
 
+function resetAppMocks() {
+  mockStartEnvironment.mockClear();
+  mockStartEnvironment.mockImplementation(async () => {});
+  mockExit.mockClear();
+  mockCheckDocker.mockClear();
+  mockCheckDocker.mockImplementation(async () => true);
+  mockSyncAllEnvironmentsWithDocker.mockClear();
+  mockSyncAllEnvironmentsWithDocker.mockImplementation(async () => []);
+  mockCheckClaudeCli.mockClear();
+  mockCheckClaudeCli.mockImplementation(async () => true);
+  mockCheckClaudeConfig.mockClear();
+  mockCheckClaudeConfig.mockImplementation(async () => true);
+  mockCheckOpencodeCli.mockClear();
+  mockCheckOpencodeCli.mockImplementation(async () => true);
+  mockCheckCodexCli.mockClear();
+  mockCheckCodexCli.mockImplementation(async () => true);
+  mockCheckGithubCli.mockClear();
+  mockCheckGithubCli.mockImplementation(async () => true);
+  mockGetAvailableAiCli.mockClear();
+  mockGetAvailableAiCli.mockImplementation(async () => "claude");
+  mockGetConfig.mockClear();
+  mockGetConfig.mockImplementation(async () => mockConfig);
+  mockToastError.mockClear();
+  mockAppUnlisten.mockClear();
+  appEventCallbacks = new Map();
+  mockListen.mockClear();
+  mockListen.mockImplementation((eventName: string, callback: AppEventCallback) => {
+    appEventCallbacks.set(eventName, callback);
+    return Promise.resolve(mockAppUnlisten);
+  });
+  document.documentElement.style.zoom = "";
+}
+
 afterAll(() => {
   mock.module("@/components/layout", () => realLayoutSnapshot);
   mock.module("@/components/ui/tooltip", () => realTooltipSnapshot);
@@ -304,12 +376,7 @@ afterAll(() => {
 describe("App background processing mounts", () => {
   beforeEach(() => {
     cleanup();
-    mockStartEnvironment.mockClear();
-    mockExit.mockClear();
-    mockCheckDocker.mockClear();
-    mockCheckDocker.mockImplementation(async () => true);
-    mockSyncAllEnvironmentsWithDocker.mockClear();
-    mockSyncAllEnvironmentsWithDocker.mockImplementation(async () => []);
+    resetAppMocks();
   });
 
   afterEach(() => {
@@ -590,17 +657,76 @@ describe("App background processing mounts", () => {
       expect(screen.queryByTestId("terminal-env-loading-codex")).toBeNull();
     });
   });
+
+  test("keeps off-screen environments with a busy tmux session mounted until idle", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-busy-tmux", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    const stateKey = createClaudeTmuxStateKey("env-busy-tmux", "tab-1");
+    useClaudeTmuxStore.getState().setRunning(stateKey, true, {
+      environmentId: "env-busy-tmux",
+      sessionId: "session-tmux",
+    });
+    useClaudeTmuxStore.getState().setBusy(stateKey, true);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-busy-tmux")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-busy-tmux").getAttribute("data-active")).toBe("false");
+
+    act(() => {
+      useClaudeTmuxStore.getState().setBusy(stateKey, false);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-env-busy-tmux")).toBeNull();
+    });
+  });
+
+  test("keeps off-screen environments with a pending tmux hook mounted while waiting", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-waiting-tmux", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    const stateKey = createClaudeTmuxStateKey("env-waiting-tmux", "tab-1");
+    useClaudeTmuxStore.getState().setRunning(stateKey, true, {
+      environmentId: "env-waiting-tmux",
+      sessionId: "session-tmux",
+    });
+    useClaudeTmuxStore.getState().addPendingQuestion(stateKey, {
+      eventId: "question-1",
+      questions: [],
+      toolInput: {},
+      payload: {},
+      receivedAt: "2026-06-16T00:00:00.000Z",
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-waiting-tmux")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-waiting-tmux").getAttribute("data-active")).toBe("false");
+  });
 });
 
 describe("App Docker availability", () => {
   beforeEach(() => {
     cleanup();
-    mockStartEnvironment.mockClear();
-    mockExit.mockClear();
-    mockCheckDocker.mockClear();
-    mockCheckDocker.mockImplementation(async () => true);
-    mockSyncAllEnvironmentsWithDocker.mockClear();
-    mockSyncAllEnvironmentsWithDocker.mockImplementation(async () => []);
+    resetAppMocks();
   });
 
   afterEach(() => {
@@ -629,12 +755,245 @@ describe("App Docker availability", () => {
     // Startup check should NOT have triggered sync because Docker was unavailable.
     expect(mockSyncAllEnvironmentsWithDocker).not.toHaveBeenCalled();
 
-    const retry = screen.getByRole("button", { name: /retry/i });
-    retry.click();
+    act(() => {
+      screen.getByRole("button", { name: /retry/i }).click();
+    });
 
     await waitFor(() => {
       expect(mockCheckDocker).toHaveBeenCalledTimes(2);
       expect(mockSyncAllEnvironmentsWithDocker).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("App startup checks and global events", () => {
+  beforeEach(() => {
+    cleanup();
+    resetAppMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+  });
+
+  test("shows the no-AI-CLI dialog and retries CLI checks", async () => {
+    mockCheckClaudeCli.mockImplementation(async () => false);
+    mockCheckClaudeConfig.mockImplementation(async () => false);
+    mockCheckOpencodeCli.mockImplementation(async () => false);
+    mockCheckCodexCli.mockImplementation(async () => false);
+    mockGetAvailableAiCli.mockImplementation(async () => null);
+
+    resetStores({
+      environments: [],
+      selectedProjectId: null,
+      selectedEnvironmentId: null,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("AI CLI Required")).toBeTruthy();
+    });
+
+    mockCheckClaudeCli.mockImplementation(async () => true);
+    mockCheckClaudeConfig.mockImplementation(async () => true);
+    mockCheckOpencodeCli.mockImplementation(async () => false);
+    mockCheckCodexCli.mockImplementation(async () => false);
+    mockGetAvailableAiCli.mockImplementation(async () => "claude");
+
+    act(() => {
+      screen.getByRole("button", { name: "Retry" }).click();
+    });
+
+    await waitFor(() => {
+      expect(mockCheckClaudeCli).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("AI CLI Required")).toBeNull();
+    });
+  });
+
+  test("shows Claude login required when Claude is installed but not configured", async () => {
+    mockCheckClaudeCli.mockImplementation(async () => true);
+    mockCheckClaudeConfig.mockImplementation(async () => false);
+    mockCheckOpencodeCli.mockImplementation(async () => false);
+    mockCheckCodexCli.mockImplementation(async () => false);
+    mockGetAvailableAiCli.mockImplementation(async () => "claude");
+
+    resetStores({
+      environments: [],
+      selectedProjectId: null,
+      selectedEnvironmentId: null,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Claude Code Login Required")).toBeTruthy();
+    });
+  });
+
+  test("shows and dismisses the GitHub CLI warning", async () => {
+    mockCheckGithubCli.mockImplementation(async () => false);
+
+    resetStores({
+      environments: [],
+      selectedProjectId: null,
+      selectedEnvironmentId: null,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("GitHub CLI Not Found")).toBeTruthy();
+    });
+
+    act(() => {
+      screen.getByRole("button", { name: "Continue Without GitHub CLI" }).click();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("GitHub CLI Not Found")).toBeNull();
+    });
+  });
+
+  test("continues rendering when config load fails", async () => {
+    const originalConsoleError = console.error;
+    const consoleError = mock(() => {});
+    console.error = consoleError;
+    mockGetConfig.mockImplementation(async () => {
+      throw new Error("config unavailable");
+    });
+
+    try {
+      resetStores({
+        environments: [],
+        selectedProjectId: null,
+        selectedEnvironmentId: null,
+      });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(mockGetConfig).toHaveBeenCalled();
+        expect(consoleError).toHaveBeenCalledWith(
+          "[App] Failed to load config:",
+          expect.any(Error),
+        );
+      });
+      expect(screen.getByTestId("app-shell")).toBeTruthy();
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
+  test("handles menu zoom and credential error events", async () => {
+    resetStores({
+      environments: [],
+      selectedProjectId: null,
+      selectedEnvironmentId: null,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(appEventCallbacks.has("menu-zoom")).toBe(true);
+      expect(appEventCallbacks.has("claude-credentials-error")).toBe(true);
+    });
+
+    act(() => {
+      appEventCallbacks.get("menu-zoom")?.({ payload: "in" });
+    });
+    await waitFor(() => {
+      expect(document.documentElement.style.zoom).toBe("110%");
+    });
+
+    act(() => {
+      appEventCallbacks.get("menu-zoom")?.({ payload: "reset" });
+      appEventCallbacks.get("claude-credentials-error")?.({
+        payload: {
+          kind: "refresh_failed",
+          message: "Unable to refresh Claude credentials",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(document.documentElement.style.zoom).toBe("100%");
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Claude credentials refresh failed",
+        expect.objectContaining({
+          description: "Unable to refresh Claude credentials",
+        }),
+      );
+    });
+  });
+});
+
+describe("App terminal overlay actions", () => {
+  beforeEach(() => {
+    cleanup();
+    resetAppMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+  });
+
+  test("normal overlay starts clear stale Claude options before starting", async () => {
+    resetStores({
+      environments: [makeEnvironment("env-visible", "project-1")],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+    useClaudeOptionsStore.getState().setOptions("env-visible", {
+      launchAgent: true,
+      agentType: "claude",
+      initialPrompt: "stale",
+    });
+
+    render(<App />);
+
+    act(() => {
+      screen.getByTestId("start-env-visible").click();
+    });
+
+    await waitFor(() => {
+      expect(mockStartEnvironment).toHaveBeenCalledWith("env-visible", undefined);
+      expect(useClaudeOptionsStore.getState().getOptions("env-visible"))
+        .toBeUndefined();
+    });
+  });
+
+  test("create-script overlay clears launch options when start fails", async () => {
+    mockStartEnvironment.mockImplementation(async () => {
+      throw new Error("start failed");
+    });
+    resetStores({
+      environments: [makeEnvironment("env-visible", "project-1")],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    render(<App />);
+
+    const originalConsoleError = console.error;
+    console.error = mock(() => {});
+    try {
+      act(() => {
+        screen.getByTestId("create-script-env-visible").click();
+      });
+
+      await waitFor(() => {
+        expect(mockStartEnvironment).toHaveBeenCalledWith(
+          "env-visible",
+          "Create setup script",
+        );
+        expect(useClaudeOptionsStore.getState().getOptions("env-visible"))
+          .toBeUndefined();
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
   });
 });
