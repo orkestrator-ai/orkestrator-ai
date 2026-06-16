@@ -590,6 +590,39 @@ describe("App background processing mounts", () => {
       expect(screen.queryByTestId("terminal-env-loading-codex")).toBeNull();
     });
   });
+
+  test("keeps off-screen environments with a busy tmux session mounted until idle", async () => {
+    resetStores({
+      environments: [
+        makeEnvironment("env-visible", "project-1"),
+        makeEnvironment("env-busy-tmux", "project-2"),
+      ],
+      selectedProjectId: "project-1",
+      selectedEnvironmentId: "env-visible",
+    });
+
+    const stateKey = createClaudeTmuxStateKey("env-busy-tmux", "tab-1");
+    useClaudeTmuxStore.getState().setRunning(stateKey, true, {
+      environmentId: "env-busy-tmux",
+      sessionId: "session-tmux",
+    });
+    useClaudeTmuxStore.getState().setBusy(stateKey, true);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-env-busy-tmux")).toBeTruthy();
+    });
+    expect(screen.getByTestId("terminal-env-busy-tmux").getAttribute("data-active")).toBe("false");
+
+    act(() => {
+      useClaudeTmuxStore.getState().setBusy(stateKey, false);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-env-busy-tmux")).toBeNull();
+    });
+  });
 });
 
 describe("App Docker availability", () => {

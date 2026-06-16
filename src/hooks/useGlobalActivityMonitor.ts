@@ -18,6 +18,10 @@ import {
   type AgentActivityState,
 } from "@/stores/agentActivityStore";
 import { useClaudeStore } from "@/stores/claudeStore";
+import {
+  getEnvironmentIdFromClaudeTmuxStateKey,
+  useClaudeTmuxStore,
+} from "@/stores/claudeTmuxStore";
 import { useOpenCodeStore } from "@/stores/openCodeStore";
 import { useCodexStore } from "@/stores/codexStore";
 
@@ -32,6 +36,15 @@ interface ClaudeStateEvent {
 function extractEnvironmentId(sessionKey: string): string | undefined {
   const match = sessionKey.match(/^env-([^:]+):/);
   return match?.[1];
+}
+
+function mergeActivityState(
+  current: AgentActivityState | undefined,
+  next: AgentActivityState
+): AgentActivityState {
+  if (current === "working" || next === "working") return "working";
+  if (current === "waiting" || next === "waiting") return "waiting";
+  return "idle";
 }
 
 export function useGlobalActivityMonitor(): void {
@@ -157,6 +170,65 @@ export function useGlobalActivityMonitor(): void {
           desiredState = hasPendingQuestions ? "waiting" : "idle";
         }
 
+        const currentState =
+          useAgentActivityStore.getState().containerStates[envId];
+        if (currentState !== desiredState) {
+          setContainerState(envId, desiredState);
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, [setContainerState]);
+
+  // ── Claude tmux mode: derive activity from hydrated tmux tab state ──
+  // Tmux mode has its own backend lifecycle (`running`) and turn lifecycle
+  // (`busy`). The sidebar icon should match native mode: blue while Claude is
+  // mid-turn, amber when a hook card is waiting for input, green when idle.
+  useEffect(() => {
+    const unsubscribe = useClaudeTmuxStore.subscribe((state, prevState) => {
+      if (state.tabs === prevState.tabs) {
+        return;
+      }
+
+      const desiredByEnvironment = new Map<string, AgentActivityState>();
+      const seenEnvironmentIds = new Set<string>();
+
+      for (const sourceTabs of [prevState.tabs, state.tabs]) {
+        for (const [stateKey, tab] of sourceTabs) {
+          const envId =
+            tab.environmentId ?? getEnvironmentIdFromClaudeTmuxStateKey(stateKey);
+          if (envId) {
+            seenEnvironmentIds.add(envId);
+          }
+        }
+      }
+
+      for (const [stateKey, tab] of state.tabs) {
+        const envId =
+          tab.environmentId ?? getEnvironmentIdFromClaudeTmuxStateKey(stateKey);
+        if (!envId) continue;
+
+        const hasPendingHooks =
+          tab.pendingApprovals.length > 0 ||
+          tab.pendingQuestions.length > 0 ||
+          tab.pendingPlans.length > 0 ||
+          tab.pendingPermissions.length > 0 ||
+          tab.pendingElicitations.length > 0;
+        const tabState: AgentActivityState = tab.busy
+          ? "working"
+          : hasPendingHooks
+            ? "waiting"
+            : "idle";
+
+        desiredByEnvironment.set(
+          envId,
+          mergeActivityState(desiredByEnvironment.get(envId), tabState),
+        );
+      }
+
+      for (const envId of seenEnvironmentIds) {
+        const desiredState = desiredByEnvironment.get(envId) ?? "idle";
         const currentState =
           useAgentActivityStore.getState().containerStates[envId];
         if (currentState !== desiredState) {

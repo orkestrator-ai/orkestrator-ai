@@ -92,6 +92,7 @@ function App() {
   const claudeSessions = useClaudeStore((state) => state.sessions);
   const codexSessions = useCodexStore((state) => state.sessions);
   const openCodeSessions = useOpenCodeStore((state) => state.sessions);
+  const claudeTmuxTabs = useClaudeTmuxStore((state) => state.tabs);
   const claudeMessageQueue = useClaudeStore((state) => state.messageQueue);
   const claudeTmuxMessageQueue = useClaudeTmuxStore((state) => state.messageQueue);
   const codexMessageQueue = useCodexStore((state) => state.messageQueue);
@@ -108,8 +109,16 @@ function App() {
         }
       }
     }
+    for (const [stateKey, tab] of claudeTmuxTabs) {
+      if (!tab.busy) continue;
+      const environmentId =
+        tab.environmentId ?? getEnvironmentIdFromClaudeTmuxStateKey(stateKey);
+      if (environmentId) {
+        environmentIds.add(environmentId);
+      }
+    }
     return Array.from(environmentIds);
-  }, [claudeSessions, codexSessions, openCodeSessions]);
+  }, [claudeSessions, codexSessions, openCodeSessions, claudeTmuxTabs]);
   const queuedAgentPromptEnvironmentIds = useMemo(() => {
     const environmentIds = new Set<string>();
     const queueMaps = [claudeMessageQueue, codexMessageQueue, openCodeMessageQueue];
