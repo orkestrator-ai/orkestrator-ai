@@ -110,7 +110,13 @@ function App() {
       }
     }
     for (const [stateKey, tab] of claudeTmuxTabs) {
-      if (!tab.busy) continue;
+      const hasPendingHooks =
+        tab.pendingApprovals.length > 0 ||
+        tab.pendingQuestions.length > 0 ||
+        tab.pendingPlans.length > 0 ||
+        tab.pendingPermissions.length > 0 ||
+        tab.pendingElicitations.length > 0;
+      if (!tab.busy && !hasPendingHooks) continue;
       const environmentId =
         tab.environmentId ?? getEnvironmentIdFromClaudeTmuxStateKey(stateKey);
       if (environmentId) {
